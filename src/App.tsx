@@ -75,8 +75,6 @@ import {
   FOCAL_LENGTH_MAX,
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
-import type { PrecisionSettings } from "./types/precision";
-import { DEFAULT_PRECISION_SETTINGS } from "./types/precision";
 import type {
   CalculationMode,
   CameraSettings,
@@ -174,23 +172,6 @@ function loadCameraSettings(): CameraSettings {
     };
   } catch {
     return DEFAULT_CAMERA_SETTINGS;
-  }
-}
-
-function loadPrecisionSettings(): PrecisionSettings {
-  try {
-    const saved = localStorage.getItem("ksg-precision-settings");
-    if (!saved) return DEFAULT_PRECISION_SETTINGS;
-
-    const parsed = JSON.parse(saved) as Partial<PrecisionSettings>;
-    const mode = parsed.refractionCorrectionMode;
-    if (mode !== "auto" && mode !== "standard" && mode !== "none") {
-      return DEFAULT_PRECISION_SETTINGS;
-    }
-
-    return { refractionCorrectionMode: mode };
-  } catch {
-    return DEFAULT_PRECISION_SETTINGS;
   }
 }
 
@@ -310,8 +291,6 @@ function App() {
 
   const [cameraSettings, setCameraSettings] =
     useState<CameraSettings>(loadCameraSettings);
-  const [precisionSettings, setPrecisionSettings] =
-    useState<PrecisionSettings>(loadPrecisionSettings);
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
@@ -674,13 +653,6 @@ function App() {
       JSON.stringify(cameraSettings)
     );
   }, [cameraSettings]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "ksg-precision-settings",
-      JSON.stringify(precisionSettings)
-    );
-  }, [precisionSettings]);
 
 
   useEffect(() => {
@@ -1839,8 +1811,6 @@ function App() {
         onSaveCurrentPlan={saveCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
         onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
-        precisionSettings={precisionSettings}
-        onPrecisionSettingsChange={setPrecisionSettings}
       />
       <section
         ref={previewSectionRef}
@@ -2125,7 +2095,7 @@ function App() {
         tripod={tripodPoint}
         subject={subjectPoint}
         visibility={celestialVisibility}
-        precisionSettings={precisionSettings}
+        calculationMode={calculationMode}
         cameraSettings={cameraSettings}
         previewAspectRatio={previewAspectRatio}
         onClose={() => setCelestialTransitSearchOpen(false)}

@@ -881,37 +881,6 @@ button { cursor: pointer; }
   font-weight: 800;
 }
 .celestial-transit-submit:disabled { opacity: 0.48; }
-
-.celestial-transit-progress {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  align-items: center;
-  gap: 7px;
-  min-height: 14px;
-}
-
-.celestial-transit-progress-track {
-  height: 5px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #303741;
-}
-
-.celestial-transit-progress-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #ffdc25;
-  transition: width 120ms linear;
-}
-
-.celestial-transit-progress strong {
-  color: #d8dde5;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
 .celestial-transit-message { margin: 0; color: #c7d1dc; font-size: 12px; }
 .celestial-transit-results { display: grid; gap: 1px; padding: 0 12px 12px; }
 .celestial-transit-results button {
@@ -1302,44 +1271,3 @@ button { cursor: pointer; }
 }
 
 .spot-time-range input[type="time"] { min-width: 0; width: 100%; }
-
-/* Precision settings in the hamburger menu. */
-.precision-settings-panel {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  margin: 0;
-  padding: 8px;
-  border: 1px solid #313944;
-  border-radius: 6px;
-  background: #090d12;
-}
-
-.precision-settings-panel legend {
-  padding: 0 4px;
-  color: #f4f6f8;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.precision-settings-panel label {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  color: #d8dde5;
-  font-size: 11px;
-}
-
-.precision-settings-panel input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: #ffdc25;
-}
-
-.precision-settings-panel small {
-  color: #8ea0b3;
-  font-size: 8px;
-}

@@ -4,13 +4,8 @@ import type { GroundPoint } from "../types/points";
 import type { SpotSearchDisplayCount, SpotSearchPeriod } from "../types/search";
 import { calculateCelestialHorizontalCoordinates } from "../cesium/celestial";
 import { sensorDimensionsMm } from "../cesium/camera";
-import { calculateElevationAngleDegrees, calculateLineMetrics } from "../cesium/geometry";
+import { calculateLineMetrics } from "../cesium/geometry";
 import { isLocalTimeWithinSearchRange } from "./searchTimeRange";
-import {
-  weatherForDate,
-  weatherRefractionCorrectionDegrees,
-  type RefractionWeatherContext,
-} from "./refractionWeather";
 import {
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,
@@ -47,7 +42,6 @@ type SearchInput = {
   cameraSettings: CameraSettings;
   previewAspectRatio: number;
   criteria: CelestialTransitCriteria;
-  refractionWeather?: RefractionWeatherContext;
 };
 
 const CROSSING_SAMPLE_MS = 10 * 60_000;
@@ -58,7 +52,7 @@ const FRAME_SAMPLES_ACROSS_SHORTEST_SIDE = 4;
 const BODY_ORDER: Array<Exclude<CelestialBodyId, "polaris">> = ["sun", "moon", "milkyWay"];
 const DEG = Math.PI / 180;
 
-export function celestialTransitDateRange(input: Pick<SearchInput, "currentDate" | "timeZone" | "criteria">): { start: Date; end: Date } {
+function dateRange(input: SearchInput): { start: Date; end: Date } {
   const currentLocalDate = zonedDateTimeLocalFromDate(input.currentDate, input.timeZone).slice(0, 10);
   let startText = currentLocalDate;
   let endExclusiveText: string;
@@ -96,35 +90,6 @@ function dot(a: { east: number; north: number; up: number }, b: { east: number; 
   return a.east * b.east + a.north * b.north + a.up * b.up;
 }
 
-
-function horizontalCoordinatesForSearch(
-  body: Exclude<CelestialBodyId, "polaris">,
-  date: Date,
-  observer: GroundPoint,
-  input: SearchInput
-) {
-  const weatherContext = input.refractionWeather;
-  if (weatherContext?.effectiveMode === "weather") {
-    const geometric = calculateCelestialHorizontalCoordinates(body, date, observer, "standard");
-    const weather = weatherForDate(weatherContext, date);
-    if (weather) {
-      const correctionDegrees = weatherRefractionCorrectionDegrees(
-        geometric.altitudeDegrees,
-        weather
-      );
-      if (correctionDegrees !== null) {
-        return {
-          ...geometric,
-          altitudeDegrees: geometric.altitudeDegrees + correctionDegrees,
-        };
-      }
-    }
-    // Missing or invalid weather for this instant must not stop the search.
-    return calculateCelestialHorizontalCoordinates(body, date, observer, "pro");
-  }
-  return calculateCelestialHorizontalCoordinates(body, date, observer, input.calculationMode);
-}
-
 function observerAtLens(input: SearchInput): GroundPoint {
   return {
     ...input.tripod,
@@ -148,10 +113,10 @@ type FrameProjection = {
 function createFrameProjection(input: SearchInput): FrameProjection {
   const line = calculateLineMetrics(input.tripod, input.subject);
   const cameraAzimuth = line.bearingDegrees;
-  const cameraAltitude = calculateElevationAngleDegrees(
-    observerAtLens(input),
-    input.subject
-  );
+  const cameraAltitude = Math.atan2(
+    input.subject.height - (input.tripod.height + input.cameraSettings.lensCenterHeightMeters),
+    Math.max(line.distanceMeters, 0.001)
+  ) / DEG;
   const sensor = sensorDimensionsMm(input.previewAspectRatio);
   const horizontalFov = 2 * Math.atan(sensor.width / (2 * input.cameraSettings.focalLengthMm));
   const verticalFov = 2 * Math.atan(sensor.height / (2 * input.cameraSettings.focalLengthMm));
@@ -204,34 +169,6 @@ function angularDistanceToFrameCenterDegrees(
   return Math.acos(cosine) / DEG;
 }
 
-
-function refineFrameBoundaryTime(
-  body: Exclude<CelestialBodyId, "polaris">,
-  lowTime: number,
-  highTime: number,
-  lowInside: boolean,
-  input: SearchInput,
-  observer: GroundPoint,
-  projection: FrameProjection,
-  signal: AbortSignal
-): number {
-  let low = lowTime;
-  let high = highTime;
-  for (let index = 0; index < 24 && high - low > 1000; index += 1) {
-    throwIfAborted(signal);
-    const mid = Math.round((low + high) / 2);
-    const horizontal = horizontalCoordinatesForSearch(body, new Date(mid), observer, input);
-    const midInside = isBodyInFrame(
-      horizontal.azimuthDegrees,
-      horizontal.altitudeDegrees,
-      projection
-    );
-    if (midInside === lowInside) low = mid;
-    else high = mid;
-  }
-  return lowInside ? high : low;
-}
-
 function refineClosestInFrameTime(
   body: Exclude<CelestialBodyId, "polaris">,
   lowTime: number,
@@ -248,8 +185,18 @@ function refineClosestInFrameTime(
     const third = (high - low) / 3;
     const left = Math.round(low + third);
     const right = Math.round(high - third);
-    const leftHorizontal = horizontalCoordinatesForSearch(body, new Date(left), observer, input);
-    const rightHorizontal = horizontalCoordinatesForSearch(body, new Date(right), observer, input);
+    const leftHorizontal = calculateCelestialHorizontalCoordinates(
+      body,
+      new Date(left),
+      observer,
+      input.calculationMode
+    );
+    const rightHorizontal = calculateCelestialHorizontalCoordinates(
+      body,
+      new Date(right),
+      observer,
+      input.calculationMode
+    );
     const leftDistance = angularDistanceToFrameCenterDegrees(
       leftHorizontal.azimuthDegrees,
       leftHorizontal.altitudeDegrees,
@@ -278,14 +225,14 @@ function refineCrossing(
   let low = lowTime;
   let high = highTime;
   let lowError = signedAngularDifference(
-    horizontalCoordinatesForSearch(body, new Date(low), observer, input).azimuthDegrees,
+    calculateCelestialHorizontalCoordinates(body, new Date(low), observer, input.calculationMode).azimuthDegrees,
     targetAzimuth
   );
   for (let index = 0; index < 20 && high - low > 1000; index += 1) {
     throwIfAborted(signal);
     const mid = Math.round((low + high) / 2);
     const midError = signedAngularDifference(
-      horizontalCoordinatesForSearch(body, new Date(mid), observer, input).azimuthDegrees,
+      calculateCelestialHorizontalCoordinates(body, new Date(mid), observer, input.calculationMode).azimuthDegrees,
       targetAzimuth
     );
     if ((lowError <= 0 && midError >= 0) || (lowError >= 0 && midError <= 0)) {
@@ -301,11 +248,11 @@ function refineCrossing(
 export async function searchCelestialTransitDates(
   input: SearchInput,
   signal: AbortSignal,
-  onProgress: (percent: number) => void
+  onProgress: (message: string) => void
 ): Promise<CelestialTransitResult[]> {
   const bodies = BODY_ORDER.filter((body) => input.visibility[body]);
   if (bodies.length === 0) throw new Error("検索対象の天体が表示されていません");
-  const { start, end } = celestialTransitDateRange(input);
+  const { start, end } = dateRange(input);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) {
     throw new Error("検索期間を正しく指定してください");
   }
@@ -327,58 +274,9 @@ export async function searchCelestialTransitDates(
     bestTime: number;
     bestDistanceDegrees: number;
   }>();
-  const lastFrameSamples = new Map<Exclude<CelestialBodyId, "polaris">, {
-    time: number;
-    inside: boolean;
-    eligible: boolean;
-  }>();
   const sampleIntervalMs = frameProjection?.sampleIntervalMs ?? CROSSING_SAMPLE_MS;
-  const totalSamples = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / sampleIntervalMs) + 1);
+  const totalSamples = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / sampleIntervalMs));
   let processed = 0;
-  let lastReportedPercent = -1;
-
-  const reportProgress = (forceComplete = false): void => {
-    const percent = forceComplete
-      ? 100
-      : Math.min(99, Math.max(0, Math.floor((processed / totalSamples) * 100)));
-    if (percent === lastReportedPercent) return;
-    lastReportedPercent = percent;
-    onProgress(percent);
-  };
-
-  reportProgress();
-
-  const isDateEligible = (date: Date): boolean => {
-    const time = date.getTime();
-    if (time < start.getTime() || time >= end.getTime()) return false;
-    const weekday = localWeekday(date, input.timeZone);
-    if (input.criteria.weekdays.length > 0 && !input.criteria.weekdays.includes(weekday)) {
-      return false;
-    }
-    return isLocalTimeWithinSearchRange(
-      date,
-      input.timeZone,
-      input.criteria.startTime,
-      input.criteria.endTime
-    );
-  };
-
-  const refineEligibilityBoundaryTime = (
-    lowTime: number,
-    highTime: number,
-    lowEligible: boolean
-  ): number => {
-    let low = lowTime;
-    let high = highTime;
-    for (let index = 0; index < 24 && high - low > 1000; index += 1) {
-      throwIfAborted(signal);
-      const mid = Math.round((low + high) / 2);
-      const midEligible = isDateEligible(new Date(mid));
-      if (midEligible === lowEligible) low = mid;
-      else high = mid;
-    }
-    return lowEligible ? high : low;
-  };
 
   const finalizeInFrameInterval = (
     body: Exclude<CelestialBodyId, "polaris">,
@@ -404,36 +302,52 @@ export async function searchCelestialTransitDates(
       signal
     );
     const id = `${body}-${closestDate.getTime()}`;
-    if (isDateEligible(closestDate) && !resultIds.has(id)) {
+    if (!resultIds.has(id)) {
       resultIds.add(id);
       results.push({ id, date: closestDate, celestialId: body });
     }
   };
 
-  for (
-    let time = start.getTime();
-    time <= end.getTime();
-    time = Math.min(time + sampleIntervalMs, end.getTime())
-  ) {
+  for (let time = start.getTime(); time < end.getTime(); time += sampleIntervalMs) {
     throwIfAborted(signal);
     const date = new Date(time);
-    const dateEligible = isDateEligible(date);
+    const weekday = localWeekday(date, input.timeZone);
+    if (input.criteria.weekdays.length > 0 && !input.criteria.weekdays.includes(weekday)) {
+      previousErrors.clear();
+      for (const [body, state] of inFrameStates) {
+        finalizeInFrameInterval(body, state, state.lastInsideTime);
+      }
+      inFrameStates.clear();
+      if (results.length >= input.criteria.displayCount) {
+        return results.sort((a, b) => a.date.getTime() - b.date.getTime());
+      }
+      processed += 1;
+      continue;
+    }
+    if (!isLocalTimeWithinSearchRange(date, input.timeZone, input.criteria.startTime, input.criteria.endTime)) {
+      previousErrors.clear();
+      for (const [body, state] of inFrameStates) {
+        finalizeInFrameInterval(body, state, state.lastInsideTime);
+      }
+      inFrameStates.clear();
+      if (results.length >= input.criteria.displayCount) {
+        return results.sort((a, b) => a.date.getTime() - b.date.getTime());
+      }
+      processed += 1;
+      continue;
+    }
 
     for (const body of bodies) {
-      const horizontal = horizontalCoordinatesForSearch(body, date, observer, input);
+      const horizontal = calculateCelestialHorizontalCoordinates(body, date, observer, input.calculationMode);
       if (input.criteria.mode === "direction-crossing") {
         if (targetAzimuth === null) throw new Error("検索モードの初期化に失敗しました");
         const error = signedAngularDifference(horizontal.azimuthDegrees, targetAzimuth);
         const previous = previousErrors.get(body);
         if (previous && Math.abs(previous.error - error) < 180 && ((previous.error <= 0 && error >= 0) || (previous.error >= 0 && error <= 0))) {
           const crossingDate = refineCrossing(body, previous.time, time, targetAzimuth, input, observer, signal);
-          const crossingHorizontal = horizontalCoordinatesForSearch(body, crossingDate, observer, input);
+          const crossingHorizontal = calculateCelestialHorizontalCoordinates(body, crossingDate, observer, input.calculationMode);
           const id = `${body}-${crossingDate.getTime()}`;
-          if (
-            isDateEligible(crossingDate) &&
-            crossingHorizontal.altitudeDegrees > 0.25 &&
-            !resultIds.has(id)
-          ) {
+          if (crossingHorizontal.altitudeDegrees > 0.25 && !resultIds.has(id)) {
             resultIds.add(id);
             results.push({ id, date: crossingDate, celestialId: body });
           }
@@ -448,32 +362,12 @@ export async function searchCelestialTransitDates(
           frameProjection
         );
         const previous = inFrameStates.get(body);
-        const lastSample = lastFrameSamples.get(body);
 
-        if (dateEligible && inside) {
-          if (!previous?.inside) {
-            let intervalStart = time;
-            if (lastSample) {
-              const eligibleStart = lastSample.eligible
-                ? lastSample.time
-                : refineEligibilityBoundaryTime(lastSample.time, time, false);
-              const frameStart = lastSample.inside
-                ? lastSample.time
-                : refineFrameBoundaryTime(
-                    body,
-                    lastSample.time,
-                    time,
-                    false,
-                    input,
-                    observer,
-                    frameProjection,
-                    signal
-                  );
-              intervalStart = Math.max(eligibleStart, frameStart);
-            }
+        if (inside) {
+          if (!previous || !previous.inside) {
             inFrameStates.set(body, {
               inside: true,
-              intervalStart,
+              intervalStart: time,
               lastInsideTime: time,
               bestTime: time,
               bestDistanceDegrees: distanceDegrees,
@@ -487,48 +381,21 @@ export async function searchCelestialTransitDates(
             });
           }
         } else if (previous?.inside) {
-          let intervalEnd = previous.lastInsideTime;
-          if (lastSample) {
-            const eligibleEnd = lastSample.eligible && !dateEligible
-              ? refineEligibilityBoundaryTime(lastSample.time, time, true)
-              : time;
-            const frameEnd = lastSample.inside && !inside
-              ? refineFrameBoundaryTime(
-                  body,
-                  lastSample.time,
-                  time,
-                  true,
-                  input,
-                  observer,
-                  frameProjection,
-                  signal
-                )
-              : time;
-            intervalEnd = Math.min(eligibleEnd, frameEnd);
-          }
-          finalizeInFrameInterval(body, previous, intervalEnd);
+          finalizeInFrameInterval(body, previous, time);
           inFrameStates.delete(body);
         }
-        lastFrameSamples.set(body, { time, inside, eligible: dateEligible });
+      }
+      if (results.length >= input.criteria.displayCount) {
+        return results.sort((a, b) => a.date.getTime() - b.date.getTime());
       }
     }
 
-    // Complete every celestial body in the current time step before applying
-    // the display limit. Refined crossings from the same sample interval can
-    // be slightly earlier than one another, regardless of BODY_ORDER.
-    if (input.criteria.mode === "direction-crossing" && results.length >= input.criteria.displayCount) {
-      reportProgress(true);
-      return results
-        .sort((a, b) => a.date.getTime() - b.date.getTime())
-        .slice(0, input.criteria.displayCount);
-    }
-
     processed += 1;
-    reportProgress();
     if (processed % 100 === 0) {
+      const label = input.criteria.mode === "direction-crossing" ? "被写体方向を横切る時刻" : "画角内で被写体に最も近い時刻";
+      onProgress(`${label}を検索中… ${Math.min(99, Math.round(processed / totalSamples * 100))}%`);
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
-    if (time === end.getTime()) break;
   }
 
   if (frameProjection !== null) {
@@ -536,8 +403,6 @@ export async function searchCelestialTransitDates(
       finalizeInFrameInterval(body, state, state.lastInsideTime);
     }
   }
-
-  reportProgress(true);
 
   return results
     .sort((a, b) => a.date.getTime() - b.date.getTime())
