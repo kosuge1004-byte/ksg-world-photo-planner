@@ -9,7 +9,6 @@ import type {
   CelestialScreenPoint,
   CelestialOcclusion,
   HorizontalCoordinates,
-  TripodCandidate,
 } from "../types/celestial";
 import type { SiteContext } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
