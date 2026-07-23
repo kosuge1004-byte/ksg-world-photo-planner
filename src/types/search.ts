@@ -53,6 +53,9 @@ export type SpotSearchCriteria = {
   customEndDate: string;
   /** 0=日曜〜6=土曜。空配列は全曜日。 */
   weekdays: number[];
+  /** ローカル時刻の検索範囲。開始>終了は日付またぎ。 */
+  startTime?: string;
+  endTime?: string;
   interval: SpotSearchInterval;
   displayCount: SpotSearchDisplayCount;
   siteConstraints: SiteConstraintFlags;
@@ -70,7 +73,6 @@ export type SpotPresetResult = {
   celestialLabel: string;
   cameraAzimuthDegrees: number;
   cameraAltitudeDegrees: number;
-  alignmentErrorDegrees: number;
   nearbyLandmarks: NearbyLandmark[];
   nearbyBuildings: NearbyBuilding[];
   nearbyStructures: NearbyStructure[];

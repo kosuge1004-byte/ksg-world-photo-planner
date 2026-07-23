@@ -35,6 +35,7 @@ import {
   extractGoogleMapsCoordinates,
   extractGoogleMapsSharedUrl,
 } from "./googleMapsUrl";
+import { isLocalTimeWithinSearchRange } from "./searchTimeRange";
 import {
   fetchSiteContexts,
   hasMappedSiteConstraints,
@@ -76,7 +77,6 @@ export type ResolvedSpotLocation = {
 type SearchSample = {
   date: Date;
   horizontal: HorizontalCoordinates;
-  score: number;
 };
 
 export type SpotPresetSearchOptions = {
@@ -276,7 +276,7 @@ function weekdayAtLocation(date: Date, timeZone: string): number {
   return ((daySerialFromDateText(localDateText) + 4) % 7 + 7) % 7;
 }
 
-function sampleScore(
+function evaluateSample(
   id: SearchCelestialId,
   date: Date,
   subject: GroundPoint,
@@ -304,7 +304,7 @@ function sampleScore(
   if (id === "sun") {
     if (altitude <= 0.25 || altitude >= 45) return null;
     if (sunSearchTiming === "all") {
-      return { date, horizontal, score: Math.abs(altitude - 8) };
+      return { date, horizontal };
     }
     if (altitude >= 12) return null;
     const futureAltitude = calculateCelestialHorizontalCoordinates(
@@ -326,16 +326,11 @@ function sampleScore(
     if (!crossesNight) return null;
     if (sunSearchTiming === "sunrise" && !rising) return null;
     if (sunSearchTiming === "sunset" && rising) return null;
-    return { date, horizontal, score: Math.abs(altitude - 1) };
+    return { date, horizontal };
   }
   if (id === "moon") {
     if (altitude <= 0.25 || altitude >= 50) return null;
-    return {
-      date,
-      horizontal,
-      // 月の明るさを順位へ加点すると満月付近だけで上位が埋まるため、高度だけで評価する。
-      score: Math.abs(altitude - 12),
-    };
+    return { date, horizontal };
   }
 
   if (altitude < 8 || altitude > 55) return null;
@@ -355,11 +350,7 @@ function sampleScore(
   if (sunAltitude > -12 || (moonAltitude > 0 && moonIllumination > 0.35)) {
     return null;
   }
-  return {
-    date,
-    horizontal,
-    score: Math.abs(altitude - 22) + moonIllumination,
-  };
+  return { date, horizontal };
 }
 
 function screenPointForSample(
@@ -429,8 +420,14 @@ export async function searchSpotPresets({
     const date = sampleDate;
     const weekdayAllowed = criteria.weekdays.length === 0 ||
       criteria.weekdays.includes(weekdayAtLocation(date, timeZone));
-    const sample = weekdayAllowed
-      ? sampleScore(
+    const timeAllowed = weekdayAllowed && isLocalTimeWithinSearchRange(
+      date,
+      timeZone,
+      criteria.startTime,
+      criteria.endTime
+    );
+    const sample = timeAllowed
+      ? evaluateSample(
           criteria.celestialId,
           date,
           subject,
@@ -517,7 +514,6 @@ export async function searchSpotPresets({
                 celestialLabel: BODY_LABELS[criteria.celestialId],
                 cameraAzimuthDegrees: cameraHorizontal.azimuthDegrees,
                 cameraAltitudeDegrees: cameraHorizontal.altitudeDegrees,
-                alignmentErrorDegrees: candidate.alignmentErrorDegrees,
                 nearbyLandmarks: siteContext?.nearbyLandmarks ?? [],
                 nearbyBuildings: siteContext?.nearbyBuildings ?? [],
                 nearbyStructures: siteContext?.nearbyStructures ?? [],

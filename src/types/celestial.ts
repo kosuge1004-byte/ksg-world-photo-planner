@@ -87,5 +87,4 @@ export type TripodCandidate = {
   longitude: number;
   height: number;
   distanceMeters: number;
-  alignmentErrorDegrees: number;
 };

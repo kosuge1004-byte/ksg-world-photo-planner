@@ -19,7 +19,8 @@ import { sampleWorldTerrain } from "./worldTerrain";
 const EARTH_RADIUS_METERS = 6_371_008.8;
 const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
-const SAMPLE_COUNT = 86;
+// 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
+const SAMPLE_COUNT = 32;
 const ROOT_REFINEMENT_PASSES = 3;
 const ROOT_REFINEMENT_SEGMENTS = 8;
 const CONVERGED_POSITION_METERS = 0.05;
@@ -277,7 +278,7 @@ async function calculateOneCandidate(
   let solved: TripodCandidate | null = null;
 
   // 観測地点が動くと方位・高度も変わるため、候補地点のレンズ中心で収束するまで再計算する。
-  for (let iteration = 0; iteration < 4; iteration += 1) {
+  for (let iteration = 0; iteration < 3; iteration += 1) {
     abortIfRequested(signal);
     if (horizontal.altitudeDegrees <= 0.25) return null;
 
@@ -302,7 +303,6 @@ async function calculateOneCandidate(
       longitude: CesiumMath.toDegrees(candidate.longitude),
       height: candidate.height,
       distanceMeters: solution.distanceMeters,
-      alignmentErrorDegrees: Math.abs(solution.altitudeErrorDegrees),
     };
     const nextHorizontal = calculateCelestialHorizontalCoordinates(
       point.id,
@@ -372,26 +372,20 @@ async function calculateOneCandidate(
     subjectBearing,
     finalHorizontal.azimuthDegrees
   );
-  const totalError = Math.hypot(altitudeError, azimuthError);
   const halfFov = cameraHalfFieldOfViewDegrees(
     cameraSettings,
     previewAspectRatio
   );
-  const discRadius = celestialDiscRadiusDegrees(point.id);
+  const celestialRadius = celestialDiscRadiusDegrees(point.id) ?? 0;
 
-  // 中心一致の固定閾値は使わない。太陽・月だけは指定焦点距離の
-  // 画角内に円盤全体が収まる候補を採用する。天の川・北極星は
-  // 従来どおり候補を返し、太陽・月向けの円盤判定を適用しない。
+  // 一致度や順位は算出せず、フルサイズの指定焦点距離で天体が画角内に入るかだけを判定する。
   if (
-    discRadius !== null &&
-    (
-      azimuthError + discRadius > halfFov.horizontal ||
-      altitudeError + discRadius > halfFov.vertical
-    )
+    azimuthError + celestialRadius > halfFov.horizontal ||
+    altitudeError + celestialRadius > halfFov.vertical
   ) {
     return null;
   }
-  return { ...solved, alignmentErrorDegrees: totalError };
+  return solved;
 }
 
 export async function calculateTripodCandidates(

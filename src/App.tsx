@@ -33,7 +33,6 @@ import { ProjectsScreen } from "./components/ProjectsScreen";
 import { CalendarScreen } from "./components/CalendarScreen";
 import { MoonAgeCalendarScreen } from "./components/MoonAgeCalendarScreen";
 import { ProjectSaveDialog } from "./components/ProjectSaveDialog";
-import { TripodGuidanceScreen } from "./components/TripodGuidanceScreen";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { TopSettingsBar } from "./components/TopSettingsBar";
@@ -76,6 +75,8 @@ import {
   FOCAL_LENGTH_MAX,
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
+import type { PrecisionSettings } from "./types/precision";
+import { DEFAULT_PRECISION_SETTINGS } from "./types/precision";
 import type {
   CalculationMode,
   CameraSettings,
@@ -94,18 +95,10 @@ import type {
   SpotSearchCriteria,
 } from "./types/search";
 import type { SpotSearchJob } from "./types/backgroundSearch";
-import type { FieldCorrection, GuidancePlan } from "./types/guidance";
 import type { PlannerProject } from "./types/project";
 import { deleteProject, loadProjects, upsertProject } from "./projectStorage";
 import { addSubjectHistory, isFavoriteSubject, loadFavoriteSubjects, loadSubjectHistory, toggleFavoriteSubject } from "./subjectStorage";
 import type { SubjectRecord } from "./subjectStorage";
-import {
-  applyFieldCorrection,
-} from "./guidance/storage";
-import {
-  cameraAltitudeToSubjectDegrees,
-  guidanceBearingDegrees,
-} from "./guidance/geometry";
 import {
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,
@@ -184,6 +177,23 @@ function loadCameraSettings(): CameraSettings {
   }
 }
 
+function loadPrecisionSettings(): PrecisionSettings {
+  try {
+    const saved = localStorage.getItem("ksg-precision-settings");
+    if (!saved) return DEFAULT_PRECISION_SETTINGS;
+
+    const parsed = JSON.parse(saved) as Partial<PrecisionSettings>;
+    const mode = parsed.refractionCorrectionMode;
+    if (mode !== "auto" && mode !== "standard" && mode !== "none") {
+      return DEFAULT_PRECISION_SETTINGS;
+    }
+
+    return { refractionCorrectionMode: mode };
+  } catch {
+    return DEFAULT_PRECISION_SETTINGS;
+  }
+}
+
 function loadCelestialVisibility(): CelestialVisibility {
   try {
     const saved = localStorage.getItem("ksg-celestial-visibility");
@@ -209,44 +219,6 @@ function loadCalculationMode(): CalculationMode {
 function loadCelestialDateTime(): string {
   // アプリ起動時は、前回終了時の日時ではなく端末の現在日時を表示する。
   return zonedDateTimeLocalFromDate(new Date(), systemTimeZone());
-}
-
-function guidancePlanFromSpotResult(
-  result: SpotPresetResult,
-  lensCenterHeightMeters: number
-): GuidancePlan {
-  const subjectAzimuthDegrees = guidanceBearingDegrees(
-    result.tripod,
-    result.subject
-  );
-  const subjectAltitudeDegrees = cameraAltitudeToSubjectDegrees(
-    result.tripod,
-    result.subject,
-    lensCenterHeightMeters
-  );
-  return {
-    id: `search-${result.id}`,
-    title: `${result.placeLabel}・${result.celestialLabel}`,
-    source: "search",
-    tripod: result.tripod,
-    calculatedTripod: result.tripod,
-    subject: result.subject,
-    dateTimeIso: result.date.toISOString(),
-    timeZone: result.timeZone,
-    focalLengthMm: result.focalLengthMm,
-    lensCenterHeightMeters,
-    cameraAzimuthDegrees: result.cameraAzimuthDegrees,
-    cameraAltitudeDegrees: result.cameraAltitudeDegrees,
-    subjectAzimuthDegrees,
-    subjectAltitudeDegrees,
-    celestialId: result.celestialId,
-    celestialLabel: result.celestialLabel,
-    celestialAzimuthDegrees: result.cameraAzimuthDegrees,
-    celestialAltitudeDegrees: result.cameraAltitudeDegrees,
-    viewCorrectionAzimuthDegrees: 0,
-    viewCorrectionAltitudeDegrees: 0,
-    createdAtIso: new Date().toISOString(),
-  };
 }
 
 function pointsMatch(
@@ -318,11 +290,6 @@ function App() {
   const [projects, setProjects] = useState<PlannerProject[]>(loadProjects);
   const [subjectHistory, setSubjectHistory] = useState<SubjectRecord[]>(loadSubjectHistory);
   const [favoriteSubjects, setFavoriteSubjects] = useState<SubjectRecord[]>(loadFavoriteSubjects);
-  const [guidanceOpen, setGuidanceOpen] = useState(false);
-  const [guidancePlan, setGuidancePlan] = useState<GuidancePlan | null>(null);
-  const [activeGuidanceSourcePlan, setActiveGuidanceSourcePlan] =
-    useState<GuidancePlan | null>(null);
-  const [fieldCorrectionRevision, setFieldCorrectionRevision] = useState(0);
 
   const [subjectPoint, setSubjectPoint] =
     useState<GroundPoint | null>(null);
@@ -343,6 +310,8 @@ function App() {
 
   const [cameraSettings, setCameraSettings] =
     useState<CameraSettings>(loadCameraSettings);
+  const [precisionSettings, setPrecisionSettings] =
+    useState<PrecisionSettings>(loadPrecisionSettings);
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
@@ -439,37 +408,7 @@ function App() {
     mapReady && subjectPoint && tripodPoint
   );
 
-  const activeCorrectedPlan = useMemo(
-    () => {
-      // localStorage更新後に保存補正を再読込するため改訂番号を参照する。
-      void fieldCorrectionRevision;
-      return activeGuidanceSourcePlan
-        ? applyFieldCorrection(activeGuidanceSourcePlan)
-        : null;
-    },
-    [activeGuidanceSourcePlan, fieldCorrectionRevision]
-  );
-  const displayedGuidancePlan = useMemo(
-    () => {
-      void fieldCorrectionRevision;
-      return guidancePlan ? applyFieldCorrection(guidancePlan) : null;
-    },
-    [fieldCorrectionRevision, guidancePlan]
-  );
-  const previewViewCorrection = useMemo<CameraViewCorrection | undefined>(() => {
-    if (
-      !activeCorrectedPlan ||
-      !tripodPoint ||
-      !subjectPoint ||
-      !pointsMatch(activeCorrectedPlan.tripod, tripodPoint) ||
-      !pointsMatch(activeCorrectedPlan.subject, subjectPoint)
-    ) return undefined;
-    return {
-      azimuthDegrees: activeCorrectedPlan.viewCorrectionAzimuthDegrees,
-      altitudeDegrees: activeCorrectedPlan.viewCorrectionAltitudeDegrees,
-    };
-  }, [activeCorrectedPlan, subjectPoint, tripodPoint]);
-
+  const previewViewCorrection: CameraViewCorrection | undefined = undefined;
   const celestialPoints = useMemo(() => {
     if (!tripodPoint || !subjectPoint) {
       return [];
@@ -735,6 +674,13 @@ function App() {
       JSON.stringify(cameraSettings)
     );
   }, [cameraSettings]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "ksg-precision-settings",
+      JSON.stringify(precisionSettings)
+    );
+  }, [precisionSettings]);
 
 
   useEffect(() => {
@@ -1323,163 +1269,45 @@ function App() {
     setFavoriteSubjects(toggleFavoriteSubject(subjectPoint));
   }
 
-  function currentGuidancePlan(): GuidancePlan | null {
-    if (!tripodPoint || !subjectPoint) return null;
-    const point = celestialPoints.find((candidate) =>
-      celestialVisibility[candidate.id]
-    );
-    if (!point) return null;
-
-    if (
-      activeGuidanceSourcePlan &&
-      activeCorrectedPlan &&
-      pointsMatch(activeCorrectedPlan.tripod, tripodPoint) &&
-      pointsMatch(activeCorrectedPlan.subject, subjectPoint)
-    ) {
-      return {
-        ...activeGuidanceSourcePlan,
-        title: `${subjectPoint.label}・${point.label}`,
-        dateTimeIso: selectedDate.toISOString(),
-        timeZone,
-        focalLengthMm: cameraSettings.focalLengthMm,
-        lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
-        celestialId: point.id,
-        celestialLabel: point.label,
-        celestialAzimuthDegrees: point.azimuthDegrees,
-        celestialAltitudeDegrees: point.altitudeDegrees,
-      };
-    }
-
-    const subjectAzimuthDegrees = guidanceBearingDegrees(
-      tripodPoint,
-      subjectPoint
-    );
-    const subjectAltitudeDegrees = cameraAltitudeToSubjectDegrees(
-      tripodPoint,
-      subjectPoint,
-      cameraSettings.lensCenterHeightMeters
-    );
-    return {
-      id: [
-        "current",
-        subjectPoint.latitude.toFixed(6),
-        subjectPoint.longitude.toFixed(6),
-        point.id,
-      ].join("-"),
-      title: `${subjectPoint.label}・${point.label}`,
-      source: "current",
-      tripod: tripodPoint,
-      calculatedTripod: tripodPoint,
-      subject: subjectPoint,
-      dateTimeIso: selectedDate.toISOString(),
-      timeZone,
-      focalLengthMm: cameraSettings.focalLengthMm,
-      lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
-      cameraAzimuthDegrees: subjectAzimuthDegrees,
-      cameraAltitudeDegrees: subjectAltitudeDegrees,
-      subjectAzimuthDegrees,
-      subjectAltitudeDegrees,
-      celestialId: point.id,
-      celestialLabel: point.label,
-      celestialAzimuthDegrees: point.azimuthDegrees,
-      celestialAltitudeDegrees: point.altitudeDegrees,
-      viewCorrectionAzimuthDegrees: 0,
-      viewCorrectionAltitudeDegrees: 0,
-      createdAtIso: new Date().toISOString(),
-    };
-  }
-
-  function applyGuidancePlan(sourcePlan: GuidancePlan): void {
+  function applySpotPreset(result: SpotPresetResult): void {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) {
       setSearchMessage("マップの読込完了後に構図を適用してください");
       return;
     }
-    const plan = applyFieldCorrection(sourcePlan);
     stopAllEditModes();
     const subject = setSubjectPinFromPosition(
       viewer,
-      Cartesian3.fromDegrees(
-        plan.subject.longitude,
-        plan.subject.latitude,
-        plan.subject.height
-      ),
-      plan.subject.label
+      Cartesian3.fromDegrees(result.subject.longitude, result.subject.latitude, result.subject.height),
+      result.subject.label
     );
     const tripod = setTripodPin(
       viewer,
-      Cartesian3.fromDegrees(
-        plan.tripod.longitude,
-        plan.tripod.latitude,
-        plan.tripod.height
-      )
+      Cartesian3.fromDegrees(result.tripod.longitude, result.tripod.latitude, result.tripod.height)
     );
-    const localizedDate = zonedDateTimeLocalFromDate(
-      new Date(plan.dateTimeIso),
-      plan.timeZone
-    );
+    const localizedDate = zonedDateTimeLocalFromDate(result.date, result.timeZone);
     setSubjectPoint(subject);
     setTripodPoint(tripod);
-    setActiveGuidanceSourcePlan(sourcePlan);
     setCameraSettings((current) => ({
       ...current,
-      focalLengthMm: plan.focalLengthMm,
-      lensCenterHeightMeters: plan.lensCenterHeightMeters,
+      focalLengthMm: result.focalLengthMm,
     }));
     setCelestialVisibility({
-      sun: plan.celestialId === "sun",
-      moon: plan.celestialId === "moon",
-      milkyWay: plan.celestialId === "milkyWay",
-      polaris: plan.celestialId === "polaris",
+      sun: result.celestialId === "sun",
+      moon: result.celestialId === "moon",
+      milkyWay: result.celestialId === "milkyWay",
+      polaris: result.celestialId === "polaris",
     });
-    timeZoneRef.current = plan.timeZone;
-    setTimeZone(plan.timeZone);
+    timeZoneRef.current = result.timeZone;
+    setTimeZone(result.timeZone);
     dateTimeLocalRef.current = localizedDate;
     setDateTimeLocal(localizedDate);
-    const center = {
-      latitude: plan.subject.latitude,
-      longitude: plan.subject.longitude,
-    };
+    const center = { latitude: result.subject.latitude, longitude: result.subject.longitude };
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d") {
-      flyMapToTarget(viewer, center.latitude, center.longitude);
-    }
+    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude);
     setSpotSearchOpen(false);
-    setSavedPlansOpen(false);
-    setSearchMessage(
-      `${plan.celestialLabel}の構図プリセットを再現しました`
-    );
-  }
-
-  function applySpotPreset(result: SpotPresetResult): void {
-    applyGuidancePlan(guidancePlanFromSpotResult(
-      result,
-      cameraSettings.lensCenterHeightMeters
-    ));
-  }
-
-  function openGuidanceForPlan(sourcePlan: GuidancePlan): void {
-    setGuidancePlan(sourcePlan);
-    setSpotSearchOpen(false);
-    setSavedPlansOpen(false);
-    setGuidanceOpen(true);
-  }
-
-  function openGuidanceForSpotResult(result: SpotPresetResult): void {
-    openGuidanceForPlan(guidancePlanFromSpotResult(
-      result,
-      cameraSettings.lensCenterHeightMeters
-    ));
-  }
-
-  function openCurrentGuidance(): void {
-    const plan = currentGuidancePlan();
-    if (!plan) {
-      setSearchMessage("三脚ピン・被写体ピン・誘導する天体を設定してください");
-      return;
-    }
-    openGuidanceForPlan(plan);
+    setSearchMessage(`${result.celestialLabel}の構図を適用しました`);
   }
 
   function saveCurrentComposition(): void {
@@ -1557,16 +1385,6 @@ function App() {
 
   function updatePlannerProject(project: PlannerProject): void { setProjects(upsertProject(project)); }
   function removePlannerProject(id: string): void { setProjects(deleteProject(id)); }
-
-  function handleCorrectionSaved(
-    _correction: FieldCorrection,
-    correctedPlan: GuidancePlan
-  ): void {
-    setFieldCorrectionRevision((revision) => revision + 1);
-    const sourcePlan = guidancePlan ?? activeGuidanceSourcePlan ?? correctedPlan;
-    applyGuidancePlan(sourcePlan);
-    setSearchMessage("現地補正を保存し、プレビューと次回の誘導へ反映しました");
-  }
 
   function toggleSubjectPlacement() {
     const viewer = mapViewerRef.current;
@@ -2014,7 +1832,6 @@ function App() {
       <TopSettingsBar
         settings={cameraSettings}
         onChange={setCameraSettings}
-        onOpenGuidance={openCurrentGuidance}
         onOpenSavedPlans={() => {
           setProjects(loadProjects());
           setSavedPlansOpen(true);
@@ -2022,6 +1839,8 @@ function App() {
         onSaveCurrentPlan={saveCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
         onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
+        precisionSettings={precisionSettings}
+        onPrecisionSettingsChange={setPrecisionSettings}
       />
       <section
         ref={previewSectionRef}
@@ -2306,10 +2125,12 @@ function App() {
         tripod={tripodPoint}
         subject={subjectPoint}
         visibility={celestialVisibility}
-        calculationMode={calculationMode}
+        precisionSettings={precisionSettings}
+        cameraSettings={cameraSettings}
+        previewAspectRatio={previewAspectRatio}
         onClose={() => setCelestialTransitSearchOpen(false)}
-        onSelect={(date) => {
-          const localized = zonedDateTimeLocalFromDate(date, timeZone);
+        onSelect={(result) => {
+          const localized = zonedDateTimeLocalFromDate(result.date, timeZone);
           dateTimeLocalRef.current = localized;
           setDateTimeLocal(localized);
         }}
@@ -2332,7 +2153,6 @@ function App() {
         onToggleCurrentFavorite={toggleCurrentSubjectFavorite}
         onToggleFavorite={(record) => setFavoriteSubjects(toggleFavoriteSubject(record))}
         onSelect={applySpotPreset}
-        onGuide={openGuidanceForSpotResult}
       />
       <ProjectsScreen
         open={savedPlansOpen}
@@ -2358,12 +2178,6 @@ function App() {
         open={projectSaveOpen}
         onCancel={() => setProjectSaveOpen(false)}
         onSave={commitProjectSave}
-      />
-      <TripodGuidanceScreen
-        open={guidanceOpen}
-        plan={displayedGuidancePlan}
-        onClose={() => setGuidanceOpen(false)}
-        onCorrectionSaved={handleCorrectionSaved}
       />
     </main>
   );

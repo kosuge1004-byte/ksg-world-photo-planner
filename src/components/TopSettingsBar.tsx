@@ -1,28 +1,33 @@
 import { useState } from "react";
 
 import type { CameraSettings } from "../types/camera";
+import type { PrecisionSettings, RefractionCorrectionMode } from "../types/precision";
+import { REFRACTION_MODE_LABELS } from "../types/precision";
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 
 type Props = {
   settings: CameraSettings;
   onChange: (settings: CameraSettings) => void;
-  onOpenGuidance: () => void;
   onOpenSavedPlans: () => void;
   onSaveCurrentPlan: () => void;
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
+  precisionSettings: PrecisionSettings;
+  onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
 };
 
 export function TopSettingsBar({
   settings,
   onChange,
-  onOpenGuidance,
   onOpenSavedPlans,
   onSaveCurrentPlan,
   onOpenCalendar,
   onOpenMoonAgeCalendar,
+  precisionSettings,
+  onPrecisionSettingsChange,
 }: Props) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
   const setFocal = (value: number) => onChange({ ...settings, focalLengthMm: Math.min(FOCAL_LENGTH_MAX, Math.max(FOCAL_LENGTH_MIN, Math.round(value))) });
   const setHeight = (value: number) => onChange({ ...settings, lensCenterHeightMeters: Math.min(10, Math.max(0.1, value)) });
 
@@ -39,13 +44,7 @@ export function TopSettingsBar({
       </button>
       {modeMenuOpen && (
         <div className="calculation-mode-menu" role="dialog" aria-label="メニュー">
-          <strong>現地誘導</strong>
-          <button type="button" onClick={() => {
-            setModeMenuOpen(false);
-            onOpenGuidance();
-          }}>
-            <b>誘導</b><small>三脚ポイントへ誘導</small>
-          </button>
+          <strong>メニュー</strong>
           <button type="button" onClick={() => {
             setModeMenuOpen(false);
             onOpenCalendar();
@@ -58,6 +57,30 @@ export function TopSettingsBar({
           }}>
             <b>月齢</b><small>月の形と月齢をオフライン表示</small>
           </button>
+          <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
+            <b>精度設定</b><small>地表屈折補正などの計算精度</small>
+          </button>
+          {precisionMenuOpen && (
+            <fieldset className="precision-settings-panel">
+              <legend>地表屈折補正</legend>
+              {(["auto", "standard", "none"] as RefractionCorrectionMode[]).map((mode) => (
+                <label key={mode}>
+                  <input
+                    type="radio"
+                    name="refraction-correction-mode"
+                    value={mode}
+                    checked={precisionSettings.refractionCorrectionMode === mode}
+                    onChange={() => onPrecisionSettingsChange({
+                      ...precisionSettings,
+                      refractionCorrectionMode: mode,
+                    })}
+                  />
+                  <span>{REFRACTION_MODE_LABELS[mode]}</span>
+                  {mode === "auto" && <small>初期値</small>}
+                </label>
+              ))}
+            </fieldset>
+          )}
         </div>
       )}
       <label className="top-setting focal-setting">
@@ -67,7 +90,7 @@ export function TopSettingsBar({
           <b>mm</b>
           <i aria-hidden="true">⌕</i>
         </span>
-        <small>フルサイズ換算</small>
+        <small>フルサイズ専用</small>
       </label>
       <label className="top-setting height-setting">
         <span>カメラ高</span>

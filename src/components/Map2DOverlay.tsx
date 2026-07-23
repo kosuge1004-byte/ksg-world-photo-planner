@@ -475,7 +475,7 @@ export function Map2DOverlay({
             className={`map-tripod-candidate-label map-candidate-label-${candidate.id}`}
             style={{ left: pixel.x, top: pixel.y }}
             onClick={() => onSelectCandidate(candidate)}
-            title={`${candidate.label}と被写体が重なる三脚位置（誤差${candidate.alignmentErrorDegrees.toFixed(2)}°）`}
+            title={`${candidate.label}の三脚位置`}
           >
             <span aria-hidden="true">●</span>
             {candidate.label} 三脚候補 {Math.round(candidate.distanceMeters)}m

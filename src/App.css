@@ -647,7 +647,6 @@ button { cursor: pointer; }
 .spot-result-detail dd { margin: 0; font-size: 9px; text-align: right; overflow-wrap: anywhere; }
 .spot-result-detail > button { min-height: 46px; border-radius: 9px; font-size: 10px; font-weight: 700; }
 .spot-result-apply { color: #0c1218; border: 0; background: #e0c934; }
-.spot-result-guide { color: #e8f5ff; border: 1px solid #2589d1; background: #09253a; }
 .spot-choice-grid { display: grid; gap: 6px; min-width: 0; }
 .spot-choice-grid.celestial { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .spot-choice-grid.periods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -882,6 +881,37 @@ button { cursor: pointer; }
   font-weight: 800;
 }
 .celestial-transit-submit:disabled { opacity: 0.48; }
+
+.celestial-transit-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 7px;
+  min-height: 14px;
+}
+
+.celestial-transit-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #303741;
+}
+
+.celestial-transit-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #ffdc25;
+  transition: width 120ms linear;
+}
+
+.celestial-transit-progress strong {
+  color: #d8dde5;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .celestial-transit-message { margin: 0; color: #c7d1dc; font-size: 12px; }
 .celestial-transit-results { display: grid; gap: 1px; padding: 0 12px 12px; }
 .celestial-transit-results button {
@@ -1158,4 +1188,158 @@ button { cursor: pointer; }
 .map-milky-way-marker.hidden {
   fill: rgba(82, 82, 82, .92);
   stroke: rgba(15, 15, 15, .9);
+}
+
+/* 2026-07-23: enlarge menu and main-screen button labels without resizing controls. */
+.calculation-mode-menu {
+  width: min(320px, calc(100vw - 12px));
+  gap: 7px;
+  padding: 11px;
+}
+.calculation-mode-menu > strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+.calculation-mode-menu button {
+  grid-template-columns: 76px minmax(0, 1fr);
+  padding: 8px 10px;
+}
+.calculation-mode-menu button b {
+  font-size: 16px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.calculation-mode-menu button small {
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+/* Top and preview controls: preserve their boxes, enlarge only their labels. */
+.top-quick-actions span {
+  font-size: clamp(7px, 1.35vw, 10px);
+  letter-spacing: -.02em;
+}
+.top-quick-actions .top-preset-button span {
+  font-size: clamp(6.5px, 1.2vw, 9px);
+}
+.preview-frame-menu button {
+  font-size: 9px;
+  letter-spacing: -.02em;
+}
+.preview-tool-rail > button small,
+.preview-actions small {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+.preview-actions small {
+  font-size: 8px;
+}
+.preview-now-button {
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: -.03em;
+}
+.celestial-menu-button {
+  font-size: 10px;
+  line-height: 1.1;
+  letter-spacing: -.03em;
+}
+.celestial-checks label {
+  font-size: 9px;
+  line-height: 1;
+}
+.celestial-reset-button {
+  font-size: 9px;
+  line-height: 1;
+}
+.timeline-title {
+  font-size: 13px;
+  line-height: 1;
+}
+.event-card {
+  font-size: clamp(8px, 1.35vw, 10px);
+  line-height: 1;
+}
+.event-card strong {
+  font-size: clamp(7px, 1.15vw, 9px);
+  line-height: 1;
+}
+.event-card.moonrise b {
+  font-size: clamp(6.5px, 1.05vw, 8px);
+}
+.event-card.moonrise b i {
+  font-size: clamp(5px, .8vw, 6px);
+}
+.event-card.milkyway strong {
+  font-size: clamp(6px, .95vw, 7.5px);
+}
+.map-tool-rail small {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+.map-right-actions small {
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: -.05em;
+}
+.map-search-toggle {
+  font-size: 11px;
+  line-height: 1;
+}
+
+@media (max-height: 720px) {
+  .calculation-mode-menu {
+    width: min(300px, calc(100vw - 10px));
+  }
+  .calculation-mode-menu button b { font-size: 15px; }
+  .calculation-mode-menu button small { font-size: 11px; }
+  .event-card { font-size: 7.5px; }
+  .event-card strong { font-size: 6.8px; }
+}
+
+.spot-time-range input[type="time"] { min-width: 0; width: 100%; }
+
+/* Precision settings in the hamburger menu. */
+.precision-settings-panel {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #090d12;
+}
+
+.precision-settings-panel legend {
+  padding: 0 4px;
+  color: #f4f6f8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.precision-settings-panel label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  color: #d8dde5;
+  font-size: 11px;
+}
+
+.precision-settings-panel input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #ffdc25;
+}
+
+.precision-settings-panel small {
+  color: #8ea0b3;
+  font-size: 8px;
 }

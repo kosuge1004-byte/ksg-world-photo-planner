@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import type { CalculationMode } from "../types/camera";
+import type { CameraSettings } from "../types/camera";
+import type { PrecisionSettings } from "../types/precision";
 import type { CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import type { SpotSearchDisplayCount, SpotSearchPeriod } from "../types/search";
 import {
+  celestialTransitDateRange,
   searchCelestialTransitDates,
+  type CelestialTransitCriteria,
   type CelestialTransitResult,
+  type CelestialTransitSearchMode,
 } from "../search/celestialTransitSearch";
+import { prepareRefractionWeatherContext } from "../search/refractionWeather";
 import { zonedDateTimeLocalFromDate } from "../time/zonedTime";
-import { DisplayCountSelect, WeekdaySelector } from "./SearchOptionControls";
+import {
+  DisplayCountSelect,
+  TimeRangeSelector,
+  WeekdaySelector,
+  useSearchTimeRange,
+} from "./SearchOptionControls";
 
 const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
   { value: "1-month", label: "30日" },
@@ -29,9 +39,11 @@ type Props = {
   tripod: GroundPoint | null;
   subject: GroundPoint | null;
   visibility: CelestialVisibility;
-  calculationMode: CalculationMode;
+  precisionSettings: PrecisionSettings;
+  cameraSettings: CameraSettings;
+  previewAspectRatio: number;
   onClose: () => void;
-  onSelect: (date: Date) => void;
+  onSelect: (result: CelestialTransitResult) => void;
 };
 
 function resultLabel(result: CelestialTransitResult, timeZone: string): string {
@@ -49,28 +61,35 @@ export function CelestialTransitSearchDialog({
   tripod,
   subject,
   visibility,
-  calculationMode,
+  precisionSettings,
+  cameraSettings,
+  previewAspectRatio,
   onClose,
   onSelect,
 }: Props) {
+  const [searchMode, setSearchMode] = useState<CelestialTransitSearchMode>("direction-crossing");
   const [period, setPeriod] = useState<SpotSearchPeriod>("1-month");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [weekdays, setWeekdays] = useState<number[]>([]);
+  const [timeRange, setTimeRange] = useSearchTimeRange();
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
   const [results, setResults] = useState<CelestialTransitResult[]>([]);
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const [progressPercent, setProgressPercent] = useState(0);
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const start = zonedDateTimeLocalFromDate(currentDate, timeZone).slice(0, 10);
     const end = zonedDateTimeLocalFromDate(new Date(currentDate.getTime() + 30 * 86_400_000), timeZone).slice(0, 10);
+    setSearchMode("direction-crossing");
     setCustomStartDate(start);
     setCustomEndDate(end);
     setResults([]);
     setMessage("");
+    setProgressPercent(0);
   }, [currentDate, open, timeZone]);
 
   useEffect(() => () => controllerRef.current?.abort(), []);
@@ -79,6 +98,7 @@ export function CelestialTransitSearchDialog({
     controllerRef.current?.abort();
     controllerRef.current = null;
     setIsSearching(false);
+    setProgressPercent(0);
     onClose();
   }
 
@@ -92,18 +112,41 @@ export function CelestialTransitSearchDialog({
     const controller = new AbortController();
     controllerRef.current = controller;
     setIsSearching(true);
+    setProgressPercent(0);
     setResults([]);
     setMessage("天体通過日時を検索中…");
     try {
+      const criteria: CelestialTransitCriteria = {
+        mode: searchMode,
+        period,
+        customStartDate,
+        customEndDate,
+        weekdays,
+        startTime: timeRange.startTime,
+        endTime: timeRange.endTime,
+        displayCount,
+      };
+      const range = celestialTransitDateRange({ currentDate, timeZone, criteria });
+      const refractionWeather = await prepareRefractionWeatherContext({
+        mode: precisionSettings.refractionCorrectionMode,
+        point: tripod,
+        searchStart: range.start,
+        searchEnd: range.end,
+        now: currentDate,
+        signal: controller.signal,
+      });
       const nextResults = await searchCelestialTransitDates({
         currentDate,
         timeZone,
         tripod,
         subject,
         visibility,
-        calculationMode,
-        criteria: { period, customStartDate, customEndDate, weekdays, displayCount },
-      }, controller.signal, setMessage);
+        calculationMode: refractionWeather.effectiveMode === "none" ? "standard" : "pro",
+        cameraSettings,
+        previewAspectRatio,
+        criteria,
+        refractionWeather,
+      }, controller.signal, setProgressPercent);
       if (controller.signal.aborted) return;
       setResults(nextResults);
       setMessage(nextResults.length > 0
@@ -133,6 +176,20 @@ export function CelestialTransitSearchDialog({
         </header>
         <form onSubmit={submit}>
           <fieldset className="spot-search-group">
+            <legend>検索方法</legend>
+            <div className="spot-choice-grid">
+              <label className={searchMode === "direction-crossing" ? "selected" : ""}>
+                <input type="radio" name="transit-search-mode" checked={searchMode === "direction-crossing"} onChange={() => setSearchMode("direction-crossing")} />
+                <span>被写体方向を横切る時刻</span>
+              </label>
+              <label className={searchMode === "in-frame" ? "selected" : ""}>
+                <input type="radio" name="transit-search-mode" checked={searchMode === "in-frame"} onChange={() => setSearchMode("in-frame")} />
+                <span>焦点距離の画角内に入る時間</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset className="spot-search-group">
             <legend>検索期間</legend>
             <div className="spot-choice-grid periods">
               {PERIODS.map((item) => (
@@ -156,19 +213,28 @@ export function CelestialTransitSearchDialog({
           </fieldset>
 
           <WeekdaySelector weekdays={weekdays} onChange={setWeekdays} />
+          <TimeRangeSelector {...timeRange} onChange={setTimeRange} />
           <DisplayCountSelect value={displayCount} onChange={setDisplayCount} />
 
           <button type="submit" className="celestial-transit-submit" disabled={isSearching || !tripod || !subject}>
             {isSearching ? "検索中…" : "検索"}
           </button>
-          {message && <p className="celestial-transit-message" role="status">{message}</p>}
+          {isSearching && (
+            <div className="celestial-transit-progress" role="progressbar" aria-label="検索進捗" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
+              <div className="celestial-transit-progress-track" aria-hidden="true">
+                <span style={{ width: `${progressPercent}%` }} />
+              </div>
+              <strong>{progressPercent}%</strong>
+            </div>
+          )}
+          {!isSearching && message && <p className="celestial-transit-message" role="status">{message}</p>}
         </form>
 
         {results.length > 0 && (
           <div className="celestial-transit-results" aria-label="検索結果">
             {results.map((result) => (
               <button key={result.id} type="button" onClick={() => {
-                onSelect(result.date);
+                onSelect(result);
                 close();
               }}>
                 {resultLabel(result, timeZone)}

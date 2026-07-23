@@ -19,7 +19,12 @@ import { zonedDateTimeLocalFromDate } from "../time/zonedTime";
 import type { SiteConstraintFlags } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
 import type { SubjectRecord } from "../subjectStorage";
-import { DisplayCountSelect, WeekdaySelector } from "./SearchOptionControls";
+import {
+  DisplayCountSelect,
+  TimeRangeSelector,
+  WeekdaySelector,
+  useSearchTimeRange,
+} from "./SearchOptionControls";
 
 type Props = {
   open: boolean;
@@ -50,7 +55,6 @@ type Props = {
   onToggleCurrentFavorite: () => void;
   onToggleFavorite: (record: SubjectRecord) => void;
   onSelect: (result: SpotPresetResult) => void;
-  onGuide: (result: SpotPresetResult) => void;
 };
 
 const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
@@ -153,7 +157,6 @@ export function SpotSearchScreen({
   onToggleCurrentFavorite,
   onToggleFavorite,
   onSelect,
-  onGuide,
 }: Props) {
   const [query, setQuery] = useState("");
   const [subjectListOpen, setSubjectListOpen] = useState<"history" | "favorites" | null>(null);
@@ -175,6 +178,7 @@ export function SpotSearchScreen({
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [weekdays, setWeekdays] = useState<number[]>([]);
+  const [timeRange, setTimeRange] = useSearchTimeRange();
   const [interval, setInterval] = useState<SpotSearchInterval>("30-minutes");
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
   const [siteConstraints, setSiteConstraints] = useState<SiteConstraintFlags>({
@@ -224,7 +228,11 @@ export function SpotSearchScreen({
   }, [hasCurrentSubject, initialDate, initialFocalLengthMm, initialTimeZone, open]);
 
   useEffect(() => {
-    if (!open || controllerRef.current) return;
+    // バックグラウンド構図検索の再開確認は、
+    // 「日時・構図候補も検索」が有効な場合だけ行う。
+    // スポット検索のみの画面で再開待機を始めると、
+    // 検索ボタンが「検索中」のまま無効になるため。
+    if (!open || !searchDateTime || controllerRef.current) return;
     const controller = new AbortController();
     controllerRef.current = controller;
     setIsSearching(true);
@@ -249,7 +257,7 @@ export function SpotSearchScreen({
         }
       });
     return () => controller.abort();
-  }, [open]);
+  }, [open, searchDateTime]);
 
   function closeScreen() {
     controllerRef.current?.abort();
@@ -306,6 +314,8 @@ export function SpotSearchScreen({
         customStartDate,
         customEndDate,
         weekdays,
+        startTime: timeRange.startTime,
+        endTime: timeRange.endTime,
         interval,
         displayCount,
         siteConstraints,
@@ -360,9 +370,6 @@ export function SpotSearchScreen({
           </article>
           <button type="button" className="spot-result-apply" onClick={() => onSelect(selectedResult)}>
             この構図を適用
-          </button>
-          <button type="button" className="spot-result-guide" onClick={() => onGuide(selectedResult)}>
-            三脚ポイントへ誘導
           </button>
         </div>
       </section>
@@ -658,6 +665,7 @@ export function SpotSearchScreen({
         </fieldset>
 
         <WeekdaySelector weekdays={weekdays} onChange={setWeekdays} />
+        <TimeRangeSelector {...timeRange} onChange={setTimeRange} />
 
         <label className="spot-search-field">
           <span>検索間隔</span>
