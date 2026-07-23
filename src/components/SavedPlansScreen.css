@@ -1,0 +1,54 @@
+.saved-plans-screen {
+  position: fixed;
+  z-index: 255;
+  inset: 0 auto 0 50%;
+  width: min(100vw, calc(100dvh * .45));
+  height: 100dvh;
+  overflow: hidden;
+  color: #f3f6fa;
+  background: #05070a;
+  transform: translateX(-50%);
+}
+.saved-plans-screen > header {
+  display: grid;
+  grid-template-columns: 64px 1fr 64px;
+  align-items: center;
+  min-height: 54px;
+  padding: max(6px, env(safe-area-inset-top)) 10px 6px;
+  border-bottom: 1px solid #26303b;
+  background: #090d12;
+}
+.saved-plans-screen header button { color: #dce6f0; border: 0; background: none; }
+.saved-plans-screen h1 { margin: 0; font-size: 15px; text-align: center; }
+.saved-plan-list,
+.saved-plan-detail { height: calc(100dvh - 54px); padding: 12px; overflow-y: auto; }
+.saved-plan-list { display: grid; align-content: start; gap: 9px; }
+.saved-plan-list > p { color: #98a5b4; font-size: 11px; line-height: 1.7; }
+.saved-plan-list > button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  color: #eef3f8;
+  text-align: left;
+  border: 1px solid #303b48;
+  border-radius: 10px;
+  background: #0d131a;
+}
+.saved-plan-list strong { font-size: 12px; }
+.saved-plan-list span { color: #d4bf52; font-size: 10px; }
+.saved-plan-list small { color: #93a0ae; font-size: 8px; }
+.saved-plan-detail { display: grid; align-content: start; gap: 10px; }
+.saved-plan-detail-card { padding: 14px; border: 1px solid #303b48; border-radius: 12px; background: #0d131a; }
+.saved-plan-detail-card > small { color: #e4c936; font-size: 9px; }
+.saved-plan-detail-card h2 { margin: 5px 0 12px; font-size: 15px; }
+.saved-plan-detail-card dl { display: grid; gap: 7px; margin: 0; }
+.saved-plan-detail-card dl div { display: grid; grid-template-columns: 86px 1fr; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid #202a34; }
+.saved-plan-detail-card dt { color: #8f9dab; font-size: 9px; }
+.saved-plan-detail-card dd { margin: 0; font-size: 10px; text-align: right; overflow-wrap: anywhere; }
+.saved-plan-detail > button { min-height: 46px; border-radius: 9px; font-size: 11px; font-weight: 700; }
+.saved-plan-apply { color: #091017; border: 0; background: #e4c936; }
+.saved-plan-guide { color: #eaf5ff; border: 1px solid #2788d0; background: #09243a; }
+@media (max-aspect-ratio: 9 / 19) {
+  .saved-plans-screen { width: 100vw; }
+}

@@ -1,0 +1,56 @@
+.tripod-guidance-screen { position: fixed; z-index: 500; top: 0; left: 50%; display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(100vw, calc(100dvh * .45)); height: 100dvh; overflow: hidden; color: #f4f7fb; background: #05080c; transform: translateX(-50%); }
+.guidance-header { position: relative; z-index: 20; display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; align-items: center; min-height: calc(54px + env(safe-area-inset-top)); padding: calc(6px + env(safe-area-inset-top)) 8px 6px; gap: 7px; border-bottom: 1px solid #263444; background: rgba(4,8,13,.96); }
+.guidance-header button { height: 34px; padding: 0 8px; color: #f4f7fb; border: 1px solid #435164; border-radius: 7px; background: #111923; font-size: 10px; }
+.guidance-header > div { display: grid; min-width: 0; }
+.guidance-header strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.guidance-header small { overflow: hidden; color: #97a9ba; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.guidance-phase { padding: 5px 6px; color: #d9e8f5; border: 1px solid #536679; border-radius: 999px; background: #17212b; font-size: 7px; font-weight: 800; white-space: nowrap; }
+.phase-目標付近, .phase-AR調整中 { color: #ffe67a; border-color: #a88200; background: #302704; }
+.phase-構図一致 { color: #bfffd3; border-color: #24924a; background: #073619; }
+.guidance-gps-content { display: grid; grid-template-rows: minmax(210px, 1fr) auto auto auto auto; gap: 8px; min-height: 0; padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); overflow-y: auto; }
+.guidance-map { position: relative; min-height: 210px; overflow: hidden; border: 1px solid #34495d; border-radius: 10px; background: #15202a; }
+.guidance-map iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; pointer-events: none; }
+.guidance-map svg { position: absolute; z-index: 3; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.guidance-map svg line { stroke: #36beff; stroke-width: 3; stroke-dasharray: 6 4; filter: drop-shadow(0 1px 1px #000); }
+.guidance-current-dot { fill: #1677ff; stroke: #fff; stroke-width: 3; filter: drop-shadow(0 1px 2px #000); }
+.guidance-target-pin path { fill: #ef3b35; stroke: #fff; stroke-width: 2; }
+.guidance-target-pin circle { fill: #fff; }
+.guidance-map-legend { position: absolute; z-index: 4; right: 5px; bottom: 5px; display: flex; gap: 6px; padding: 3px 5px; border-radius: 4px; background: rgba(0,0,0,.72); font-size: 6px; }
+.guidance-map-legend span:first-child { color: #69a8ff; }
+.guidance-map-legend span:last-child { color: #ff7771; }
+.guidance-primary-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.guidance-primary-metrics div { display: grid; gap: 2px; min-width: 0; padding: 7px 5px; border: 1px solid #2a3a4b; border-radius: 7px; background: #0c141d; text-align: center; }
+.guidance-primary-metrics small { color: #8fa3b6; font-size: 7px; }
+.guidance-primary-metrics strong { overflow: hidden; color: #fff071; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.guidance-detail-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin: 0; }
+.guidance-detail-list div { display: flex; justify-content: space-between; gap: 6px; padding: 6px 7px; border: 1px solid #253445; border-radius: 6px; background: #0a1119; }
+.guidance-detail-list dt { color: #8fa3b6; font-size: 7px; }
+.guidance-detail-list dd { margin: 0; font-size: 8px; font-weight: 700; }
+.guidance-accuracy-note, .guidance-error, .guidance-save-lock, .guidance-sensor-note { margin: 0; padding: 6px 8px; border-radius: 6px; font-size: 7px; line-height: 1.35; }
+.guidance-accuracy-note, .guidance-sensor-note { color: #bbcad7; background: #101923; }
+.guidance-error, .guidance-save-lock { color: #ffd3ca; background: #43130d; }
+.guidance-start-ar { min-height: 42px; color: #fff; border: 1px solid #2d75ff; border-radius: 9px; background: #0756df; font-size: 11px; font-weight: 800; }
+.guidance-ar-content { position: relative; min-height: 0; overflow: hidden; background: #020508; }
+.guidance-camera { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.guidance-camera-wait { position: absolute; z-index: 2; inset: 0; display: grid; place-items: center; color: #c6d4e2; background: #07101a; font-size: 11px; }
+.guidance-ar-overlay { position: absolute; z-index: 4; inset: 0; overflow: hidden; pointer-events: none; }
+.guidance-level-line { position: absolute; top: 50%; left: 50%; width: 62%; height: 1px; border-top: 2px solid rgba(68,223,255,.85); transform-origin: center; filter: drop-shadow(0 1px 2px #000); }
+.guidance-camera-center { position: absolute; top: 50%; left: 50%; display: grid; justify-items: center; gap: 4px; transform: translate(-50%,-50%); }
+.guidance-camera-center i { width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.85); border-radius: 50%; box-shadow: 0 0 0 1px #000; }
+.guidance-camera-center span, .guidance-subject-marker span, .guidance-celestial-marker span { padding: 2px 4px; color: #fff; border-radius: 4px; background: rgba(0,0,0,.72); font-size: 7px; white-space: nowrap; }
+.guidance-subject-marker, .guidance-celestial-marker { position: absolute; display: grid; justify-items: center; gap: 2px; transform: translate(-50%,-50%); }
+.guidance-subject-marker b { color: #ff4a45; font-size: 28px; line-height: 1; text-shadow: 0 1px 3px #000; }
+.guidance-celestial-marker b { color: #ffe84d; font-size: 28px; line-height: 1; text-shadow: 0 1px 5px #000; }
+.guidance-celestial-marker.celestial-moon b { color: #e8f4ff; }
+.guidance-celestial-marker.celestial-milkyWay b, .guidance-celestial-marker.celestial-polaris b { color: #d79cff; }
+.guidance-direction-arrow { position: absolute; top: 11%; left: calc(50% - 17px); width: 34px; color: #fff36f; font-size: 38px; line-height: 1; text-align: center; text-shadow: 0 2px 4px #000; transform-origin: 50% 160%; }
+.guidance-ar-readout { position: absolute; right: 8px; bottom: calc(68px + env(safe-area-inset-bottom)); left: 8px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px 7px; padding: 8px; border: 1px solid rgba(255,255,255,.24); border-radius: 8px; background: rgba(0,4,9,.78); backdrop-filter: blur(4px); }
+.guidance-ar-readout strong { grid-column: 1 / -1; color: #fff36f; font-size: 11px; text-align: center; }
+.guidance-ar-readout span { color: #ecf3fa; font-size: 8px; }
+.guidance-ar-actions { position: absolute; z-index: 7; right: 8px; bottom: calc(9px + env(safe-area-inset-bottom)); left: 8px; display: grid; grid-template-columns: .8fr 1.4fr; gap: 6px; }
+.guidance-ar-actions button { min-height: 42px; color: #fff; border: 1px solid #425167; border-radius: 8px; background: rgba(8,15,23,.92); font-size: 8px; }
+.guidance-ar-actions .guidance-save-correction { border-color: #2b83ff; background: rgba(4,79,194,.94); font-weight: 800; }
+.guidance-ar-actions button:disabled { opacity: .45; }
+.guidance-save-lock, .guidance-sensor-note, .guidance-error.ar-error { position: absolute; z-index: 8; top: 8px; right: 8px; left: 8px; text-align: center; }
+.guidance-sensor-note + .guidance-save-lock { top: 38px; }
+@media (max-width: 600px) { .tripod-guidance-screen { width: 100vw; } }
