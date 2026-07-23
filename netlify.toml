@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  # geo-tzは座標境界データを実行時に読み込むため、モジュールとデータを同じFunctionへ含める。
+  external_node_modules = ["geo-tz"]
+  included_files = ["node_modules/geo-tz/data/**"]
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Permissions-Policy = "camera=(self), geolocation=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)"
