@@ -37,7 +37,6 @@ import { TripodGuidanceScreen } from "./components/TripodGuidanceScreen";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { TopSettingsBar } from "./components/TopSettingsBar";
-import { MobileBottomNav } from "./components/MobileBottomNav";
 import { coordinatesAtMapPixel } from "./map/webMercator";
 
 import { flyMapToTarget } from "./cesium/camera";
@@ -2299,7 +2298,6 @@ function App() {
         onConfirm={confirmSubjectEdit}
         onCancel={cancelSubjectEdit}
       />
-      <MobileBottomNav />
 
       <CelestialTransitSearchDialog
         open={celestialTransitSearchOpen}

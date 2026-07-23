@@ -48,12 +48,6 @@ export function TopSettingsBar({
           </button>
           <button type="button" onClick={() => {
             setModeMenuOpen(false);
-            onOpenGuidance();
-          }}>
-            <b>AR</b><small>AR誘導（共通画面）</small>
-          </button>
-          <button type="button" onClick={() => {
-            setModeMenuOpen(false);
             onOpenCalendar();
           }}>
             <b>カレンダー</b><small>撮影予定とプロジェクト</small>

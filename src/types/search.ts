@@ -24,7 +24,6 @@ export type SpotSearchPeriod =
   | "custom";
 
 export type SpotSearchInterval =
-  | "auto"
   | "1-minute"
   | "5-minutes"
   | "10-minutes"

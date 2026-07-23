@@ -675,8 +675,12 @@ button { cursor: pointer; }
 .spot-custom-period { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; }
 .spot-custom-period label { display: grid; gap: 4px; min-width: 0; color: #b9c3cf; font-size: 8px; }
 .spot-custom-period input { min-height: 38px; padding: 5px; font-size: 16px; }
+.spot-search-action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
 .spot-search-submit { width: 100%; min-height: 46px; color: #08101b; border: 0; border-radius: 9px; background: linear-gradient(180deg, #ffdf36, #e8b918); font-size: 13px; font-weight: 800; }
 .spot-search-submit:disabled { color: #acb3bc; background: #303843; }
+.spot-search-pause { min-width: 88px; min-height: 46px; padding: 0 14px; border: 1px solid #ffb54a; border-radius: 9px; color: #ffd28a; background: #21170d; font-size: 13px; font-weight: 800; }
+.spot-search-pause.resume { border-color: #6aa9ff; color: #b9d8ff; background: #0f1d31; }
+
 .spot-search-results { display: grid; gap: 7px; min-width: 0; padding-top: 3px; }
 .spot-search-results h2 { margin: 4px 0 0; font-size: 12px; }
 .spot-search-message { margin: 0; padding: 8px; color: #cbd4df; border-radius: 7px; background: #0d141c; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }

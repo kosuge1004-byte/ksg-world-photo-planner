@@ -62,7 +62,6 @@ const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
 ];
 
 const INTERVALS: Array<{ value: SpotSearchInterval; label: string }> = [
-  { value: "auto", label: "自動" },
   { value: "1-minute", label: "1分" },
   { value: "5-minutes", label: "5分" },
   { value: "10-minutes", label: "10分" },
@@ -162,8 +161,8 @@ export function SpotSearchScreen({
   const [useCurrentSubjectPin, setUseCurrentSubjectPin] = useState(false);
   const [celestialId, setCelestialId] = useState<SearchCelestialId>("moon");
   const [sunSearchTiming, setSunSearchTiming] = useState<SunSearchTiming>("all");
-  const [moonAgeMinDays, setMoonAgeMinDays] = useState(0);
-  const [moonAgeMaxDays, setMoonAgeMaxDays] = useState(MOON_AGE_MAX_DAYS);
+  const [moonAgeMinDays, setMoonAgeMinDays] = useState(1);
+  const [moonAgeMaxDays, setMoonAgeMaxDays] = useState(28);
   const [focalLengthMm, setFocalLengthMm] = useState(initialFocalLengthMm);
   const [initialTripodDistance] = useState(loadTripodDistance);
   const [tripodDistanceMinMeters, setTripodDistanceMinMeters] = useState(
@@ -176,7 +175,7 @@ export function SpotSearchScreen({
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [interval, setInterval] = useState<SpotSearchInterval>("auto");
+  const [interval, setInterval] = useState<SpotSearchInterval>("30-minutes");
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
   const [siteConstraints, setSiteConstraints] = useState<SiteConstraintFlags>({
     walkingOnly: false,
@@ -189,6 +188,7 @@ export function SpotSearchScreen({
   const [selectedResult, setSelectedResult] = useState<SpotPresetResult | null>(null);
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
   const resumeSearchRef = useRef(onResumeSearch);
   resumeSearchRef.current = onResumeSearch;
@@ -217,6 +217,7 @@ export function SpotSearchScreen({
       zonedDateTimeLocalFromDate(end, initialTimeZone).slice(0, 10)
     );
     setMessage("");
+    setIsPaused(false);
     setSelectedResult(null);
     setSubjectListOpen(null);
     if (!hasCurrentSubject) setUseCurrentSubjectPin(false);
@@ -254,6 +255,7 @@ export function SpotSearchScreen({
     controllerRef.current?.abort();
     controllerRef.current = null;
     setIsSearching(false);
+    setIsPaused(false);
     onBack();
   }
 
@@ -282,6 +284,7 @@ export function SpotSearchScreen({
     const controller = new AbortController();
     controllerRef.current = controller;
     setIsSearching(true);
+    setIsPaused(false);
     setResults([]);
     setMessage("スポットを検索しています…");
     try {
@@ -529,7 +532,7 @@ export function SpotSearchScreen({
               </label>
               <small>日</small>
             </div>
-            <small>0〜29.53で指定。初期値は全月齢です。</small>
+            <small>0〜29.53で指定。初期値は月齢1〜28です。</small>
           </fieldset>
         )}
 
@@ -679,65 +682,80 @@ export function SpotSearchScreen({
               />
               <span>歩行可能のみ</span>
             </label>
-            <label className={siteConstraints.roadsAndPathsOnly ? "selected" : ""}>
-              <input
-                type="checkbox"
-                checked={siteConstraints.roadsAndPathsOnly}
-                onChange={(event) => setSiteConstraints((current) => ({
-                  ...current,
-                  roadsAndPathsOnly: event.target.checked,
-                }))}
-              />
-              <span>道路・道の上のみ</span>
-            </label>
-            <label className={siteConstraints.excludePrivateAccess ? "selected" : ""}>
-              <input
-                type="checkbox"
-                checked={siteConstraints.excludePrivateAccess}
-                onChange={(event) => setSiteConstraints((current) => ({
-                  ...current,
-                  excludePrivateAccess: event.target.checked,
-                }))}
-              />
-              <span>私有地除外</span>
-            </label>
-            <label className={siteConstraints.elevationDifferenceWithin100m ? "selected" : ""}>
-              <input
-                type="checkbox"
-                checked={siteConstraints.elevationDifferenceWithin100m}
-                onChange={(event) => setSiteConstraints((current) => ({
-                  ...current,
-                  elevationDifferenceWithin100m: event.target.checked,
-                }))}
-              />
-              <span>標高差100m以内</span>
-            </label>
-            <label className={siteConstraints.excludeRoads ? "selected" : ""}>
-              <input
-                type="checkbox"
-                checked={siteConstraints.excludeRoads}
-                onChange={(event) => setSiteConstraints((current) => ({
-                  ...current,
-                  excludeRoads: event.target.checked,
-                }))}
-              />
-              <span>道路上除外</span>
-            </label>
           </div>
           <small className="spot-condition-note">
-            通行条件はOpenStreetMap登録情報で厳格判定します。未登録の所有権・通行権は保証対象外です。
+            ONの場合、OpenStreetMap登録情報を使って歩行可能と判定できる地点だけを採用します。未登録情報や現地の立入可否は保証対象外です。
           </small>
         </fieldset>
 
         </>}
 
-        <button className="spot-search-submit" type="submit" disabled={isSearching}>
-          {isSearching
-            ? "検索中…"
-            : searchDateTime
-              ? "日時・構図候補を検索"
-              : "被写体を検索して表示"}
-        </button>
+        <div className="spot-search-action-row">
+          <button className="spot-search-submit" type="submit" disabled={isSearching}>
+            {isSearching
+              ? "検索中…"
+              : isPaused && searchDateTime
+                ? "新しい構図検索を開始"
+                : searchDateTime
+                  ? "日時・構図候補を検索"
+                  : "被写体を検索して表示"}
+          </button>
+          {searchDateTime && isSearching && (
+            <button
+              className="spot-search-pause"
+              type="button"
+              onClick={() => {
+                controllerRef.current?.abort();
+                controllerRef.current = null;
+                setIsSearching(false);
+                setIsPaused(true);
+                setMessage("構図検索の待機を一時停止しました。登録済みの検索処理と結果は保持されます。");
+              }}
+            >
+              一時停止
+            </button>
+          )}
+          {searchDateTime && isPaused && !isSearching && (
+            <button
+              className="spot-search-pause resume"
+              type="button"
+              onClick={() => {
+                const controller = new AbortController();
+                controllerRef.current = controller;
+                setIsSearching(true);
+                setMessage("構図検索を再開しています…");
+                void resumeSearchRef.current(controller.signal, setMessage)
+                  .then((resumedResults) => {
+                    if (controller.signal.aborted) return;
+                    if (resumedResults === null) {
+                      setMessage("再開できる一時停止中の構図検索がありません");
+                      setIsPaused(false);
+                      return;
+                    }
+                    setResults(resumedResults);
+                    setMessage(
+                      resumedResults.length > 0
+                        ? `${resumedResults.length}件の構図候補が見つかりました`
+                        : "指定条件で地表上に三脚解を持つ候補は見つかりませんでした"
+                    );
+                    setIsPaused(false);
+                  })
+                  .catch((error: unknown) => {
+                    if (error instanceof DOMException && error.name === "AbortError") return;
+                    setMessage(error instanceof Error ? error.message : "検索の再開に失敗しました");
+                  })
+                  .finally(() => {
+                    if (controllerRef.current === controller) {
+                      controllerRef.current = null;
+                      setIsSearching(false);
+                    }
+                  });
+              }}
+            >
+              再開
+            </button>
+          )}
+        </div>
 
         {!searchDateTime && message && (
           <p className="spot-search-message" aria-live="polite">{message}</p>

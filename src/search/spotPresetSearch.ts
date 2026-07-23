@@ -57,7 +57,6 @@ const BODY_LABELS: Record<SearchCelestialId, string> = {
 };
 
 const INTERVAL_MILLISECONDS: Record<SpotSearchInterval, number> = {
-  auto: 0,
   "1-minute": MINUTE_MS,
   "5-minutes": 5 * MINUTE_MS,
   "10-minutes": 10 * MINUTE_MS,
@@ -79,16 +78,6 @@ type SearchSample = {
   date: Date;
   horizontal: HorizontalCoordinates;
   score: number;
-};
-
-type CandidateRecord = {
-  sample: SearchSample;
-  candidate: TripodCandidate;
-  siteContext?: SiteContext;
-};
-
-type VisibleCandidateRecord = CandidateRecord & {
-  cameraHorizontal: HorizontalCoordinates;
 };
 
 export type SpotPresetSearchOptions = {
@@ -278,15 +267,8 @@ function searchRange(
   return { start: baseDate, end: addLocalMonths(baseDate, months, timeZone) };
 }
 
-function resolvedInterval(
-  interval: SpotSearchInterval,
-  durationMilliseconds: number
-): number {
-  if (interval !== "auto") return INTERVAL_MILLISECONDS[interval];
-  if (durationMilliseconds <= 35 * DAY_MS) return 30 * MINUTE_MS;
-  if (durationMilliseconds <= 100 * DAY_MS) return HOUR_MS;
-  if (durationMilliseconds <= 200 * DAY_MS) return 2 * HOUR_MS;
-  return 4 * HOUR_MS;
+function resolvedInterval(interval: SpotSearchInterval): number {
+  return INTERVAL_MILLISECONDS[interval];
 }
 
 function weekdayAtLocation(date: Date, timeZone: string): number {
@@ -431,15 +413,20 @@ export async function searchSpotPresets({
   const tripodDistanceRange = resolvedTripodDistanceRange(criteria);
   const range = searchRange(criteria, baseDate, timeZone);
   const duration = range.end.getTime() - range.start.getTime();
-  const interval = resolvedInterval(criteria.interval, duration);
+  const interval = resolvedInterval(criteria.interval);
   const sampleCount = Math.floor(duration / interval) + 1;
-  const poolLimit = Math.max(80, Math.min(800, criteria.displayCount * 8));
-  let pool: SearchSample[] = [];
+  const mappedSiteConstraints = hasMappedSiteConstraints(criteria.siteConstraints);
+  const results: SpotPresetResult[] = [];
 
-  onProgress?.(`${sampleCount.toLocaleString()}時点の天体位置を検索中…`);
+  onProgress?.(
+    `${sampleCount.toLocaleString()}時点を日時順に検証し、${criteria.displayCount}件見つかり次第終了します…`
+  );
+
   let sampleDate = range.start;
-  for (let index = 0; sampleDate.getTime() <= range.end.getTime(); index += 1) {
+  let checkedCount = 0;
+  while (sampleDate.getTime() <= range.end.getTime()) {
     abortIfRequested(signal);
+    checkedCount += 1;
     const date = sampleDate;
     const weekdayAllowed = criteria.weekdays.length === 0 ||
       criteria.weekdays.includes(weekdayAtLocation(date, timeZone));
@@ -454,212 +441,113 @@ export async function searchSpotPresets({
           criteria.moonAgeMaxDays
         )
       : null;
-    if (sample) pool.push(sample);
-    if (pool.length >= poolLimit * 2) {
-      pool = pool.sort((a, b) => a.score - b.score).slice(0, poolLimit);
-    }
-    if (index > 0 && index % 400 === 0) {
+
+    if (sample) {
       onProgress?.(
-        `天体位置を検索中… ${Math.min(100, Math.round(index / sampleCount * 100))}%`
+        `候補日時を検証中… ${checkedCount}/${sampleCount}（確定 ${results.length}/${criteria.displayCount}件）`
+      );
+      try {
+        const candidates = await candidateCalculator(
+          subject,
+          [screenPointForSample(criteria.celestialId, sample)],
+          cameraSettings,
+          sample.date,
+          calculationMode,
+          undefined,
+          signal,
+          previewAspectRatio,
+          tripodDistanceRange
+        );
+        const candidate = candidates[0] ?? null;
+        if (candidate &&
+          candidate.distanceMeters >= tripodDistanceRange.minMeters &&
+          candidate.distanceMeters <= tripodDistanceRange.maxMeters &&
+          !(criteria.siteConstraints.elevationDifferenceWithin100m &&
+            Math.abs(candidate.height - subjectGroundHeightMeters) > 100)) {
+          let siteContext: SiteContext | undefined;
+          let siteAllowed = true;
+          if (mappedSiteConstraints) {
+            const contexts = await siteContextFetcher([{
+              latitude: candidate.latitude,
+              longitude: candidate.longitude,
+              height: candidate.height,
+              label: candidate.label,
+            }], signal, false);
+            siteContext = contexts[0];
+            siteAllowed = Boolean(siteContext &&
+              passesMappedSiteConstraints(siteContext, criteria.siteConstraints));
+          }
+
+          if (siteAllowed) {
+            const cameraHorizontal = calculateCelestialHorizontalCoordinates(
+              criteria.celestialId,
+              sample.date,
+              {
+                latitude: candidate.latitude,
+                longitude: candidate.longitude,
+                height: candidate.height + cameraSettings.lensCenterHeightMeters,
+                label: `${BODY_LABELS[criteria.celestialId]}三脚候補レンズ中心`,
+              },
+              calculationMode
+            );
+            const lineOfSight = await lineOfSightEvaluator(
+              {
+                latitude: candidate.latitude,
+                longitude: candidate.longitude,
+                height: candidate.height,
+                label: `${BODY_LABELS[criteria.celestialId]}三脚候補`,
+              },
+              cameraHorizontal,
+              signal
+            );
+            if (lineOfSight.verified && lineOfSight.visible) {
+              results.push({
+                id: `${criteria.celestialId}-${sample.date.getTime()}-${candidate.latitude}-${candidate.longitude}`,
+                placeLabel: subject.label,
+                date: sample.date,
+                timeZone,
+                subject,
+                tripod: {
+                  latitude: candidate.latitude,
+                  longitude: candidate.longitude,
+                  height: candidate.height,
+                  label: `${BODY_LABELS[criteria.celestialId]}三脚候補`,
+                },
+                focalLengthMm: criteria.focalLengthMm,
+                celestialId: criteria.celestialId,
+                celestialLabel: BODY_LABELS[criteria.celestialId],
+                cameraAzimuthDegrees: cameraHorizontal.azimuthDegrees,
+                cameraAltitudeDegrees: cameraHorizontal.altitudeDegrees,
+                alignmentErrorDegrees: candidate.alignmentErrorDegrees,
+                nearbyLandmarks: siteContext?.nearbyLandmarks ?? [],
+                nearbyBuildings: siteContext?.nearbyBuildings ?? [],
+                nearbyStructures: siteContext?.nearbyStructures ?? [],
+              });
+              onProgress?.(
+                `${results.length}/${criteria.displayCount}件を確定しました（${checkedCount}/${sampleCount}時点を確認）`
+              );
+              if (results.length >= criteria.displayCount) break;
+            }
+          }
+        }
+      } catch (error) {
+        if (signal?.aborted ||
+          (error instanceof DOMException && error.name === "AbortError")) {
+          throw error;
+        }
+        console.warn("スポット検索中に候補日時を検証できませんでした", error);
+      }
+    }
+
+    if (checkedCount % 50 === 0) {
+      onProgress?.(
+        `日時順に検索中… ${checkedCount}/${sampleCount}（確定 ${results.length}/${criteria.displayCount}件）`
       );
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
-    const nextDate = advanceSampleDate(
-      sampleDate,
-      criteria.interval,
-      interval,
-      timeZone
-    );
+    const nextDate = advanceSampleDate(sampleDate, criteria.interval, interval, timeZone);
     if (nextDate.getTime() <= sampleDate.getTime()) break;
     sampleDate = nextDate;
-  }
-  pool = pool.sort((a, b) => a.score - b.score).slice(0, poolLimit);
-
-  const minimumSpacing = Math.max(interval, criteria.celestialId === "milkyWay"
-    ? 6 * HOUR_MS
-    : 3 * HOUR_MS);
-  const distinct: SearchSample[] = [];
-  for (const sample of pool) {
-    if (distinct.every(
-      (existing) => Math.abs(existing.date.getTime() - sample.date.getTime()) >= minimumSpacing
-    )) {
-      distinct.push(sample);
-    }
-  }
-
-  const attempts = distinct.slice(
-    0,
-    Math.min(300, Math.max(60, criteria.displayCount * 4))
-  );
-  const mappedSiteConstraints = hasMappedSiteConstraints(criteria.siteConstraints);
-  const results: SpotPresetResult[] = [];
-  for (let offset = 0; offset < attempts.length;) {
-    abortIfRequested(signal);
-    const remainingResultCount = criteria.displayCount - results.length;
-    const failedAttemptCount = Math.max(0, offset - results.length);
-    const rejectionBackoffBatchSize = failedAttemptCount === 0
-      ? 1
-      : failedAttemptCount < 3
-        ? 2
-        : 4;
-    // 少数件は最初の成功まで最小限だけ計算し、不採用が続く場合は並列度を戻して待ち時間を抑える。
-    const batchSize = Math.min(
-      4,
-      Math.max(1, remainingResultCount, rejectionBackoffBatchSize)
-    );
-    const batch = attempts.slice(offset, offset + batchSize);
-    const processedAttemptCount = offset + batch.length;
-    onProgress?.(
-      `地表上の三脚位置を計算中… ${processedAttemptCount}/${attempts.length}`
-    );
-    const batchCandidates = await Promise.all(
-      batch.map(async (sample) => {
-        try {
-          const candidates = await candidateCalculator(
-            subject,
-            [screenPointForSample(criteria.celestialId, sample)],
-            cameraSettings,
-            sample.date,
-            calculationMode,
-            undefined,
-            signal,
-            previewAspectRatio,
-            tripodDistanceRange
-          );
-          return { sample, candidate: candidates[0] ?? null };
-        } catch (error) {
-          if (
-            signal?.aborted ||
-            (error instanceof DOMException && error.name === "AbortError")
-          ) {
-            throw error;
-          }
-          console.warn("スポット検索中に三脚候補を計算できませんでした", error);
-          return { sample, candidate: null };
-        }
-      })
-    );
-
-    // 高さだけで除外できる候補には、外部の道路・建物照会や遮蔽計算を実行しない。
-    let candidateRecords: CandidateRecord[] = batchCandidates.flatMap(
-      ({ sample, candidate }) => candidate ? [{ sample, candidate }] : []
-    ).filter(({ candidate }) =>
-      candidate.distanceMeters >= tripodDistanceRange.minMeters &&
-      candidate.distanceMeters <= tripodDistanceRange.maxMeters
-    ).filter(({ candidate }) => !(
-      criteria.siteConstraints.elevationDifferenceWithin100m &&
-      Math.abs(candidate.height - subjectGroundHeightMeters) > 100
-    ));
-
-    // 通行条件を指定した場合だけ先に地理情報を取得し、不適合候補の重い遮蔽検証を省く。
-    if (mappedSiteConstraints && candidateRecords.length > 0) {
-      onProgress?.(
-        `道路・通行条件を照合中… ${processedAttemptCount}/${attempts.length}`
-      );
-      try {
-        const siteContexts = await siteContextFetcher(
-          candidateRecords.map(({ candidate }) => ({
-            latitude: candidate.latitude,
-            longitude: candidate.longitude,
-            height: candidate.height,
-            label: candidate.label,
-          })),
-          signal,
-          false
-        );
-        candidateRecords = candidateRecords.flatMap((record, index) => {
-          const siteContext = siteContexts[index];
-          return siteContext && passesMappedSiteConstraints(
-            siteContext,
-            criteria.siteConstraints
-          )
-            ? [{ ...record, siteContext }]
-            : [];
-        });
-      } catch (error) {
-        if (
-          signal?.aborted ||
-          (error instanceof DOMException && error.name === "AbortError")
-        ) {
-          throw error;
-        }
-        throw new Error(
-          `道路・通行制限を検証できないため候補を確定できません：${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    onProgress?.(
-      `稜線・建物による天体の目視可否を並列検証中… ${processedAttemptCount}/${attempts.length}`
-    );
-    const checkedRecords = await Promise.all(candidateRecords.map(
-      async (record): Promise<VisibleCandidateRecord | null> => {
-        const { sample, candidate } = record;
-        const cameraHorizontal = calculateCelestialHorizontalCoordinates(
-          criteria.celestialId,
-          sample.date,
-          {
-            latitude: candidate.latitude,
-            longitude: candidate.longitude,
-            height: candidate.height + cameraSettings.lensCenterHeightMeters,
-            label: `${BODY_LABELS[criteria.celestialId]}三脚候補レンズ中心`,
-          },
-          calculationMode
-        );
-        const lineOfSight = await lineOfSightEvaluator(
-          {
-            latitude: candidate.latitude,
-            longitude: candidate.longitude,
-            height: candidate.height,
-            label: `${BODY_LABELS[criteria.celestialId]}三脚候補`,
-          },
-          cameraHorizontal,
-          signal
-        );
-        // 高精度検索では、遮蔽未検証または中心視線が遮られる候補を結果へ混ぜない。
-        return lineOfSight.verified && lineOfSight.visible
-          ? { ...record, cameraHorizontal }
-          : null;
-      }
-    ));
-    const visibleRecords = checkedRecords.filter(
-      (record): record is VisibleCandidateRecord => record !== null
-    );
-
-    for (const {
-      sample,
-      candidate,
-      cameraHorizontal,
-      siteContext,
-    } of visibleRecords) {
-      results.push({
-        id: `${criteria.celestialId}-${sample.date.getTime()}-${candidate.latitude}-${candidate.longitude}`,
-        placeLabel: subject.label,
-        date: sample.date,
-        timeZone,
-        subject,
-        tripod: {
-          latitude: candidate.latitude,
-          longitude: candidate.longitude,
-          height: candidate.height,
-          label: `${BODY_LABELS[criteria.celestialId]}三脚候補`,
-        },
-        focalLengthMm: criteria.focalLengthMm,
-        celestialId: criteria.celestialId,
-        celestialLabel: BODY_LABELS[criteria.celestialId],
-        cameraAzimuthDegrees: cameraHorizontal.azimuthDegrees,
-        cameraAltitudeDegrees: cameraHorizontal.altitudeDegrees,
-        alignmentErrorDegrees: candidate.alignmentErrorDegrees,
-        nearbyLandmarks: siteContext?.nearbyLandmarks ?? [],
-        nearbyBuildings: siteContext?.nearbyBuildings ?? [],
-        nearbyStructures: siteContext?.nearbyStructures ?? [],
-      });
-      if (results.length >= criteria.displayCount) break;
-    }
-    if (results.length >= criteria.displayCount) break;
-    offset = processedAttemptCount;
   }
 
   // 通行条件がない検索では、採用結果だけを最後にまとめて照合してOverpass待ちを最小化する。
