@@ -1,3 +1,4 @@
+import { calculateKarneySurfaceDistanceMeters } from "../src/geodesy/karneyGeodesic.ts";
 export type PrecisionStructureType =
   | "hotel"
   | "communications-tower"
@@ -75,10 +76,7 @@ function distanceMeters(
   origin: { latitude: number; longitude: number },
   target: { latitude: number; longitude: number }
 ): number {
-  const latitudeRadians = origin.latitude * Math.PI / 180;
-  const x = (target.longitude - origin.longitude) * Math.cos(latitudeRadians) * 111_320;
-  const y = (target.latitude - origin.latitude) * 110_574;
-  return Math.hypot(x, y);
+  return calculateKarneySurfaceDistanceMeters(origin, target);
 }
 
 export function precisionStructuresNear(

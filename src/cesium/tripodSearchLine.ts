@@ -1,7 +1,6 @@
 import type { CelestialBodyId, CelestialScreenPoint, CelestialVisibility } from "../types/celestial";
+import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { GroundPoint } from "../types/points";
-
-const EARTH_RADIUS_METERS = 6_371_008.8;
 export const TRIPOD_SEARCH_BASE_LINE_DISTANCE_METERS = 250_000;
 
 export type TripodSearchBaseLine = {
@@ -17,23 +16,14 @@ function destinationGroundPoint(
   bearingDegrees: number,
   distanceMeters: number
 ): GroundPoint {
-  const bearing = bearingDegrees * Math.PI / 180;
-  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
-  const latitude = origin.latitude * Math.PI / 180;
-  const longitude = origin.longitude * Math.PI / 180;
-  const destinationLatitude = Math.asin(
-    Math.sin(latitude) * Math.cos(angularDistance) +
-      Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing)
-  );
-  const destinationLongitude = longitude + Math.atan2(
-    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
-    Math.cos(angularDistance) -
-      Math.sin(latitude) * Math.sin(destinationLatitude)
+  const destination = calculateKarneyDestinationPoint(
+    origin,
+    bearingDegrees,
+    distanceMeters
   );
 
   return {
-    latitude: destinationLatitude * 180 / Math.PI,
-    longitude: destinationLongitude * 180 / Math.PI,
+    ...destination,
     height: origin.height + 0.2,
     label: `${origin.label ?? "被写体"}からの三脚探索基礎ライン終端`,
   };

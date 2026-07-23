@@ -13,10 +13,12 @@ import type { GroundPoint } from "../types/points";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import { calculateCelestialHorizontalCoordinates } from "./celestial";
 import { sensorDimensionsMm } from "./camera";
-import { calculateLineMetrics } from "./geometry";
+import {
+  calculateKarneyDestinationPoint,
+  calculateKarneyLineMetrics,
+} from "../geodesy/karneyGeodesic";
 import { sampleWorldTerrain } from "./worldTerrain";
 
-const EARTH_RADIUS_METERS = 6_371_008.8;
 const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
@@ -40,23 +42,16 @@ function destinationCartographic(
   bearingDegrees: number,
   distanceMeters: number
 ): Cartographic {
-  const bearing = CesiumMath.toRadians(bearingDegrees);
-  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
-  const latitude = CesiumMath.toRadians(origin.latitude);
-  const longitude = CesiumMath.toRadians(origin.longitude);
-  const destinationLatitude = Math.asin(
-    Math.sin(latitude) * Math.cos(angularDistance) +
-      Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing)
+  const destination = calculateKarneyDestinationPoint(
+    origin,
+    bearingDegrees,
+    distanceMeters
   );
-  const destinationLongitude =
-    longitude +
-    Math.atan2(
-      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
-      Math.cos(angularDistance) -
-        Math.sin(latitude) * Math.sin(destinationLatitude)
-    );
-
-  return new Cartographic(destinationLongitude, destinationLatitude, 0);
+  return Cartographic.fromDegrees(
+    destination.longitude,
+    destination.latitude,
+    0
+  );
 }
 
 function elevationAngleDegrees(
@@ -358,7 +353,10 @@ async function calculateOneCandidate(
     },
     calculationMode
   );
-  const subjectBearing = calculateLineMetrics(candidatePoint, subject).bearingDegrees;
+  const subjectBearing = calculateKarneyLineMetrics(
+    candidatePoint,
+    subject
+  ).bearingDegrees;
   const candidateCartographic = Cartographic.fromDegrees(
     solved.longitude,
     solved.latitude,

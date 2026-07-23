@@ -54,7 +54,10 @@ import { calculateTripodCandidates } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer } from "./cesium/createMapViewer";
-import { calculateLineMetrics } from "./cesium/geometry";
+import {
+  calculateKarneyDestinationPoint,
+  calculateKarneyLineMetrics,
+} from "./geodesy/karneyGeodesic";
 import { enableMapPlacement } from "./cesium/mapPlacement";
 import { captureTripodPreview } from "./cesium/previewSnapshot";
 import { pickCenterPosition } from "./cesium/subjectEdit";
@@ -75,6 +78,8 @@ import {
   FOCAL_LENGTH_MAX,
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
+import type { PrecisionSettings } from "./types/precision";
+import { DEFAULT_PRECISION_SETTINGS } from "./types/precision";
 import type {
   CalculationMode,
   CameraSettings,
@@ -175,6 +180,23 @@ function loadCameraSettings(): CameraSettings {
   }
 }
 
+function loadPrecisionSettings(): PrecisionSettings {
+  try {
+    const saved = localStorage.getItem("ksg-precision-settings");
+    if (!saved) return DEFAULT_PRECISION_SETTINGS;
+
+    const parsed = JSON.parse(saved) as Partial<PrecisionSettings>;
+    const mode = parsed.refractionCorrectionMode;
+    if (mode !== "auto" && mode !== "standard" && mode !== "none") {
+      return DEFAULT_PRECISION_SETTINGS;
+    }
+
+    return { refractionCorrectionMode: mode };
+  } catch {
+    return DEFAULT_PRECISION_SETTINGS;
+  }
+}
+
 function loadCelestialVisibility(): CelestialVisibility {
   try {
     const saved = localStorage.getItem("ksg-celestial-visibility");
@@ -219,19 +241,29 @@ function constrainForegroundToSegment(
   tripod: GroundPoint,
   subject: GroundPoint
 ): { latitude: number; longitude: number } {
-  const meanLat = (tripod.latitude + subject.latitude) * Math.PI / 360;
-  const metersPerLat = 111132;
-  const metersPerLon = 111320 * Math.cos(meanLat);
-  const sx = (subject.longitude - tripod.longitude) * metersPerLon;
-  const sy = (subject.latitude - tripod.latitude) * metersPerLat;
-  const px = (longitude - tripod.longitude) * metersPerLon;
-  const py = (latitude - tripod.latitude) * metersPerLat;
-  const lengthSquared = sx * sx + sy * sy;
-  const raw = lengthSquared > 0 ? (px * sx + py * sy) / lengthSquared : 0.5;
+  const line = calculateKarneyLineMetrics(tripod, subject);
+  const pointerLine = calculateKarneyLineMetrics(tripod, {
+    latitude,
+    longitude,
+    height: tripod.height,
+    label: "前景移動位置",
+  });
+  const bearingDeltaRadians =
+    (pointerLine.bearingDegrees - line.bearingDegrees) * Math.PI / 180;
+  const projectedDistanceMeters =
+    pointerLine.distanceMeters * Math.cos(bearingDeltaRadians);
+  const raw = line.distanceMeters > 0
+    ? projectedDistanceMeters / line.distanceMeters
+    : 0.5;
   const t = Math.max(0.01, Math.min(0.99, raw));
+  const constrained = calculateKarneyDestinationPoint(
+    tripod,
+    line.bearingDegrees,
+    line.distanceMeters * t
+  );
   return {
-    latitude: tripod.latitude + (subject.latitude - tripod.latitude) * t,
-    longitude: tripod.longitude + (subject.longitude - tripod.longitude) * t,
+    latitude: constrained.latitude,
+    longitude: constrained.longitude,
   };
 }
 
@@ -291,6 +323,8 @@ function App() {
 
   const [cameraSettings, setCameraSettings] =
     useState<CameraSettings>(loadCameraSettings);
+  const [precisionSettings, setPrecisionSettings] =
+    useState<PrecisionSettings>(loadPrecisionSettings);
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
@@ -375,7 +409,7 @@ function App() {
       return null;
     }
 
-    return calculateLineMetrics(tripodPoint, subjectPoint);
+    return calculateKarneyLineMetrics(tripodPoint, subjectPoint);
   }, [subjectPoint, tripodPoint]);
 
   const googleMapUrl = useMemo(() => {
@@ -653,6 +687,13 @@ function App() {
       JSON.stringify(cameraSettings)
     );
   }, [cameraSettings]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "ksg-precision-settings",
+      JSON.stringify(precisionSettings)
+    );
+  }, [precisionSettings]);
 
 
   useEffect(() => {
@@ -1811,6 +1852,8 @@ function App() {
         onSaveCurrentPlan={saveCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
         onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
+        precisionSettings={precisionSettings}
+        onPrecisionSettingsChange={setPrecisionSettings}
       />
       <section
         ref={previewSectionRef}
@@ -2095,7 +2138,7 @@ function App() {
         tripod={tripodPoint}
         subject={subjectPoint}
         visibility={celestialVisibility}
-        calculationMode={calculationMode}
+        precisionSettings={precisionSettings}
         cameraSettings={cameraSettings}
         previewAspectRatio={previewAspectRatio}
         onClose={() => setCelestialTransitSearchOpen(false)}

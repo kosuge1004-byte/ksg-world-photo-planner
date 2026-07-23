@@ -9,7 +9,6 @@ import {
   Observer,
   Refraction,
 } from "astronomy-engine";
-import { Cartesian3, Ellipsoid } from "cesium";
 
 import type {
   CalculationMode,
@@ -26,7 +25,8 @@ import type {
 import type { GroundPoint } from "../types/points";
 import { zonedDateParts } from "../time/zonedTime";
 import { sensorDimensionsMm } from "./camera";
-import { calculateLineMetrics } from "./geometry";
+import { calculateElevationAngleDegrees } from "./geometry";
+import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -92,34 +92,6 @@ export function calculateCelestialHorizontalCoordinates(
   };
 }
 
-function lineOfSightElevationDegrees(
-  tripod: GroundPoint,
-  subject: GroundPoint,
-  lensCenterHeightMeters: number
-): number {
-  const cameraPosition = Cartesian3.fromDegrees(
-    tripod.longitude,
-    tripod.latitude,
-    tripod.height + lensCenterHeightMeters
-  );
-  const targetPosition = Cartesian3.fromDegrees(
-    subject.longitude,
-    subject.latitude,
-    subject.height
-  );
-  const direction = Cartesian3.normalize(
-    Cartesian3.subtract(targetPosition, cameraPosition, new Cartesian3()),
-    new Cartesian3()
-  );
-  const localUp = Ellipsoid.WGS84.geodeticSurfaceNormal(
-    cameraPosition,
-    new Cartesian3()
-  );
-  return Math.asin(
-    Math.max(-1, Math.min(1, Cartesian3.dot(direction, localUp)))
-  ) * RAD;
-}
-
 function observerAtLens(
   tripod: GroundPoint,
   settings: CameraSettings
@@ -164,11 +136,10 @@ function cameraProjection(
   previewAspectRatio: number,
   viewCorrection?: CameraViewCorrection
 ): CameraProjection {
-  const line = calculateLineMetrics(tripod, subject);
-  const cameraAltitude = lineOfSightElevationDegrees(
-    tripod,
-    subject,
-    settings.lensCenterHeightMeters
+  const line = calculateKarneyLineMetrics(tripod, subject);
+  const cameraAltitude = calculateElevationAngleDegrees(
+    observerAtLens(tripod, settings),
+    subject
   );
   const sensor = sensorDimensionsMm(previewAspectRatio);
   const horizontalFov =

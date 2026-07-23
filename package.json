@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:geodesic": "node scripts/verify-geodesic-comparison.mjs",
+    "verify:geodesic:reference": "python scripts/verify-geodesic-reference-python.py",
+    "verify:geodesic:direct": "node scripts/verify-geodesic-direct.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.9",
@@ -17,7 +20,8 @@
     "ol": "^10.9.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "resium": "^1.24.0"
+    "resium": "^1.24.0",
+    "geographiclib-geodesic": "^2.2.0"
   },
   "devDependencies": {
     "@netlify/functions": "^5.3.0",

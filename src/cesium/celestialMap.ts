@@ -20,10 +20,10 @@ import type {
 } from "../types/celestial";
 import type { TripodSearchBaseLine } from "./tripodSearchLine";
 import type { GroundPoint } from "../types/points";
+import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { celestialWorldDirection } from "./celestialOcclusion";
 
 const PREFIX = "ksg-celestial-map-";
-const EARTH_RADIUS_METERS = 6_371_008.8;
 const CELESTIAL_RAY_DISTANCE_METERS = 1_000_000;
 const entityCache = new WeakMap<Viewer, {
   trackKey: string;
@@ -106,27 +106,20 @@ function destinationPoint(
   altitudeDegrees: number,
   distanceMeters: number
 ): Cartesian3 {
-  const bearing = (azimuthDegrees * Math.PI) / 180;
-  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
-  const lat1 = (origin.latitude * Math.PI) / 180;
-  const lon1 = (origin.longitude * Math.PI) / 180;
-
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(angularDistance) +
-      Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
+  const destination = calculateKarneyDestinationPoint(
+    origin,
+    azimuthDegrees,
+    distanceMeters
   );
-  const lon2 =
-    lon1 +
-    Math.atan2(
-      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
-      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
-    );
-
   const height =
     origin.height +
     Math.tan((altitudeDegrees * Math.PI) / 180) * distanceMeters;
 
-  return Cartesian3.fromRadians(lon2, lat2, height);
+  return Cartesian3.fromDegrees(
+    destination.longitude,
+    destination.latitude,
+    height
+  );
 }
 
 function destinationGroundPoint(
@@ -134,21 +127,17 @@ function destinationGroundPoint(
   azimuthDegrees: number,
   distanceMeters: number
 ): Cartesian3 {
-  const bearing = (azimuthDegrees * Math.PI) / 180;
-  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
-  const lat1 = (origin.latitude * Math.PI) / 180;
-  const lon1 = (origin.longitude * Math.PI) / 180;
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(angularDistance) +
-      Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
+  const destination = calculateKarneyDestinationPoint(
+    origin,
+    azimuthDegrees,
+    distanceMeters
   );
-  const lon2 =
-    lon1 +
-    Math.atan2(
-      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
-      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
-    );
-  return Cartesian3.fromRadians(lon2, lat2, origin.height + 1);
+
+  return Cartesian3.fromDegrees(
+    destination.longitude,
+    destination.latitude,
+    origin.height + 1
+  );
 }
 
 function celestialRayTarget(

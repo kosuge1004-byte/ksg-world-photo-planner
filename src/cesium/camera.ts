@@ -12,20 +12,23 @@ import type {
   CameraSettings,
   CameraViewCorrection,
 } from "../types/camera";
-import { calculateLineMetrics } from "./geometry";
+import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 import type { GroundPoint } from "../types/points";
 
 const FULL_FRAME_SENSOR_WIDTH_MM = 36;
+const FULL_FRAME_SENSOR_HEIGHT_MM = 24;
 
 export function sensorDimensionsMm(
   aspectRatio: number
 ): { width: number; height: number } {
-  const longEdge = FULL_FRAME_SENSOR_WIDTH_MM;
   const safeAspect = Math.max(0.2, aspectRatio);
-  // 36×24mmの長辺を基準にし、縦構図では36mmが縦方向になるようセンサーを回転する。
-  return safeAspect >= 1
-    ? { width: longEdge, height: longEdge / safeAspect }
-    : { width: longEdge * safeAspect, height: longEdge };
+  // 指定アスペクト比の撮像領域を36×24mmのフルサイズセンサー内へ内接させる。
+  // width / height = safeAspect を維持しつつ、幅36mm・高さ24mmを超えない最大寸法を返す。
+  const height = Math.min(
+    FULL_FRAME_SENSOR_HEIGHT_MM,
+    FULL_FRAME_SENSOR_WIDTH_MM / safeAspect
+  );
+  return { width: height * safeAspect, height };
 }
 
 export function flyMapToTarget(
@@ -128,7 +131,7 @@ export function setPreviewFromTripodToSubject(
   );
 
   if (viewCorrection) {
-    const line = calculateLineMetrics(tripod, subject);
+    const line = calculateKarneyLineMetrics(tripod, subject);
     const cameraAltitude = Math.asin(Math.max(
       -1,
       Math.min(1, Cartesian3.dot(direction, surfaceNormal))

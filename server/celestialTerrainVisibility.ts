@@ -8,10 +8,10 @@ import type {
   CelestialOcclusion,
   HorizontalCoordinates,
 } from "../src/types/celestial.ts";
+import { calculateKarneyDestinationPoint } from "../src/geodesy/karneyGeodesic.ts";
 import type { GroundPoint } from "../src/types/points.ts";
 import { sampleServerLineOfSightTerrain } from "./worldTerrain.ts";
 
-const EARTH_RADIUS_METERS = 6_371_008.8;
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
 const TERRAIN_CLEARANCE_DEGREES = 0.015;
 const horizonCache = new Map<string, Promise<TerrainHorizon>>();
@@ -30,20 +30,16 @@ function destinationCartographic(
   azimuthDegrees: number,
   distanceMeters: number
 ): Cartographic {
-  const bearing = azimuthDegrees * Math.PI / 180;
-  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
-  const latitude = origin.latitude * Math.PI / 180;
-  const longitude = origin.longitude * Math.PI / 180;
-  const destinationLatitude = Math.asin(
-    Math.sin(latitude) * Math.cos(angularDistance) +
-      Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing)
+  const destination = calculateKarneyDestinationPoint(
+    origin,
+    azimuthDegrees,
+    distanceMeters
   );
-  const destinationLongitude = longitude + Math.atan2(
-    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
-    Math.cos(angularDistance) -
-      Math.sin(latitude) * Math.sin(destinationLatitude)
+  return Cartographic.fromDegrees(
+    destination.longitude,
+    destination.latitude,
+    0
   );
-  return new Cartographic(destinationLongitude, destinationLatitude, 0);
 }
 
 function coarseDistances(): number[] {

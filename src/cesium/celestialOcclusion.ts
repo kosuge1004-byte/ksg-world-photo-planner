@@ -18,6 +18,7 @@ import type {
 } from "../types/celestial";
 import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
+import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import {
   groundPointFromCoordinates,
   sampleTerrainLineOfSightProfile,
@@ -51,7 +52,6 @@ export type CelestialLineOfSightObserver = {
   meshOrigin: Cartesian3;
 };
 
-const EARTH_RADIUS_METERS = 6_371_008.8;
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
 const TERRAIN_AZIMUTH_CACHE_STEP_DEGREES = 0.02;
 const MAX_TERRAIN_CACHE_ENTRIES = 384;
@@ -68,19 +68,16 @@ function destinationCartographic(
   azimuthDegrees: number,
   distanceMeters: number
 ): Cartographic {
-  const bearing = azimuthDegrees * Math.PI / 180;
-  const angularDistance = distanceMeters / EARTH_RADIUS_METERS;
-  const latitude = origin.latitude * Math.PI / 180;
-  const longitude = origin.longitude * Math.PI / 180;
-  const destinationLatitude = Math.asin(
-    Math.sin(latitude) * Math.cos(angularDistance) +
-      Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing)
+  const destination = calculateKarneyDestinationPoint(
+    origin,
+    azimuthDegrees,
+    distanceMeters
   );
-  const destinationLongitude = longitude + Math.atan2(
-    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
-    Math.cos(angularDistance) - Math.sin(latitude) * Math.sin(destinationLatitude)
+  return Cartographic.fromDegrees(
+    destination.longitude,
+    destination.latitude,
+    0
   );
-  return new Cartographic(destinationLongitude, destinationLatitude, 0);
 }
 
 function coarseProfileDistances(): number[] {

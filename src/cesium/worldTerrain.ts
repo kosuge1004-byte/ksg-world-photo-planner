@@ -18,6 +18,12 @@ let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
 const geoidHeightCache = new Map<string, Promise<number>>();
+const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
+const GEOID_CACHE_STORE = "geoid";
+const GEOID_CACHE_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
+// 約1kmグリッド。地点ごとの精度を保ちつつ、近接点のAPI要求をまとめる。
+const GEOID_REGION_DECIMALS = 2;
+type GeoidCacheRecord = { key: string; height: number; updatedAt: number };
 type GsiMaximumDetail = "1m" | "5m" | "10m";
 type PendingGsiRequest = {
   points: Cartographic[];
@@ -241,6 +247,64 @@ function fetchGsiElevationsBatched(
   });
 }
 
+function geoidRegionKey(point: Cartographic): string {
+  const latitude = CesiumMath.toDegrees(point.latitude);
+  const longitude = CesiumMath.toDegrees(point.longitude);
+  return `${latitude.toFixed(GEOID_REGION_DECIMALS)},${longitude.toFixed(GEOID_REGION_DECIMALS)}`;
+}
+
+function openGeoidCache(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const request = indexedDB.open(GEOID_CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(GEOID_CACHE_STORE)) {
+        database.createObjectStore(GEOID_CACHE_STORE, { keyPath: "key" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function readGeoidPersistentCache(key: string): Promise<number | null> {
+  const database = await openGeoidCache();
+  if (!database) return null;
+  const value = await new Promise<number | null>((resolve) => {
+    const request = database.transaction(GEOID_CACHE_STORE, "readonly")
+      .objectStore(GEOID_CACHE_STORE).get(key);
+    request.onsuccess = () => {
+      const record = request.result as GeoidCacheRecord | undefined;
+      if (
+        record &&
+        Date.now() - record.updatedAt <= GEOID_CACHE_MAX_AGE_MS &&
+        Number.isFinite(record.height)
+      ) {
+        resolve(record.height);
+      } else {
+        resolve(null);
+      }
+    };
+    request.onerror = () => resolve(null);
+  });
+  database.close();
+  return value;
+}
+
+async function writeGeoidPersistentCache(key: string, height: number): Promise<void> {
+  const database = await openGeoidCache();
+  if (!database) return;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(GEOID_CACHE_STORE, "readwrite");
+    transaction.objectStore(GEOID_CACHE_STORE).put({ key, height, updatedAt: Date.now() });
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+  database.close();
+}
+
 async function fetchGsiGeoidHeight(
   point: Cartographic,
   signal?: AbortSignal
@@ -250,24 +314,35 @@ async function fetchGsiGeoidHeight(
   }
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
-  const key = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+  const key = geoidRegionKey(point);
   const cached = geoidHeightCache.get(key);
   if (cached) return cached;
-  const request = fetch(
-    `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
-    { headers: { Accept: "application/json" }, signal }
-  ).then(async (response) => {
+
+  const request = (async () => {
+    const persistent = await readGeoidPersistentCache(key);
+    abortIfRequested(signal);
+    if (persistent !== null) return persistent;
+
+    const response = await fetch(
+      `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
+      { headers: { Accept: "application/json" }, signal }
+    );
     const data = await response.json() as {
       geoidHeightMeters?: unknown;
       error?: unknown;
     };
-    if (!response.ok || typeof data.geoidHeightMeters !== "number") {
+    if (
+      !response.ok ||
+      typeof data.geoidHeightMeters !== "number" ||
+      !Number.isFinite(data.geoidHeightMeters)
+    ) {
       throw new Error(
         typeof data.error === "string" ? data.error : "ジオイド高を取得できません"
       );
     }
+    void writeGeoidPersistentCache(key, data.geoidHeightMeters);
     return data.geoidHeightMeters;
-  }).catch((error: unknown) => {
+  })().catch((error: unknown) => {
     geoidHeightCache.delete(key);
     if (!(error instanceof DOMException && error.name === "AbortError")) {
       geoidUnavailableUntil = Date.now() + 60_000;
@@ -276,6 +351,34 @@ async function fetchGsiGeoidHeight(
   });
   geoidHeightCache.set(key, request);
   return request;
+}
+
+async function fetchRegionalGeoidHeights(
+  points: Cartographic[],
+  eligibleIndexes: number[],
+  signal?: AbortSignal
+): Promise<Map<string, number>> {
+  const representativeByRegion = new Map<string, Cartographic>();
+  for (const index of eligibleIndexes) {
+    const point = points[index];
+    const key = geoidRegionKey(point);
+    if (!representativeByRegion.has(key)) representativeByRegion.set(key, point);
+  }
+
+  const heights = new Map<string, number>();
+  await Promise.all(Array.from(representativeByRegion.entries()).map(async ([key, point]) => {
+    try {
+      const height = await fetchGsiGeoidHeight(point, signal);
+      heights.set(key, height);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (Date.now() >= geoidWarningLoggedUntil) {
+        geoidWarningLoggedUntil = Date.now() + 60_000;
+        console.warn("一部地域のジオイド高を取得できないため該当地域はWorld Terrainを使用します", error);
+      }
+    }
+  }));
+  return heights;
 }
 
 export async function sampleWorldTerrain(
@@ -298,36 +401,31 @@ async function sampleTerrainWithGsiPriority(
     maximumDetails,
     signal
   );
-  const hasGsiSample = gsiSamples.some((sample) =>
-    sample.source !== null && typeof sample.heightMeters === "number"
+  const gsiEligibleIndexes = gsiSamples.map((sample, index) =>
+    sample.source !== null &&
+    typeof sample.heightMeters === "number" &&
+    Number.isFinite(sample.heightMeters)
+      ? index
+      : -1
+  ).filter((index) => index >= 0);
+  const geoidHeightByRegion = await fetchRegionalGeoidHeights(
+    result,
+    gsiEligibleIndexes,
+    signal
   );
-  let geoidHeightMeters: number | null = null;
-  if (hasGsiSample) {
-    try {
-      geoidHeightMeters = await fetchGsiGeoidHeight(
-        result[Math.floor(result.length / 2)],
-        signal
-      );
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      // 高さ基準を混在させるよりWorld Terrainへ統一した方が三脚計算は安全。
-      if (Date.now() >= geoidWarningLoggedUntil) {
-        geoidWarningLoggedUntil = Date.now() + 60_000;
-        console.warn("ジオイド高を取得できないためGSI標高を採用しません", error);
-      }
-    }
-  }
+
   const unresolvedIndexes: number[] = [];
   for (let index = 0; index < result.length; index += 1) {
     const gsi = gsiSamples[index];
+    const geoidHeightMeters = geoidHeightByRegion.get(geoidRegionKey(result[index]));
     if (
       gsi &&
       gsi.source &&
       typeof gsi.heightMeters === "number" &&
       Number.isFinite(gsi.heightMeters) &&
-      geoidHeightMeters !== null
+      typeof geoidHeightMeters === "number"
     ) {
-      // GSI標高（平均海面基準）へジオイド高を加え、Cesiumの楕円体高へ統一する。
+      // GSI標高（平均海面基準）へ地域ごとのジオイド高を加え、楕円体高へ統一する。
       result[index].height = gsi.heightMeters + geoidHeightMeters;
       terrainSourceBySample.set(result[index], GSI_SOURCE_NAMES[gsi.source]);
     } else {

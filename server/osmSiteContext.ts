@@ -4,6 +4,7 @@ import {
 import type {
   PrecisionStructureType,
 } from "./precisionStructures.ts";
+import { calculateKarneySurfaceMetrics } from "../src/geodesy/karneyGeodesic.ts";
 
 export type OsmContextRequestPoint = {
   latitude: number;
@@ -131,10 +132,14 @@ function localMeters(
   coordinate: OsmCoordinate,
   origin: OsmContextRequestPoint
 ): { x: number; y: number } {
-  const latitudeRadians = origin.latitude * Math.PI / 180;
+  const metrics = calculateKarneySurfaceMetrics(origin, {
+    latitude: coordinate.lat,
+    longitude: coordinate.lon,
+  });
+  const bearingRadians = metrics.bearingDegrees * Math.PI / 180;
   return {
-    x: (coordinate.lon - origin.longitude) * Math.cos(latitudeRadians) * 111_320,
-    y: (coordinate.lat - origin.latitude) * 110_574,
+    x: Math.sin(bearingRadians) * metrics.distanceMeters,
+    y: Math.cos(bearingRadians) * metrics.distanceMeters,
   };
 }
 
