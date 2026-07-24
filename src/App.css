@@ -1393,6 +1393,13 @@ button { cursor: pointer; }
     height: calc(45.25dvh - 12px);
   }
 
+  .map-section:fullscreen .map-search-control,
+  .map-section:-webkit-full-screen .map-search-control {
+    top: max(6px, env(safe-area-inset-top));
+    right: 6px;
+    left: 53px;
+  }
+
   .preview-section:fullscreen .fullscreen-exit-button,
   .preview-section:-webkit-full-screen .fullscreen-exit-button,
   .map-section:fullscreen .fullscreen-exit-button,
@@ -1401,12 +1408,12 @@ button { cursor: pointer; }
   }
 }
 
-/* Map fullscreen: expand the spot-search control across the complete top edge. */
+/* Map fullscreen: use the remaining top width without covering the left tool rail. */
 .map-section:fullscreen .map-search-control,
 .map-section:-webkit-full-screen .map-search-control {
-  top: env(safe-area-inset-top);
-  right: 0;
-  left: 0;
+  top: max(8px, env(safe-area-inset-top));
+  right: 8px;
+  left: calc(8px + clamp(39px, 6.2vw, 43px) + 8px);
   width: auto;
 }
 

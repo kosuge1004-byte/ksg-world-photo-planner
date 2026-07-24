@@ -5,6 +5,7 @@ import {
   setSpotSearchJob,
   validSearchJobId,
 } from "../../server/spotSearchJobs.ts";
+import { runSpotSearchJob } from "../../server/runSpotSearchJob.ts";
 
 type StartRequest = {
   clientId?: unknown;
@@ -64,16 +65,11 @@ export default async function handler(request: Request): Promise<Response> {
     };
     await setSpotSearchJob(job);
 
-    const backgroundUrl = new URL("/api/spot-search-background", request.url);
-    const response = await fetch(backgroundUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ clientId: body.clientId, jobId: body.jobId }),
-    });
-    if (!response.ok) {
-      throw new Error(`バックグラウンド処理を起動できません：${response.status}`);
-    }
-    return jsonResponse({ jobId: body.jobId, status: "queued" }, 202);
+    // このエンドポイント自体をNetlify Background Functionとして実行する。
+    // 通常Functionから別のBackground Functionをfetchで起動すると、環境によっては
+    // queuedのまま実処理が開始されないため、同一実行内で検索ジョブを開始する。
+    await runSpotSearchJob(job);
+    return jsonResponse({ jobId: body.jobId, status: "accepted" }, 202);
   } catch (error) {
     return jsonResponse({
       error: error instanceof Error ? error.message : String(error),
@@ -84,4 +80,5 @@ export default async function handler(request: Request): Promise<Response> {
 export const config: Config = {
   path: "/api/spot-search-start",
   method: "POST",
+  background: true,
 };

@@ -7,8 +7,10 @@ import {
 } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
+  BoundingSphere,
   Cartesian3,
   Cartographic,
+  HeadingPitchRange,
   Math as CesiumMath,
 } from "cesium";
 import type { Viewer } from "cesium";
@@ -64,6 +66,7 @@ import { captureTripodPreview } from "./cesium/previewSnapshot";
 import { pickCenterPosition } from "./cesium/subjectEdit";
 import {
   setSubjectPinFromCoordinates,
+  getSubjectPinPoint,
   setSubjectPinFromPosition,
 } from "./cesium/subjectPin";
 import {
@@ -142,20 +145,36 @@ function applyMapViewMode(
   duration = 0.6
 ) {
   const current = viewer.camera.positionCartographic;
-  const destination = Cartesian3.fromDegrees(
-    center.longitude,
-    center.latitude,
-    Math.max(current.height, 800)
-  );
+  const height = Math.max(current.height, 800);
 
-  viewer.camera.flyTo({
-    destination,
+  if (mode === "2d") {
+    const destination = Cartesian3.fromDegrees(
+      center.longitude,
+      center.latitude,
+      height
+    );
+    viewer.camera.flyTo({
+      destination,
+      duration,
+      orientation: {
+        heading: 0,
+        pitch: CesiumMath.toRadians(-90),
+        roll: 0,
+      },
+    });
+    return;
+  }
+
+  // A pitched camera placed directly above the 2D center looks past that point,
+  // which pushed the former 2D center toward (or beyond) the bottom edge.
+  // Fly around the center as the target instead, so the same geographic point
+  // remains at the screen center when entering 3D.
+  const pitch = CesiumMath.toRadians(-35);
+  const range = height / Math.sin(Math.abs(pitch));
+  const target = Cartesian3.fromDegrees(center.longitude, center.latitude, 0);
+  viewer.camera.flyToBoundingSphere(new BoundingSphere(target, 0), {
     duration,
-    orientation: {
-      heading: mode === "2d" ? 0 : viewer.camera.heading,
-      pitch: CesiumMath.toRadians(mode === "2d" ? -90 : -35),
-      roll: 0,
-    },
+    offset: new HeadingPitchRange(viewer.camera.heading, pitch, range),
   });
 }
 
@@ -1127,6 +1146,13 @@ function App() {
     return groundPointFromCoordinates(latitude, longitude, label);
   }
 
+  function currentSubjectPoint(): GroundPoint | null {
+    if (subjectPoint) return subjectPoint;
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return null;
+    return getSubjectPinPoint(viewer);
+  }
+
   async function searchFromSpotScreen(
     criteria: SpotSearchCriteria,
     signal: AbortSignal,
@@ -1138,11 +1164,15 @@ function App() {
     onProgress(criteria.useCurrentSubjectPin
       ? "現在の被写体ピンから検索条件を準備しています…"
       : "スポット位置を検索しています…", 0);
+    const activeSubject = currentSubjectPoint();
+    if (criteria.useCurrentSubjectPin && activeSubject && !subjectPoint) {
+      setSubjectPoint(activeSubject);
+    }
     const location = criteria.useCurrentSubjectPin
-      ? subjectPoint && {
-          latitude: subjectPoint.latitude,
-          longitude: subjectPoint.longitude,
-          label: subjectPoint.label,
+      ? activeSubject && {
+          latitude: activeSubject.latitude,
+          longitude: activeSubject.longitude,
+          label: activeSubject.label,
         }
       : await resolveSpotLocation(criteria.query, signal);
     if (!location) {
@@ -1152,8 +1182,8 @@ function App() {
     const searchTimeZone = criteria.useCurrentSubjectPin
       ? timeZone
       : await resolveSpotTimeZone(location, timeZone, signal);
-    const subject = criteria.useCurrentSubjectPin && subjectPoint
-      ? subjectPoint
+    const subject = criteria.useCurrentSubjectPin && activeSubject
+      ? activeSubject
       : await resolveSearchSubject(
           location.latitude,
           location.longitude,
@@ -2217,7 +2247,7 @@ function App() {
       />
       <SpotSearchScreen
         open={spotSearchOpen}
-        hasCurrentSubject={Boolean(subjectPoint)}
+        hasCurrentSubject={Boolean(currentSubjectPoint())}
         initialFocalLengthMm={cameraSettings.focalLengthMm}
         initialDate={selectedDate}
         initialTimeZone={timeZone}
@@ -2225,7 +2255,7 @@ function App() {
         onSearch={searchFromSpotScreen}
         onResumeSearch={resumeSpotSearch}
         onLocateSubject={locateSubjectFromSpotScreen}
-        currentSubject={subjectPoint}
+        currentSubject={currentSubjectPoint()}
         history={subjectHistory}
         favorites={favoriteSubjects}
         currentSubjectIsFavorite={isFavoriteSubject(favoriteSubjects, subjectPoint)}

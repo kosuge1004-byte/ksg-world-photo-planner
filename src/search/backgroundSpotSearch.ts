@@ -123,6 +123,7 @@ export async function waitForBackgroundSpotSearch(
   onProgress: (message: string, percent: number) => void
 ): Promise<SpotSearchJob> {
   let missingRetryCount = 0;
+  const waitStartedAt = Date.now();
   while (true) {
     if (signal.aborted) {
       throw new DOMException("検索結果の待機を中止しました", "AbortError");
@@ -144,7 +145,22 @@ export async function waitForBackgroundSpotSearch(
       throw new Error("バックグラウンド検索の応答形式が不正です");
     }
     const percent = typeof job.progressPercent === "number" ? job.progressPercent : 0;
-    onProgress(job.progress, Math.max(0, Math.min(100, Math.round(percent))));
+    const boundedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - waitStartedAt) / 1000));
+    const elapsedText = elapsedSeconds < 60
+      ? `${elapsedSeconds}秒`
+      : `${Math.floor(elapsedSeconds / 60)}分${elapsedSeconds % 60}秒`;
+    const stalledQueued = job.status === "queued" && elapsedSeconds >= 30;
+    const heartbeat = boundedPercent === 0 &&
+      (job.status === "queued" || job.status === "running")
+      ? `${job.progress}\n${stalledQueued
+          ? "検索処理の起動待ちが長引いています"
+          : "サーバー応答確認済み"}・経過 ${elapsedText}`
+      : job.progress;
+    onProgress(heartbeat, boundedPercent);
+    if (job.status === "queued" && elapsedSeconds >= 90) {
+      throw new Error("検索処理を開始できませんでした。通信状態を確認して、もう一度検索してください");
+    }
     if (job.status === "failed") {
       throw new Error(job.error ?? "バックグラウンド検索に失敗しました");
     }

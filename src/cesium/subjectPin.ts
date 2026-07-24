@@ -99,3 +99,16 @@ export function setSubjectPinFromPosition(
 ): GroundPoint {
   return addVisibleSubjectPin(viewer, position, label);
 }
+
+export function getSubjectPinPoint(viewer: Viewer): GroundPoint | null {
+  const entity = viewer.entities.getById(SUBJECT_PIN_ID);
+  const value = entity?.position?.getValue(viewer.clock.currentTime);
+  if (!value) return null;
+  const cartographic = Cartographic.fromCartesian(value);
+  return {
+    latitude: (cartographic.latitude * 180) / Math.PI,
+    longitude: (cartographic.longitude * 180) / Math.PI,
+    height: cartographic.height,
+    label: entity.name ?? "現在の被写体ピン",
+  };
+}
