@@ -56,6 +56,7 @@ export default async function handler(request: Request): Promise<Response> {
       jobId: body.jobId,
       status: "queued",
       progress: "バックグラウンド検索を開始しています…",
+      progressPercent: 0,
       input: body.input,
       results: [],
       createdAt: now,

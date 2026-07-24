@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import type { CameraSettings } from "../types/camera";
+import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN, type CameraSettings } from "../types/camera";
 import type { PrecisionSettings } from "../types/precision";
 import type { CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
@@ -68,6 +68,8 @@ export function CelestialTransitSearchDialog({
   onSelect,
 }: Props) {
   const [searchMode, setSearchMode] = useState<CelestialTransitSearchMode>("direction-crossing");
+  const [searchFocalLengthMm, setSearchFocalLengthMm] = useState(cameraSettings.focalLengthMm);
+  const [includeBelowSubject, setIncludeBelowSubject] = useState(false);
   const [period, setPeriod] = useState<SpotSearchPeriod>("1-month");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
@@ -81,24 +83,24 @@ export function CelestialTransitSearchDialog({
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || controllerRef.current) return;
     const start = zonedDateTimeLocalFromDate(currentDate, timeZone).slice(0, 10);
     const end = zonedDateTimeLocalFromDate(new Date(currentDate.getTime() + 30 * 86_400_000), timeZone).slice(0, 10);
     setSearchMode("direction-crossing");
+    setSearchFocalLengthMm(cameraSettings.focalLengthMm);
+    setIncludeBelowSubject(false);
     setCustomStartDate(start);
     setCustomEndDate(end);
     setResults([]);
     setMessage("");
     setProgressPercent(0);
-  }, [currentDate, open, timeZone]);
+  }, [cameraSettings.focalLengthMm, currentDate, open, timeZone]);
 
   useEffect(() => () => controllerRef.current?.abort(), []);
 
   function close() {
-    controllerRef.current?.abort();
-    controllerRef.current = null;
-    setIsSearching(false);
-    setProgressPercent(0);
+    // 検索中に画面を閉じても処理は継続する。
+    // これによりスポット検索を並行して開始できる。
     onClose();
   }
 
@@ -125,6 +127,7 @@ export function CelestialTransitSearchDialog({
         startTime: timeRange.startTime,
         endTime: timeRange.endTime,
         displayCount,
+        includeBelowSubject,
       };
       const range = celestialTransitDateRange({ currentDate, timeZone, criteria });
       const refractionWeather = await prepareRefractionWeatherContext({
@@ -135,6 +138,9 @@ export function CelestialTransitSearchDialog({
         now: currentDate,
         signal: controller.signal,
       });
+      const searchCameraSettings: CameraSettings = searchMode === "in-frame"
+        ? { ...cameraSettings, focalLengthMm: searchFocalLengthMm }
+        : cameraSettings;
       const nextResults = await searchCelestialTransitDates({
         currentDate,
         timeZone,
@@ -142,7 +148,7 @@ export function CelestialTransitSearchDialog({
         subject,
         visibility,
         calculationMode: refractionWeather.effectiveMode === "none" ? "standard" : "pro",
-        cameraSettings,
+        cameraSettings: searchCameraSettings,
         previewAspectRatio,
         criteria,
         refractionWeather,
@@ -188,6 +194,62 @@ export function CelestialTransitSearchDialog({
               </label>
             </div>
           </fieldset>
+
+          <fieldset className="spot-search-group">
+            <legend>被写体より下側の通過</legend>
+            <div className="spot-choice-grid">
+              <label className={!includeBelowSubject ? "selected" : ""}>
+                <input
+                  type="radio"
+                  name="transit-below-subject-count"
+                  checked={!includeBelowSubject}
+                  onChange={() => setIncludeBelowSubject(false)}
+                />
+                <span>除外する（初期値）</span>
+              </label>
+              <label className={includeBelowSubject ? "selected" : ""}>
+                <input
+                  type="radio"
+                  name="transit-below-subject-count"
+                  checked={includeBelowSubject}
+                  onChange={() => setIncludeBelowSubject(true)}
+                />
+                <span>含める</span>
+              </label>
+            </div>
+          </fieldset>
+
+          {searchMode === "in-frame" && (
+            <label className="spot-search-field focal celestial-transit-focal">
+              <span>検索に使用する焦点距離</span>
+              <div>
+                <input
+                  type="range"
+                  min={FOCAL_LENGTH_MIN}
+                  max={FOCAL_LENGTH_MAX}
+                  step={1}
+                  value={searchFocalLengthMm}
+                  onChange={(event) => setSearchFocalLengthMm(Number(event.target.value))}
+                />
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={FOCAL_LENGTH_MIN}
+                  max={FOCAL_LENGTH_MAX}
+                  step={1}
+                  value={searchFocalLengthMm}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (!Number.isFinite(value)) return;
+                    setSearchFocalLengthMm(Math.min(FOCAL_LENGTH_MAX, Math.max(FOCAL_LENGTH_MIN, Math.round(value))));
+                  }}
+                  aria-label="検索焦点距離"
+                />
+                <small>mm</small>
+              </div>
+              <small>現在の焦点距離を初期値として使用します。ここで変更してもメイン画面の焦点距離は変わりません。</small>
+            </label>
+          )}
 
           <fieldset className="spot-search-group">
             <legend>検索期間</legend>

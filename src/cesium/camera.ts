@@ -34,12 +34,15 @@ export function sensorDimensionsMm(
 export function flyMapToTarget(
   viewer: Viewer,
   latitude: number,
-  longitude: number
+  longitude: number,
+  heightMeters = 0
 ): void {
+  // 高山などでは標高0mを中心にすると実際のピンが画面外へずれるため、
+  // ピン自身の標高をカメラの注視中心として使用する。
   const targetPosition = Cartesian3.fromDegrees(
     longitude,
     latitude,
-    0
+    Number.isFinite(heightMeters) ? heightMeters : 0
   );
 
   viewer.camera.flyToBoundingSphere(

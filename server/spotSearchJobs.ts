@@ -47,7 +47,7 @@ export async function setSpotSearchJob(job: SpotSearchJob): Promise<void> {
 export async function updateSpotSearchJob(
   clientId: string,
   jobId: string,
-  update: Partial<Pick<SpotSearchJob, "status" | "progress" | "results" | "error">>
+  update: Partial<Pick<SpotSearchJob, "status" | "progress" | "progressPercent" | "results" | "error">>
 ): Promise<SpotSearchJob> {
   const current = await getSpotSearchJob(clientId, jobId);
   if (!current) throw new Error("検索ジョブが見つかりません");

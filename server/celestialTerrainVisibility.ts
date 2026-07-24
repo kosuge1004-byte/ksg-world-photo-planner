@@ -11,10 +11,14 @@ import type {
 import { calculateKarneyDestinationPoint } from "../src/geodesy/karneyGeodesic.ts";
 import type { GroundPoint } from "../src/types/points.ts";
 import { sampleServerLineOfSightTerrain } from "./worldTerrain.ts";
+import { LruPromiseCache } from "./lruPromiseCache.ts";
 
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
 const TERRAIN_CLEARANCE_DEGREES = 0.015;
-const horizonCache = new Map<string, Promise<TerrainHorizon>>();
+const horizonCache = new LruPromiseCache<TerrainHorizon>({
+  maxEntries: 4_096,
+  ttlMs: 6 * 60 * 60 * 1_000,
+});
 
 type TerrainHorizon = {
   maximumElevationDegrees: number;
@@ -23,6 +27,24 @@ type TerrainHorizon = {
 
 function abortIfRequested(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("可視判定を中止しました", "AbortError");
+}
+
+
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  abortIfRequested(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException("可視判定を中止しました", "AbortError"));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); }
+    );
+  });
 }
 
 function destinationCartographic(
@@ -161,20 +183,14 @@ export function createServerLineOfSightEvaluator(
       };
     }
     const key = cacheKey(tripod, lensCenterHeightMeters, horizontal.azimuthDegrees);
-    let pending = horizonCache.get(key);
-    if (!pending) {
-      pending = calculateHorizon(
+    const pending = horizonCache.getOrCreate(key, () =>
+      calculateHorizon(
         tripod,
         lensCenterHeightMeters,
-        horizontal.azimuthDegrees,
-        signal
-      ).catch((error) => {
-        horizonCache.delete(key);
-        throw error;
-      });
-      horizonCache.set(key, pending);
-    }
-    const horizon = await pending;
+        horizontal.azimuthDegrees
+      )
+    );
+    const horizon = await awaitWithAbort(pending, signal);
     const terrainObstructed =
       horizon.maximumElevationDegrees >=
       horizontal.altitudeDegrees - TERRAIN_CLEARANCE_DEGREES;

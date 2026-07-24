@@ -1,4 +1,5 @@
 import { inflateSync } from "node:zlib";
+import { getStore } from "@netlify/blobs";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -31,6 +32,12 @@ type DecodedPng = {
   pixels: Uint8Array;
 };
 
+type DecodedElevationTile = {
+  width: number;
+  height: number;
+  heightsCentimeters: Int32Array;
+};
+
 const GSI_TILE_SOURCES: ElevationTileSource[] = [
   // 国土地理院の公開順に合わせ、航空レーザ由来の1m/5m DEMを最優先する。
   { id: "dem1a_png", label: "DEM1A", zoom: 17 },
@@ -41,9 +48,13 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 ];
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
-const MAX_TILE_CACHE_ENTRIES = 128;
+const MAX_TILE_CACHE_ENTRIES = 512;
+const PERSISTENT_TILE_STORE_NAME = "ksg-decoded-dem-tiles-v1";
+const PERSISTENT_TILE_FORMAT_VERSION = 1;
+const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 8;
-const tileCache = new Map<string, Promise<DecodedPng | null>>();
+const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
+const persistentWritePromises = new Map<string, Promise<void>>();
 let activeTileRequests = 0;
 const tileRequestWaiters: Array<() => void> = [];
 
@@ -182,6 +193,27 @@ function decodePng(bytes: Uint8Array): DecodedPng {
   return { width, height, bytesPerPixel, pixels };
 }
 
+
+function decodeElevationTile(bytes: Uint8Array): DecodedElevationTile {
+  const png = decodePng(bytes);
+  const pixelCount = png.width * png.height;
+  const heightsCentimeters = new Int32Array(pixelCount);
+  const noDataValue = NO_DATA_HEIGHT_CENTIMETERS;
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    const offset = pixelIndex * png.bytesPerPixel;
+    const encoded =
+      png.pixels[offset] * 65_536 +
+      png.pixels[offset + 1] * 256 +
+      png.pixels[offset + 2];
+    heightsCentimeters[pixelIndex] = encoded === 2 ** 23
+      ? noDataValue
+      : encoded < 2 ** 23
+        ? encoded
+        : encoded - 2 ** 24;
+  }
+  return { width: png.width, height: png.height, heightsCentimeters };
+}
+
 function tileCoordinates(
   point: GsiElevationRequestPoint,
   zoom: number
@@ -202,31 +234,144 @@ function tileCoordinates(
   };
 }
 
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+function persistentTileStore() {
+  return getStore({ name: PERSISTENT_TILE_STORE_NAME, consistency: "eventual" });
+}
+
+function persistentTileKey(source: ElevationTileSource, x: number, y: number): string {
+  return `${source.id}/${source.zoom}/${x}/${y}.bin`;
+}
+
+function serializeDecodedElevationTile(tile: DecodedElevationTile): Uint8Array {
+  const headerBytes = 12;
+  const output = new Uint8Array(headerBytes + tile.heightsCentimeters.byteLength);
+  const view = new DataView(output.buffer);
+  view.setUint32(0, PERSISTENT_TILE_FORMAT_VERSION, true);
+  view.setUint32(4, tile.width, true);
+  view.setUint32(8, tile.height, true);
+  output.set(
+    new Uint8Array(
+      tile.heightsCentimeters.buffer,
+      tile.heightsCentimeters.byteOffset,
+      tile.heightsCentimeters.byteLength
+    ),
+    headerBytes
+  );
+  return output;
+}
+
+function deserializeDecodedElevationTile(bytes: ArrayBuffer): DecodedElevationTile | null {
+  const headerBytes = 12;
+  if (bytes.byteLength < headerBytes) return null;
+  const view = new DataView(bytes);
+  const version = view.getUint32(0, true);
+  const width = view.getUint32(4, true);
+  const height = view.getUint32(8, true);
+  if (
+    version !== PERSISTENT_TILE_FORMAT_VERSION ||
+    width <= 0 ||
+    height <= 0 ||
+    width * height > 1_048_576 ||
+    bytes.byteLength !== headerBytes + width * height * Int32Array.BYTES_PER_ELEMENT
+  ) {
+    return null;
+  }
+  const copied = bytes.slice(headerBytes);
+  return { width, height, heightsCentimeters: new Int32Array(copied) };
+}
+
+async function readPersistentDecodedTile(
+  source: ElevationTileSource,
+  x: number,
+  y: number
+): Promise<DecodedElevationTile | null> {
+  try {
+    const bytes = await persistentTileStore().get(persistentTileKey(source, x, y), {
+      type: "arrayBuffer",
+    });
+    return bytes instanceof ArrayBuffer ? deserializeDecodedElevationTile(bytes) : null;
+  } catch {
+    // ローカル開発やBlob未設定環境では永続キャッシュを使わず従来処理を継続する。
+    return null;
+  }
+}
+
+function writePersistentDecodedTile(
+  source: ElevationTileSource,
+  x: number,
+  y: number,
+  tile: DecodedElevationTile
+): void {
+  const key = persistentTileKey(source, x, y);
+  if (persistentWritePromises.has(key)) return;
+  const write = persistentTileStore().set(key, serializeDecodedElevationTile(tile), {
+    metadata: {
+      source: source.label,
+      zoom: source.zoom,
+      width: tile.width,
+      height: tile.height,
+      formatVersion: PERSISTENT_TILE_FORMAT_VERSION,
+      savedAt: new Date().toISOString(),
+    },
+  }).then(() => undefined).catch(() => {
+    // 永続化失敗は検索結果に影響させない。メモリキャッシュと通常取得を維持する。
+  }).finally(() => {
+    persistentWritePromises.delete(key);
+  });
+  persistentWritePromises.set(key, write);
+}
+
 async function fetchDecodedTile(
   source: ElevationTileSource,
   x: number,
   y: number,
   signal?: AbortSignal
-): Promise<DecodedPng | null> {
+): Promise<DecodedElevationTile | null> {
   const key = `${source.id}/${source.zoom}/${x}/${y}`;
   const cached = tileCache.get(key);
-  if (cached) return cached;
+  if (cached) return awaitWithAbort(cached, signal);
 
-  // 地形見通し線では多数の標高点を調べるため、国土地理院タイルへの同時接続数を制限する。
+  // 同一タイルの通信・PNG展開Promiseを要求間で共有する。
+  // 個々の検索中断で共有処理そのものを停止させると、別検索まで巻き込むため、
+  // 基礎Promiseは中断信号から独立させ、各呼び出し側の待機だけを中断可能にする。
   const promise = withTileRequestLimit(async () => {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const persistent = await readPersistentDecodedTile(source, x, y);
+    if (persistent) return persistent;
+
     const response = await fetch(
       `https://cyberjapandata.gsi.go.jp/xyz/${source.id}/${source.zoom}/${x}/${y}.png`,
       {
         headers: { Accept: "image/png" },
-        signal,
       }
     );
     if (response.status === 404) return null;
     if (!response.ok) {
       throw new Error(`国土地理院標高タイル取得エラー：${response.status}`);
     }
-    return decodePng(new Uint8Array(await response.arrayBuffer()));
+    const decoded = decodeElevationTile(new Uint8Array(await response.arrayBuffer()));
+    writePersistentDecodedTile(source, x, y, decoded);
+    return decoded;
   }).catch((error: unknown) => {
     // 中断や一時的な通信失敗をキャッシュせず、次の判定で再取得できるようにする。
     tileCache.delete(key);
@@ -242,22 +387,18 @@ async function fetchDecodedTile(
     const oldestKey = tileCache.keys().next().value;
     if (typeof oldestKey === "string") tileCache.delete(oldestKey);
   }
-  return promise;
+  return awaitWithAbort(promise, signal);
 }
 
 function heightFromTile(
-  tile: DecodedPng,
+  tile: DecodedElevationTile,
   pixelX: number,
   pixelY: number
 ): number | null {
   if (pixelX >= tile.width || pixelY >= tile.height) return null;
-  const offset = (pixelY * tile.width + pixelX) * tile.bytesPerPixel;
-  const red = tile.pixels[offset];
-  const green = tile.pixels[offset + 1];
-  const blue = tile.pixels[offset + 2];
-  const encoded = red * 65_536 + green * 256 + blue;
-  if (encoded === 2 ** 23) return null;
-  return (encoded < 2 ** 23 ? encoded : encoded - 2 ** 24) * 0.01;
+  const heightCentimeters = tile.heightsCentimeters[pixelY * tile.width + pixelX];
+  if (heightCentimeters === NO_DATA_HEIGHT_CENTIMETERS) return null;
+  return heightCentimeters * 0.01;
 }
 
 async function lookupOneElevation(
@@ -284,6 +425,15 @@ async function lookupOneElevation(
   return { heightMeters: null, source: null };
 }
 
+function sourceIsAllowedForPoint(
+  source: ElevationTileSource,
+  point: GsiElevationRequestPoint
+): boolean {
+  if (point.maximumDetail === "10m") return source.label === "DEM10B";
+  if (point.maximumDetail === "5m") return source.label !== "DEM1A";
+  return true;
+}
+
 export async function lookupGsiElevations(
   points: GsiElevationRequestPoint[],
   signal?: AbortSignal
@@ -303,5 +453,142 @@ export async function lookupGsiElevations(
       throw new Error("標高取得座標が不正です");
     }
   }
-  return Promise.all(points.map((point) => lookupOneElevation(point, signal)));
+
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  const results: GsiElevationSample[] = points.map(() => ({
+    heightMeters: null,
+    source: null,
+  }));
+  const unresolved = new Set<number>();
+  points.forEach((point, index) => {
+    if (isJapaneseCoverage(point)) unresolved.add(index);
+  });
+
+  // 点ごとに「タイル取得→待機」を繰り返さず、標高種別ごとに必要タイルを
+  // 先に集約して一括取得する。標高種別の優先順位と各点の詳細度条件は
+  // 従来どおり維持するため、取得結果・精度は変わらない。
+  for (const source of GSI_TILE_SOURCES) {
+    if (unresolved.size === 0) break;
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
+    const requests: Array<{
+      index: number;
+      coordinate: ReturnType<typeof tileCoordinates>;
+      tileKey: string;
+    }> = [];
+    const uniqueTiles = new Map<string, { x: number; y: number }>();
+
+    for (const index of unresolved) {
+      const point = points[index];
+      if (!sourceIsAllowedForPoint(source, point)) continue;
+      const coordinate = tileCoordinates(point, source.zoom);
+      const tileKey = `${coordinate.x}/${coordinate.y}`;
+      requests.push({ index, coordinate, tileKey });
+      if (!uniqueTiles.has(tileKey)) {
+        uniqueTiles.set(tileKey, { x: coordinate.x, y: coordinate.y });
+      }
+    }
+
+    if (requests.length === 0) continue;
+
+    const tileEntries = await Promise.all(
+      [...uniqueTiles.entries()].map(async ([tileKey, coordinate]) => [
+        tileKey,
+        await fetchDecodedTile(source, coordinate.x, coordinate.y, signal),
+      ] as const)
+    );
+    const tiles = new Map<string, DecodedElevationTile | null>(tileEntries);
+
+    for (const request of requests) {
+      const tile = tiles.get(request.tileKey) ?? null;
+      if (!tile) continue;
+      const heightMeters = heightFromTile(
+        tile,
+        request.coordinate.pixelX,
+        request.coordinate.pixelY
+      );
+      if (heightMeters === null) continue;
+      results[request.index] = { heightMeters, source: source.label };
+      unresolved.delete(request.index);
+    }
+  }
+
+  return results;
+}
+
+
+export type GsiTerrainAzimuthBand = {
+  startDegrees: number;
+  endDegrees: number;
+};
+
+function normalizeBearing(degrees: number): number {
+  return ((degrees % 360) + 360) % 360;
+}
+
+function bearingsForBand(
+  band: GsiTerrainAzimuthBand | undefined,
+  directionCount: number
+): number[] {
+  if (!band) {
+    return Array.from({ length: directionCount }, (_, index) =>
+      index / directionCount * 360
+    );
+  }
+  const start = normalizeBearing(band.startDegrees);
+  const end = normalizeBearing(band.endDegrees);
+  const span = (end - start + 360) % 360;
+  const stepDegrees = 5;
+  const steps = Math.max(1, Math.ceil(span / stepDegrees));
+  const bearings = Array.from({ length: steps + 1 }, (_, index) =>
+    normalizeBearing(start + span * index / steps)
+  );
+  // 幅がほぼ0度でも中心方向を必ず1本取得する。
+  return bearings.length > 0 ? bearings : [start];
+}
+
+export async function prefetchGsiTerrainAroundSubject(
+  latitude: number,
+  longitude: number,
+  maximumDistanceMeters = 10_000,
+  directionCount = 24,
+  samplesPerDirection = 12,
+  signal?: AbortSignal,
+  azimuthBand?: GsiTerrainAzimuthBand
+): Promise<{ sampledPoints: number; sampledDirections: number }> {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error("先行地形取得座標が不正です");
+  }
+  const earthRadius = 6_378_137;
+  const originLatitude = latitude * Math.PI / 180;
+  const originLongitude = longitude * Math.PI / 180;
+  const bearings = bearingsForBand(azimuthBand, directionCount);
+  const points: GsiElevationRequestPoint[] = [{ latitude, longitude, maximumDetail: "10m" }];
+  for (const bearingDegrees of bearings) {
+    const bearing = bearingDegrees * Math.PI / 180;
+    for (let step = 1; step <= samplesPerDirection; step += 1) {
+      const distance = maximumDistanceMeters * step / samplesPerDirection;
+      const angularDistance = distance / earthRadius;
+      const targetLatitude = Math.asin(
+        Math.sin(originLatitude) * Math.cos(angularDistance) +
+        Math.cos(originLatitude) * Math.sin(angularDistance) * Math.cos(bearing)
+      );
+      const targetLongitude = originLongitude + Math.atan2(
+        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(originLatitude),
+        Math.cos(angularDistance) - Math.sin(originLatitude) * Math.sin(targetLatitude)
+      );
+      points.push({
+        latitude: targetLatitude * 180 / Math.PI,
+        longitude: ((targetLongitude * 180 / Math.PI + 540) % 360) - 180,
+        maximumDetail: "10m",
+      });
+    }
+  }
+  await lookupGsiElevations(points, signal);
+  return { sampledPoints: points.length, sampledDirections: bearings.length };
 }

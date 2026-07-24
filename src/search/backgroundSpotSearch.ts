@@ -4,9 +4,31 @@ import type {
   SpotSearchJobInput,
 } from "../types/backgroundSearch";
 import type { SpotPresetResult } from "../types/search";
+import {
+  markPreparedSearchCache,
+  preparedSearchCacheState,
+} from "./preparedSearchCache";
 
 const CLIENT_ID_KEY = "ksg-spot-search-client-id-v1";
 const ACTIVE_JOB_KEY = "ksg-active-spot-search-v1";
+
+export function spotSearchPreparationKey(input: Pick<SpotSearchJobInput,
+  "subject" | "criteria" | "calculationMode"
+>): string {
+  const lat = input.subject.latitude.toFixed(4);
+  const lon = input.subject.longitude.toFixed(4);
+  return [
+    "v2", lat, lon, input.criteria.celestialId, input.calculationMode,
+  ].join(":");
+}
+
+export function spotSearchCacheState(cacheKey: string): "cold" | "warm" {
+  return preparedSearchCacheState(cacheKey);
+}
+
+export function markSpotSearchPrepared(cacheKey: string): void {
+  markPreparedSearchCache(cacheKey);
+}
 
 export type ActiveSpotSearchJob = {
   clientId: string;
@@ -98,7 +120,7 @@ function isSpotSearchJob(value: unknown): value is SpotSearchJob {
 export async function waitForBackgroundSpotSearch(
   active: ActiveSpotSearchJob,
   signal: AbortSignal,
-  onProgress: (message: string) => void
+  onProgress: (message: string, percent: number) => void
 ): Promise<SpotSearchJob> {
   let missingRetryCount = 0;
   while (true) {
@@ -121,7 +143,8 @@ export async function waitForBackgroundSpotSearch(
     if (!isSpotSearchJob(job)) {
       throw new Error("バックグラウンド検索の応答形式が不正です");
     }
-    onProgress(job.progress);
+    const percent = typeof job.progressPercent === "number" ? job.progressPercent : 0;
+    onProgress(job.progress, Math.max(0, Math.min(100, Math.round(percent))));
     if (job.status === "failed") {
       throw new Error(job.error ?? "バックグラウンド検索に失敗しました");
     }

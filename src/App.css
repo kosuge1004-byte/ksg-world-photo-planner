@@ -333,7 +333,7 @@ button { cursor: pointer; }
 .preview-tool-rail > button.active { color: #74a6ff; border-color: #246bd7; }
 .preview-tool-rail > button span, .preview-actions span { font-size: 20px; line-height: 1; }
 .preview-tool-rail > button small, .preview-actions small { font-size: 8px; white-space: nowrap; }
-.preview-zoom-control { display: grid; grid-template-rows: repeat(2, 31px); width: 48px; overflow: hidden; border: 1px solid rgba(255,255,255,.17); border-radius: 8px; background: rgba(1,4,8,.86); box-shadow: 0 4px 12px rgba(0,0,0,.28); }
+.preview-zoom-control { display: grid; grid-template-rows: repeat(2, 62px); width: 48px; overflow: hidden; border: 1px solid rgba(255,255,255,.17); border-radius: 8px; background: rgba(1,4,8,.86); box-shadow: 0 4px 12px rgba(0,0,0,.28); }
 .preview-zoom-control button { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 0; padding: 0; overflow: hidden; color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,.11); background: transparent; font-size: 18px; line-height: 1; }
 .preview-zoom-control button:last-child { border-bottom: 0; }
 
@@ -365,8 +365,8 @@ button { cursor: pointer; }
 .preview-actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
 .preview-actions button { width: 44px; min-height: 40px; padding: 2px; }
 .preview-actions button:last-child { width: 44px; }
-.preview-actions span { font-size: 16px; }
-.preview-actions small { font-size: 6px; }
+.preview-actions span { font-size: 22px; line-height: .9; }
+.preview-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; }
 
 .fullscreen-exit-button {
   position: absolute;
@@ -586,19 +586,19 @@ button { cursor: pointer; }
 .map-2d-pan-layer:active { cursor: grabbing; }
 
 .map-left-controls { position: absolute; top: 8px; bottom: 8px; left: 8px; display: flex; flex-direction: column; width: clamp(39px, 6.2vw, 43px); min-height: 0; }
-.map-tool-rail { position: static; display: grid; grid-template-rows: repeat(4, minmax(0, 1fr)); flex: 1 1 auto; min-height: 0; margin-bottom: 7px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(1,4,8,.87); }
+.map-tool-rail { position: static; display: grid; grid-template-rows: repeat(3, minmax(0, 1fr)); flex: 1 1 auto; min-height: 0; margin-bottom: 7px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(1,4,8,.87); }
 .map-tool-rail button { display: grid; place-content: center; justify-items: center; gap: 1px; width: 100%; min-height: 0; padding: 1px; color: #f4f6f9; border: 0; border-bottom: 1px solid rgba(255,255,255,.09); background: transparent; }
 .map-tool-rail button:last-child { border-bottom: 0; }
 .map-tool-rail button.active { color: #5b8cff; background: rgba(18,74,164,.26); }
 .map-tool-rail span { font-size: 20px; line-height: 1; }
 .map-tool-rail small { font-size: 8px; }
-.map-zoom-control { position: static; display: grid; grid-template-rows: repeat(2, clamp(27px, 3.3dvh, 38px)); flex: 0 0 auto; width: 100%; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(1,4,8,.87); }
+.map-zoom-control { position: static; display: grid; grid-template-rows: repeat(2, clamp(54px, 6.6dvh, 76px)); flex: 0 0 auto; width: 100%; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(1,4,8,.87); }
 .map-zoom-control button { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 0; padding: 0; overflow: hidden; color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,.11); background: transparent; font-size: 20px; line-height: 1; }
 .map-zoom-control button:last-child { border-bottom: 0; }
 .map-right-actions { position: absolute; right: 12px; bottom: 13px; display: grid; gap: 6px; }
 .map-right-actions button { display: grid; place-content: center; justify-items: center; gap: 1px; width: 44px; min-height: 40px; padding: 2px; color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(1,4,8,.87); }
-.map-right-actions span { font-size: 16px; }
-.map-right-actions small { font-size: 6px; white-space: nowrap; }
+.map-right-actions span { font-size: 22px; line-height: .9; }
+.map-right-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
 .map-fullscreen-exit { top: 14px; }
 
 .map-pin-drawer { position: absolute; z-index: 12; top: 58px; left: 62px; width: min(330px, calc(100% - 140px)); max-height: calc(100% - 68px); padding: 8px; overflow-y: auto; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(2,6,10,.95); box-shadow: 0 12px 30px rgba(0,0,0,.55); }
@@ -682,7 +682,7 @@ button { cursor: pointer; }
 
 .spot-search-results { display: grid; gap: 7px; min-width: 0; padding-top: 3px; }
 .spot-search-results h2 { margin: 4px 0 0; font-size: 12px; }
-.spot-search-message { margin: 0; padding: 8px; color: #cbd4df; border-radius: 7px; background: #0d141c; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.spot-search-message { margin: 0; padding: 8px; color: #cbd4df; border-radius: 7px; background: #0d141c; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
 .spot-preset-result { display: grid; gap: 3px; width: 100%; min-width: 0; padding: 10px; overflow: hidden; color: #eef3f8; border: 1px solid #344253; border-radius: 8px; background: #0c131b; text-align: left; }
 .spot-preset-result strong { color: #ffe064; font-size: 10px; }
 .spot-preset-result span { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -750,7 +750,7 @@ button { cursor: pointer; }
   .top-quick-actions button { gap: 2px; padding: 2px; }
   .preview-tool-rail { top: 14px; left: 8px; gap: 4px; }
   .preview-tool-rail > button { width: 42px; min-height: 45px; }
-  .preview-zoom-control { grid-template-rows: repeat(2, 28px); width: 42px; }
+  .preview-zoom-control { grid-template-rows: repeat(2, 56px); width: 42px; }
   .preview-date-control { top: 9px; right: 7px; }
   .celestial-menu { top: 46px; right: 6px; }
   .preview-actions { right: 7px; bottom: 7px; }
@@ -764,7 +764,7 @@ button { cursor: pointer; }
   .map-left-controls { top: 6px; bottom: 6px; left: 6px; width: 39px; }
   .map-tool-rail span { font-size: 16px; }
   .map-tool-rail small { font-size: 7px; }
-  .map-zoom-control { grid-template-rows: repeat(2, clamp(25px, 3.1dvh, 32px)); }
+  .map-zoom-control { grid-template-rows: repeat(2, clamp(50px, 6.2dvh, 64px)); }
   .map-right-actions { right: 8px; bottom: 8px; }
   .map-right-actions button { width: 42px; min-height: 38px; }
   .map-search-control { top: 6px; left: 53px; width: 104px; }
@@ -1235,7 +1235,10 @@ button { cursor: pointer; }
   letter-spacing: -.04em;
 }
 .preview-actions small {
-  font-size: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.08em;
 }
 .preview-now-button {
   font-size: 10px;
@@ -1342,4 +1345,115 @@ button { cursor: pointer; }
 .precision-settings-panel small {
   color: #8ea0b3;
   font-size: 8px;
+}
+
+/* スポット検索の進捗表示は通過日時検索と同じ視認性を使用する。 */
+.spot-search-progress { margin-top: -2px; }
+
+
+/* Fullscreen control layout: keep the same control sizes and relative placement as split view. */
+.preview-section:fullscreen .fullscreen-exit-button,
+.preview-section:-webkit-full-screen .fullscreen-exit-button,
+.map-section:fullscreen .fullscreen-exit-button,
+.map-section:-webkit-full-screen .fullscreen-exit-button {
+  top: auto;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+/* The map rail normally stretches because its parent becomes the full screen height.
+   Limit it to the same vertical working area used by the map in the two-panel layout. */
+.map-section:fullscreen .map-left-controls,
+.map-section:-webkit-full-screen .map-left-controls {
+  top: 8px;
+  bottom: auto;
+  height: calc(45.25dvh - 16px);
+}
+
+.map-section:fullscreen .map-tool-rail,
+.map-section:-webkit-full-screen .map-tool-rail,
+.map-section:fullscreen .map-zoom-control,
+.map-section:-webkit-full-screen .map-zoom-control,
+.map-section:fullscreen .map-right-actions button,
+.map-section:-webkit-full-screen .map-right-actions button,
+.preview-section:fullscreen .preview-tool-rail > button,
+.preview-section:-webkit-full-screen .preview-tool-rail > button,
+.preview-section:fullscreen .preview-zoom-control,
+.preview-section:-webkit-full-screen .preview-zoom-control,
+.preview-section:fullscreen .preview-actions button,
+.preview-section:-webkit-full-screen .preview-actions button {
+  transform: none;
+  zoom: 1;
+}
+
+@media (max-width: 520px) {
+  .map-section:fullscreen .map-left-controls,
+  .map-section:-webkit-full-screen .map-left-controls {
+    top: 6px;
+    left: 6px;
+    height: calc(45.25dvh - 12px);
+  }
+
+  .preview-section:fullscreen .fullscreen-exit-button,
+  .preview-section:-webkit-full-screen .fullscreen-exit-button,
+  .map-section:fullscreen .fullscreen-exit-button,
+  .map-section:-webkit-full-screen .fullscreen-exit-button {
+    bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Map fullscreen: expand the spot-search control across the complete top edge. */
+.map-section:fullscreen .map-search-control,
+.map-section:-webkit-full-screen .map-search-control {
+  top: env(safe-area-inset-top);
+  right: 0;
+  left: 0;
+  width: auto;
+}
+
+.map-section:fullscreen .map-search-toggle,
+.map-section:-webkit-full-screen .map-search-toggle {
+  justify-content: center;
+  width: 100%;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+/* 2026-07-25: Enlarge timeline event text without changing card dimensions.
+   Milky Way card intentionally retains its existing typography. */
+.event-card:not(.milkyway) b {
+  font-size: clamp(10px, 2.2vw, 13px);
+  line-height: .98;
+  letter-spacing: -.035em;
+}
+.event-card:not(.milkyway) strong {
+  font-size: clamp(9px, 1.9vw, 12px);
+  line-height: .98;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.event-card.moonrise b {
+  font-size: clamp(9px, 1.85vw, 11px);
+}
+.event-card.moonrise b i {
+  font-size: clamp(5.5px, 1.05vw, 7px);
+  letter-spacing: -.08em;
+}
+
+@media (max-height: 720px) {
+  .event-card:not(.milkyway) b { font-size: 10px; }
+  .event-card:not(.milkyway) strong { font-size: 9px; }
+  .event-card.moonrise b { font-size: 8.5px; }
+  .event-card.moonrise b i { font-size: 5.5px; }
+}
+
+
+/* Celestial transit in-frame mode: independent focal length selector. */
+.celestial-transit-focal {
+  gap: 7px;
+}
+.celestial-transit-focal > small {
+  color: #84919f;
+  font-size: 7px;
+  line-height: 1.45;
 }

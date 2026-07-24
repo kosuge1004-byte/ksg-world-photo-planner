@@ -36,16 +36,16 @@ type Props = {
   onSearch: (
     criteria: SpotSearchCriteria,
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ) => Promise<SpotPresetResult[]>;
   onResumeSearch: (
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ) => Promise<SpotPresetResult[] | null>;
   onLocateSubject: (
     query: string,
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ) => Promise<void>;
   currentSubject: GroundPoint | null;
   history: SubjectRecord[];
@@ -193,6 +193,7 @@ export function SpotSearchScreen({
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [progressPercent, setProgressPercent] = useState(0);
   const controllerRef = useRef<AbortController | null>(null);
   const resumeSearchRef = useRef(onResumeSearch);
   resumeSearchRef.current = onResumeSearch;
@@ -221,6 +222,7 @@ export function SpotSearchScreen({
       zonedDateTimeLocalFromDate(end, initialTimeZone).slice(0, 10)
     );
     setMessage("");
+    setProgressPercent(0);
     setIsPaused(false);
     setSelectedResult(null);
     setSubjectListOpen(null);
@@ -236,7 +238,10 @@ export function SpotSearchScreen({
     const controller = new AbortController();
     controllerRef.current = controller;
     setIsSearching(true);
-    void resumeSearchRef.current(controller.signal, setMessage)
+    void resumeSearchRef.current(controller.signal, (nextMessage, percent) => {
+      setMessage(nextMessage);
+      setProgressPercent(percent);
+    })
       .then((resumedResults) => {
         if (controller.signal.aborted || resumedResults === null) return;
         setResults(resumedResults);
@@ -263,6 +268,7 @@ export function SpotSearchScreen({
     controllerRef.current?.abort();
     controllerRef.current = null;
     setIsSearching(false);
+    setProgressPercent(0);
     setIsPaused(false);
     onBack();
   }
@@ -292,6 +298,7 @@ export function SpotSearchScreen({
     const controller = new AbortController();
     controllerRef.current = controller;
     setIsSearching(true);
+    setProgressPercent(0);
     setIsPaused(false);
     setResults([]);
     setMessage("スポットを検索しています…");
@@ -323,10 +330,14 @@ export function SpotSearchScreen({
       const nextResults = await onSearch(
         criteria,
         controller.signal,
-        setMessage
+        (nextMessage, percent) => {
+          setMessage(nextMessage);
+          setProgressPercent(percent);
+        }
       );
       if (controller.signal.aborted) return;
       setResults(nextResults);
+      setProgressPercent(100);
       setMessage(
         nextResults.length > 0
           ? `${nextResults.length}件の構図候補が見つかりました`
@@ -732,7 +743,10 @@ export function SpotSearchScreen({
                 controllerRef.current = controller;
                 setIsSearching(true);
                 setMessage("構図検索を再開しています…");
-                void resumeSearchRef.current(controller.signal, setMessage)
+                void resumeSearchRef.current(controller.signal, (nextMessage, percent) => {
+      setMessage(nextMessage);
+      setProgressPercent(percent);
+    })
                   .then((resumedResults) => {
                     if (controller.signal.aborted) return;
                     if (resumedResults === null) {
@@ -764,6 +778,15 @@ export function SpotSearchScreen({
             </button>
           )}
         </div>
+
+        {searchDateTime && isSearching && (
+          <div className="celestial-transit-progress spot-search-progress" role="progressbar" aria-label="スポット検索進捗" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
+            <div className="celestial-transit-progress-track" aria-hidden="true">
+              <span style={{ width: `${progressPercent}%` }} />
+            </div>
+            <strong>{progressPercent}%</strong>
+          </div>
+        )}
 
         {!searchDateTime && message && (
           <p className="spot-search-message" aria-live="polite">{message}</p>

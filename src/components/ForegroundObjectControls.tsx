@@ -4,6 +4,8 @@ import type { ForegroundObject } from "../types/foreground";
 
 type Props = {
   object: ForegroundObject | null;
+  /** Placement height even before a person exists. */
+  heightCm: number;
   active: boolean;
   disabled: boolean;
   onToggle: () => void;
@@ -19,13 +21,14 @@ const clampHeight = (value: number): number =>
 
 export function ForegroundObjectControls({
   object,
+  heightCm,
   active,
   disabled,
   onToggle,
   onHeight,
   onDelete,
 }: Props) {
-  const height = object?.heightCm ?? 170;
+  const height = object?.heightCm ?? heightCm;
   const [heightText, setHeightText] = useState(String(height));
 
   useEffect(() => {
@@ -71,7 +74,7 @@ export function ForegroundObjectControls({
           max={HEIGHT_MAX_CM}
           step={1}
           value={height}
-          disabled={!object}
+          disabled={disabled}
           onChange={(event) => changeHeight(Number(event.target.value))}
         />
         <input
@@ -80,7 +83,7 @@ export function ForegroundObjectControls({
           max={HEIGHT_MAX_CM}
           step={1}
           value={heightText}
-          disabled={!object}
+          disabled={disabled}
           inputMode="numeric"
           aria-label="人物の高さ（cm）"
           onChange={(event) => {

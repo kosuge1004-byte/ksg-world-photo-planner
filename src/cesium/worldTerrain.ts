@@ -243,26 +243,74 @@ async function fetchGsiElevations(
   }
 }
 
+const GSI_DETAIL_PRIORITY: Record<GsiMaximumDetail, number> = {
+  "10m": 0,
+  "5m": 1,
+  "1m": 2,
+};
+
+function finerGsiDetail(
+  current: GsiMaximumDetail | undefined,
+  candidate: GsiMaximumDetail | undefined
+): GsiMaximumDetail | undefined {
+  if (!current) return candidate;
+  if (!candidate) return current;
+  return GSI_DETAIL_PRIORITY[candidate] > GSI_DETAIL_PRIORITY[current]
+    ? candidate
+    : current;
+}
+
+function exactGsiPointKey(point: Cartographic): string {
+  // 丸めによる別地点の混同を避けるため、Cesiumが保持するラジアン値をそのまま使用する。
+  // 同じ数値座標だけを重複要求として扱い、検索精度は変更しない。
+  return `${point.latitude}:${point.longitude}`;
+}
+
 async function flushGsiRequests(signal?: AbortSignal): Promise<void> {
   const requests = pendingGsiRequests.get(signal) ?? [];
   pendingGsiRequests.delete(signal);
   if (requests.length === 0) return;
   try {
     abortIfRequested(signal);
-    const points = requests.flatMap((request) => request.points);
-    const hasMaximumDetails = requests.some((request) => request.maximumDetails);
-    const maximumDetails = hasMaximumDetails
-      ? requests.flatMap((request) => request.points.map(
-          (_, index) => request.maximumDetails?.[index]
-        ))
-      : undefined;
-    const samples = await fetchGsiElevations(points, maximumDetails, signal);
-    let offset = 0;
+
+    const uniquePoints: Cartographic[] = [];
+    const uniqueMaximumDetails: Array<GsiMaximumDetail | undefined> = [];
+    const uniqueIndexByKey = new Map<string, number>();
+    const requestResultIndexes: number[][] = [];
+
     for (const request of requests) {
-      const end = offset + request.points.length;
-      request.resolve(samples.slice(offset, end));
-      offset = end;
+      const resultIndexes: number[] = [];
+      request.points.forEach((point, pointIndex) => {
+        const key = exactGsiPointKey(point);
+        let uniqueIndex = uniqueIndexByKey.get(key);
+        if (uniqueIndex === undefined) {
+          uniqueIndex = uniquePoints.length;
+          uniqueIndexByKey.set(key, uniqueIndex);
+          uniquePoints.push(point);
+          uniqueMaximumDetails.push(request.maximumDetails?.[pointIndex]);
+        } else {
+          uniqueMaximumDetails[uniqueIndex] = finerGsiDetail(
+            uniqueMaximumDetails[uniqueIndex],
+            request.maximumDetails?.[pointIndex]
+          );
+        }
+        resultIndexes.push(uniqueIndex);
+      });
+      requestResultIndexes.push(resultIndexes);
     }
+
+    const hasMaximumDetails = uniqueMaximumDetails.some((detail) => detail !== undefined);
+    const uniqueSamples = await fetchGsiElevations(
+      uniquePoints,
+      hasMaximumDetails ? uniqueMaximumDetails : undefined,
+      signal
+    );
+
+    requests.forEach((request, requestIndex) => {
+      request.resolve(
+        requestResultIndexes[requestIndex].map((uniqueIndex) => uniqueSamples[uniqueIndex])
+      );
+    });
   } catch (error) {
     for (const request of requests) request.reject(error);
   }

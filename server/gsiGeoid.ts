@@ -1,11 +1,15 @@
+import { LruPromiseCache } from "./lruPromiseCache.ts";
+
 type GsiGeoidResponse = {
   OutputData?: {
     geoidHeight?: unknown;
   };
 };
 
-const cache = new Map<string, Promise<number>>();
-const MAX_CACHE_ENTRIES = 128;
+const cache = new LruPromiseCache<number>({
+  maxEntries: 128,
+  ttlMs: 24 * 60 * 60 * 1000,
+});
 
 function validatedCoordinate(latitude: number, longitude: number): void {
   if (
@@ -51,15 +55,7 @@ export async function lookupGsiGeoidHeight(
       throw new Error("国土地理院ジオイドAPIの応答が不正です");
     }
     return height;
-  }).catch((error: unknown) => {
-    cache.delete(key);
-    throw error;
   });
 
-  cache.set(key, request);
-  if (cache.size > MAX_CACHE_ENTRIES) {
-    const oldest = cache.keys().next().value;
-    if (typeof oldest === "string") cache.delete(oldest);
-  }
-  return request;
+  return cache.set(key, request);
 }

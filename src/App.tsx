@@ -37,6 +37,7 @@ import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { TopSettingsBar } from "./components/TopSettingsBar";
 import { coordinatesAtMapPixel } from "./map/webMercator";
+import { adaptiveSearchConcurrency } from "./search/adaptiveConcurrency";
 
 import { flyMapToTarget } from "./cesium/camera";
 import {
@@ -121,6 +122,9 @@ import {
   readActiveSpotSearchJob,
   startBackgroundSpotSearch,
   waitForBackgroundSpotSearch,
+  spotSearchPreparationKey,
+  spotSearchCacheState,
+  markSpotSearchPrepared,
 } from "./search/backgroundSpotSearch";
 import type { ActiveSpotSearchJob } from "./search/backgroundSpotSearch";
 
@@ -153,6 +157,47 @@ function applyMapViewMode(
       roll: 0,
     },
   });
+}
+
+const LAST_MAP_STATE_STORAGE_KEY = "ksg-last-map-state-v1";
+
+type LastMapState = {
+  center: { latitude: number; longitude: number };
+  zoom: number;
+  viewMode: "2d" | "3d";
+};
+
+const DEFAULT_MAP_STATE: LastMapState = {
+  center: { latitude: 35.658581, longitude: 139.745433 },
+  zoom: 15,
+  viewMode: "2d",
+};
+
+function loadLastMapState(): LastMapState {
+  try {
+    const saved = localStorage.getItem(LAST_MAP_STATE_STORAGE_KEY);
+    if (!saved) return DEFAULT_MAP_STATE;
+    const parsed = JSON.parse(saved) as Partial<LastMapState>;
+    const latitude = parsed.center?.latitude;
+    const longitude = parsed.center?.longitude;
+    const zoom = parsed.zoom;
+    const viewMode = parsed.viewMode;
+    if (
+      !Number.isFinite(latitude) || latitude! < -90 || latitude! > 90 ||
+      !Number.isFinite(longitude) || longitude! < -180 || longitude! > 180 ||
+      !Number.isFinite(zoom) || zoom! < 3 || zoom! > 20 ||
+      (viewMode !== "2d" && viewMode !== "3d")
+    ) {
+      return DEFAULT_MAP_STATE;
+    }
+    return {
+      center: { latitude: latitude!, longitude: longitude! },
+      zoom: zoom!,
+      viewMode,
+    };
+  } catch {
+    return DEFAULT_MAP_STATE;
+  }
 }
 
 function loadCameraSettings(): CameraSettings {
@@ -263,7 +308,7 @@ function App() {
   const map2dStageRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapViewerRef = useRef<Viewer | null>(null);
-  const mapViewModeRef = useRef<"2d" | "3d">("2d");
+  const mapViewModeRef = useRef<"2d" | "3d">(loadLastMapState().viewMode);
   const disablePlacementRef = useRef<(() => void) | null>(null);
   const previewJobRef = useRef(0);
   const previewRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -299,6 +344,9 @@ function App() {
     useState<GroundPoint | null>(null);
   const [foregroundObjects, setForegroundObjects] = useState<ForegroundObject[]>([]);
   const foregroundObject = foregroundObjects[0] ?? null;
+  // 人物を配置する前に指定した身長を保持し、配置時の初期サイズへ使用する。
+  const [plannedForegroundHeightCm, setPlannedForegroundHeightCm] = useState(170);
+  const plannedForegroundHeightCmRef = useRef(170);
   const foregroundTerrainTimerRef = useRef<number | null>(null);
   const foregroundTerrainRequestRef = useRef(0);
 
@@ -318,13 +366,15 @@ function App() {
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
   const [celestialMenuOpen, setCelestialMenuOpen] = useState(true);
-  const [mapViewMode, setMapViewMode] = useState<"2d" | "3d">("2d");
-  const [mapZoom, setMapZoom] = useState(15);
+  const initialMapStateRef = useRef<LastMapState>(loadLastMapState());
+  const [mapViewMode, setMapViewMode] = useState<"2d" | "3d">(
+    initialMapStateRef.current.viewMode
+  );
+  const [mapZoom, setMapZoom] = useState(initialMapStateRef.current.zoom);
   const [mapSize, setMapSize] = useState({ width: 1, height: 1 });
-  const [mapCenter, setMapCenter] = useState({
-    latitude: 35.658581,
-    longitude: 139.745433,
-  });
+  const [mapCenter, setMapCenter] = useState(
+    initialMapStateRef.current.center
+  );
   const [mapTool, setMapTool] = useState<"none" | "pin" | "metrics">("none");
   const [celestialVisibility, setCelestialVisibility] =
     useState<CelestialVisibility>(loadCelestialVisibility);
@@ -596,7 +646,7 @@ function App() {
 
         localViewer = viewer;
         mapViewerRef.current = viewer;
-        applyMapViewMode(viewer, "2d", mapCenterRef.current, 0);
+        applyMapViewMode(viewer, mapViewModeRef.current, mapCenterRef.current, 0);
         removeCameraSync = viewer.camera.moveEnd.addEventListener(() => {
           if (mapViewModeRef.current !== "3d") return;
           const position = pickCenterPosition(viewer);
@@ -688,6 +738,13 @@ function App() {
   useEffect(() => {
     mapViewModeRef.current = mapViewMode;
   }, [mapViewMode]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      LAST_MAP_STATE_STORAGE_KEY,
+      JSON.stringify({ center: mapCenter, zoom: mapZoom, viewMode: mapViewMode })
+    );
+  }, [mapCenter, mapZoom, mapViewMode]);
 
   useEffect(() => {
     const latitude = tripodPoint?.latitude ?? subjectPoint?.latitude;
@@ -1073,14 +1130,14 @@ function App() {
   async function searchFromSpotScreen(
     criteria: SpotSearchCriteria,
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ): Promise<SpotPresetResult[]> {
     if (!mapReady) {
       throw new Error("3Dマップの読込完了後に検索してください");
     }
     onProgress(criteria.useCurrentSubjectPin
       ? "現在の被写体ピンから検索条件を準備しています…"
-      : "スポット位置を検索しています…");
+      : "スポット位置を検索しています…", 0);
     const location = criteria.useCurrentSubjectPin
       ? subjectPoint && {
           latitude: subjectPoint.latitude,
@@ -1108,7 +1165,14 @@ function App() {
       `${location.label} 地表`
     );
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
-    onProgress("サーバーへバックグラウンド検索を登録しています…");
+    const cacheKey = spotSearchPreparationKey({ criteria, subject, calculationMode });
+    const cacheState = spotSearchCacheState(cacheKey);
+    onProgress(
+      cacheState === "cold"
+        ? "初回検索データを準備しています。初回は通常より時間がかかります。次回以降は保存済みデータを利用して高速化されます。"
+        : "保存済みの検索準備データを利用しています…",
+      0
+    );
     // 登録完了後は画面を閉じてもサーバー側ジョブを中断しない。
     const active = await startBackgroundSpotSearch({
       criteria,
@@ -1120,6 +1184,8 @@ function App() {
       previewAspectRatio,
       subjectGroundHeightMeters: subjectGround.height,
       calculationMode,
+      cacheState,
+      cacheKey,
     });
     const job = await waitForBackgroundSpotSearch(
       active,
@@ -1133,7 +1199,7 @@ function App() {
     active: ActiveSpotSearchJob,
     job: SpotSearchJob,
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ): Promise<SpotPresetResult[]> {
     const results = deserializeSpotSearchResults(job.results);
     if (job.status === "complete") {
@@ -1145,7 +1211,7 @@ function App() {
       if (signal.aborted) {
         throw new DOMException("最終3D確認を中止しました", "AbortError");
       }
-      onProgress("3Dマップの読込完了を待っています…");
+      onProgress("3Dマップの読込完了を待っています…", 98);
       await new Promise<void>((resolve) => setTimeout(resolve, 250));
       viewer = mapViewerRef.current;
     }
@@ -1153,7 +1219,7 @@ function App() {
       throw new Error("3Dマップを読み込めないため最終遮蔽確認を開始できません");
     }
     const verifiedResults: SpotPresetResult[] = [];
-    const concurrency = 3;
+    const concurrency = adaptiveSearchConcurrency("mesh-los", job.input.calculationMode);
     for (let offset = 0; offset < results.length; offset += concurrency) {
       if (signal.aborted) {
         throw new DOMException("最終3D確認を中止しました", "AbortError");
@@ -1162,7 +1228,8 @@ function App() {
         `建物の最終3D遮蔽を確認しています… ${Math.min(
           results.length,
           offset + concurrency
-        )}/${results.length}`
+        )}/${results.length}`,
+        98 + Math.floor((Math.min(results.length, offset + concurrency) / Math.max(1, results.length)) * 2)
       );
       const batch = await Promise.all(
         results.slice(offset, offset + concurrency).map(async (result) => {
@@ -1188,21 +1255,23 @@ function App() {
         (result): result is SpotPresetResult => result !== null
       ));
     }
-    onProgress("最終3D確認結果を保存しています…");
+    onProgress("最終3D確認結果を保存しています…", 100);
     await finalizeBackgroundSpotSearch(active, verifiedResults);
+    if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
     return verifiedResults;
   }
 
   async function resumeSpotSearch(
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ): Promise<SpotPresetResult[] | null> {
     const active = readActiveSpotSearchJob();
     if (!active) return null;
-    onProgress("バックグラウンド検索を再開しています…");
+    onProgress("バックグラウンド検索を再開しています…", 0);
     const job = await waitForBackgroundSpotSearch(active, signal, onProgress);
     return completeBackgroundSpotSearch(active, job, signal, onProgress);
   }
+
 
   async function locateSubjectFromSpotScreen(
     query: string,
@@ -1241,7 +1310,7 @@ function App() {
     mapCenterRef.current = center;
     setMapCenter(center);
     if (mapViewMode === "3d") {
-      flyMapToTarget(viewer, center.latitude, center.longitude);
+      flyMapToTarget(viewer, center.latitude, center.longitude, pinned.height);
     }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
@@ -1261,7 +1330,7 @@ function App() {
     setSubjectHistory(addSubjectHistory(pinned, record.searchType));
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude);
+    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude, pinned.height);
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
@@ -1307,7 +1376,7 @@ function App() {
     const center = { latitude: result.subject.latitude, longitude: result.subject.longitude };
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude);
+    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude, subject.height);
     setSpotSearchOpen(false);
     setSearchMessage(`${result.celestialLabel}の構図を適用しました`);
   }
@@ -1359,6 +1428,10 @@ function App() {
     }));
     setForegroundObjects(loadedForegroundObjects);
     const loadedForeground = loadedForegroundObjects[0];
+    if (loadedForeground) {
+      plannedForegroundHeightCmRef.current = loadedForeground.heightCm;
+      setPlannedForegroundHeightCm(loadedForeground.heightCm);
+    }
     if (loadedForeground?.enabled && !Number.isFinite(loadedForeground.groundHeightMeters)) {
       const requestId = ++foregroundTerrainRequestRef.current;
       void groundPointFromCoordinates(
@@ -1453,7 +1526,7 @@ function App() {
       longitude: constrained.longitude,
       // 移動先の標高が確定するまで古い地点の標高を流用しない。
       groundHeightMeters: undefined,
-      heightCm: current[0]?.heightCm ?? 170,
+      heightCm: current[0]?.heightCm ?? plannedForegroundHeightCmRef.current,
       enabled: true,
     }]);
 
@@ -1508,7 +1581,12 @@ function App() {
   }
 
   function updateForegroundHeight(heightCm: number): void {
-    setForegroundObjects((current) => current.map((object, index) => index === 0 ? { ...object, heightCm } : object));
+    plannedForegroundHeightCmRef.current = heightCm;
+    setPlannedForegroundHeightCm(heightCm);
+    // 配置済みの場合はCesium Entityとプレビューが同じrender cycleで即時更新される。
+    setForegroundObjects((current) => current.map((object, index) =>
+      index === 0 ? { ...object, heightCm } : object
+    ));
   }
 
   function deleteForegroundObject(): void {
@@ -2018,7 +2096,6 @@ function App() {
                 <button type="button" className={mapViewMode === "2d" ? "active" : ""} onClick={() => changeMapViewMode("2d")}><span>▣</span><small>2D</small></button>
                 <button type="button" className={mapViewMode === "3d" ? "active" : ""} onClick={() => changeMapViewMode("3d")}><span>◇</span><small>3D</small></button>
                 <button type="button" className={mapTool === "pin" ? "active" : ""} onClick={() => { setSpotSearchOpen(false); setMapTool((current) => current === "pin" ? "none" : "pin"); }}><span>⌖</span><small>ピン</small></button>
-                <button type="button" className={mapTool === "metrics" ? "active" : ""} onClick={() => { setSpotSearchOpen(false); setMapTool((current) => current === "metrics" ? "none" : "metrics"); }}><span>⌁</span><small>計測</small></button>
               </div>
 
               <div className="map-zoom-control">
@@ -2072,6 +2149,7 @@ function App() {
                 />
                 <ForegroundObjectControls
                   object={foregroundObject}
+                  heightCm={plannedForegroundHeightCm}
                   active={foregroundPlacementActive}
                   disabled={!subjectPoint || !tripodPoint}
                   onToggle={toggleForegroundPlacement}

@@ -56,6 +56,10 @@ const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
 const TERRAIN_AZIMUTH_CACHE_STEP_DEGREES = 0.02;
 const MAX_TERRAIN_CACHE_ENTRIES = 384;
 const terrainHorizonCache = new Map<string, Promise<TerrainHorizon>>();
+const MAX_MESH_LINE_OF_SIGHT_CACHE_ENTRIES = 512;
+type MeshIntersectionResult = { verified: boolean; distanceMeters: number | null };
+const meshLineOfSightCache = new WeakMap<Viewer, Map<string, Promise<MeshIntersectionResult>>>();
+const observerPreparationCache = new WeakMap<Viewer, Map<string, Promise<CelestialLineOfSightObserver>>>();
 
 function abortIfRequested(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -236,13 +240,49 @@ export function celestialWorldDirection(
   return Cartesian3.normalize(worldDirection, worldDirection);
 }
 
-async function photorealisticMeshIntersection(
+function boundedPromiseCacheSet<T>(
+  cache: Map<string, Promise<T>>,
+  key: string,
+  value: Promise<T>,
+  maximumEntries: number,
+): void {
+  cache.set(key, value);
+  if (cache.size > maximumEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey === "string") cache.delete(oldestKey);
+  }
+}
+
+function meshLineOfSightKey(
+  observer: CelestialLineOfSightObserver,
+  horizontal: HorizontalCoordinates,
+): string {
+  return [
+    observer.meshOrigin.x,
+    observer.meshOrigin.y,
+    observer.meshOrigin.z,
+    horizontal.azimuthDegrees,
+    horizontal.altitudeDegrees,
+  ].join(":");
+}
+
+function observerPreparationKey(
+  tripod: GroundPoint,
+  lensCenterHeightMeters: number,
+): string {
+  return [
+    tripod.latitude,
+    tripod.longitude,
+    tripod.height,
+    lensCenterHeightMeters,
+  ].join(":");
+}
+
+async function calculatePhotorealisticMeshIntersection(
   viewer: Viewer,
   observer: CelestialLineOfSightObserver,
   horizontal: HorizontalCoordinates,
-  signal?: AbortSignal
-): Promise<{ verified: boolean; distanceMeters: number | null }> {
-  abortIfRequested(signal);
+): Promise<MeshIntersectionResult> {
   const scene = viewer.scene as RayPickingScene;
   if (
     scene.mode !== SceneMode.SCENE3D ||
@@ -261,7 +301,6 @@ async function photorealisticMeshIntersection(
     [...viewer.entities.values],
     0.12
   );
-  abortIfRequested(signal);
   const minimumDistance = Math.max(3, observer.lensCenterHeightMeters * 0.75);
   const obstruction = intersections.find((intersection) => {
     if (!intersection.position) return false;
@@ -276,19 +315,44 @@ async function photorealisticMeshIntersection(
   };
 }
 
-export async function prepareCelestialLineOfSightObserver(
+async function photorealisticMeshIntersection(
+  viewer: Viewer,
+  observer: CelestialLineOfSightObserver,
+  horizontal: HorizontalCoordinates,
+  signal?: AbortSignal,
+): Promise<MeshIntersectionResult> {
+  abortIfRequested(signal);
+  let viewerCache = meshLineOfSightCache.get(viewer);
+  if (!viewerCache) {
+    viewerCache = new Map();
+    meshLineOfSightCache.set(viewer, viewerCache);
+  }
+  const key = meshLineOfSightKey(observer, horizontal);
+  let calculation = viewerCache.get(key);
+  if (!calculation) {
+    calculation = calculatePhotorealisticMeshIntersection(viewer, observer, horizontal)
+      .catch((error) => {
+        viewerCache?.delete(key);
+        throw error;
+      });
+    boundedPromiseCacheSet(viewerCache, key, calculation, MAX_MESH_LINE_OF_SIGHT_CACHE_ENTRIES);
+  }
+  const result = await calculation;
+  abortIfRequested(signal);
+  return result;
+}
+
+async function calculateCelestialLineOfSightObserver(
   viewer: Viewer,
   tripod: GroundPoint,
   lensCenterHeightMeters: number,
-  signal?: AbortSignal
 ): Promise<CelestialLineOfSightObserver> {
-  abortIfRequested(signal);
+
   const preciseGround = await groundPointFromCoordinates(
     tripod.latitude,
     tripod.longitude,
     "三脚位置の高精度地表"
   );
-  abortIfRequested(signal);
   const terrainOrigin = Cartesian3.fromDegrees(
     tripod.longitude,
     tripod.latitude,
@@ -327,6 +391,36 @@ export async function prepareCelestialLineOfSightObserver(
     terrainOrigin,
     meshOrigin,
   };
+}
+
+export async function prepareCelestialLineOfSightObserver(
+  viewer: Viewer,
+  tripod: GroundPoint,
+  lensCenterHeightMeters: number,
+  signal?: AbortSignal,
+): Promise<CelestialLineOfSightObserver> {
+  abortIfRequested(signal);
+  let viewerCache = observerPreparationCache.get(viewer);
+  if (!viewerCache) {
+    viewerCache = new Map();
+    observerPreparationCache.set(viewer, viewerCache);
+  }
+  const key = observerPreparationKey(tripod, lensCenterHeightMeters);
+  let preparation = viewerCache.get(key);
+  if (!preparation) {
+    preparation = calculateCelestialLineOfSightObserver(
+      viewer,
+      tripod,
+      lensCenterHeightMeters,
+    ).catch((error) => {
+      viewerCache?.delete(key);
+      throw error;
+    });
+    boundedPromiseCacheSet(viewerCache, key, preparation, 256);
+  }
+  const observer = await preparation;
+  abortIfRequested(signal);
+  return observer;
 }
 
 export async function evaluateCelestialLineOfSight(

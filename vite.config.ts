@@ -5,7 +5,7 @@ import netlify from "@netlify/vite-plugin";
 import { find } from "geo-tz";
 import type { Plugin, PluginOption } from "vite";
 import { resolveGoogleMapsSharedUrl } from "./server/googleMaps.ts";
-import { lookupGsiElevations } from "./server/gsiElevation.ts";
+import { lookupGsiElevations, prefetchGsiTerrainAroundSubject } from "./server/gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./server/gsiGeoid.ts";
 import { lookupOsmSiteContexts } from "./server/osmSiteContext.ts";
 import { runSpotSearchJob } from "./server/runSpotSearchJob.ts";
@@ -92,6 +92,32 @@ function localGsiElevationApi(): Plugin {
   return {
     name: "ksg-local-gsi-elevation-api",
     configureServer(server) {
+      server.middlewares.use(
+        "/api/spot-terrain-prefetch",
+        async (request, response) => {
+          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          if (request.method !== "POST") {
+            response.statusCode = 405;
+            response.end(JSON.stringify({ error: "POSTリクエストのみ利用できます" }));
+            return;
+          }
+          try {
+            let rawBody = "";
+            for await (const chunk of request) rawBody += chunk.toString();
+            const body = JSON.parse(rawBody) as { latitude?: unknown; longitude?: unknown; maximumDistanceMeters?: unknown };
+            const latitude = Number(body.latitude);
+            const longitude = Number(body.longitude);
+            const maximumDistanceMeters = Math.max(500, Math.min(50_000, Number(body.maximumDistanceMeters) || 10_000));
+            const result = await prefetchGsiTerrainAroundSubject(latitude, longitude, maximumDistanceMeters);
+            response.statusCode = 200;
+            response.end(JSON.stringify(result));
+          } catch (error) {
+            response.statusCode = 422;
+            response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+          }
+        }
+      );
+
       server.middlewares.use(
         "/api/gsi-elevation",
         async (request, response) => {

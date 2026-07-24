@@ -36,6 +36,7 @@ export type CelestialTransitCriteria = {
   startTime: string;
   endTime: string;
   displayCount: SpotSearchDisplayCount;
+  includeBelowSubject: boolean;
 };
 
 type SearchInput = {
@@ -316,6 +317,9 @@ export async function searchCelestialTransitDates(
   const results: CelestialTransitResult[] = [];
   const resultIds = new Set<string>();
   const observer = observerAtLens(input);
+  const subjectAltitudeDegrees = calculateElevationAngleDegrees(observer, input.subject);
+  const isCountableAltitude = (altitudeDegrees: number): boolean =>
+    input.criteria.includeBelowSubject || altitudeDegrees >= subjectAltitudeDegrees;
   const targetAzimuth = input.criteria.mode === "direction-crossing"
     ? calculateKarneyLineMetrics(input.tripod, input.subject).bearingDegrees
     : null;
@@ -435,6 +439,7 @@ export async function searchCelestialTransitDates(
           if (
             isDateEligible(crossingDate) &&
             crossingHorizontal.altitudeDegrees > 0.25 &&
+            isCountableAltitude(crossingHorizontal.altitudeDegrees) &&
             !resultIds.has(id)
           ) {
             resultIds.add(id);
@@ -444,7 +449,8 @@ export async function searchCelestialTransitDates(
         previousErrors.set(body, { time, error });
       } else {
         if (frameProjection === null) throw new Error("画角検索の初期化に失敗しました");
-        const inside = isBodyInFrame(horizontal.azimuthDegrees, horizontal.altitudeDegrees, frameProjection);
+        const inside = isBodyInFrame(horizontal.azimuthDegrees, horizontal.altitudeDegrees, frameProjection) &&
+          isCountableAltitude(horizontal.altitudeDegrees);
         const distanceDegrees = angularDistanceToFrameCenterDegrees(
           horizontal.azimuthDegrees,
           horizontal.altitudeDegrees,

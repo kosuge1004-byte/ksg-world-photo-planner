@@ -17,6 +17,10 @@ export type SpotSearchJobInput = {
   previewAspectRatio?: number;
   subjectGroundHeightMeters: number;
   calculationMode: CalculationMode;
+  /** 同一地点・天体の検索準備データが端末側で作成済みか。 */
+  cacheState?: "cold" | "warm";
+  /** 検索完了後に端末側へ準備済み状態を保存するためのキー。 */
+  cacheKey?: string;
 };
 
 export type SpotSearchJobStatus =
@@ -32,6 +36,7 @@ export type SpotSearchJob = {
   jobId: string;
   status: SpotSearchJobStatus;
   progress: string;
+  progressPercent?: number;
   input: SpotSearchJobInput;
   results: SerializedSpotPresetResult[];
   error?: string;

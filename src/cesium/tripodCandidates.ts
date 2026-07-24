@@ -22,9 +22,9 @@ import { sampleWorldTerrain } from "./worldTerrain";
 const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
-const SAMPLE_COUNT = 32;
-const ROOT_REFINEMENT_PASSES = 3;
-const ROOT_REFINEMENT_SEGMENTS = 8;
+const DEFAULT_SAMPLE_COUNT = 32;
+const DEFAULT_ROOT_REFINEMENT_PASSES = 3;
+const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 8;
 const CONVERGED_POSITION_METERS = 0.05;
 const CONVERGED_HORIZONTAL_DEGREES = 0.0001;
 
@@ -87,8 +87,17 @@ export type TripodDistanceRange = {
   maxMeters: number;
 };
 
+export type TripodSearchProfile = {
+  sampleCount?: number;
+  refinementPasses?: number;
+  refinementSegments?: number;
+  /** 近接日時で得た前回解。精度判定を満たす場合だけ再利用し、外れた場合は従来の全探索へ進む。 */
+  preferredDistanceMeters?: number;
+};
+
 function logarithmicDistances(
-  distanceRange?: TripodDistanceRange
+  distanceRange?: TripodDistanceRange,
+  sampleCount = DEFAULT_SAMPLE_COUNT
 ): number[] {
   const requestedMin = distanceRange?.minMeters ?? ABSOLUTE_MIN_DISTANCE_METERS;
   const requestedMax = distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS;
@@ -99,8 +108,9 @@ function logarithmicDistances(
   }
   if (maximum === minimum) return [minimum];
   const ratio = maximum / minimum;
-  return Array.from({ length: SAMPLE_COUNT }, (_, index) =>
-    minimum * ratio ** (index / (SAMPLE_COUNT - 1))
+  const resolvedSampleCount = Math.max(4, Math.floor(sampleCount));
+  return Array.from({ length: resolvedSampleCount }, (_, index) =>
+    minimum * ratio ** (index / (resolvedSampleCount - 1))
   );
 }
 
@@ -138,17 +148,20 @@ type TerrainSolution = {
   altitudeErrorDegrees: number;
 };
 
-async function solveTerrainDistance(
+async function scanTerrainDistanceRange(
   subject: GroundPoint,
   bearingDegrees: number,
   targetAltitudeDegrees: number,
   lensCenterHeightMeters: number,
   terrainSampler: TerrainSampler,
-  signal?: AbortSignal,
-  distanceRange?: TripodDistanceRange
+  signal: AbortSignal | undefined,
+  distanceRange: TripodDistanceRange | undefined,
+  searchProfile: TripodSearchProfile | undefined
 ): Promise<TerrainSolution | null> {
-  abortIfRequested(signal);
-  const distances = logarithmicDistances(distanceRange);
+  const distances = logarithmicDistances(
+    distanceRange,
+    searchProfile?.sampleCount ?? DEFAULT_SAMPLE_COUNT
+  );
   if (distances.length === 0) return null;
   const sampled = await terrainSampler(
     distances.map((distance) =>
@@ -193,12 +206,18 @@ async function solveTerrainDistance(
   let highDistance = distances[crossingIndex];
   let lowError = errors[crossingIndex - 1];
   let highError = errors[crossingIndex];
-  for (let pass = 0; pass < ROOT_REFINEMENT_PASSES; pass += 1) {
+  const refinementPasses = Math.max(0, Math.floor(
+    searchProfile?.refinementPasses ?? DEFAULT_ROOT_REFINEMENT_PASSES
+  ));
+  const refinementSegments = Math.max(2, Math.floor(
+    searchProfile?.refinementSegments ?? DEFAULT_ROOT_REFINEMENT_SEGMENTS
+  ));
+  for (let pass = 0; pass < refinementPasses; pass += 1) {
     // 7点を一括取得して8分割する。3段階で9回二分探索相当の区間精度を保ち、
     // 高精度DEMへの逐次通信を最大9往復から3往復へ減らす。
-    const step = (highDistance - lowDistance) / ROOT_REFINEMENT_SEGMENTS;
+    const step = (highDistance - lowDistance) / refinementSegments;
     const refinementDistances = Array.from(
-      { length: ROOT_REFINEMENT_SEGMENTS - 1 },
+      { length: refinementSegments - 1 },
       (_, index) => lowDistance + step * (index + 1)
     );
     const refinementSamples = await terrainSampler(
@@ -254,6 +273,81 @@ async function solveTerrainDistance(
   return best;
 }
 
+async function solveTerrainDistance(
+  subject: GroundPoint,
+  bearingDegrees: number,
+  targetAltitudeDegrees: number,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal?: AbortSignal,
+  distanceRange?: TripodDistanceRange,
+  searchProfile?: TripodSearchProfile
+): Promise<TerrainSolution | null> {
+  abortIfRequested(signal);
+  const preferredDistance = searchProfile?.preferredDistanceMeters;
+  const minimum = distanceRange?.minMeters ?? ABSOLUTE_MIN_DISTANCE_METERS;
+  const maximum = distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS;
+  if (
+    Number.isFinite(preferredDistance) &&
+    preferredDistance! >= minimum &&
+    preferredDistance! <= maximum
+  ) {
+    const [preferredSample] = await terrainSampler([
+      destinationCartographic(subject, bearingDegrees, preferredDistance!),
+    ], signal);
+    abortIfRequested(signal);
+    if (preferredSample && Number.isFinite(preferredSample.height)) {
+      const preferredError =
+        elevationAngleDegrees(preferredSample, subject, lensCenterHeightMeters) -
+        targetAltitudeDegrees;
+      // 従来の精密化終了条件と同じ角度誤差を満たす場合だけ前回解を採用する。
+      if (Math.abs(preferredError) <= 0.002) {
+        return {
+          cartographic: preferredSample,
+          distanceMeters: preferredDistance!,
+          altitudeErrorDegrees: preferredError,
+        };
+      }
+    }
+
+    // 前回解の周辺だけを先に精密探索する。解が十分収束しない場合は、
+    // 必ず元の全距離範囲を再探索して局所解による取りこぼしを防ぐ。
+    const localRange: TripodDistanceRange = {
+      minMeters: Math.max(minimum, preferredDistance! * 0.65),
+      maxMeters: Math.min(maximum, preferredDistance! * 1.35),
+    };
+    if (localRange.maxMeters >= localRange.minMeters) {
+      const localSolution = await scanTerrainDistanceRange(
+        subject,
+        bearingDegrees,
+        targetAltitudeDegrees,
+        lensCenterHeightMeters,
+        terrainSampler,
+        signal,
+        localRange,
+        searchProfile
+      );
+      if (
+        localSolution &&
+        Math.abs(localSolution.altitudeErrorDegrees) <= 0.002
+      ) {
+        return localSolution;
+      }
+    }
+  }
+
+  return scanTerrainDistanceRange(
+    subject,
+    bearingDegrees,
+    targetAltitudeDegrees,
+    lensCenterHeightMeters,
+    terrainSampler,
+    signal,
+    distanceRange,
+    searchProfile
+  );
+}
+
 async function calculateOneCandidate(
   subject: GroundPoint,
   point: CelestialScreenPoint,
@@ -263,7 +357,8 @@ async function calculateOneCandidate(
   calculationMode: CalculationMode,
   terrainSampler: TerrainSampler,
   signal?: AbortSignal,
-  distanceRange?: TripodDistanceRange
+  distanceRange?: TripodDistanceRange,
+  searchProfile?: TripodSearchProfile
 ): Promise<TripodCandidate | null> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
   let horizontal = {
@@ -285,7 +380,8 @@ async function calculateOneCandidate(
       lensCenterHeightMeters,
       terrainSampler,
       signal,
-      distanceRange
+      distanceRange,
+      searchProfile
     );
     if (!solution || !Number.isFinite(solution.cartographic.height)) return null;
     const candidate = solution.cartographic;
@@ -395,7 +491,8 @@ export async function calculateTripodCandidates(
   terrainSampler: TerrainSampler = sampleWorldTerrain,
   signal?: AbortSignal,
   previewAspectRatio = 3 / 2,
-  distanceRange?: TripodDistanceRange
+  distanceRange?: TripodDistanceRange,
+  searchProfile?: TripodSearchProfile
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -420,7 +517,8 @@ export async function calculateTripodCandidates(
         calculationMode,
         terrainSampler,
         signal,
-        distanceRange
+        distanceRange,
+        searchProfile
       )
     )
   );
