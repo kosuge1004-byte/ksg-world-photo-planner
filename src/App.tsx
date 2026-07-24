@@ -224,17 +224,6 @@ function loadCelestialDateTime(): string {
   return zonedDateTimeLocalFromDate(new Date(), systemTimeZone());
 }
 
-function pointsMatch(
-  left: GroundPoint,
-  right: GroundPoint,
-  toleranceDegrees = 1e-7
-): boolean {
-  return Math.abs(left.latitude - right.latitude) <= toleranceDegrees &&
-    Math.abs(left.longitude - right.longitude) <= toleranceDegrees &&
-    Math.abs(left.height - right.height) <= .05;
-}
-
-
 function constrainForegroundToSegment(
   latitude: number,
   longitude: number,
