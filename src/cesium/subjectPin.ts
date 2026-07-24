@@ -109,6 +109,6 @@ export function getSubjectPinPoint(viewer: Viewer): GroundPoint | null {
     latitude: (cartographic.latitude * 180) / Math.PI,
     longitude: (cartographic.longitude * 180) / Math.PI,
     height: cartographic.height,
-    label: entity.name ?? "現在の被写体ピン",
+    label: entity?.name ?? "現在の被写体ピン",
   };
 }
