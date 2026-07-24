@@ -1,4 +1,6 @@
-import { Geodesic } from "geographiclib-geodesic";
+import geographicLibGeodesic from "geographiclib-geodesic";
+
+const { Geodesic } = geographicLibGeodesic;
 
 import type { GroundPoint, LineMetrics } from "../types/points";
 

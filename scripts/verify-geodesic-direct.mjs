@@ -1,4 +1,6 @@
-import { Geodesic } from "geographiclib-geodesic";
+import geographicLibGeodesic from "geographiclib-geodesic";
+
+const { Geodesic } = geographicLibGeodesic;
 
 const COORDINATE_TOLERANCE_DEGREES = 1e-11;
 

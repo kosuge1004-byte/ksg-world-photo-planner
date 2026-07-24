@@ -1,4 +1,6 @@
-import { Geodesic } from "geographiclib-geodesic";
+import geographicLibGeodesic from "geographiclib-geodesic";
+
+const { Geodesic } = geographicLibGeodesic;
 
 const EARTH_RADIUS_METERS = 6371008.8;
 const DISTANCE_TOLERANCE_METERS = 1e-6;

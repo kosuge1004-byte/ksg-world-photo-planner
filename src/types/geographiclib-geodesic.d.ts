@@ -38,8 +38,13 @@ declare module "geographiclib-geodesic" {
     ): DirectResult;
   }
 
-  export const Geodesic: {
-    STANDARD: number;
-    WGS84: GeodesicInstance;
-  };
+  interface GeographicLibGeodesicPackage {
+    Geodesic: {
+      STANDARD: number;
+      WGS84: GeodesicInstance;
+    };
+  }
+
+  const geographicLibGeodesic: GeographicLibGeodesicPackage;
+  export default geographicLibGeodesic;
 }
