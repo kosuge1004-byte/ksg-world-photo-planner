@@ -37,10 +37,6 @@ function roundedCoordinate(value: number): string {
   return (Math.round(value * 20) / 20).toFixed(2);
 }
 
-function dateText(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
 function cacheKey(point: GroundPoint, source: "forecast" | "climatology"): string {
   return `${CACHE_PREFIX}${source}:${roundedCoordinate(point.latitude)}:${roundedCoordinate(point.longitude)}`;
 }

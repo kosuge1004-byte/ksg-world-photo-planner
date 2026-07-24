@@ -45,14 +45,53 @@ const terrainHeightMemoryCache = new Map<string, number>();
 
 type TerrainCacheRecord = { key: string; height: number; updatedAt: number };
 
+// IndexedDBの実行時APIだけを構造型で扱う。
+// TypeScriptのDOM型定義がビルド環境で解決されない場合でも、
+// ブラウザ上のIndexedDBキャッシュ動作は維持する。
+type KsgIdbRequest<T> = {
+  result: T;
+  onsuccess: (() => void) | null;
+  onerror: (() => void) | null;
+  onupgradeneeded?: (() => void) | null;
+};
+
+type KsgIdbObjectStore = {
+  get: (key: string) => KsgIdbRequest<unknown>;
+  put: (value: unknown) => KsgIdbRequest<unknown>;
+};
+
+type KsgIdbTransaction = {
+  objectStore: (name: string) => KsgIdbObjectStore;
+  oncomplete: (() => void) | null;
+  onerror: (() => void) | null;
+  onabort: (() => void) | null;
+};
+
+type KsgIdbDatabase = {
+  objectStoreNames: { contains: (name: string) => boolean };
+  createObjectStore: (name: string, options: { keyPath: string }) => KsgIdbObjectStore;
+  transaction: (name: string, mode: "readonly" | "readwrite") => KsgIdbTransaction;
+  close: () => void;
+};
+
+type KsgIndexedDbFactory = {
+  open: (name: string, version: number) => KsgIdbRequest<KsgIdbDatabase>;
+};
+
+function getIndexedDbFactory(): KsgIndexedDbFactory | null {
+  const runtimeGlobal = globalThis as unknown as { indexedDB?: KsgIndexedDbFactory };
+  return runtimeGlobal.indexedDB ?? null;
+}
+
 function terrainCacheKey(point: Cartographic): string {
   return `${CesiumMath.toDegrees(point.latitude).toFixed(5)},${CesiumMath.toDegrees(point.longitude).toFixed(5)}`;
 }
 
-function openTerrainCache(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+function openTerrainCache(): Promise<KsgIdbDatabase | null> {
+  const indexedDb = getIndexedDbFactory();
+  if (!indexedDb) return Promise.resolve(null);
   return new Promise((resolve) => {
-    const request = indexedDB.open(TERRAIN_CACHE_DB, 1);
+    const request = indexedDb.open(TERRAIN_CACHE_DB, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains(TERRAIN_CACHE_STORE)) {
@@ -253,10 +292,11 @@ function geoidRegionKey(point: Cartographic): string {
   return `${latitude.toFixed(GEOID_REGION_DECIMALS)},${longitude.toFixed(GEOID_REGION_DECIMALS)}`;
 }
 
-function openGeoidCache(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+function openGeoidCache(): Promise<KsgIdbDatabase | null> {
+  const indexedDb = getIndexedDbFactory();
+  if (!indexedDb) return Promise.resolve(null);
   return new Promise((resolve) => {
-    const request = indexedDB.open(GEOID_CACHE_DB, 1);
+    const request = indexedDb.open(GEOID_CACHE_DB, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains(GEOID_CACHE_STORE)) {

@@ -1309,7 +1309,7 @@ function App() {
       sun: result.celestialId === "sun",
       moon: result.celestialId === "moon",
       milkyWay: result.celestialId === "milkyWay",
-      polaris: result.celestialId === "polaris",
+      polaris: false,
     });
     timeZoneRef.current = result.timeZone;
     setTimeZone(result.timeZone);

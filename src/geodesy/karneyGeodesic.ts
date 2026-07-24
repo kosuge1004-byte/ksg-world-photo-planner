@@ -13,8 +13,8 @@ export type KarneySurfaceMetrics = {
   bearingDegrees: number;
 };
 
-function assertFiniteNumber(value: number, valueName: string): void {
-  if (!Number.isFinite(value)) {
+function assertFiniteNumber(value: unknown, valueName: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${valueName} must be a finite number.`);
   }
 }
@@ -47,15 +47,20 @@ export function calculateKarneySurfaceMetrics(
     Geodesic.STANDARD
   );
 
-  assertFiniteNumber(result.s12, "Karney inverse distance result");
-  if (result.s12 < 0) {
+  const distanceMeters = result.s12;
+  const initialBearingDegrees = result.azi1;
+
+  assertFiniteNumber(distanceMeters, "Karney inverse distance result");
+  assertFiniteNumber(initialBearingDegrees, "Karney inverse initial bearing result");
+
+  if (distanceMeters < 0) {
     throw new Error("Karney inverse distance result must be non-negative.");
   }
 
   return {
-    distanceMeters: result.s12,
+    distanceMeters,
     bearingDegrees: normalizeBearingDegrees(
-      result.azi1,
+      initialBearingDegrees,
       "Karney inverse initial bearing result"
     ),
   };
@@ -119,14 +124,19 @@ export function calculateKarneyDestinationPoint(
     Geodesic.STANDARD
   );
 
+  const destinationLatitude = result.lat2;
+  const destinationLongitude = result.lon2;
+
+  assertFiniteNumber(destinationLatitude, "Karney direct result latitude");
+  assertFiniteNumber(destinationLongitude, "Karney direct result longitude");
   assertValidGeodeticCoordinate(
-    { latitude: result.lat2, longitude: result.lon2 },
+    { latitude: destinationLatitude, longitude: destinationLongitude },
     "Karney direct result"
   );
 
   return {
-    latitude: result.lat2,
-    longitude: result.lon2,
+    latitude: destinationLatitude,
+    longitude: destinationLongitude,
     height: origin.height,
     label: origin.label,
   };

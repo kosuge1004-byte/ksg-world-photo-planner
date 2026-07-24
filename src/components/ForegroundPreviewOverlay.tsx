@@ -16,7 +16,7 @@ type Props = {
 export function ForegroundPreviewOverlay({ object, tripod, subject, camera, aspectRatio }: Props) {
   if (!object?.enabled || !tripod || !subject) return null;
   const objectGroundHeight = object.groundHeightMeters;
-  if (!Number.isFinite(objectGroundHeight)) return null;
+  if (typeof objectGroundHeight !== "number" || !Number.isFinite(objectGroundHeight)) return null;
   const toSubject = calculateKarneyLineMetrics(tripod, subject);
   const objectBase: GroundPoint = {
     latitude: object.latitude,
