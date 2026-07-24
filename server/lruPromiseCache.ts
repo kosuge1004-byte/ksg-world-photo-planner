@@ -14,8 +14,11 @@ type CacheEntry<T> = {
  */
 export class LruPromiseCache<T> {
   private readonly entries = new Map<string, CacheEntry<T>>();
+  private readonly options: LruPromiseCacheOptions;
 
-  constructor(private readonly options: LruPromiseCacheOptions) {}
+  constructor(options: LruPromiseCacheOptions) {
+    this.options = options;
+  }
 
   get(key: string): Promise<T> | undefined {
     const entry = this.entries.get(key);

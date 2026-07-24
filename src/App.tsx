@@ -1276,13 +1276,13 @@ function App() {
   async function locateSubjectFromSpotScreen(
     query: string,
     signal: AbortSignal,
-    onProgress: (message: string) => void
+    onProgress: (message: string, percent: number) => void
   ): Promise<void> {
     const viewer = mapViewerRef.current;
     if (!mapReady || !viewer || viewer.isDestroyed()) {
       throw new Error("マップの読込完了後に検索してください");
     }
-    onProgress("被写体の位置を検索しています…");
+    onProgress("被写体の位置を検索しています…", 0);
     const location = await resolveSpotLocation(query, signal);
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const subject = await resolveSearchSubject(

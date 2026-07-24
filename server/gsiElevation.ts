@@ -263,7 +263,7 @@ function persistentTileKey(source: ElevationTileSource, x: number, y: number): s
   return `${source.id}/${source.zoom}/${x}/${y}.bin`;
 }
 
-function serializeDecodedElevationTile(tile: DecodedElevationTile): Uint8Array {
+function serializeDecodedElevationTile(tile: DecodedElevationTile): ArrayBuffer {
   const headerBytes = 12;
   const output = new Uint8Array(headerBytes + tile.heightsCentimeters.byteLength);
   const view = new DataView(output.buffer);
@@ -278,7 +278,7 @@ function serializeDecodedElevationTile(tile: DecodedElevationTile): Uint8Array {
     ),
     headerBytes
   );
-  return output;
+  return output.buffer;
 }
 
 function deserializeDecodedElevationTile(bytes: ArrayBuffer): DecodedElevationTile | null {
@@ -399,30 +399,6 @@ function heightFromTile(
   const heightCentimeters = tile.heightsCentimeters[pixelY * tile.width + pixelX];
   if (heightCentimeters === NO_DATA_HEIGHT_CENTIMETERS) return null;
   return heightCentimeters * 0.01;
-}
-
-async function lookupOneElevation(
-  point: GsiElevationRequestPoint,
-  signal?: AbortSignal
-): Promise<GsiElevationSample> {
-  if (!isJapaneseCoverage(point)) {
-    return { heightMeters: null, source: null };
-  }
-  const allowedSources = point.maximumDetail === "10m"
-    ? GSI_TILE_SOURCES.filter((source) => source.label === "DEM10B")
-    : point.maximumDetail === "5m"
-      ? GSI_TILE_SOURCES.filter((source) => source.label !== "DEM1A")
-      : GSI_TILE_SOURCES;
-  for (const source of allowedSources) {
-    const coordinate = tileCoordinates(point, source.zoom);
-    const tile = await fetchDecodedTile(source, coordinate.x, coordinate.y, signal);
-    if (!tile) continue;
-    const heightMeters = heightFromTile(tile, coordinate.pixelX, coordinate.pixelY);
-    if (heightMeters !== null) {
-      return { heightMeters, source: source.label };
-    }
-  }
-  return { heightMeters: null, source: null };
 }
 
 function sourceIsAllowedForPoint(
