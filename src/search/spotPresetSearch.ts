@@ -387,6 +387,41 @@ function screenPointForSample(
   };
 }
 
+/**
+ * スポット検索では天体と被写体を必ず画面中央で完全一致させる必要はない。
+ * 指定焦点距離の画角内に両方が入る撮影地点を探すため、中央解に加えて
+ * 画角内の水平・垂直オフセット解も少数探索する。
+ */
+function screenPointsForSample(
+  id: SearchCelestialId,
+  sample: SearchSample,
+  cameraSettings: CameraSettings,
+  previewAspectRatio: number
+): CelestialScreenPoint[] {
+  const focalLength = Math.max(1, cameraSettings.focalLengthMm);
+  const aspect = Math.max(0.25, previewAspectRatio);
+  const sensorWidthMm = 36;
+  const sensorHeightMm = sensorWidthMm / aspect;
+  const horizontalHalfFov = Math.atan(sensorWidthMm / (2 * focalLength)) * 180 / Math.PI;
+  const verticalHalfFov = Math.atan(sensorHeightMm / (2 * focalLength)) * 180 / Math.PI;
+  // 円盤半径と計算誤差の余白を残し、画角端までは使わない。
+  const horizontalOffset = Math.max(0, horizontalHalfFov * 0.62);
+  const verticalOffset = Math.max(0, verticalHalfFov * 0.55);
+  const offsets: Array<[number, number]> = [
+    [0, 0],
+    [-horizontalOffset, 0],
+    [horizontalOffset, 0],
+    [0, -verticalOffset],
+    [0, verticalOffset],
+  ];
+  return offsets.map(([azimuthOffset, altitudeOffset], index) => ({
+    ...screenPointForSample(id, sample),
+    label: `${BODY_LABELS[id]}構図候補${index + 1}`,
+    azimuthDegrees: (sample.horizontal.azimuthDegrees + azimuthOffset + 360) % 360,
+    altitudeDegrees: sample.horizontal.altitudeDegrees + altitudeOffset,
+  })).filter((point) => point.altitudeDegrees > 0.25);
+}
+
 
 function minimalAzimuthBand(azimuths: number[], paddingDegrees = 3): {
   startDegrees: number;
@@ -457,6 +492,14 @@ export async function searchSpotPresets({
   terrainPrefetcher,
 }: SpotPresetSearchOptions): Promise<SpotPresetResult[]> {
   const performanceTracker = createSpotSearchPerformanceTracker();
+  // 被写体ピンの3D Tiles高が未確定・古い場合でも、検索時に取得した地表高を
+  // 天体構図計算へ統一して使用する。高さ0mのまま計算される取りこぼしを防ぐ。
+  const searchSubject: GroundPoint = {
+    ...subject,
+    height: Number.isFinite(subjectGroundHeightMeters)
+      ? subjectGroundHeightMeters
+      : subject.height,
+  };
   performanceTracker.enterPhase(1);
   onProgress?.(phaseMessage(1), phaseProgress(1));
   const tripodDistanceRange = resolvedTripodDistanceRange(criteria);
@@ -521,7 +564,7 @@ export async function searchSpotPresets({
       try {
         performanceTracker.increment("terrainPrefetches");
         await performanceTracker.measure("terrainPrefetch", () => terrainPrefetcher(
-          subject,
+          searchSubject,
           azimuthBand,
           tripodDistanceRange.maxMeters,
           signal
@@ -551,8 +594,13 @@ export async function searchSpotPresets({
           const previousDistance = previousDistanceByBearing.get(bearingBucket);
           performanceTracker.increment("candidateAttempts");
           const candidates = await performanceTracker.measure("candidateSearch", () => candidateCalculator(
-            subject,
-            [screenPointForSample(criteria.celestialId, sample)],
+            searchSubject,
+            screenPointsForSample(
+              criteria.celestialId,
+              sample,
+              cameraSettings,
+              previewAspectRatio
+            ),
             cameraSettings,
             sample.date,
             calculationMode,
@@ -565,28 +613,33 @@ export async function searchSpotPresets({
               preferredDistanceMeters: previousDistance,
             }
           ));
-          const candidate = candidates[0] ?? null;
-          if (!candidate ||
-            candidate.distanceMeters < tripodDistanceRange.minMeters ||
-            candidate.distanceMeters > tripodDistanceRange.maxMeters ||
-            (criteria.siteConstraints.elevationDifferenceWithin100m &&
-              Math.abs(candidate.height - subjectGroundHeightMeters) > 100)) {
-            return null;
-          }
+          const distanceEligible = candidates.filter((candidate) =>
+            candidate.distanceMeters >= tripodDistanceRange.minMeters &&
+            candidate.distanceMeters <= tripodDistanceRange.maxMeters &&
+            (!criteria.siteConstraints.elevationDifferenceWithin100m ||
+              Math.abs(candidate.height - subjectGroundHeightMeters) <= 100)
+          );
+          if (distanceEligible.length === 0) return null;
 
+          let candidate = distanceEligible[0];
           let siteContext: SiteContext | undefined;
           if (mappedSiteConstraints) {
-            const contexts = await siteContextFetcher([{
-              latitude: candidate.latitude,
-              longitude: candidate.longitude,
-              height: candidate.height,
-              label: candidate.label,
-            }], signal, false);
-            siteContext = contexts[0];
-            if (!siteContext ||
-              !passesMappedSiteConstraints(siteContext, criteria.siteConstraints)) {
-              return null;
-            }
+            const contexts = await siteContextFetcher(
+              distanceEligible.map((value) => ({
+                latitude: value.latitude,
+                longitude: value.longitude,
+                height: value.height,
+                label: value.label,
+              })),
+              signal,
+              false
+            );
+            const acceptedIndex = contexts.findIndex((context) =>
+              passesMappedSiteConstraints(context, criteria.siteConstraints)
+            );
+            if (acceptedIndex < 0) return null;
+            candidate = distanceEligible[acceptedIndex];
+            siteContext = contexts[acceptedIndex];
           }
 
           performanceTracker.increment("candidateAccepted");
@@ -664,7 +717,7 @@ export async function searchSpotPresets({
           placeLabel: subject.label,
           date: sample.date,
           timeZone,
-          subject,
+          subject: searchSubject,
           tripod: {
             latitude: candidate.latitude,
             longitude: candidate.longitude,
@@ -706,7 +759,7 @@ export async function searchSpotPresets({
       ? evaluateSample(
           criteria.celestialId,
           date,
-          subject,
+          searchSubject,
           calculationMode,
           criteria.sunSearchTiming,
           criteria.moonAgeMinDays,

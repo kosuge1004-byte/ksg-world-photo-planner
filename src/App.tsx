@@ -43,6 +43,7 @@ import { adaptiveSearchConcurrency } from "./search/adaptiveConcurrency";
 
 import { flyMapToTarget } from "./cesium/camera";
 import {
+  calculateCelestialHorizontalCoordinates,
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
@@ -614,8 +615,49 @@ function App() {
     if (subjectPoint) setTimelineInteracting(false);
   }, [subjectPoint]);
 
+  const tripodCandidateSourcePoints = useMemo(() => {
+    // 三脚ピンがまだ無い段階でも、被写体ピン地点を初期観測地点として
+    // 各天体の方位・高度を作り、三脚候補計算を開始できるようにする。
+    // calculateTripodCandidates() 内で候補地点を反復更新するため、
+    // 実際の候補位置における天体位置へ収束する。
+    if (celestialPoints.length > 0) return celestialPoints;
+    if (!subjectPoint || Number.isNaN(selectedDate.getTime())) return [];
+
+    const definitions = [
+      { id: "sun" as const, label: "太陽" },
+      { id: "moon" as const, label: "月" },
+      { id: "milkyWay" as const, label: "天の川" },
+      { id: "polaris" as const, label: "北極星" },
+    ];
+    const initialObserver = {
+      ...subjectPoint,
+      height: subjectPoint.height + cameraSettings.lensCenterHeightMeters,
+    };
+
+    return definitions.map(({ id, label }) => ({
+      id,
+      label,
+      ...calculateCelestialHorizontalCoordinates(
+        id,
+        selectedDate,
+        initialObserver,
+        calculationMode
+      ),
+      xPercent: 50,
+      yPercent: 50,
+      inFront: true,
+      visibleInFrame: false,
+    }));
+  }, [
+    celestialPoints,
+    subjectPoint,
+    selectedDate,
+    cameraSettings.lensCenterHeightMeters,
+    calculationMode,
+  ]);
+
   useEffect(() => {
-    const enabledPoints = celestialPoints.filter(
+    const enabledPoints = tripodCandidateSourcePoints.filter(
       (point) => celestialVisibility[point.id]
     );
     if (!subjectPoint || enabledPoints.length === 0) {
@@ -665,7 +707,7 @@ function App() {
     };
   }, [
     subjectPoint,
-    celestialPoints,
+    tripodCandidateSourcePoints,
     celestialVisibility,
     cameraSettings,
     selectedDate,

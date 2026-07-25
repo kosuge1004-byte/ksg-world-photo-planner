@@ -107,9 +107,14 @@ export async function runSpotSearchJob(
 
   try {
     let performanceMetrics: SpotSearchPerformanceMetrics | undefined;
-    const cameraSettings: CameraSettings = input.cameraSettings ?? {
-      focalLengthMm: 24,
-      lensCenterHeightMeters: input.lensCenterHeightMeters,
+    // スポット検索画面で指定した焦点距離を必ず検索計算へ使用する。
+    // 以前はメイン画面の cameraSettings.focalLengthMm が優先され、
+    // 検索画面で24mmを指定してもメイン画面が望遠なら望遠条件で計算されていた。
+    const cameraSettings: CameraSettings = {
+      ...(input.cameraSettings ?? {}),
+      focalLengthMm: input.criteria.focalLengthMm,
+      lensCenterHeightMeters:
+        input.cameraSettings?.lensCenterHeightMeters ?? input.lensCenterHeightMeters,
     };
     const results = await searchSpotPresets({
       criteria: input.criteria,
