@@ -147,8 +147,8 @@ export async function runSpotSearchJob(
       status: "awaiting-3d",
       progressPercent: 98,
       progress: results.length > 0
-        ? `端末復帰後に建物の最終3D遮蔽を確認します…${performanceMetrics ? `\n検索計算 ${formatSearchDuration(performanceMetrics.totalMilliseconds)}` : ""}`
-        : `条件に一致する候補はありませんでした${performanceMetrics ? `\n検索計算 ${formatSearchDuration(performanceMetrics.totalMilliseconds)}` : ""}`,
+        ? `端末復帰後に建物の最終3D遮蔽を確認します…${performanceMetrics ? `\n検索計算 ${formatSearchDuration(performanceMetrics.totalMilliseconds)}\n${diagnosticSummary(performanceMetrics)}` : ""}`
+        : `条件に一致する候補はありませんでした${performanceMetrics ? `\n検索計算 ${formatSearchDuration(performanceMetrics.totalMilliseconds)}\n${diagnosticSummary(performanceMetrics)}` : ""}`,
       results: serializeResults(results),
     });
   } catch (error) {
