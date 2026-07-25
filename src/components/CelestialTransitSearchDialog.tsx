@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN, type CameraSettings } from "../types/camera";
@@ -31,6 +31,7 @@ const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
 ];
 
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"] as const;
+type ResultSortOrder = "date" | "distance";
 
 type Props = {
   open: boolean;
@@ -77,6 +78,7 @@ export function CelestialTransitSearchDialog({
   const [timeRange, setTimeRange] = useSearchTimeRange();
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
   const [results, setResults] = useState<CelestialTransitResult[]>([]);
+  const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("date");
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -92,6 +94,7 @@ export function CelestialTransitSearchDialog({
     setCustomStartDate(start);
     setCustomEndDate(end);
     setResults([]);
+    setResultSortOrder("date");
     setMessage("");
     setProgressPercent(0);
   }, [cameraSettings.focalLengthMm, currentDate, open, timeZone]);
@@ -168,6 +171,17 @@ export function CelestialTransitSearchDialog({
       }
     }
   }
+
+  const displayedResults = useMemo(() => {
+    const sorted = [...results].sort((a, b) => {
+      if (resultSortOrder === "distance") {
+        const distanceDifference = a.angularDistanceDegrees - b.angularDistanceDegrees;
+        if (Math.abs(distanceDifference) > 1e-9) return distanceDifference;
+      }
+      return a.date.getTime() - b.date.getTime();
+    });
+    return sorted.slice(0, displayCount);
+  }, [displayCount, resultSortOrder, results]);
 
   if (!open) return null;
 
@@ -294,12 +308,24 @@ export function CelestialTransitSearchDialog({
 
         {results.length > 0 && (
           <div className="celestial-transit-results" aria-label="検索結果">
-            {results.map((result) => (
+            <div className="celestial-transit-result-sort">
+              <span>並べ替え</span>
+              <select
+                value={resultSortOrder}
+                onChange={(event) => setResultSortOrder(event.target.value as ResultSortOrder)}
+                aria-label="検索結果の並べ替え"
+              >
+                <option value="date">日付順</option>
+                <option value="distance">画角内の距離が近い順</option>
+              </select>
+            </div>
+            {displayedResults.map((result) => (
               <button key={result.id} type="button" onClick={() => {
                 onSelect(result);
                 close();
               }}>
-                {resultLabel(result, timeZone)}
+                <span>{resultLabel(result, timeZone)}</span>
+                <small>被写体との角距離 {result.angularDistanceDegrees.toFixed(2)}°</small>
               </button>
             ))}
           </div>

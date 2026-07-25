@@ -64,13 +64,20 @@ function destinationCartographic(
   );
 }
 
-function coarseDistances(): number[] {
+function coarseDistances(maximumDistanceMeters: number): number[] {
   const minimum = 8;
+  const maximum = Math.max(minimum, Math.min(TERRAIN_DISTANCE_LIMIT_METERS, maximumDistanceMeters));
   const samples = 112;
   return Array.from({ length: samples }, (_, index) =>
-    minimum * (TERRAIN_DISTANCE_LIMIT_METERS / minimum) **
+    minimum * (maximum / minimum) **
       (index / (samples - 1))
   );
+}
+
+function subjectExclusionMarginMeters(subjectDistanceMeters: number): number {
+  // 被写体地点そのものを遮蔽物と誤判定しないため、終端直前を除外する。
+  // DEMの解像度・位置誤差を考慮し、距離の1%を基準に25〜100mへ制限する。
+  return Math.min(100, Math.max(25, subjectDistanceMeters * 0.01));
 }
 
 function elevationAngleDegrees(
@@ -115,6 +122,7 @@ async function calculateHorizon(
   tripod: GroundPoint,
   lensCenterHeightMeters: number,
   azimuthDegrees: number,
+  maximumDistanceMeters: number,
   signal?: AbortSignal
 ): Promise<TerrainHorizon> {
   abortIfRequested(signal);
@@ -123,7 +131,10 @@ async function calculateHorizon(
     tripod.latitude,
     tripod.height + lensCenterHeightMeters
   );
-  const distances = coarseDistances();
+  if (maximumDistanceMeters <= 8) {
+    return { maximumElevationDegrees: -90, distanceMeters: 0 };
+  }
+  const distances = coarseDistances(maximumDistanceMeters);
   const coarse = await sampleServerLineOfSightTerrain(
     distances.map((distance) => destinationCartographic(tripod, azimuthDegrees, distance)),
     distances,
@@ -152,7 +163,8 @@ async function calculateHorizon(
 function cacheKey(
   tripod: GroundPoint,
   lensCenterHeightMeters: number,
-  azimuthDegrees: number
+  azimuthDegrees: number,
+  maximumDistanceMeters: number
 ): string {
   return [
     tripod.latitude.toFixed(6),
@@ -160,6 +172,7 @@ function cacheKey(
     tripod.height.toFixed(1),
     lensCenterHeightMeters.toFixed(2),
     (Math.round((((azimuthDegrees % 360) + 360) % 360) / 0.02) * 0.02).toFixed(2),
+    Math.round(maximumDistanceMeters).toString(),
   ].join(":");
 }
 
@@ -168,9 +181,10 @@ export function createServerLineOfSightEvaluator(
 ): (
   tripod: GroundPoint,
   horizontal: HorizontalCoordinates,
+  subjectDistanceMeters: number,
   signal?: AbortSignal
 ) => Promise<CelestialOcclusion> {
-  return async (tripod, horizontal, signal) => {
+  return async (tripod, horizontal, subjectDistanceMeters, signal) => {
     if (horizontal.altitudeDegrees <= 0) {
       return {
         visible: false,
@@ -182,12 +196,20 @@ export function createServerLineOfSightEvaluator(
         obstructionDistanceMeters: 0,
       };
     }
-    const key = cacheKey(tripod, lensCenterHeightMeters, horizontal.azimuthDegrees);
+    const exclusionMarginMeters = subjectExclusionMarginMeters(subjectDistanceMeters);
+    const maximumDistanceMeters = Math.max(0, subjectDistanceMeters - exclusionMarginMeters);
+    const key = cacheKey(
+      tripod,
+      lensCenterHeightMeters,
+      horizontal.azimuthDegrees,
+      maximumDistanceMeters
+    );
     const pending = horizonCache.getOrCreate(key, () =>
       calculateHorizon(
         tripod,
         lensCenterHeightMeters,
-        horizontal.azimuthDegrees
+        horizontal.azimuthDegrees,
+        maximumDistanceMeters
       )
     );
     const horizon = await awaitWithAbort(pending, signal);

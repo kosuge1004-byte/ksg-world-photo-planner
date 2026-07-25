@@ -358,7 +358,7 @@ button { cursor: pointer; }
   cursor: pointer;
   pointer-events: auto;
 }
-.preview-date-time input { position: static; display: block; width: 100%; min-width: 0; height: 25px; padding: 1px 2px; color: #f4f6f9; border: 0; outline: 0; background: transparent; font-size: clamp(8px, 1.55vw, 11px); font-weight: 600; color-scheme: dark; cursor: pointer; }
+.preview-date-time input { position: static; display: block; width: 100%; min-width: 0; height: 25px; padding: 1px 2px; color: #f4f6f9; border: 0; outline: 0; background: transparent; font-size: clamp(12px, 2.25vw, 14px); line-height: 1; letter-spacing: -0.25px; font-weight: 700; color-scheme: dark; cursor: pointer; }
 .preview-date-time input::-webkit-calendar-picker-indicator { margin: 0; padding: 1px; filter: brightness(1.45); cursor: pointer; }
 .preview-now-button { min-width: 43px; padding: 3px 5px; color: #fff; border: 1px solid rgba(255,255,255,.24); border-radius: 6px; background: rgba(0,2,5,.88); font-size: 8px; font-weight: 700; }
 
@@ -914,6 +914,25 @@ button { cursor: pointer; }
 
 .celestial-transit-message { margin: 0; color: #c7d1dc; font-size: 12px; }
 .celestial-transit-results { display: grid; gap: 1px; padding: 0 12px 12px; }
+.celestial-transit-result-sort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  color: #c7d1dc;
+  font-size: 12px;
+}
+.celestial-transit-result-sort select {
+  min-height: 34px;
+  max-width: 70%;
+  padding: 4px 28px 4px 8px;
+  border: 1px solid #435160;
+  border-radius: 6px;
+  background: #111923;
+  color: #f1f5f9;
+  font-size: 12px;
+}
 .celestial-transit-results button {
   min-height: 46px;
   padding: 10px 12px;
@@ -923,6 +942,13 @@ button { cursor: pointer; }
   color: #f1f5f9;
   text-align: left;
   font-size: 14px;
+}
+.celestial-transit-results button span,
+.celestial-transit-results button small { display: block; }
+.celestial-transit-results button small {
+  margin-top: 3px;
+  color: #9eabb8;
+  font-size: 11px;
 }
 .celestial-transit-results button:active { background: #242a0d; }
 
@@ -1463,4 +1489,50 @@ button { cursor: pointer; }
   color: #84919f;
   font-size: 7px;
   line-height: 1.45;
+}
+
+/* iPhone Safari does not support the Fullscreen API for ordinary page elements.
+   This fixed-position fallback provides the same in-app fullscreen behavior. */
+body.pseudo-fullscreen-active {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+.preview-section.ios-pseudo-fullscreen,
+.map-section.ios-pseudo-fullscreen {
+  position: fixed !important;
+  z-index: 10000 !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #05070a;
+}
+.preview-section.ios-pseudo-fullscreen .fullscreen-exit-button,
+.map-section.ios-pseudo-fullscreen .fullscreen-exit-button {
+  display: flex;
+  top: auto;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+}
+.map-section.ios-pseudo-fullscreen .map-left-controls {
+  top: max(6px, env(safe-area-inset-top));
+  bottom: auto;
+  left: 6px;
+  height: calc(45.25dvh - 12px);
+}
+.map-section.ios-pseudo-fullscreen .map-search-control {
+  top: max(6px, env(safe-area-inset-top));
+  right: 6px;
+  left: 53px;
+  width: auto;
+}
+.map-section.ios-pseudo-fullscreen .map-search-toggle {
+  justify-content: center;
+  width: 100%;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
 }

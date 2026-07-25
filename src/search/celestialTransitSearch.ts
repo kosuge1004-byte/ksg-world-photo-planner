@@ -25,6 +25,8 @@ export type CelestialTransitResult = {
   id: string;
   date: Date;
   celestialId: Exclude<CelestialBodyId, "polaris">;
+  /** 画面中央（被写体方向）から天体中心までの角距離。小さいほど構図上で近い。 */
+  angularDistanceDegrees: number;
 };
 
 export type CelestialTransitCriteria = {
@@ -323,8 +325,11 @@ export async function searchCelestialTransitDates(
   const targetAzimuth = input.criteria.mode === "direction-crossing"
     ? calculateKarneyLineMetrics(input.tripod, input.subject).bearingDegrees
     : null;
+  // 並べ替え用の角距離は両検索モードで必要なため、被写体を中心とする
+  // 投影座標系を常に作成する。画角内判定自体は in-frame のときだけ使用する。
+  const resultProjection = createFrameProjection(input);
   const frameProjection = input.criteria.mode === "in-frame"
-    ? createFrameProjection(input)
+    ? resultProjection
     : null;
   const previousErrors = new Map<Exclude<CelestialBodyId, "polaris">, { time: number; error: number }>();
   const inFrameStates = new Map<Exclude<CelestialBodyId, "polaris">, {
@@ -412,8 +417,18 @@ export async function searchCelestialTransitDates(
     );
     const id = `${body}-${closestDate.getTime()}`;
     if (isDateEligible(closestDate) && !resultIds.has(id)) {
+      const closestHorizontal = horizontalCoordinatesForSearch(body, closestDate, observer, input);
       resultIds.add(id);
-      results.push({ id, date: closestDate, celestialId: body });
+      results.push({
+        id,
+        date: closestDate,
+        celestialId: body,
+        angularDistanceDegrees: angularDistanceToFrameCenterDegrees(
+          closestHorizontal.azimuthDegrees,
+          closestHorizontal.altitudeDegrees,
+          resultProjection
+        ),
+      });
     }
   };
 
@@ -443,7 +458,16 @@ export async function searchCelestialTransitDates(
             !resultIds.has(id)
           ) {
             resultIds.add(id);
-            results.push({ id, date: crossingDate, celestialId: body });
+            results.push({
+              id,
+              date: crossingDate,
+              celestialId: body,
+              angularDistanceDegrees: angularDistanceToFrameCenterDegrees(
+                crossingHorizontal.azimuthDegrees,
+                crossingHorizontal.altitudeDegrees,
+                resultProjection
+              ),
+            });
           }
         }
         previousErrors.set(body, { time, error });
@@ -522,16 +546,6 @@ export async function searchCelestialTransitDates(
       }
     }
 
-    // Complete every celestial body in the current time step before applying
-    // the display limit. Refined crossings from the same sample interval can
-    // be slightly earlier than one another, regardless of BODY_ORDER.
-    if (input.criteria.mode === "direction-crossing" && results.length >= input.criteria.displayCount) {
-      reportProgress(true);
-      return results
-        .sort((a, b) => a.date.getTime() - b.date.getTime())
-        .slice(0, input.criteria.displayCount);
-    }
-
     processed += 1;
     reportProgress();
     if (processed % 100 === 0) {
@@ -548,7 +562,7 @@ export async function searchCelestialTransitDates(
 
   reportProgress(true);
 
-  return results
-    .sort((a, b) => a.date.getTime() - b.date.getTime())
-    .slice(0, input.criteria.displayCount);
+  // UI側で「日付順」と「被写体と天体の距離順」を切り替えるため、
+  // ここでは全候補を返す。表示件数の制限は並べ替え後にUI側で適用する。
+  return results.sort((a, b) => a.date.getTime() - b.date.getTime());
 }

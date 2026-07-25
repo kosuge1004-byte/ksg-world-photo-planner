@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { zonedDateTimeLocalFromDate } from "../time/zonedTime";
 import type { PreviewFrameMode } from "../types/camera";
+import { enterElementFullscreen, exitElementFullscreen } from "../ui/fullscreen";
 
 type Props = {
   dateTimeLocal: string;
@@ -27,11 +28,11 @@ export function PreviewChrome({
 
   function openFullscreen() {
     const preview = document.querySelector<HTMLElement>(".preview-section");
-    void preview?.requestFullscreen?.();
+    void enterElementFullscreen(preview);
   }
 
   function exitFullscreen() {
-    void document.exitFullscreen?.();
+    void exitElementFullscreen();
   }
 
   return (

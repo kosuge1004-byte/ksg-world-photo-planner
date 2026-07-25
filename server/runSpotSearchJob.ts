@@ -10,6 +10,27 @@ import { sampleServerWorldTerrain } from "./worldTerrain.ts";
 import { prefetchGsiTerrainAroundSubject } from "./gsiElevation.ts";
 import { formatSearchDuration, type SpotSearchPerformanceMetrics } from "../src/search/searchPerformance.ts";
 
+
+function diagnosticSummary(metrics?: SpotSearchPerformanceMetrics): string {
+  if (!metrics) return "";
+  const c = metrics.counters;
+  return [
+    "検索診断",
+    `日時候補: ${c.generatedSamples}件`,
+    `日時確認: ${c.checkedSamples}件`,
+    `天体条件通過: ${c.celestialMatches}件`,
+    `三脚計算試行: ${c.candidateAttempts}件`,
+    `三脚候補成立: ${c.candidateAccepted}件`,
+    `三脚計算失敗: ${c.candidateFailures}件`,
+    `DEM先行取得失敗: ${c.terrainPrefetchFailures}件`,
+    `見通し確認: ${c.lineOfSightChecks}件`,
+    `見通し通過: ${c.lineOfSightVisible}件`,
+    `見通し取得失敗: ${c.lineOfSightFailures}件`,
+    `地形未確認で保留: ${c.lineOfSightUnverifiedAccepted}件`,
+    `サーバー候補: ${c.resultCount}件`,
+  ].join(" / ");
+}
+
 const serverCandidateCalculator: typeof calculateTripodCandidates = (
   subject,
   points,

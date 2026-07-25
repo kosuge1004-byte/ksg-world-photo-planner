@@ -130,6 +130,7 @@ import {
   markSpotSearchPrepared,
 } from "./search/backgroundSpotSearch";
 import type { ActiveSpotSearchJob } from "./search/backgroundSpotSearch";
+import { enterElementFullscreen, exitElementFullscreen } from "./ui/fullscreen";
 
 const DEFAULT_CELESTIAL_VISIBILITY: CelestialVisibility = {
   sun: true,
@@ -368,6 +369,7 @@ function App() {
   const plannedForegroundHeightCmRef = useRef(170);
   const foregroundTerrainTimerRef = useRef<number | null>(null);
   const foregroundTerrainRequestRef = useRef(0);
+  const currentLocationRequestRef = useRef(0);
 
   const [subjectPlacementActive, setSubjectPlacementActive] =
     useState(false);
@@ -415,8 +417,27 @@ function App() {
   timeZoneRef.current = timeZone;
 
   useEffect(() => {
-    // アプリがOSに破棄された後の再起動でも、保存済みジョブの結果取得画面へ復帰する。
-    if (readActiveSpotSearchJob()) setSpotSearchOpen(true);
+    // 起動時は必ずプレビュー＋マップのメイン画面を表示する。
+    // 保存済みのスポット検索ジョブは維持し、検索画面を手動で開いた際に再開できる。
+    setSpotSearchOpen(false);
+    setCelestialTransitSearchOpen(false);
+    setSavedPlansOpen(false);
+    setCalendarOpen(false);
+    setMoonAgeCalendarOpen(false);
+    setProjectSaveOpen(false);
+
+    const showMainScreenAfterPageRestore = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setSpotSearchOpen(false);
+      setCelestialTransitSearchOpen(false);
+      setSavedPlansOpen(false);
+      setCalendarOpen(false);
+      setMoonAgeCalendarOpen(false);
+      setProjectSaveOpen(false);
+    };
+
+    window.addEventListener("pageshow", showMainScreenAfterPageRestore);
+    return () => window.removeEventListener("pageshow", showMainScreenAfterPageRestore);
   }, []);
 
   const previewAspectRatio =
@@ -587,6 +608,13 @@ function App() {
   ]);
 
   useEffect(() => {
+    // 被写体ピンを新しく置いた直後は、モバイルのpointer/touch終了イベントが
+    // 取りこぼされていても候補計算を再開できるよう、時間操作中フラグを解除する。
+    // これにより、被写体確定時点の天体位置から三脚候補点を必ず再計算する。
+    if (subjectPoint) setTimelineInteracting(false);
+  }, [subjectPoint]);
+
+  useEffect(() => {
     const enabledPoints = celestialPoints.filter(
       (point) => celestialVisibility[point.id]
     );
@@ -594,15 +622,18 @@ function App() {
       setTripodCandidates([]);
       return;
     }
-    if (timelineInteracting) {
-      setTripodCandidates([]);
-      return;
-    }
-
     let cancelled = false;
     const controller = new AbortController();
-    // 時刻スクロール中に旧時刻の候補を残さず、操作が止まった時刻だけを表示する。
-    setTripodCandidates([]);
+    // 時間スライダー操作中も候補計算を止めず、描画間隔に近い短い待ち時間で追従させる。
+    // 操作中は粗いDEM走査で即応し、指を離した直後に通常精度で再計算する。
+    const updateDelayMs = timelineInteracting ? 16 : 32;
+    const interactionProfile = timelineInteracting
+      ? {
+          sampleCount: 8,
+          refinementPasses: 0,
+          refinementSegments: 2,
+        }
+      : undefined;
     const timer = window.setTimeout(() => {
       void calculateTripodCandidates(
         subjectPoint,
@@ -612,7 +643,9 @@ function App() {
         calculationMode,
         undefined,
         controller.signal,
-        previewAspectRatio
+        previewAspectRatio,
+        undefined,
+        interactionProfile
       )
         .then((candidates) => {
           if (!cancelled) setTripodCandidates(candidates);
@@ -620,9 +653,10 @@ function App() {
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
-          if (!cancelled) setTripodCandidates([]);
+          // 操作中の一時的な通信失敗では直前候補を保持し、追従表示を途切れさせない。
+          if (!cancelled && !timelineInteracting) setTripodCandidates([]);
         });
-    }, 280);
+    }, updateDelayMs);
 
     return () => {
       cancelled = true;
@@ -1232,6 +1266,9 @@ function App() {
     onProgress: (message: string, percent: number) => void
   ): Promise<SpotPresetResult[]> {
     const results = deserializeSpotSearchResults(job.results);
+    const diagnosticMessage = job.progress.includes("検索診断")
+      ? job.progress.slice(job.progress.indexOf("検索診断"))
+      : "";
     if (job.status === "complete") {
       clearActiveSpotSearchJob(active);
       return results;
@@ -1288,6 +1325,12 @@ function App() {
     onProgress("最終3D確認結果を保存しています…", 100);
     await finalizeBackgroundSpotSearch(active, verifiedResults);
     if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+    onProgress(
+      `${verifiedResults.length}件を最終確定しました${diagnosticMessage ? `
+${diagnosticMessage}
+最終3D通過: ${verifiedResults.length}件` : ""}`,
+      100
+    );
     return verifiedResults;
   }
 
@@ -1794,34 +1837,88 @@ function App() {
   }
 
   function openMapFullscreen() {
-    void mapSectionRef.current?.requestFullscreen?.();
+    void enterElementFullscreen(mapSectionRef.current);
   }
 
-  function showCurrentLocation() {
+  async function showCurrentLocation() {
+    if (!window.isSecureContext) {
+      setSearchMessage("現在地はHTTPS接続でのみ取得できます");
+      return;
+    }
     if (!navigator.geolocation) {
-      setSearchMessage("この端末では現在地を取得できません");
+      setSearchMessage("この端末またはブラウザでは現在地を取得できません");
       return;
     }
 
+    const requestId = ++currentLocationRequestRef.current;
+    setMapTool("none");
+    setSpotSearchOpen(false);
     setSearchMessage("現在地を取得しています…");
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        const center = {
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        };
-        setMapCenter(center);
-        const viewer = mapViewerRef.current;
-        if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
-          flyMapToTarget(viewer, center.latitude, center.longitude);
+
+    const getPosition = (options: PositionOptions) =>
+      new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, options);
+      });
+
+    try {
+      let position: GeolocationPosition;
+      try {
+        // まずGPSを優先する。屋内などでタイムアウトした場合は、
+        // Wi-Fi・基地局を利用する低精度取得へ自動的に切り替える。
+        position = await getPosition({
+          enableHighAccuracy: true,
+          timeout: 15_000,
+          maximumAge: 60_000,
+        });
+      } catch (firstError) {
+        const geolocationError = firstError as GeolocationPositionError;
+        if (geolocationError.code === 1) {
+          throw geolocationError;
         }
-        setSearchMessage("現在地を地図の中心へ移動しました");
-      },
-      (error) => {
-        setSearchMessage(`現在地を取得できませんでした：${error.message}`);
-      },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
-    );
+        setSearchMessage("GPSで取得できないため、通常精度で再取得しています…");
+        position = await getPosition({
+          enableHighAccuracy: false,
+          timeout: 15_000,
+          maximumAge: 300_000,
+        });
+      }
+
+      if (requestId !== currentLocationRequestRef.current) return;
+      const { latitude, longitude, accuracy } = position.coords;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        throw new Error("取得した座標が正しくありません");
+      }
+
+      const center = { latitude, longitude };
+      mapCenterRef.current = center;
+      setMapCenter(center);
+
+      const viewer = mapViewerRef.current;
+      if (mapViewModeRef.current === "3d" && viewer && !viewer.isDestroyed()) {
+        flyMapToTarget(viewer, latitude, longitude);
+      }
+
+      const accuracyText = Number.isFinite(accuracy)
+        ? `（精度 約${Math.max(1, Math.round(accuracy))}m）`
+        : "";
+      setSearchMessage(`現在地を地図の中心へ移動しました${accuracyText}`);
+    } catch (error) {
+      if (requestId !== currentLocationRequestRef.current) return;
+      const geolocationError = error as GeolocationPositionError;
+      if (typeof geolocationError.code === "number") {
+        if (geolocationError.code === 1) {
+          setSearchMessage("現在地の使用が許可されていません。端末の設定で、このサイトの位置情報を許可してください");
+        } else if (geolocationError.code === 2) {
+          setSearchMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
+        } else if (geolocationError.code === 3) {
+          setSearchMessage("現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください");
+        } else {
+          setSearchMessage(`現在地を取得できませんでした：${geolocationError.message || "不明なエラー"}`);
+        }
+      } else {
+        setSearchMessage(`現在地を取得できませんでした：${error instanceof Error ? error.message : "不明なエラー"}`);
+      }
+    }
   }
 
   function showSubjectOnMap() {
@@ -2158,7 +2255,7 @@ function App() {
             <button
               type="button"
               className="fullscreen-exit-button map-fullscreen-exit"
-              onClick={() => void document.exitFullscreen?.()}
+              onClick={() => void exitElementFullscreen()}
             >
               <span aria-hidden="true">✕</span>
               全画面を終了

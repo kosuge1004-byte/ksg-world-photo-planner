@@ -195,6 +195,7 @@ export function SpotSearchScreen({
   const [isPaused, setIsPaused] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const controllerRef = useRef<AbortController | null>(null);
+  const lastProgressMessageRef = useRef("");
   const resumeSearchRef = useRef(onResumeSearch);
   resumeSearchRef.current = onResumeSearch;
 
@@ -298,6 +299,7 @@ export function SpotSearchScreen({
     const controller = new AbortController();
     controllerRef.current = controller;
     setIsSearching(true);
+    lastProgressMessageRef.current = "";
     setProgressPercent(0);
     setIsPaused(false);
     setResults([]);
@@ -331,6 +333,7 @@ export function SpotSearchScreen({
         criteria,
         controller.signal,
         (nextMessage, percent) => {
+          lastProgressMessageRef.current = nextMessage;
           setMessage(nextMessage);
           setProgressPercent(percent);
         }
@@ -338,10 +341,16 @@ export function SpotSearchScreen({
       if (controller.signal.aborted) return;
       setResults(nextResults);
       setProgressPercent(100);
+      const diagnostic = lastProgressMessageRef.current.includes("検索診断")
+        ? lastProgressMessageRef.current.slice(
+            lastProgressMessageRef.current.indexOf("検索診断")
+          )
+        : "";
       setMessage(
-        nextResults.length > 0
+        `${nextResults.length > 0
           ? `${nextResults.length}件の構図候補が見つかりました`
-          : "指定条件で地表上に三脚解を持つ候補は見つかりませんでした"
+          : "指定条件で地表上に三脚解を持つ候補は見つかりませんでした"}${diagnostic ? `
+${diagnostic}` : ""}`
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;

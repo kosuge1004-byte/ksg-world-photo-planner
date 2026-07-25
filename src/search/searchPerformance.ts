@@ -8,10 +8,14 @@ export type SpotSearchPerformanceMetrics = {
     checkedSamples: number;
     celestialMatches: number;
     terrainPrefetches: number;
+    terrainPrefetchFailures: number;
     candidateAttempts: number;
+    candidateFailures: number;
     candidateAccepted: number;
     lineOfSightChecks: number;
     lineOfSightVisible: number;
+    lineOfSightFailures: number;
+    lineOfSightUnverifiedAccepted: number;
     siteContextRequests: number;
     resultCount: number;
   };
@@ -30,6 +34,7 @@ export type SpotSearchPerformanceTracker = {
   enterPhase: (phaseId: number) => void;
   increment: (name: CounterName, amount?: number) => void;
   measure: <T>(name: OperationName, operation: () => Promise<T>) => Promise<T>;
+  snapshot: (resultCount?: number) => SpotSearchPerformanceMetrics;
   complete: (resultCount: number) => SpotSearchPerformanceMetrics;
 };
 
@@ -42,10 +47,14 @@ export function createSpotSearchPerformanceTracker(): SpotSearchPerformanceTrack
     checkedSamples: 0,
     celestialMatches: 0,
     terrainPrefetches: 0,
+    terrainPrefetchFailures: 0,
     candidateAttempts: 0,
+    candidateFailures: 0,
     candidateAccepted: 0,
     lineOfSightChecks: 0,
     lineOfSightVisible: 0,
+    lineOfSightFailures: 0,
+    lineOfSightUnverifiedAccepted: 0,
     siteContextRequests: 0,
     resultCount: 0,
   };
@@ -82,6 +91,22 @@ export function createSpotSearchPerformanceTracker(): SpotSearchPerformanceTrack
       } finally {
         operationMilliseconds[name] += Math.max(0, Date.now() - start);
       }
+    },
+    snapshot(resultCount = counters.resultCount) {
+      const now = Date.now();
+      const snapshotPhases = { ...phaseMilliseconds };
+      if (currentPhase !== null) {
+        snapshotPhases[currentPhase] = (snapshotPhases[currentPhase] ?? 0) +
+          Math.max(0, now - phaseStartedAt);
+      }
+      return {
+        version: 1,
+        startedAtIso,
+        totalMilliseconds: Math.max(0, now - startedAt),
+        phaseMilliseconds: snapshotPhases,
+        counters: { ...counters, resultCount },
+        operationMilliseconds: { ...operationMilliseconds },
+      };
     },
     complete(resultCount) {
       const finishedAt = Date.now();

@@ -105,6 +105,7 @@ export type SpotPresetSearchOptions = {
   lineOfSightEvaluator: (
     tripod: GroundPoint,
     horizontal: HorizontalCoordinates,
+    subjectDistanceMeters: number,
     signal?: AbortSignal
   ) => Promise<CelestialOcclusion>;
   /** サーバー実行時も同じ探索ロジックを使えるよう、地形依存処理だけを注入する。 */
@@ -531,6 +532,7 @@ export async function searchSpotPresets({
           throw error;
         }
         // 先行取得失敗時も通常のオンデマンドDEM取得で検索を継続する。
+        performanceTracker.increment("terrainPrefetchFailures");
         console.warn("必要方位帯の地形先行取得を完了できませんでした", error);
       }
     }
@@ -606,6 +608,7 @@ export async function searchSpotPresets({
             (error instanceof DOMException && error.name === "AbortError")) {
             throw error;
           }
+          performanceTracker.increment("candidateFailures");
           console.warn("スポット検索中に三脚候補を計算できませんでした", error);
           return null;
         }
@@ -633,6 +636,7 @@ export async function searchSpotPresets({
               label: `${BODY_LABELS[criteria.celestialId]}三脚候補`,
             },
             entry.cameraHorizontal,
+            entry.candidate.distanceMeters,
             signal
           ));
           if (lineOfSight.verified && lineOfSight.visible) {
@@ -645,8 +649,10 @@ export async function searchSpotPresets({
             (error instanceof DOMException && error.name === "AbortError")) {
             throw error;
           }
-          console.warn("スポット検索中に見通しを確認できませんでした", error);
-          return null;
+          performanceTracker.increment("lineOfSightFailures");
+          performanceTracker.increment("lineOfSightUnverifiedAccepted");
+          console.warn("スポット検索中に見通しを確認できなかったため、地形未確認候補として残します", error);
+          return entry;
         }
       }));
 
@@ -771,6 +777,18 @@ export async function searchSpotPresets({
       }
       console.warn("建物・ランドマーク情報を取得できませんでした", error);
     }
+  }
+
+  // 標高・地形取得の障害を「候補0件」と誤表示しない。
+  // 三脚候補計算が一度も成功せず、計算例外だけが発生した場合は検索障害として明示する。
+  const interimMetrics = performanceTracker.snapshot(results.length);
+  if (results.length === 0 &&
+      interimMetrics.counters.candidateAccepted === 0 &&
+      interimMetrics.counters.candidateFailures > 0) {
+    onPerformance?.(interimMetrics);
+    throw new Error(
+      `標高・地形データの取得または三脚候補計算に失敗しました（失敗 ${interimMetrics.counters.candidateFailures}件）。候補0件ではなく検索処理エラーです。`
+    );
   }
 
   performanceTracker.enterPhase(12);
