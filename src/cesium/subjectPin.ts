@@ -7,6 +7,7 @@ import {
 } from "cesium";
 
 import type { GroundPoint } from "../types/points";
+import { groundPointFromCoordinates } from "./worldTerrain";
 
 const SUBJECT_PIN_ID = "ksg-subject-pin";
 const SUBJECT_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
@@ -80,15 +81,40 @@ export async function setSubjectPinFromCoordinates(
     return addVisibleSubjectPin(viewer, clampedPosition, label);
   } catch (error) {
     console.warn(
-      "3D表面への被写体ピン配置に失敗。代替高度を使用します。",
+      "3D表面への被写体ピン配置に失敗。地形標高へフォールバックします。",
       error
     );
 
-    return addVisibleSubjectPin(
-      viewer,
-      Cartesian3.fromDegrees(longitude, latitude, 0),
-      label
-    );
+    // clampToHeightMostDetailed() はPhotorealistic 3D Tilesが未読込・対象外の場合に
+    // undefinedを返すことがある。従来は高さ0mへ落としていたため、被写体が実際の
+    // 地表より数十～数百m下に入り、三脚候補計算が全件不成立になっていた。
+    // DEMで地表高を取得し、被写体ピンの基準高度を維持する。
+    try {
+      const groundPoint = await groundPointFromCoordinates(
+        latitude,
+        longitude,
+        label
+      );
+      return addVisibleSubjectPin(
+        viewer,
+        Cartesian3.fromDegrees(
+          groundPoint.longitude,
+          groundPoint.latitude,
+          groundPoint.height
+        ),
+        label
+      );
+    } catch (terrainError) {
+      console.warn(
+        "地形標高も取得できないため楕円体高0mを使用します。",
+        terrainError
+      );
+      return addVisibleSubjectPin(
+        viewer,
+        Cartesian3.fromDegrees(longitude, latitude, 0),
+        label
+      );
+    }
   }
 }
 

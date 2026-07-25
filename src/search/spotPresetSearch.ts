@@ -492,13 +492,18 @@ export async function searchSpotPresets({
   terrainPrefetcher,
 }: SpotPresetSearchOptions): Promise<SpotPresetResult[]> {
   const performanceTracker = createSpotSearchPerformanceTracker();
-  // 被写体ピンの3D Tiles高が未確定・古い場合でも、検索時に取得した地表高を
-  // 天体構図計算へ統一して使用する。高さ0mのまま計算される取りこぼしを防ぐ。
+  // 被写体ピンが建物・塔・山頂などの3D表面に置かれている場合、その高さは
+  // 構図計算に必要な「狙う被写体点」そのもの。従来は検索開始時にDEM地表高で
+  // 無条件上書きしていたため、被写体点を地面まで落とし、候補が全件不成立に
+  // なっていた。3D表面高を優先し、無効値の場合だけDEM高へフォールバックする。
+  const resolvedSubjectHeight = Number.isFinite(subject.height)
+    ? subject.height
+    : subjectGroundHeightMeters;
   const searchSubject: GroundPoint = {
     ...subject,
-    height: Number.isFinite(subjectGroundHeightMeters)
-      ? subjectGroundHeightMeters
-      : subject.height,
+    height: Number.isFinite(resolvedSubjectHeight)
+      ? resolvedSubjectHeight
+      : 0,
   };
   performanceTracker.enterPhase(1);
   onProgress?.(phaseMessage(1), phaseProgress(1));
