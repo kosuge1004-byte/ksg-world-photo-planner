@@ -13,3 +13,60 @@
   for = "/*"
   [headers.values]
     Permissions-Policy = "camera=(self), geolocation=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)"
+
+# Production API routing.
+# Vite's local development middleware handles /api/* during `npm run dev`,
+# while deployed builds must forward each public API path to its Netlify Function.
+[[redirects]]
+  from = "/api/resolve-google-maps"
+  to = "/.netlify/functions/geocode"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/gsi-elevation"
+  to = "/.netlify/functions/gsi-elevation"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/gsi-geoid"
+  to = "/.netlify/functions/gsi-geoid"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/osm-site-context"
+  to = "/.netlify/functions/osm-site-context"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/spot-search-start"
+  to = "/.netlify/functions/spot-search-start"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/spot-search-status"
+  to = "/.netlify/functions/spot-search-status"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/spot-search-background"
+  to = "/.netlify/functions/spot-search-background"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/spot-search-finalize"
+  to = "/.netlify/functions/spot-search-finalize"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/timezone"
+  to = "/.netlify/functions/timezone"
+  status = 200
+  force = true
