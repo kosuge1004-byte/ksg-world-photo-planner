@@ -43,19 +43,13 @@
 
 [[redirects]]
   from = "/api/spot-search-start"
-  to = "/.netlify/functions/spot-search-start"
+  to = "/.netlify/functions/spot-search-start-background"
   status = 200
   force = true
 
 [[redirects]]
   from = "/api/spot-search-status"
   to = "/.netlify/functions/spot-search-status"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/spot-search-background"
-  to = "/.netlify/functions/spot-search-background"
   status = 200
   force = true
 
