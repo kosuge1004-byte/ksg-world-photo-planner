@@ -255,22 +255,23 @@ button { cursor: pointer; }
   z-index: 14;
   left: 50%;
   bottom: 8px;
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  max-width: 56%;
-  padding: 4px 8px;
+  display: grid;
+  gap: 7px;
+  width: max-content;
+  max-width: 78%;
+  padding: 8px 12px;
   color: #cbd2dc;
   border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 7px;
+  border-radius: 9px;
   background: rgba(2, 5, 9, .72);
-  font-size: 8px;
-  text-align: left;
+  font-size: 16px;
+  line-height: 1.35;
+  text-align: center;
   transform: translateX(-50%);
   pointer-events: none;
 }
 
-.preview-empty-state strong { color: #fff; font-size: 9px; white-space: nowrap; }
+.preview-empty-state strong { color: #fff; font-size: 18px; line-height: 1.1; white-space: nowrap; }
 .preview-load-status, .app-status { display: none; }
 
 /* Preview controls */
@@ -603,7 +604,7 @@ button { cursor: pointer; }
 .map-current-location-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(270px, calc(100% - 148px)); padding: 5px 8px; color: #edf4fb; border: 1px solid rgba(158,190,225,.45); border-radius: 6px; background: rgba(2,8,14,.9); font-size: 8px; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
 .map-current-location-status.permission-denied { display: grid; gap: 5px; width: min(286px, calc(100% - 116px)); pointer-events: auto !important; }
 .map-current-location-status.permission-denied button { min-height: 28px; padding: 4px 8px; color: #fff; border: 1px solid #55a7ff; border-radius: 5px; background: #0759a8; font: inherit; font-size: 9px; font-weight: 700; touch-action: manipulation; }
-.location-notice-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.location-notice-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .75fr) auto; gap: 5px; }
 .map-current-location-status.permission-denied .location-notice-actions .secondary { border-color: #596675; background: #202833; }
 .map-tripod-candidate-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(250px, calc(100% - 148px)); padding: 5px 8px; color: #eef7ff; border: 1px solid rgba(90,185,255,.58); border-radius: 6px; background: rgba(2,8,14,.92); font-size: 8px; font-weight: 700; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
 .map-tripod-candidate-status.calculating::before { content: "⌛ "; }

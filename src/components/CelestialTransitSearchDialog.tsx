@@ -14,7 +14,11 @@ import {
   type CelestialTransitSearchMode,
 } from "../search/celestialTransitSearch";
 import { prepareRefractionWeatherContext } from "../search/refractionWeather";
-import { zonedDateTimeLocalFromDate } from "../time/zonedTime";
+import {
+  JAPANESE_WEEKDAY_LABELS,
+  zonedDateTimeLocalFromDate,
+  zonedWeekday,
+} from "../time/zonedTime";
 import {
   DisplayCountSelect,
   TimeRangeSelector,
@@ -30,7 +34,6 @@ const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
   { value: "custom", label: "指定期間" },
 ];
 
-const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"] as const;
 type ResultSortOrder = "date" | "distance";
 
 type Props = {
@@ -51,8 +54,8 @@ function resultLabel(result: CelestialTransitResult, timeZone: string): string {
   const local = zonedDateTimeLocalFromDate(result.date, timeZone);
   const [dateText, timeText] = local.split("T");
   const [year, month, day] = dateText.split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}(${WEEKDAY_LABELS[weekday]}) ${timeText.slice(0, 5)}`;
+  const weekday = zonedWeekday(result.date, timeZone);
+  return `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}(${JAPANESE_WEEKDAY_LABELS[weekday]}) ${timeText.slice(0, 5)}`;
 }
 
 export function CelestialTransitSearchDialog({

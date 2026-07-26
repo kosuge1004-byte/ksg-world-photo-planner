@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="104" fill="#05070a"/>
+  <circle cx="256" cy="238" r="150" fill="#0a0f18" stroke="#2d8cff" stroke-width="18"/>
+  <path d="M279 69 124 285h103v158l161-231H284z" fill="#863bff"/>
+  <circle cx="371" cy="137" r="30" fill="#47bfff"/>
+  <text x="256" y="474" fill="#fff" font-family="Arial, sans-serif" font-size="58" font-weight="700" text-anchor="middle">KSG</text>
+</svg>

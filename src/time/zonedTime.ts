@@ -7,6 +7,16 @@ export type ZonedDateParts = {
   second: number;
 };
 
+export const JAPANESE_WEEKDAY_LABELS = [
+  "日",
+  "月",
+  "火",
+  "水",
+  "木",
+  "金",
+  "土",
+] as const;
+
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function formatter(timeZone: string): Intl.DateTimeFormat {
@@ -66,6 +76,24 @@ export function zonedDateTimeLocalFromDate(
 ): string {
   const parts = zonedDateParts(date, timeZone);
   return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T${pad2(
+    parts.hour
+  )}:${pad2(parts.minute)}`;
+}
+
+export function zonedWeekday(date: Date, timeZone: string): number {
+  const parts = zonedDateParts(date, timeZone);
+  return new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day)
+  ).getUTCDay();
+}
+
+export function formatZonedDateTimeWithWeekday(
+  date: Date,
+  timeZone: string
+): string {
+  const parts = zonedDateParts(date, timeZone);
+  const weekday = JAPANESE_WEEKDAY_LABELS[zonedWeekday(date, timeZone)];
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}(${weekday}) ${pad2(
     parts.hour
   )}:${pad2(parts.minute)}`;
 }

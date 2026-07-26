@@ -54,12 +54,21 @@ export function canOpenNativeLocationSettings(): boolean {
   );
 }
 
+export function isInstalledWebApp(): boolean {
+  const iosNavigator = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: fullscreen)").matches ||
+    iosNavigator.standalone === true;
+}
+
 export function locationPermissionInstructions(
   platform = locationSettingsPlatform(),
   siteLabel = window.location.host
 ): string {
   if (platform === "android") {
-    return `Chromeのアドレスバー左にあるサイト情報→「権限」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。ホーム画面版では、アプリアイコン長押し→「アプリ情報」→「権限」→「位置情報」も確認してください。`;
+    return isInstalledWebApp()
+      ? `ホーム画面のKSGアイコンを長押し→「アプリ情報」→「権限」→「位置情報」→「アプリの使用中のみ許可」を選んでください。表示されない場合はChromeで対象サイト（${siteLabel}）を開き、サイト情報→「権限」→「位置情報」→「許可」を選んでからホーム画面版を再起動してください。`
+      : `Chromeのアドレスバー左にあるサイト情報→「権限」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。`;
   }
   if (platform === "ios") {
     return `Safariのページメニュー→「Webサイトの設定」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。ホーム画面版では「設定」→「プライバシーとセキュリティ」→「位置情報サービス」も確認してください。`;

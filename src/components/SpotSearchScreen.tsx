@@ -16,7 +16,10 @@ import type {
   SpotSearchPeriod,
   SunSearchTiming,
 } from "../types/search";
-import { zonedDateTimeLocalFromDate } from "../time/zonedTime";
+import {
+  formatZonedDateTimeWithWeekday,
+  zonedDateTimeLocalFromDate,
+} from "../time/zonedTime";
 import type { SiteConstraintFlags } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
 import type { SubjectRecord } from "../subjectStorage";
@@ -203,8 +206,7 @@ function loadTripodDistance(): StoredTripodDistance {
 
 
 function resultDateTime(result: SpotPresetResult): string {
-  return zonedDateTimeLocalFromDate(result.date, result.timeZone)
-    .replace("T", " ");
+  return formatZonedDateTimeWithWeekday(result.date, result.timeZone);
 }
 
 export function SpotSearchScreen({
@@ -888,7 +890,7 @@ ${diagnostic}` : ""}`
               className="spot-preset-result"
               onClick={() => setSelectedResult(result)}
             >
-              <strong>{resultDateTime(result)}　{result.celestialLabel}</strong>
+              <strong>{resultDateTime(result)}　天体：{result.celestialLabel}</strong>
               <span>{result.placeLabel}</span>
               <small>
                 {result.focalLengthMm}mm　方位{result.cameraAzimuthDegrees.toFixed(1)}°　仰角{result.cameraAltitudeDegrees.toFixed(1)}°

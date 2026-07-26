@@ -2151,22 +2151,9 @@ ${diagnosticMessage}
       });
 
     try {
-      if (navigator.permissions?.query) {
-        try {
-          const permission = await navigator.permissions.query({
-            name: "geolocation",
-          });
-          if (permission.state === "denied") {
-            handleLocationPermissionDenied();
-            return;
-          }
-        } catch (error) {
-          // SafariなどPermissions APIの位置情報照会に未対応の環境では、
-          // 従来どおりgetCurrentPositionの結果で判定する。
-          console.info("位置情報の事前権限確認を省略します", error);
-        }
-      }
-
+      // Androidホーム画面版ではPermissions APIの状態がChrome本体と一時的に
+      // 食い違う場合があるため、事前判定で中止せずgetCurrentPositionを正とする。
+      // これによりボタン操作からOS/ブラウザーの許可処理または明示的な拒否結果へ進める。
       let position: GeolocationPosition;
       try {
         // まずGPSを優先する。屋内などでタイムアウトした場合は、
@@ -2588,6 +2575,12 @@ ${diagnosticMessage}
                       {canOpenNativeLocationSettings()
                         ? "このアプリの設定を開く"
                         : "許可方法を表示"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void showCurrentLocation()}
+                    >
+                      再試行
                     </button>
                     <button
                       type="button"
