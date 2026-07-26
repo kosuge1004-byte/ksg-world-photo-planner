@@ -138,11 +138,16 @@ import type { ActiveSpotSearchJob } from "./search/backgroundSpotSearch";
 import { enterElementFullscreen, exitElementFullscreen } from "./ui/fullscreen";
 import {
   canOpenNativeLocationSettings,
+  DeviceLocationError,
+  type DeviceLocation,
   geolocationPermissionState,
+  getDeviceCurrentPosition,
   isInstalledWebApp,
+  isNativeAndroidApp,
   locationPermissionInstructions,
   locationSettingsPlatform,
   openNativeLocationSettings,
+  openNativeSystemLocationSettings,
 } from "./device/locationSettings";
 
 const DEFAULT_CELESTIAL_VISIBILITY: CelestialVisibility = {
@@ -361,6 +366,8 @@ function App() {
   const [currentLocationMessage, setCurrentLocationMessage] = useState("");
   const [currentLocationPermissionDenied, setCurrentLocationPermissionDenied] =
     useState(false);
+  const [currentLocationSettingsTarget, setCurrentLocationSettingsTarget] =
+    useState<"app" | "system-location">("app");
 
   const [subjectPlacementActive, setSubjectPlacementActive] =
     useState(false);
@@ -2125,10 +2132,12 @@ ${diagnosticMessage}
     }
     setCurrentLocationMessage("");
     setCurrentLocationPermissionDenied(false);
+    setCurrentLocationSettingsTarget("app");
   }
 
   function handleLocationPermissionDenied(): void {
     setCurrentLocationPermissionDenied(true);
+    setCurrentLocationSettingsTarget("app");
     publishCurrentLocationMessage(
       `現在地の使用が許可されていません。${locationPermissionInstructions()}`,
       false
@@ -2137,9 +2146,14 @@ ${diagnosticMessage}
 
   async function openLocationSettingsFromNotice(): Promise<void> {
     try {
-      if (await openNativeLocationSettings()) {
+      const settingsOpened = currentLocationSettingsTarget === "system-location"
+        ? await openNativeSystemLocationSettings()
+        : await openNativeLocationSettings();
+      if (settingsOpened) {
         publishCurrentLocationMessage(
-          "端末の設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
+          currentLocationSettingsTarget === "system-location"
+            ? "Androidの位置情報設定を開きました。「位置情報を使用」をONにしてからアプリへ戻り、現在地を再実行してください"
+            : "KSGアプリの設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
           false
         );
         return;
@@ -2154,11 +2168,12 @@ ${diagnosticMessage}
 
   async function showCurrentLocation() {
     if (currentLocationPending) return;
-    if (!window.isSecureContext) {
+    const nativeAndroid = isNativeAndroidApp();
+    if (!nativeAndroid && !window.isSecureContext) {
       publishCurrentLocationMessage("現在地はHTTPS接続でのみ取得できます");
       return;
     }
-    if (!navigator.geolocation) {
+    if (!nativeAndroid && !navigator.geolocation) {
       publishCurrentLocationMessage("この端末またはブラウザでは現在地を取得できません");
       return;
     }
@@ -2169,9 +2184,14 @@ ${diagnosticMessage}
     stopAllEditModes();
     setSpotSearchOpen(false);
     setCurrentLocationPermissionDenied(false);
+    setCurrentLocationSettingsTarget("app");
     const initialPermissionState = await geolocationPermissionState();
     publishCurrentLocationMessage(
-      isInstalledWebApp() &&
+      nativeAndroid
+        ? initialPermissionState === "granted"
+          ? "Androidから現在地を取得しています…"
+          : "Androidの位置情報権限を確認しています…"
+        : isInstalledWebApp() &&
         locationSettingsPlatform() === "android" &&
         initialPermissionState !== "granted"
         ? "インストール版の位置情報権限を確認しています。Androidのアプリ権限欄に位置情報が表示されない場合は、Chromeのサイト権限で許可します…"
@@ -2179,34 +2199,33 @@ ${diagnosticMessage}
       false
     );
 
-    const getPosition = (options: PositionOptions) =>
-      new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, options);
-      });
-
     try {
-      // Androidホーム画面版ではPermissions APIの状態がChrome本体と一時的に
-      // 食い違う場合があるため、事前判定で中止せずgetCurrentPositionを正とする。
-      // これによりボタン操作からOS/ブラウザーの許可処理または明示的な拒否結果へ進める。
-      let position: GeolocationPosition;
+      // Androidネイティブ版ではCapacitorがOSの実行時権限を要求する。
+      // Web/PWA版は同じ関数内で従来のGeolocation APIへ切り替わる。
+      let position: DeviceLocation;
       try {
         // まずGPSを優先する。屋内などでタイムアウトした場合は、
         // Wi-Fi・基地局を利用する低精度取得へ自動的に切り替える。
-        position = await getPosition({
+        position = await getDeviceCurrentPosition({
           enableHighAccuracy: true,
           timeout: 15_000,
           maximumAge: 60_000,
         });
       } catch (firstError) {
-        const geolocationError = firstError as GeolocationPositionError;
-        if (geolocationError.code === 1) {
-          throw geolocationError;
+        if (
+          firstError instanceof DeviceLocationError &&
+          (
+            firstError.failure === "permission-denied" ||
+            firstError.failure === "location-disabled"
+          )
+        ) {
+          throw firstError;
         }
         publishCurrentLocationMessage(
           "GPSで取得できないため、通常精度で再取得しています…",
           false
         );
-        position = await getPosition({
+        position = await getDeviceCurrentPosition({
           enableHighAccuracy: false,
           timeout: 15_000,
           maximumAge: 300_000,
@@ -2214,7 +2233,7 @@ ${diagnosticMessage}
       }
 
       if (requestId !== currentLocationRequestRef.current) return;
-      const { latitude, longitude, accuracy } = position.coords;
+      const { latitude, longitude, accuracy } = position;
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
         throw new Error("取得した座標が正しくありません");
       }
@@ -2233,49 +2252,32 @@ ${diagnosticMessage}
       const accuracyText = Number.isFinite(accuracy)
         ? `（精度 約${Math.max(1, Math.round(accuracy))}m）`
         : "";
+      const precisionText = position.precision === "approximate"
+        ? "（Androidの概算位置。正確な位置情報をONにすると精度が上がります）"
+        : "";
       publishCurrentLocationMessage(
-        `現在地を地図の中心へ移動しました${accuracyText}`
+        `現在地を地図の中心へ移動しました${accuracyText}${precisionText}`
       );
     } catch (error) {
       if (requestId !== currentLocationRequestRef.current) return;
-      const geolocationError = error as GeolocationPositionError;
-      if (typeof geolocationError.code === "number") {
-        if (geolocationError.code === 1) {
+      if (error instanceof DeviceLocationError) {
+        if (error.failure === "permission-denied") {
           handleLocationPermissionDenied();
-        } else if (
-          await geolocationPermissionState() === "denied"
-        ) {
-          // Androidホーム画面版では拒否がPOSITION_UNAVAILABLEとして返る場合もある。
-          // Permissions APIがdeniedなら、取得エラー種別より権限案内を優先する。
-          handleLocationPermissionDenied();
-        } else if (geolocationError.code === 2) {
-          if (
-            isInstalledWebApp() &&
-            locationSettingsPlatform() === "android"
-          ) {
-            setCurrentLocationPermissionDenied(true);
-            publishCurrentLocationMessage(
-              `現在地を特定できませんでした。${locationPermissionInstructions()}`,
-              false
-            );
-          } else {
-            publishCurrentLocationMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
-          }
-        } else if (geolocationError.code === 3) {
-          if (
-            isInstalledWebApp() &&
-            locationSettingsPlatform() === "android"
-          ) {
-            setCurrentLocationPermissionDenied(true);
-            publishCurrentLocationMessage(
-              `現在地の取得がタイムアウトしました。${locationPermissionInstructions()}`,
-              false
-            );
-          } else {
-            publishCurrentLocationMessage("現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください");
-          }
+        } else if (error.failure === "location-disabled") {
+          setCurrentLocationPermissionDenied(true);
+          setCurrentLocationSettingsTarget("system-location");
+          publishCurrentLocationMessage(
+            "Android端末の位置情報サービスがOFFです。位置情報設定を開いて「位置情報を使用」をONにしてください",
+            false
+          );
+        } else if (error.failure === "timeout") {
+          publishCurrentLocationMessage(
+            "現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください"
+          );
         } else {
-          publishCurrentLocationMessage(`現在地を取得できませんでした：${geolocationError.message || "不明なエラー"}`);
+          publishCurrentLocationMessage(
+            `現在地を取得できませんでした：${error.message || "不明なエラー"}`
+          );
         }
       } else {
         publishCurrentLocationMessage(`現在地を取得できませんでした：${error instanceof Error ? error.message : "不明なエラー"}`);
@@ -2649,7 +2651,9 @@ ${diagnosticMessage}
                       onClick={() => void openLocationSettingsFromNotice()}
                     >
                       {canOpenNativeLocationSettings()
-                        ? "アプリ設定"
+                        ? currentLocationSettingsTarget === "system-location"
+                          ? "位置情報設定"
+                          : "アプリ設定"
                         : "設定方法"}
                     </button>
                     <button
