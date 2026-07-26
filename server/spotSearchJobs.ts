@@ -1,12 +1,34 @@
 import { getStore } from "@netlify/blobs";
 
-import type { SpotSearchJob } from "../src/types/backgroundSearch.ts";
+import type {
+  SpotSearchJob,
+  SpotSearchJobInput,
+} from "../src/types/backgroundSearch.ts";
 
 const STORE_NAME = "ksg-spot-search-jobs-v1";
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function validSearchJobId(value: unknown): value is string {
   return typeof value === "string" && ID_PATTERN.test(value);
+}
+
+export function validSpotSearchJobInput(
+  value: unknown
+): value is SpotSearchJobInput {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("criteria" in value) || typeof value.criteria !== "object" || value.criteria === null) {
+    return false;
+  }
+  if (!("subject" in value) || typeof value.subject !== "object" || value.subject === null) {
+    return false;
+  }
+  return "baseDateIso" in value && typeof value.baseDateIso === "string" &&
+    Number.isFinite(Date.parse(value.baseDateIso)) &&
+    "timeZone" in value && typeof value.timeZone === "string" && value.timeZone.length <= 80 &&
+    "lensCenterHeightMeters" in value && Number.isFinite(value.lensCenterHeightMeters) &&
+    "subjectGroundHeightMeters" in value && Number.isFinite(value.subjectGroundHeightMeters) &&
+    "calculationMode" in value &&
+      (value.calculationMode === "standard" || value.calculationMode === "pro");
 }
 
 function store() {

@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import cesiumPlugin from "vite-plugin-cesium";
 import netlify from "@netlify/vite-plugin";
 import { find } from "geo-tz";
-import type { Plugin, PluginOption } from "vite";
+import type { Plugin, PluginOption, ViteDevServer } from "vite";
 import { resolveGoogleMapsSharedUrl } from "./server/googleMaps.ts";
 import { resolveJapanesePlaceName } from "./server/placeGeocode.ts";
 import { lookupGsiElevations, prefetchGsiTerrainAroundSubject } from "./server/gsiElevation.ts";
@@ -18,6 +18,24 @@ import type {
 } from "./src/types/backgroundSearch.ts";
 
 const cesium = cesiumPlugin as unknown as () => PluginOption;
+
+/**
+ * Vite の preview は configureServer を実行しないため、ローカル API が
+ * 404 にならないよう同じ Connect ミドルウェアを preview にも登録する。
+ */
+function withLocalPreviewApi(plugin: Plugin): Plugin {
+  const configureDevServer = plugin.configureServer;
+  if (typeof configureDevServer !== "function") return plugin;
+  return {
+    ...plugin,
+    configurePreviewServer(server) {
+      return configureDevServer.call(
+        this,
+        server as unknown as ViteDevServer
+      );
+    },
+  };
+}
 
 function localTimezoneApi(): Plugin {
   return {
@@ -408,13 +426,13 @@ export default defineConfig(({ command }) => {
       cesium(),
       ...(command === "serve"
         ? [
-            localTimezoneApi(),
-            localGoogleMapsApi(),
-            localPlaceGeocodeApi(),
-            localGsiElevationApi(),
-            localGsiGeoidApi(),
-            localOsmSiteContextApi(),
-            localBackgroundSpotSearchApi(),
+            withLocalPreviewApi(localTimezoneApi()),
+            withLocalPreviewApi(localGoogleMapsApi()),
+            withLocalPreviewApi(localPlaceGeocodeApi()),
+            withLocalPreviewApi(localGsiElevationApi()),
+            withLocalPreviewApi(localGsiGeoidApi()),
+            withLocalPreviewApi(localOsmSiteContextApi()),
+            withLocalPreviewApi(localBackgroundSpotSearchApi()),
           ]
         : []),
       // ローカルの npm.cmd run dev では .netlify の監視を起動しません。

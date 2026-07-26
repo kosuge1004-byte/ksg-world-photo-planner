@@ -471,9 +471,16 @@ async function fetchRegionalGeoidHeights(
 
 export async function sampleWorldTerrain(
   points: Cartographic[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  maximumDetail?: GsiMaximumDetail
 ): Promise<Cartographic[]> {
-  return sampleTerrainCached(points, undefined, signal);
+  return sampleTerrainCached(
+    points,
+    maximumDetail
+      ? points.map(() => maximumDetail)
+      : undefined,
+    signal
+  );
 }
 
 async function sampleTerrainWithGsiPriority(

@@ -1,4 +1,7 @@
-import { calculateTripodCandidates } from "../src/cesium/tripodCandidates.ts";
+import {
+  calculateTripodCandidates,
+  type TerrainSampler,
+} from "../src/cesium/tripodCandidates.ts";
 import { searchSpotPresets } from "../src/search/spotPresetSearch.ts";
 import type { SerializedSpotPresetResult } from "../src/types/backgroundSearch.ts";
 import type { CameraSettings } from "../src/types/camera.ts";
@@ -31,6 +34,16 @@ function diagnosticSummary(metrics?: SpotSearchPerformanceMetrics): string {
   ].join(" / ");
 }
 
+const sampleServerCandidateTerrain: TerrainSampler = (
+  points,
+  signal,
+  maximumDetail
+) => sampleServerWorldTerrain(
+  points,
+  signal,
+  maximumDetail ? points.map(() => maximumDetail) : undefined
+);
+
 const serverCandidateCalculator: typeof calculateTripodCandidates = (
   subject,
   points,
@@ -48,7 +61,7 @@ const serverCandidateCalculator: typeof calculateTripodCandidates = (
   lensCenterHeightMeters,
   date,
   calculationMode,
-  sampleServerWorldTerrain,
+  sampleServerCandidateTerrain,
   signal,
   previewAspectRatio,
   distanceRange,

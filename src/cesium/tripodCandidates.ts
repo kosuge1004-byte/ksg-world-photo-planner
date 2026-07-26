@@ -31,7 +31,8 @@ export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;
 
 export type TerrainSampler = (
   points: Cartographic[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  maximumDetail?: "1m" | "5m" | "10m"
 ) => Promise<Cartographic[]>;
 
 function abortIfRequested(signal?: AbortSignal): void {
@@ -168,7 +169,10 @@ async function scanTerrainDistanceRange(
     distances.map((distance) =>
       destinationCartographic(subject, bearingDegrees, distance)
     ),
-    signal
+    signal,
+    // 全距離走査は交差区間を探す工程なので10m DEMで十分です。
+    // 確定座標は下の精密化工程で1m DEMを使い、精度を落とさず通信量を削減します。
+    "10m"
   );
   abortIfRequested(signal);
   const errors = sampled.map((candidate) =>
@@ -225,7 +229,8 @@ async function scanTerrainDistanceRange(
       refinementDistances.map((distance) =>
         destinationCartographic(subject, bearingDegrees, distance)
       ),
-      signal
+      signal,
+      "1m"
     );
     abortIfRequested(signal);
     const refinementErrors = refinementSamples.map((candidate) =>
@@ -295,7 +300,7 @@ async function solveTerrainDistance(
   ) {
     const [preferredSample] = await terrainSampler([
       destinationCartographic(subject, bearingDegrees, preferredDistance!),
-    ], signal);
+    ], signal, "1m");
     abortIfRequested(signal);
     if (preferredSample && Number.isFinite(preferredSample.height)) {
       const preferredError =
@@ -367,6 +372,7 @@ async function calculateOneCandidate(
     altitudeDegrees: point.altitudeDegrees,
   };
   let solved: TripodCandidate | null = null;
+  let iterationSearchProfile = searchProfile;
 
   // 観測地点が動くと方位・高度も変わるため、候補地点のレンズ中心で収束するまで再計算する。
   for (let iteration = 0; iteration < 3; iteration += 1) {
@@ -382,7 +388,7 @@ async function calculateOneCandidate(
       terrainSampler,
       signal,
       distanceRange,
-      searchProfile
+      iterationSearchProfile
     );
     if (!solution || !Number.isFinite(solution.cartographic.height)) return null;
     const candidate = solution.cartographic;
@@ -396,6 +402,12 @@ async function calculateOneCandidate(
       height: candidate.height,
       distanceMeters: solution.distanceMeters,
       solutionType: "aligned",
+    };
+    // 2回目以降は直前の精密解を最初に検証する。判定許容値を満たさない場合は
+    // solveTerrainDistance内で局所探索・全探索へ戻るため、精度を維持したまま高速化できる。
+    iterationSearchProfile = {
+      ...searchProfile,
+      preferredDistanceMeters: solution.distanceMeters,
     };
     const nextHorizontal = calculateCelestialHorizontalCoordinates(
       point.id,
@@ -512,9 +524,17 @@ export async function calculateTripodCandidates(
   // GSI/Cesium Terrain の一時障害で候補計算全体が0件になることを防ぐ。
   // 高度取得に失敗した場合は被写体地点の楕円体高を暫定地表高として使い、
   // 候補位置の幾何計算を継続する。通信復旧後の次回計算では通常DEMへ戻る。
-  const resilientTerrainSampler: TerrainSampler = async (requested, requestedSignal) => {
+  const resilientTerrainSampler: TerrainSampler = async (
+    requested,
+    requestedSignal,
+    maximumDetail
+  ) => {
     try {
-      const sampled = await terrainSampler(requested, requestedSignal);
+      const sampled = await terrainSampler(
+        requested,
+        requestedSignal,
+        maximumDetail
+      );
       return requested.map((point, index) => {
         const value = sampled[index];
         if (value && Number.isFinite(value.height)) return value;

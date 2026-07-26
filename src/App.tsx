@@ -55,9 +55,7 @@ import {
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
 import {
-  buildDirectionalTripodCandidates,
   calculateTripodCandidates,
-  sampleDirectionalTripodCandidates,
 } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
@@ -422,6 +420,8 @@ function App() {
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
+  const [tripodCandidateCalculationStatus, setTripodCandidateCalculationStatus] =
+    useState<"idle" | "calculating" | "complete" | "no-solution" | "error">("idle");
   const [dateTimeLocal, setDateTimeLocal] = useState(
     loadCelestialDateTime
   );
@@ -716,6 +716,7 @@ function App() {
     if (!subjectPoint || enabledPoints.length === 0) {
       tripodCandidatesRef.current = [];
       setTripodCandidates([]);
+      setTripodCandidateCalculationStatus("idle");
       return;
     }
     if (timelineInteracting) {
@@ -724,59 +725,45 @@ function App() {
       return;
     }
 
-    // 被写体ピン確定直後は、重いDEM精密探索を待たず天体方位上の候補を表示する。
-    // 垂直方向まで一致する精密解が存在する天体は、計算完了後にaligned候補へ置換する。
-    const provisionalCandidates = buildDirectionalTripodCandidates(
-      subjectPoint,
-      enabledPoints
-    );
-    tripodCandidatesRef.current = provisionalCandidates;
-    setTripodCandidates(provisionalCandidates);
+    // 任意の500m地点を候補として見せると確定点と誤認されるため、
+    // 精密DEM計算中は点を消し、計算状態だけを明示する。
+    tripodCandidatesRef.current = [];
+    setTripodCandidates([]);
+    setTripodCandidateCalculationStatus("calculating");
 
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void Promise.all([
-        calculateTripodCandidates(
-          subjectPoint,
-          enabledPoints,
-          cameraSettings,
-          selectedDate,
-          calculationMode,
-          undefined,
-          controller.signal,
-          previewAspectRatio,
-          undefined
-        ),
-        sampleDirectionalTripodCandidates(
-          subjectPoint,
-          enabledPoints,
-          undefined,
-          controller.signal
-        ),
-      ])
-        .then(([alignedCandidates, directionalCandidates]) => {
+      void calculateTripodCandidates(
+        subjectPoint,
+        enabledPoints,
+        cameraSettings,
+        selectedDate,
+        calculationMode,
+        undefined,
+        controller.signal,
+        previewAspectRatio,
+        undefined
+      )
+        .then((candidates) => {
           if (!cancelled) {
-            const alignedById = new Map(
-              alignedCandidates.map((candidate) => [candidate.id, candidate])
-            );
-            const candidates = directionalCandidates.map(
-              (candidate) => alignedById.get(candidate.id) ?? candidate
-            );
             tripodCandidatesRef.current = candidates;
             setTripodCandidates(candidates);
+            setTripodCandidateCalculationStatus(
+              candidates.length > 0 ? "complete" : "no-solution"
+            );
           }
         })
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
-          // 精密探索の失敗時も、先に表示した方位候補を消さない。
-          if (!cancelled && !timelineInteracting) {
-            tripodCandidatesRef.current = provisionalCandidates;
-            setTripodCandidates(provisionalCandidates);
+          if (!cancelled) {
+            tripodCandidatesRef.current = [];
+            setTripodCandidates([]);
+            setTripodCandidateCalculationStatus("error");
           }
         });
-    }, 32);
+    }, 0);
 
     return () => {
       cancelled = true;
@@ -2562,6 +2549,22 @@ ${diagnosticMessage}
                     端末の設定を開く
                   </button>
                 )}
+              </div>
+            )}
+
+            {tripodCandidateCalculationStatus !== "idle" && (
+              <div
+                className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus}`}
+                role="status"
+                aria-live="polite"
+              >
+                {tripodCandidateCalculationStatus === "calculating"
+                  ? "三脚候補を計算中…"
+                  : tripodCandidateCalculationStatus === "complete"
+                    ? `確定した三脚候補：${tripodCandidates.length}件`
+                    : tripodCandidateCalculationStatus === "no-solution"
+                      ? "現在の条件では確定できる三脚候補がありません"
+                      : "三脚候補の計算に失敗しました"}
               </div>
             )}
 
