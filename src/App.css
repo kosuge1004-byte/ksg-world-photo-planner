@@ -29,7 +29,8 @@ button { cursor: pointer; }
   position: relative;
   z-index: 100;
   display: grid;
-  grid-template-columns: 9% 23% 18% 50%;
+  /* ハンバーガーのタップ幅を従来の9%から1.5倍へ広げる。 */
+  grid-template-columns: 13.5% 23% 18% 45.5%;
   min-width: 0;
   border-bottom: 1px solid #21262e;
   background: #020304;
@@ -182,7 +183,7 @@ button { cursor: pointer; }
 
 .top-quick-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) 23px;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) 23px;
   align-items: center;
   gap: 5px;
   min-width: 0;
@@ -597,8 +598,10 @@ button { cursor: pointer; }
 .map-zoom-control button:last-child { border-bottom: 0; }
 .map-right-actions { position: absolute; right: 12px; bottom: 13px; display: grid; gap: 6px; }
 .map-right-actions button { display: grid; place-content: center; justify-items: center; gap: 1px; width: 44px; min-height: 40px; padding: 2px; color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(1,4,8,.87); }
+.map-right-actions button:disabled { opacity: .72; cursor: progress; }
 .map-right-actions span { font-size: 22px; line-height: .9; }
 .map-right-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
+.map-current-location-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(270px, calc(100% - 148px)); padding: 5px 8px; color: #edf4fb; border: 1px solid rgba(158,190,225,.45); border-radius: 6px; background: rgba(2,8,14,.9); font-size: 8px; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
 .map-fullscreen-exit { top: 14px; }
 
 .map-pin-drawer { position: absolute; z-index: 12; top: 58px; left: 62px; width: min(330px, calc(100% - 140px)); max-height: calc(100% - 68px); padding: 8px; overflow-y: auto; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(2,6,10,.95); box-shadow: 0 12px 30px rgba(0,0,0,.55); }
@@ -688,6 +691,10 @@ button { cursor: pointer; }
 .spot-preset-result span { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .spot-preset-result small { color: #aeb9c6; font-size: 8px; overflow-wrap: anywhere; }
 .spot-preset-result .spot-result-landmarks { color: #b8dca8; }
+.spot-preset-result .spot-result-3d-status { width: fit-content; padding: 2px 5px; border: 1px solid currentColor; border-radius: 4px; font-weight: 700; }
+.spot-result-3d-status.status-visible { color: #82e6a0; background: rgba(27, 92, 48, .28); }
+.spot-result-3d-status.status-possibly-obstructed { color: #ffc178; background: rgba(113, 55, 10, .3); }
+.spot-result-3d-status.status-unverified { color: #b7c4d5; background: rgba(60, 72, 88, .3); }
 .spot-search-credit { color: #7f8b99; font-size: 7px; }
 .pin-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 7px; }
 .pin-button, .subject-edit-start-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 8px; }

@@ -19,8 +19,8 @@ import {
   DisplayCountSelect,
   TimeRangeSelector,
   WeekdaySelector,
-  useSearchTimeRange,
 } from "./SearchOptionControls";
+import { useSearchTimeRange } from "../search/searchUiPreferences";
 
 const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
   { value: "1-month", label: "30日" },

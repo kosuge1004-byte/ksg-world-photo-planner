@@ -36,6 +36,15 @@ export type SpotSearchInterval =
 
 export type SpotSearchDisplayCount = 1 | 3 | 5 | 10 | 20 | 50 | 100;
 
+/**
+ * 検索候補を削除せず利用者が現地・プレビューで確認できるよう、
+ * 天体方向に対するPhotorealistic 3Dの確認状態を候補へ保持する。
+ */
+export type SpotCandidate3dStatus =
+  | "visible"
+  | "possibly-obstructed"
+  | "unverified";
+
 export type SpotSearchCriteria = {
   query: string;
   useCurrentSubjectPin: boolean;
@@ -73,6 +82,7 @@ export type SpotPresetResult = {
   celestialLabel: string;
   cameraAzimuthDegrees: number;
   cameraAltitudeDegrees: number;
+  candidate3dStatus: SpotCandidate3dStatus;
   nearbyLandmarks: NearbyLandmark[];
   nearbyBuildings: NearbyBuilding[];
   nearbyStructures: NearbyStructure[];

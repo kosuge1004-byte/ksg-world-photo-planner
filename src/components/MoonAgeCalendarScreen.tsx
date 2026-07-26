@@ -107,7 +107,7 @@ export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack }: P
   const selected = days.find((day) => day.key === selectedKey) ?? days[0];
   return (
     <section className="project-screen moon-age-calendar-screen">
-      <header><button type="button" onClick={onBack}>‹ 戻る</button><h1>月齢カレンダー</h1><span /></header>
+      <header><button type="button" className="project-screen-back" onClick={onBack} aria-label="メイン画面へ戻る">‹ 戻る</button><h1>月齢カレンダー</h1><span /></header>
       <div className="calendar-nav">
         <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
         <strong>{month.getFullYear()}年 {month.getMonth() + 1}月</strong>

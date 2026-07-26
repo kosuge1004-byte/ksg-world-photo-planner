@@ -8,6 +8,7 @@ import type { FormEvent } from "react";
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import type {
   SearchCelestialId,
+  SpotCandidate3dStatus,
   SpotPresetResult,
   SpotSearchCriteria,
   SpotSearchDisplayCount,
@@ -23,8 +24,8 @@ import {
   DisplayCountSelect,
   TimeRangeSelector,
   WeekdaySelector,
-  useSearchTimeRange,
 } from "./SearchOptionControls";
+import { useSearchTimeRange } from "../search/searchUiPreferences";
 
 type Props = {
   open: boolean;
@@ -96,8 +97,75 @@ const TRIPOD_DISTANCE_MAX_METERS = 10_000;
 const TRIPOD_DISTANCE_DEFAULT_MIN_METERS = 500;
 const TRIPOD_DISTANCE_DEFAULT_MAX_METERS = 3_000;
 const TRIPOD_DISTANCE_STORAGE_KEY = "ksg-spot-search-tripod-distance-v1";
+const RETAINED_RESULTS_STORAGE_KEY = "ksg-retained-spot-search-results-v1";
 
 type StoredTripodDistance = { minMeters: number; maxMeters: number };
+type StoredSpotPresetResult = Omit<SpotPresetResult, "date"> & { date: string };
+
+function isCandidate3dStatus(value: unknown): value is SpotCandidate3dStatus {
+  return value === "visible" ||
+    value === "possibly-obstructed" ||
+    value === "unverified";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function loadRetainedResults(): SpotPresetResult[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(RETAINED_RESULTS_STORAGE_KEY) ?? "[]"
+    ) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((value) => {
+      if (
+        !isRecord(value) ||
+        typeof value.id !== "string" ||
+        typeof value.date !== "string" ||
+        !Number.isFinite(Date.parse(value.date)) ||
+        typeof value.placeLabel !== "string" ||
+        typeof value.timeZone !== "string" ||
+        !isRecord(value.subject) ||
+        !isRecord(value.tripod) ||
+        !Array.isArray(value.nearbyLandmarks) ||
+        !Array.isArray(value.nearbyBuildings) ||
+        !Array.isArray(value.nearbyStructures)
+      ) return [];
+      const stored = value as StoredSpotPresetResult;
+      return [{
+        ...stored,
+        date: new Date(stored.date),
+        // 旧保存結果も削除せず、状態不明の候補として復元する。
+        candidate3dStatus: isCandidate3dStatus(stored.candidate3dStatus)
+          ? stored.candidate3dStatus
+          : "unverified",
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function saveRetainedResults(results: SpotPresetResult[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const stored: StoredSpotPresetResult[] = results.slice(0, 100).map((result) => ({
+      ...result,
+      date: result.date.toISOString(),
+    }));
+    window.localStorage.setItem(RETAINED_RESULTS_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // 容量制限やプライベートモードでも検索結果表示そのものは継続する。
+  }
+}
+
+function candidate3dStatusLabel(status: SpotCandidate3dStatus): string {
+  if (status === "visible") return "天体方向3D：見通し確認済み";
+  if (status === "possibly-obstructed") return "天体方向3D：遮蔽の可能性あり";
+  return "天体方向3D：未確認";
+}
 
 function clampTripodDistance(value: number): number {
   return Math.min(
@@ -188,7 +256,7 @@ export function SpotSearchScreen({
     elevationDifferenceWithin100m: false,
     excludeRoads: false,
   });
-  const [results, setResults] = useState<SpotPresetResult[]>([]);
+  const [results, setResults] = useState<SpotPresetResult[]>(loadRetainedResults);
   const [selectedResult, setSelectedResult] = useState<SpotPresetResult | null>(null);
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -209,6 +277,12 @@ export function SpotSearchScreen({
       })
     );
   }, [tripodDistanceMaxMeters, tripodDistanceMinMeters]);
+
+  useEffect(() => {
+    // メイン画面へ構図を適用しても検索結果を失わず、
+    // 次の検索が完了して結果が置き換わるまで端末内へ保持する。
+    saveRetainedResults(results);
+  }, [results]);
 
   useEffect(() => {
     if (!open) return;
@@ -302,7 +376,6 @@ export function SpotSearchScreen({
     lastProgressMessageRef.current = "";
     setProgressPercent(0);
     setIsPaused(false);
-    setResults([]);
     setMessage("スポットを検索しています…");
     try {
       if (!searchDateTime) {
@@ -384,6 +457,10 @@ ${diagnostic}` : ""}`
               <div><dt>焦点距離</dt><dd>{selectedResult.focalLengthMm}mm</dd></div>
               <div><dt>カメラ方位</dt><dd>{selectedResult.cameraAzimuthDegrees.toFixed(2)}°</dd></div>
               <div><dt>カメラ仰角</dt><dd>{selectedResult.cameraAltitudeDegrees.toFixed(2)}°</dd></div>
+              <div>
+                <dt>3D確認状態</dt>
+                <dd>{candidate3dStatusLabel(selectedResult.candidate3dStatus)}</dd>
+              </div>
               <div><dt>三脚位置</dt><dd>{selectedResult.tripod.latitude.toFixed(6)}, {selectedResult.tripod.longitude.toFixed(6)}</dd></div>
               <div><dt>被写体位置</dt><dd>{selectedResult.subject.latitude.toFixed(6)}, {selectedResult.subject.longitude.toFixed(6)}</dd></div>
             </dl>
@@ -815,6 +892,9 @@ ${diagnostic}` : ""}`
               <span>{result.placeLabel}</span>
               <small>
                 {result.focalLengthMm}mm　方位{result.cameraAzimuthDegrees.toFixed(1)}°　仰角{result.cameraAltitudeDegrees.toFixed(1)}°
+              </small>
+              <small className={`spot-result-3d-status status-${result.candidate3dStatus}`}>
+                {candidate3dStatusLabel(result.candidate3dStatus)}
               </small>
               {result.nearbyLandmarks.length > 0 && (
                 <small className="spot-result-landmarks">

@@ -504,8 +504,33 @@ export async function calculateTripodCandidates(
   // 太陽・月に限定すると、同じ候補計算を共有する天の川・北極星が
   // アプリ全体から消えるため、地平線上にある有効な天体をすべて対象にする。
   const visiblePoints = points.filter(
-    (point) => point.altitudeDegrees > 0.25
+    (point) => Number.isFinite(point.altitudeDegrees) && point.altitudeDegrees > 0.25
   );
+
+  // GSI/Cesium Terrain の一時障害で候補計算全体が0件になることを防ぐ。
+  // 高度取得に失敗した場合は被写体地点の楕円体高を暫定地表高として使い、
+  // 候補位置の幾何計算を継続する。通信復旧後の次回計算では通常DEMへ戻る。
+  const resilientTerrainSampler: TerrainSampler = async (requested, requestedSignal) => {
+    try {
+      const sampled = await terrainSampler(requested, requestedSignal);
+      return requested.map((point, index) => {
+        const value = sampled[index];
+        if (value && Number.isFinite(value.height)) return value;
+        const fallback = Cartographic.clone(point);
+        fallback.height = Number.isFinite(subject.height) ? subject.height : 0;
+        return fallback;
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      console.warn("地形高度を取得できないため暫定高度で三脚候補計算を継続します", error);
+      return requested.map((point) => {
+        const fallback = Cartographic.clone(point);
+        fallback.height = Number.isFinite(subject.height) ? subject.height : 0;
+        return fallback;
+      });
+    }
+  };
+
   const results = await Promise.all(
     visiblePoints.map((point) =>
       calculateOneCandidate(
@@ -515,7 +540,7 @@ export async function calculateTripodCandidates(
         previewAspectRatio,
         date,
         calculationMode,
-        terrainSampler,
+        resilientTerrainSampler,
         signal,
         distanceRange,
         searchProfile

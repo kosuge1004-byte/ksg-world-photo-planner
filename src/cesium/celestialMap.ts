@@ -1,4 +1,5 @@
 import {
+  CallbackPositionProperty,
   CallbackProperty,
   Cartesian2,
   Cartesian3,
@@ -27,7 +28,6 @@ const PREFIX = "ksg-celestial-map-";
 const CELESTIAL_RAY_DISTANCE_METERS = 1_000_000;
 const entityCache = new WeakMap<Viewer, {
   trackKey: string;
-  candidateKey: string;
 }>();
 
 type SharedGroundLineState = { positions: Cartesian3[] };
@@ -99,6 +99,83 @@ const COLORS = {
   milkyWay: Color.MEDIUMPURPLE,
   polaris: Color.WHITE,
 } as const;
+
+type TripodCandidateEntityState = {
+  position: Cartesian3;
+  text: string;
+};
+const tripodCandidateEntityStates = new WeakMap<
+  Viewer,
+  Map<string, TripodCandidateEntityState>
+>();
+
+function updateTripodCandidateEntities(
+  viewer: Viewer,
+  subject: GroundPoint | null,
+  candidates: TripodCandidate[],
+  visibility: CelestialVisibility
+): void {
+  let states = tripodCandidateEntityStates.get(viewer);
+  if (!states) {
+    states = new Map();
+    tripodCandidateEntityStates.set(viewer, states);
+  }
+  const activeIds = new Set<string>();
+
+  if (subject) {
+    for (const candidate of candidates) {
+      if (!visibility[candidate.id]) continue;
+      const id = `${PREFIX}${candidate.id}-tripod-candidate`;
+      activeIds.add(id);
+      const position = Cartesian3.fromDegrees(
+        candidate.longitude,
+        candidate.latitude,
+        candidate.height + 0.2
+      );
+      const text = `${candidate.label} 三脚候補\n${Math.round(candidate.distanceMeters)}m`;
+      const existing = states.get(id);
+      if (existing) {
+        // 時間軸ドラッグ中はEntityを作り直さず、参照中の座標だけを更新する。
+        existing.position = position;
+        existing.text = text;
+        continue;
+      }
+
+      const color = COLORS[candidate.id];
+      const state: TripodCandidateEntityState = { position, text };
+      states.set(id, state);
+      viewer.entities.add({
+        id,
+        name: `${candidate.label} 三脚候補`,
+        position: new CallbackPositionProperty(() => state.position, false),
+        point: {
+          pixelSize: 11,
+          color,
+          outlineColor: Color.BLACK,
+          outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+        label: {
+          text: new CallbackProperty(() => state.text, false),
+          font: "bold 12px sans-serif",
+          fillColor: color,
+          outlineColor: Color.BLACK,
+          outlineWidth: 3,
+          style: LabelStyle.FILL_AND_OUTLINE,
+          verticalOrigin: VerticalOrigin.BOTTOM,
+          pixelOffset: new Cartesian2(0, -13),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+    }
+  }
+
+  for (const [id] of states) {
+    if (activeIds.has(id)) continue;
+    viewer.entities.removeById(id);
+    states.delete(id);
+  }
+}
 
 function destinationPoint(
   origin: GroundPoint,
@@ -224,19 +301,8 @@ export function updateCelestialMapEntities(
       track.points.at(-1)?.timestampMilliseconds,
     ]),
   });
-  const candidateKey = JSON.stringify({
-    subject: subject && [subject.latitude, subject.longitude, subject.height],
-    visibility,
-    candidates: tripodCandidates.map((candidate) => [
-      candidate.id,
-      candidate.latitude,
-      candidate.longitude,
-      candidate.height,
-    ]),
-  });
   const previousCache = entityCache.get(viewer);
   const replaceTracks = previousCache?.trackKey !== trackKey;
-  const replaceCandidates = previousCache?.candidateKey !== candidateKey;
 
   for (const entity of [...viewer.entities.values]) {
     if (typeof entity.id === "string" && entity.id.startsWith(PREFIX)) {
@@ -246,8 +312,8 @@ export function updateCelestialMapEntities(
       // 基礎ラインはCallbackPropertyの座標だけを更新し、Entityを再生成しない。
       if (
         isSharedGroundLine ||
-        (isTrack && !replaceTracks) ||
-        (isCandidate && !replaceCandidates)
+        isCandidate ||
+        (isTrack && !replaceTracks)
       ) {
         continue;
       }
@@ -255,12 +321,20 @@ export function updateCelestialMapEntities(
     }
   }
 
+  // 被写体だけを置いた段階でも、共通基礎ラインと候補点を3D地図へ表示する。
+  updateSharedGroundLines(viewer, tripodSearchLines);
+  updateTripodCandidateEntities(
+    viewer,
+    subject,
+    tripodCandidates,
+    visibility
+  );
+
   if (!tripod) {
-    updateSharedGroundLines(viewer, []);
-    entityCache.delete(viewer);
+    entityCache.set(viewer, { trackKey });
     return;
   }
-  entityCache.set(viewer, { trackKey, candidateKey });
+  entityCache.set(viewer, { trackKey });
 
   const origin = Cartesian3.fromDegrees(
     tripod.longitude,
@@ -268,7 +342,6 @@ export function updateCelestialMapEntities(
     tripod.height + lensCenterHeightMeters
   );
   const distanceMeters = 1500;
-  updateSharedGroundLines(viewer, tripodSearchLines);
 
   if (replaceTracks) for (const track of tracks) {
     if (!visibility[track.id]) continue;
@@ -455,41 +528,5 @@ export function updateCelestialMapEntities(
         });
       });
     });
-  }
-
-  if (subject && replaceCandidates) {
-    for (const candidate of tripodCandidates) {
-      if (!visibility[candidate.id]) continue;
-      const color = COLORS[candidate.id];
-      const target = Cartesian3.fromDegrees(
-        candidate.longitude,
-        candidate.latitude,
-        candidate.height + 0.2
-      );
-      // 候補点は共通基礎ライン上に載せる。候補専用ラインは作らず二重描画を防ぐ。
-      viewer.entities.add({
-        id: `${PREFIX}${candidate.id}-tripod-candidate`,
-        name: `${candidate.label} 三脚候補`,
-        position: target,
-        point: {
-          pixelSize: 11,
-          color,
-          outlineColor: Color.BLACK,
-          outlineWidth: 2,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-        label: {
-          text: `${candidate.label} 三脚候補\n${Math.round(candidate.distanceMeters)}m`,
-          font: "bold 12px sans-serif",
-          fillColor: color,
-          outlineColor: Color.BLACK,
-          outlineWidth: 3,
-          style: LabelStyle.FILL_AND_OUTLINE,
-          verticalOrigin: VerticalOrigin.BOTTOM,
-          pixelOffset: new Cartesian2(0, -13),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-      });
-    }
   }
 }

@@ -10,6 +10,27 @@ import type { GroundPoint } from "../types/points";
 import { groundPointFromCoordinates } from "./worldTerrain";
 
 const SUBJECT_PIN_ID = "ksg-subject-pin";
+const SUBJECT_CLAMP_TIMEOUT_MS = 2_500;
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMilliseconds: number
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("3D表面の高さ取得がタイムアウトしました")),
+          timeoutMilliseconds
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 const SUBJECT_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
     <path d="M14 39C11 32 2 24 2 14A12 12 0 0 1 26 14c0 10-9 18-12 25Z" fill="#e53935" stroke="#fff" stroke-width="2"/>
@@ -68,9 +89,10 @@ export async function setSubjectPinFromCoordinates(
   );
 
   try {
-    const positions = await viewer.scene.clampToHeightMostDetailed([
-      originalPosition,
-    ]);
+    const positions = await withTimeout(
+      viewer.scene.clampToHeightMostDetailed([originalPosition]),
+      SUBJECT_CLAMP_TIMEOUT_MS
+    );
 
     const clampedPosition = positions[0];
 

@@ -370,7 +370,11 @@ function App() {
   const plannedForegroundHeightCmRef = useRef(170);
   const foregroundTerrainTimerRef = useRef<number | null>(null);
   const foregroundTerrainRequestRef = useRef(0);
+  const subjectPlacementRequestRef = useRef(0);
   const currentLocationRequestRef = useRef(0);
+  const currentLocationMessageTimerRef = useRef<number | null>(null);
+  const [currentLocationPending, setCurrentLocationPending] = useState(false);
+  const [currentLocationMessage, setCurrentLocationMessage] = useState("");
 
   const [subjectPlacementActive, setSubjectPlacementActive] =
     useState(false);
@@ -406,6 +410,7 @@ function App() {
     useState<Record<number, boolean>>({});
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
+  const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
   const [dateTimeLocal, setDateTimeLocal] = useState(
     loadCelestialDateTime
   );
@@ -439,6 +444,12 @@ function App() {
 
     window.addEventListener("pageshow", showMainScreenAfterPageRestore);
     return () => window.removeEventListener("pageshow", showMainScreenAfterPageRestore);
+  }, []);
+
+  useEffect(() => () => {
+    if (currentLocationMessageTimerRef.current !== null) {
+      window.clearTimeout(currentLocationMessageTimerRef.current);
+    }
   }, []);
 
   const previewAspectRatio =
@@ -570,15 +581,6 @@ function App() {
     [milkyWayLineOfSight, milkyWayPath]
   );
 
-  const tripodSearchLines = useMemo(
-    () => buildTripodSearchBaseLines(
-      subjectPoint,
-      celestialPoints,
-      celestialVisibility
-    ),
-    [subjectPoint, celestialPoints, celestialVisibility]
-  );
-
   const celestialTracks = useMemo(() => {
     if (!tripodPoint || !subjectPoint) return [];
     if (
@@ -656,26 +658,62 @@ function App() {
     calculationMode,
   ]);
 
+  const tripodSearchLines = useMemo(
+    () => buildTripodSearchBaseLines(
+      subjectPoint,
+      tripodCandidateSourcePoints,
+      celestialVisibility
+    ),
+    [subjectPoint, tripodCandidateSourcePoints, celestialVisibility]
+  );
+
+  const displayedTripodCandidates = useMemo(() => {
+    if (!timelineInteracting || !subjectPoint) return tripodCandidates;
+    const previousById = new Map(
+      tripodCandidatesRef.current.map((candidate) => [candidate.id, candidate])
+    );
+    // ドラッグ中は通信を伴うDEM探索を行わず、直前の精密距離を現在時刻の
+    // 天体方位へ再投影する。これにより候補点をフレーム単位で滑らかに動かす。
+    return tripodCandidateSourcePoints.flatMap((point) => {
+      if (!celestialVisibility[point.id] || point.altitudeDegrees <= 0.25) return [];
+      const previous = previousById.get(point.id);
+      if (!previous) return [];
+      const destination = calculateKarneyDestinationPoint(
+        subjectPoint,
+        (point.azimuthDegrees + 180) % 360,
+        previous.distanceMeters
+      );
+      return [{
+        ...previous,
+        label: point.label,
+        latitude: destination.latitude,
+        longitude: destination.longitude,
+      }];
+    });
+  }, [
+    celestialVisibility,
+    subjectPoint,
+    timelineInteracting,
+    tripodCandidateSourcePoints,
+    tripodCandidates,
+  ]);
+
   useEffect(() => {
     const enabledPoints = tripodCandidateSourcePoints.filter(
       (point) => celestialVisibility[point.id]
     );
     if (!subjectPoint || enabledPoints.length === 0) {
+      tripodCandidatesRef.current = [];
       setTripodCandidates([]);
+      return;
+    }
+    if (timelineInteracting) {
+      // 操作中はdisplayedTripodCandidatesの軽量再投影を使用し、
+      // 操作停止後に下のDEM精密計算を一度だけ実行する。
       return;
     }
     let cancelled = false;
     const controller = new AbortController();
-    // 時間スライダー操作中も候補計算を止めず、描画間隔に近い短い待ち時間で追従させる。
-    // 操作中は粗いDEM走査で即応し、指を離した直後に通常精度で再計算する。
-    const updateDelayMs = timelineInteracting ? 16 : 32;
-    const interactionProfile = timelineInteracting
-      ? {
-          sampleCount: 8,
-          refinementPasses: 0,
-          refinementSegments: 2,
-        }
-      : undefined;
     const timer = window.setTimeout(() => {
       void calculateTripodCandidates(
         subjectPoint,
@@ -686,19 +724,24 @@ function App() {
         undefined,
         controller.signal,
         previewAspectRatio,
-        undefined,
-        interactionProfile
+        undefined
       )
         .then((candidates) => {
-          if (!cancelled) setTripodCandidates(candidates);
+          if (!cancelled) {
+            tripodCandidatesRef.current = candidates;
+            setTripodCandidates(candidates);
+          }
         })
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
           // 操作中の一時的な通信失敗では直前候補を保持し、追従表示を途切れさせない。
-          if (!cancelled && !timelineInteracting) setTripodCandidates([]);
+          if (!cancelled && !timelineInteracting) {
+            tripodCandidatesRef.current = [];
+            setTripodCandidates([]);
+          }
         });
-    }, updateDelayMs);
+    }, 32);
 
     return () => {
       cancelled = true;
@@ -1013,7 +1056,34 @@ function App() {
       return;
     }
     updateConnectionLine(viewer, tripodPoint, subjectPoint);
-  }, [tripodPoint, subjectPoint]);
+  }, [mapReady, tripodPoint, subjectPoint]);
+
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!mapReady || !viewer || viewer.isDestroyed()) return;
+    // 2Dで3D読込より先に配置したピンも、Viewer準備完了時に同じ座標へ同期する。
+    if (subjectPoint) {
+      setSubjectPinFromPosition(
+        viewer,
+        Cartesian3.fromDegrees(
+          subjectPoint.longitude,
+          subjectPoint.latitude,
+          subjectPoint.height
+        ),
+        subjectPoint.label
+      );
+    }
+    if (tripodPoint) {
+      setTripodPin(
+        viewer,
+        Cartesian3.fromDegrees(
+          tripodPoint.longitude,
+          tripodPoint.latitude,
+          tripodPoint.height
+        )
+      );
+    }
+  }, [mapReady, subjectPoint, tripodPoint]);
 
   useEffect(() => () => {
     if (foregroundTerrainTimerRef.current !== null) {
@@ -1035,6 +1105,8 @@ function App() {
       const coordinates = cartesianToForegroundCoordinates(position);
       placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude);
     });
+    // foregroundObjectの値全体はドラッグ可否に不要で、ID変更時だけ再登録する。
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [mapReady, foregroundObject?.id, tripodPoint, subjectPoint]);
 
   useEffect(() => {
@@ -1062,7 +1134,7 @@ function App() {
         celestialTracks,
         mapViewMode === "3d" ? visibleMilkyWayPath : milkyWayPath,
         celestialVisibility,
-        tripodCandidates,
+        displayedTripodCandidates,
         tripodSearchLines,
         celestialOcclusion,
         mapViewMode,
@@ -1082,7 +1154,7 @@ function App() {
     milkyWayPath,
     visibleMilkyWayPath,
     celestialVisibility,
-    tripodCandidates,
+    displayedTripodCandidates,
     tripodSearchLines,
     celestialOcclusion,
     mapViewMode,
@@ -1325,9 +1397,21 @@ function App() {
       viewer = mapViewerRef.current;
     }
     if (!viewer || viewer.isDestroyed()) {
-      throw new Error("3Dマップを読み込めないため最終遮蔽確認を開始できません");
+      // 3Dを確認できないことを「撮影不可」と同一視しない。
+      // 候補は未確認状態で保存し、利用者が三脚ピンとプレビューで確認できるようにする。
+      const unverifiedResults = results.map((result) => ({
+        ...result,
+        candidate3dStatus: "unverified" as const,
+      }));
+      await finalizeBackgroundSpotSearch(active, unverifiedResults);
+      if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+      onProgress(
+        `${unverifiedResults.length}件を候補として保持しました（3D未確認）`,
+        100
+      );
+      return unverifiedResults;
     }
-    const verifiedResults: SpotPresetResult[] = [];
+    const assessedResults: SpotPresetResult[] = [];
     const concurrency = adaptiveSearchConcurrency("mesh-los", job.input.calculationMode);
     for (let offset = 0; offset < results.length; offset += concurrency) {
       if (signal.aborted) {
@@ -1342,38 +1426,58 @@ function App() {
       );
       const batch = await Promise.all(
         results.slice(offset, offset + concurrency).map(async (result) => {
-          const observer = await prepareCelestialLineOfSightObserver(
-            viewer,
-            result.tripod,
-            job.input.lensCenterHeightMeters,
-            signal
-          );
-          const visibility = await evaluatePhotorealisticMeshLineOfSight(
-            viewer,
-            observer,
-            {
-              azimuthDegrees: result.cameraAzimuthDegrees,
-              altitudeDegrees: result.cameraAltitudeDegrees,
-            },
-            signal
-          );
-          return visibility.verified && visibility.visible ? result : null;
+          try {
+            const observer = await prepareCelestialLineOfSightObserver(
+              viewer,
+              result.tripod,
+              job.input.lensCenterHeightMeters,
+              signal
+            );
+            const visibility = await evaluatePhotorealisticMeshLineOfSight(
+              viewer,
+              observer,
+              {
+                azimuthDegrees: result.cameraAzimuthDegrees,
+                altitudeDegrees: result.cameraAltitudeDegrees,
+              },
+              signal
+            );
+            return {
+              ...result,
+              candidate3dStatus: visibility.verified
+                ? visibility.visible
+                  ? "visible" as const
+                  : "possibly-obstructed" as const
+                : "unverified" as const,
+            };
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+              throw error;
+            }
+            console.warn("候補の最終3D状態を確認できないため未確認として残します", error);
+            return { ...result, candidate3dStatus: "unverified" as const };
+          }
         })
       );
-      verifiedResults.push(...batch.filter(
-        (result): result is SpotPresetResult => result !== null
-      ));
+      assessedResults.push(...batch);
     }
     onProgress("最終3D確認結果を保存しています…", 100);
-    await finalizeBackgroundSpotSearch(active, verifiedResults);
+    await finalizeBackgroundSpotSearch(active, assessedResults);
     if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+    const visibleCount = assessedResults.filter(
+      (result) => result.candidate3dStatus === "visible"
+    ).length;
+    const obstructedCount = assessedResults.filter(
+      (result) => result.candidate3dStatus === "possibly-obstructed"
+    ).length;
+    const unverifiedCount = assessedResults.length - visibleCount - obstructedCount;
     onProgress(
-      `${verifiedResults.length}件を最終確定しました${diagnosticMessage ? `
+      `${assessedResults.length}件を候補として保持しました（確認済み ${visibleCount}／遮蔽可能性 ${obstructedCount}／未確認 ${unverifiedCount}）${diagnosticMessage ? `
 ${diagnosticMessage}
-最終3D通過: ${verifiedResults.length}件` : ""}`,
+候補保持: ${assessedResults.length}件` : ""}`,
       100
     );
-    return verifiedResults;
+    return assessedResults;
   }
 
   async function resumeSpotSearch(
@@ -1577,15 +1681,6 @@ ${diagnosticMessage}
   function removePlannerProject(id: string): void { setProjects(deleteProject(id)); }
 
   function toggleSubjectPlacement() {
-    const viewer = mapViewerRef.current;
-
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage(
-        "3Dマップの読込完了後にお試しください"
-      );
-      return;
-    }
-
     if (subjectPlacementActive) {
       stopPlacementMode();
       setSearchMessage("被写体ピン変更を終了しました");
@@ -1599,6 +1694,12 @@ ${diagnosticMessage}
     if (mapViewMode === "2d") {
       setSubjectPlacementActive(true);
       setSearchMessage("2D地図上で被写体を置く場所をクリックしてください");
+      return;
+    }
+
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) {
+      setSearchMessage("3Dマップの読込完了後にお試しください");
       return;
     }
 
@@ -1711,15 +1812,6 @@ ${diagnosticMessage}
   }
 
   function toggleTripodPlacement() {
-    const viewer = mapViewerRef.current;
-
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage(
-        "3Dマップの読込完了後にお試しください"
-      );
-      return;
-    }
-
     if (tripodPlacementActive) {
       stopPlacementMode();
       setSearchMessage("三脚ピン設置を終了しました");
@@ -1733,6 +1825,12 @@ ${diagnosticMessage}
     if (mapViewMode === "2d") {
       setTripodPlacementActive(true);
       setSearchMessage("2D地図上で三脚を置く場所をクリックしてください");
+      return;
+    }
+
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) {
+      setSearchMessage("3Dマップの読込完了後にお試しください");
       return;
     }
 
@@ -1764,7 +1862,7 @@ ${diagnosticMessage}
     if (!subjectPlacementActive && !tripodPlacementActive && !foregroundPlacementActive) return;
     const viewer = mapViewerRef.current;
     const mapElement = mapSectionRef.current;
-    if (!viewer || viewer.isDestroyed() || !mapElement) return;
+    if (!mapElement) return;
     const rect = mapElement.getBoundingClientRect();
     const coordinates = coordinatesAtMapPixel(
       event.clientX - rect.left,
@@ -1779,23 +1877,48 @@ ${diagnosticMessage}
       stopPlacementMode();
       setSearchMessage("前景・中景オブジェクトを配置しました。人物をタップして移動できます");
     } else if (subjectPlacementActive) {
-      const point = await setSubjectPinFromCoordinates(
-        viewer,
-        coordinates.latitude,
-        coordinates.longitude,
-        "手動指定地点"
-      );
+      const requestId = ++subjectPlacementRequestRef.current;
+      const provisionalPoint: GroundPoint = {
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        // 3D表面取得を待たず候補基礎ラインを描画する。精密高度取得後に置き換える。
+        height: subjectPoint?.height ?? 0,
+        label: "手動指定地点（高度確認中）",
+      };
+      setSubjectPoint(provisionalPoint);
+      stopPlacementMode();
+      setSearchMessage("被写体位置を確定しました。三脚候補を計算しながら3D表面高度を確認しています…");
+      const point = viewer && !viewer.isDestroyed()
+        ? await setSubjectPinFromCoordinates(
+            viewer,
+            coordinates.latitude,
+            coordinates.longitude,
+            "手動指定地点"
+          )
+        : await groundPointFromCoordinates(
+            coordinates.latitude,
+            coordinates.longitude,
+            "手動指定地点"
+          );
+      if (requestId !== subjectPlacementRequestRef.current) return;
       setSubjectPoint(point);
       setSearchMessage(
         `被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
       );
+      return;
     } else {
-      const point = await setTripodPinFromCoordinates(
-        viewer,
-        coordinates.latitude,
-        coordinates.longitude,
-        true
-      );
+      const point = viewer && !viewer.isDestroyed()
+        ? await setTripodPinFromCoordinates(
+            viewer,
+            coordinates.latitude,
+            coordinates.longitude,
+            true
+          )
+        : await groundPointFromCoordinates(
+            coordinates.latitude,
+            coordinates.longitude,
+            "三脚位置"
+          );
       setTripodPoint(point);
       setSearchMessage(
         `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
@@ -1882,20 +2005,43 @@ ${diagnosticMessage}
     void enterElementFullscreen(mapSectionRef.current);
   }
 
+  function publishCurrentLocationMessage(
+    message: string,
+    autoHide = true
+  ): void {
+    setSearchMessage(message);
+    setCurrentLocationMessage(message);
+    if (currentLocationMessageTimerRef.current !== null) {
+      window.clearTimeout(currentLocationMessageTimerRef.current);
+      currentLocationMessageTimerRef.current = null;
+    }
+    if (autoHide) {
+      currentLocationMessageTimerRef.current = window.setTimeout(() => {
+        currentLocationMessageTimerRef.current = null;
+        setCurrentLocationMessage("");
+      }, 7_000);
+    }
+  }
+
   async function showCurrentLocation() {
+    if (currentLocationPending) return;
     if (!window.isSecureContext) {
-      setSearchMessage("現在地はHTTPS接続でのみ取得できます");
+      publishCurrentLocationMessage("現在地はHTTPS接続でのみ取得できます");
       return;
     }
     if (!navigator.geolocation) {
-      setSearchMessage("この端末またはブラウザでは現在地を取得できません");
+      publishCurrentLocationMessage("この端末またはブラウザでは現在地を取得できません");
       return;
     }
 
     const requestId = ++currentLocationRequestRef.current;
+    setCurrentLocationPending(true);
     setMapTool("none");
+    setSubjectPlacementActive(false);
+    setTripodPlacementActive(false);
+    setForegroundPlacementActive(false);
     setSpotSearchOpen(false);
-    setSearchMessage("現在地を取得しています…");
+    publishCurrentLocationMessage("現在地を取得しています…", false);
 
     const getPosition = (options: PositionOptions) =>
       new Promise<GeolocationPosition>((resolve, reject) => {
@@ -1917,7 +2063,10 @@ ${diagnosticMessage}
         if (geolocationError.code === 1) {
           throw geolocationError;
         }
-        setSearchMessage("GPSで取得できないため、通常精度で再取得しています…");
+        publishCurrentLocationMessage(
+          "GPSで取得できないため、通常精度で再取得しています…",
+          false
+        );
         position = await getPosition({
           enableHighAccuracy: false,
           timeout: 15_000,
@@ -1933,7 +2082,8 @@ ${diagnosticMessage}
 
       const center = { latitude, longitude };
       mapCenterRef.current = center;
-      setMapCenter(center);
+      // 新しいオブジェクトを必ず設定し、2D iframe・オーバーレイも再描画させる。
+      setMapCenter({ latitude: center.latitude, longitude: center.longitude });
 
       const viewer = mapViewerRef.current;
       if (mapViewModeRef.current === "3d" && viewer && !viewer.isDestroyed()) {
@@ -1943,22 +2093,28 @@ ${diagnosticMessage}
       const accuracyText = Number.isFinite(accuracy)
         ? `（精度 約${Math.max(1, Math.round(accuracy))}m）`
         : "";
-      setSearchMessage(`現在地を地図の中心へ移動しました${accuracyText}`);
+      publishCurrentLocationMessage(
+        `現在地を地図の中心へ移動しました${accuracyText}`
+      );
     } catch (error) {
       if (requestId !== currentLocationRequestRef.current) return;
       const geolocationError = error as GeolocationPositionError;
       if (typeof geolocationError.code === "number") {
         if (geolocationError.code === 1) {
-          setSearchMessage("現在地の使用が許可されていません。端末の設定で、このサイトの位置情報を許可してください");
+          publishCurrentLocationMessage("現在地の使用が許可されていません。端末の設定で、このサイトの位置情報を許可してください");
         } else if (geolocationError.code === 2) {
-          setSearchMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
+          publishCurrentLocationMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
         } else if (geolocationError.code === 3) {
-          setSearchMessage("現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください");
+          publishCurrentLocationMessage("現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください");
         } else {
-          setSearchMessage(`現在地を取得できませんでした：${geolocationError.message || "不明なエラー"}`);
+          publishCurrentLocationMessage(`現在地を取得できませんでした：${geolocationError.message || "不明なエラー"}`);
         }
       } else {
-        setSearchMessage(`現在地を取得できませんでした：${error instanceof Error ? error.message : "不明なエラー"}`);
+        publishCurrentLocationMessage(`現在地を取得できませんでした：${error instanceof Error ? error.message : "不明なエラー"}`);
+      }
+    } finally {
+      if (requestId === currentLocationRequestRef.current) {
+        setCurrentLocationPending(false);
       }
     }
   }
@@ -2215,7 +2371,7 @@ ${diagnosticMessage}
               tracks={celestialTracks}
               milkyWayPath={visibleMilkyWayPath}
               visibility={celestialVisibility}
-              candidates={tripodCandidates}
+              candidates={displayedTripodCandidates}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
               foregroundEditing={foregroundPlacementActive}
@@ -2287,8 +2443,22 @@ ${diagnosticMessage}
               </button>
             </div>
 
+            {currentLocationMessage && (
+              <div className="map-current-location-status" role="status">
+                {currentLocationMessage}
+              </div>
+            )}
+
             <div className="map-right-actions">
-              <button type="button" onClick={showCurrentLocation}><span>◉</span><small>現在地</small></button>
+              <button
+                type="button"
+                onClick={showCurrentLocation}
+                disabled={currentLocationPending}
+                aria-busy={currentLocationPending}
+              >
+                <span>{currentLocationPending ? "⌛" : "◉"}</span>
+                <small>{currentLocationPending ? "取得中" : "現在地"}</small>
+              </button>
               <button type="button" onClick={showSubjectOnMap}><span>⌖</span><small>被写体</small></button>
               <button type="button" onClick={showTripodOnMap}><span>●</span><small>三脚</small></button>
               <button type="button" onClick={openMapFullscreen}><span>⛶</span><small>全画面</small></button>

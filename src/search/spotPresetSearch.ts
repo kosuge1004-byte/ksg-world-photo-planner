@@ -699,9 +699,12 @@ export async function searchSpotPresets({
           ));
           if (lineOfSight.verified && lineOfSight.visible) {
             performanceTracker.increment("lineOfSightVisible");
-            return entry;
+          } else {
+            performanceTracker.increment("lineOfSightUnverifiedAccepted");
           }
-          return null;
+          // 3D見通し判定はデータ欠損や地物精度の影響を受けるため、
+          // 候補の削除条件にはせず、全候補をクライアント側の状態表示へ渡す。
+          return entry;
         } catch (error) {
           if (signal?.aborted ||
             (error instanceof DOMException && error.name === "AbortError")) {
@@ -734,6 +737,8 @@ export async function searchSpotPresets({
           celestialLabel: BODY_LABELS[criteria.celestialId],
           cameraAzimuthDegrees: cameraHorizontal.azimuthDegrees,
           cameraAltitudeDegrees: cameraHorizontal.altitudeDegrees,
+          // サーバー側のDEM確認後も、端末側Photorealistic 3D確認までは候補を残す。
+          candidate3dStatus: "unverified",
           nearbyLandmarks: siteContext?.nearbyLandmarks ?? [],
           nearbyBuildings: siteContext?.nearbyBuildings ?? [],
           nearbyStructures: siteContext?.nearbyStructures ?? [],

@@ -134,14 +134,31 @@ export async function waitForBackgroundSpotSearch(
       cache: "no-store",
       signal,
     });
-    if (response.status === 404 && missingRetryCount < 4) {
-      missingRetryCount += 1;
-      await abortableDelay(500, signal);
-      continue;
+    if (response.status === 404) {
+      const isJsonResponse = (
+        response.headers.get("content-type") ?? ""
+      ).includes("application/json");
+      // 開始API直後は別インスタンスの状態反映に時間差が出る場合がある。
+      // JSONの「ジョブ未検出」だけを待ち、HTML 404（API未配置）は即時に区別する。
+      if (isJsonResponse && missingRetryCount < 20) {
+        missingRetryCount += 1;
+        onProgress(
+          `検索ジョブの起動を確認中（${missingRetryCount}/20）`,
+          0
+        );
+        await abortableDelay(500, signal);
+        continue;
+      }
+      clearActiveSpotSearchJob(active);
+      const detail = await errorMessage(response);
+      throw new Error(isJsonResponse
+        ? `${detail}。保存済みの古い検索状態を解除しました。もう一度検索してください`
+        : `${detail}。この起動方法では検索APIが利用できません`);
     }
     if (!response.ok) throw new Error(await errorMessage(response));
     const job = await response.json() as unknown;
     if (!isSpotSearchJob(job)) {
+      clearActiveSpotSearchJob(active);
       throw new Error("バックグラウンド検索の応答形式が不正です");
     }
     const percent = typeof job.progressPercent === "number" ? job.progressPercent : 0;
@@ -159,9 +176,11 @@ export async function waitForBackgroundSpotSearch(
       : job.progress;
     onProgress(heartbeat, boundedPercent);
     if (job.status === "queued" && elapsedSeconds >= 90) {
+      clearActiveSpotSearchJob(active);
       throw new Error("検索処理を開始できませんでした。通信状態を確認して、もう一度検索してください");
     }
     if (job.status === "failed") {
+      clearActiveSpotSearchJob(active);
       throw new Error(job.error ?? "バックグラウンド検索に失敗しました");
     }
     if (job.status === "awaiting-3d" || job.status === "complete") return job;
@@ -172,7 +191,12 @@ export async function waitForBackgroundSpotSearch(
 export function deserializeSpotSearchResults(
   results: SerializedSpotPresetResult[]
 ): SpotPresetResult[] {
-  return results.map((result) => ({ ...result, date: new Date(result.date) }));
+  return results.map((result) => ({
+    ...result,
+    date: new Date(result.date),
+    // 旧ジョブには状態が無いため、安全側の「未確認」として候補を維持する。
+    candidate3dStatus: result.candidate3dStatus ?? "unverified",
+  }));
 }
 
 export async function finalizeBackgroundSpotSearch(
