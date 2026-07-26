@@ -1,8 +1,10 @@
 import {
   extractGoogleMapsCoordinates,
+  extractGoogleMapsPlaceQuery,
   extractGoogleMapsSharedUrl,
   isAllowedGoogleMapsHost,
 } from "../src/search/googleMapsUrl.ts";
+import { resolveJapanesePlaceName } from "./placeGeocode.ts";
 
 export type ResolvedGoogleMapsLocation = {
   latitude: number;
@@ -38,6 +40,9 @@ function decodeHtmlEntities(value: string): string {
 function resolveRedirectUrl(location: string, baseUrl: string): string | null {
   try {
     const resolved = new URL(decodeHtmlEntities(location), baseUrl);
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
+      return null;
+    }
     // Google共有リンクの解析中に外部サイトへ誘導されないよう転送先も制限する。
     return isAllowedGoogleMapsHost(resolved.hostname) ? resolved.href : null;
   } catch {
@@ -81,6 +86,9 @@ function extractGoogleUrlsFromHtml(
     /<meta[^>]+(?:property|name)=["'](?:og:url|twitter:url)["'][^>]+content=["']([^"']+)["']/giu,
     /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:url|twitter:url)["']/giu,
     /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url\s*=\s*([^"';]+)[^"']*["']/giu,
+    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/giu,
+    /(?:window\.)?location\.(?:replace|assign)\(\s*["']([^"']+)["']\s*\)/giu,
+    /["'](?:url|redirectUrl|continueUrl)["']\s*:\s*["']([^"']+)["']/giu,
   ];
   if (includeOrdinaryLinks) {
     // 座標の抽出時だけ通常リンクも調べる。次の転送先には使用しない。
@@ -173,11 +181,12 @@ export async function resolveGoogleMapsSharedUrl(
         continue;
       }
 
-      throw new Error(
-        response.ok
-          ? "共有リンクは開けましたが座標を取得できませんでした"
-          : `Googleマップ共有リンク通信エラー：${response.status}`
-      );
+      if (response.ok) {
+        // 手動転送では200応答内のクライアント側遷移を確定できない場合がある。
+        // ここで失敗させず、標準fetch転送と追加のHTML座標形式を続けて試す。
+        break;
+      }
+      throw new Error(`Googleマップ共有リンク通信エラー：${response.status}`);
     }
     // 手動転送で確定しない特殊な共有リンクは、fetch標準の転送処理で最終URLを確認する。
     const finalResponse = await fetch(sourceUrl, {
@@ -194,6 +203,29 @@ export async function resolveGoogleMapsSharedUrl(
     const finalContent = await finalResponse.text();
     const finalCoordinates = coordinatesFromContent(finalContent, finalUrl);
     if (finalCoordinates) return finalCoordinates;
+
+    // 座標をURLへ含めないGoogle Maps検索共有では、場所名を最終手段として
+    // 既存の日本向け地名検索へ渡す。座標形式とPlace正式座標の抽出を常に優先する。
+    const placeQuery = [finalUrl, ...[...visited].reverse()]
+      .map((candidate) => extractGoogleMapsPlaceQuery(candidate))
+      .find((candidate): candidate is string => Boolean(candidate));
+    if (placeQuery) {
+      const place = await resolveJapanesePlaceName(
+        placeQuery,
+        abortController.signal
+      );
+      return {
+        latitude: place.latitude,
+        longitude: place.longitude,
+        resolvedUrl: finalUrl,
+      };
+    }
+
+    if (/\/maps\/d\//u.test(new URL(finalUrl).pathname)) {
+      throw new Error(
+        "この共有URLは複数地点を含むGoogleマイマップです。Google Mapsで対象地点を1つ開き、その地点の共有URLを貼り付けてください"
+      );
+    }
     throw new Error("共有リンクの最終転送先から座標を取得できませんでした");
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {

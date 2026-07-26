@@ -138,7 +138,10 @@ import type { ActiveSpotSearchJob } from "./search/backgroundSpotSearch";
 import { enterElementFullscreen, exitElementFullscreen } from "./ui/fullscreen";
 import {
   canOpenNativeLocationSettings,
+  geolocationPermissionState,
+  isInstalledWebApp,
   locationPermissionInstructions,
+  locationSettingsPlatform,
   openNativeLocationSettings,
 } from "./device/locationSettings";
 
@@ -2166,7 +2169,15 @@ ${diagnosticMessage}
     stopAllEditModes();
     setSpotSearchOpen(false);
     setCurrentLocationPermissionDenied(false);
-    publishCurrentLocationMessage("現在地を取得しています…", false);
+    const initialPermissionState = await geolocationPermissionState();
+    publishCurrentLocationMessage(
+      isInstalledWebApp() &&
+        locationSettingsPlatform() === "android" &&
+        initialPermissionState !== "granted"
+        ? "インストール版の位置情報権限を確認しています。Androidのアプリ権限欄に位置情報が表示されない場合は、Chromeのサイト権限で許可します…"
+        : "現在地を取得しています…",
+      false
+    );
 
     const getPosition = (options: PositionOptions) =>
       new Promise<GeolocationPosition>((resolve, reject) => {
@@ -2231,10 +2242,38 @@ ${diagnosticMessage}
       if (typeof geolocationError.code === "number") {
         if (geolocationError.code === 1) {
           handleLocationPermissionDenied();
+        } else if (
+          await geolocationPermissionState() === "denied"
+        ) {
+          // Androidホーム画面版では拒否がPOSITION_UNAVAILABLEとして返る場合もある。
+          // Permissions APIがdeniedなら、取得エラー種別より権限案内を優先する。
+          handleLocationPermissionDenied();
         } else if (geolocationError.code === 2) {
-          publishCurrentLocationMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
+          if (
+            isInstalledWebApp() &&
+            locationSettingsPlatform() === "android"
+          ) {
+            setCurrentLocationPermissionDenied(true);
+            publishCurrentLocationMessage(
+              `現在地を特定できませんでした。${locationPermissionInstructions()}`,
+              false
+            );
+          } else {
+            publishCurrentLocationMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
+          }
         } else if (geolocationError.code === 3) {
-          publishCurrentLocationMessage("現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください");
+          if (
+            isInstalledWebApp() &&
+            locationSettingsPlatform() === "android"
+          ) {
+            setCurrentLocationPermissionDenied(true);
+            publishCurrentLocationMessage(
+              `現在地の取得がタイムアウトしました。${locationPermissionInstructions()}`,
+              false
+            );
+          } else {
+            publishCurrentLocationMessage("現在地の取得がタイムアウトしました。端末の位置情報を確認して再試行してください");
+          }
         } else {
           publishCurrentLocationMessage(`現在地を取得できませんでした：${geolocationError.message || "不明なエラー"}`);
         }
@@ -2605,14 +2644,14 @@ ${diagnosticMessage}
                 <span>{currentLocationMessage}</span>
                 {currentLocationPermissionDenied && (
                   <div className="location-notice-actions">
-                    {canOpenNativeLocationSettings() && (
-                      <button
-                        type="button"
-                        onClick={() => void openLocationSettingsFromNotice()}
-                      >
-                        アプリ設定
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => void openLocationSettingsFromNotice()}
+                    >
+                      {canOpenNativeLocationSettings()
+                        ? "アプリ設定"
+                        : "設定方法"}
+                    </button>
                     <button
                       type="button"
                       onClick={() => void showCurrentLocation()}

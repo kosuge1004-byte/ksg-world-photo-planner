@@ -56,6 +56,56 @@ function coordinatePair(
     : null;
 }
 
+/**
+ * Google Maps共有ページではURLがHTML entity、JavaScript escape、
+ * percent encodingの複数層で格納されることがあるため、座標抽出前に展開する。
+ */
+function normalizeGoogleMapsText(source: string): string {
+  let normalized = source
+    .replaceAll("&amp;", "&")
+    .replaceAll("&#38;", "&")
+    .replaceAll("&#x26;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#34;", '"')
+    .replaceAll("&#x22;", '"')
+    .replaceAll("\\u002f", "/")
+    .replaceAll("\\u002F", "/")
+    .replaceAll("\\u003a", ":")
+    .replaceAll("\\u003A", ":")
+    .replaceAll("\\u003d", "=")
+    .replaceAll("\\u003D", "=")
+    .replaceAll("\\u0026", "&")
+    .replaceAll("\\u002c", ",")
+    .replaceAll("\\u002C", ",")
+    .replaceAll("\\x2f", "/")
+    .replaceAll("\\x2F", "/")
+    .replaceAll("\\x3a", ":")
+    .replaceAll("\\x3A", ":")
+    .replaceAll("\\x3d", "=")
+    .replaceAll("\\x3D", "=")
+    .replaceAll("\\x26", "&")
+    .replaceAll("\\x2c", ",")
+    .replaceAll("\\x2C", ",")
+    .replaceAll("\\/", "/");
+
+  // continueパラメーターなどへ二重符号化された共有URLも展開する。
+  for (let pass = 0; pass < 4; pass += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(normalized);
+    } catch {
+      // 壊れたpercent列を含むHTMLでも、座標用のASCII区切りだけは展開する。
+      decoded = normalized.replace(
+        /%(21|23|25|26|2C|2F|3A|3D|3F|40)/giu,
+        (value) => String.fromCharCode(Number.parseInt(value.slice(1), 16))
+      );
+    }
+    if (decoded === normalized) break;
+    normalized = decoded;
+  }
+  return normalized;
+}
+
 function extractCoordinatesFromUrl(
   source: string
 ): GoogleMapsCoordinates | null {
@@ -83,18 +133,47 @@ function extractCoordinatesFromUrl(
   }
 }
 
+export function extractGoogleMapsPlaceQuery(source: string): string | null {
+  const normalized = normalizeGoogleMapsText(source);
+  try {
+    const url = new URL(normalized);
+    for (const parameter of ["query", "q", "destination"]) {
+      const value = url.searchParams.get(parameter)?.trim();
+      if (
+        !value ||
+        /^place_id:/iu.test(value) ||
+        coordinatePair(
+          value.split(",")[0] ?? "",
+          value.split(",")[1] ?? ""
+        )
+      ) {
+        continue;
+      }
+      return value.slice(0, 200);
+    }
+
+    const path = decodeURIComponent(url.pathname).replaceAll("+", " ");
+    const match = path.match(/\/maps\/(?:place|search)\/([^/]+)/iu);
+    const value = match?.[1]?.trim();
+    if (
+      !value ||
+      coordinatePair(
+        value.split(",")[0] ?? "",
+        value.split(",")[1] ?? ""
+      )
+    ) {
+      return null;
+    }
+    return value.slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
 export function extractGoogleMapsCoordinates(
   source: string
 ): GoogleMapsCoordinates | null {
-  let normalized = source
-    .replaceAll("\\u003d", "=")
-    .replaceAll("\\u0026", "&")
-    .replaceAll("\\/", "/");
-  try {
-    normalized = decodeURIComponent(normalized);
-  } catch {
-    // URL全体をデコードできない場合も未デコード文字列のパターンを調べる。
-  }
+  const normalized = normalizeGoogleMapsText(source);
 
   const urlCoordinates = extractCoordinatesFromUrl(normalized);
   if (urlCoordinates) return urlCoordinates;
@@ -105,6 +184,7 @@ export function extractGoogleMapsCoordinates(
     /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:,|\/|$)/u,
     /[?&](?:query|q|destination|ll|center)=(-?\d+(?:\.\d+)?),(?:\+|\s)*(-?\d+(?:\.\d+)?)/iu,
     /"latitude"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*(-?\d+(?:\.\d+)?)/iu,
+    /["'](?:latitude|lat)["']\s*[:=]\s*(-?\d+(?:\.\d+)?)[\s\S]{0,160}?["'](?:longitude|lng|lon)["']\s*[:=]\s*(-?\d+(?:\.\d+)?)/iu,
   ];
   for (const pattern of latitudeLongitudePatterns) {
     const match = normalized.match(pattern);
@@ -113,11 +193,48 @@ export function extractGoogleMapsCoordinates(
     if (coordinates) return coordinates;
   }
 
+  // JSONのキーがlongitude→latitudeの順で返る共有ページにも対応する。
+  const namedLongitudeLatitude = normalized.match(
+    /["'](?:longitude|lng|lon)["']\s*[:=]\s*(-?\d+(?:\.\d+)?)[\s\S]{0,160}?["'](?:latitude|lat)["']\s*[:=]\s*(-?\d+(?:\.\d+)?)/iu
+  );
+  if (namedLongitudeLatitude) {
+    const coordinates = coordinatePair(
+      namedLongitudeLatitude[2],
+      namedLongitudeLatitude[1]
+    );
+    if (coordinates) return coordinates;
+  }
+
   // 一部のGoogle Maps dataパラメーターは経度(!2d)→緯度(!3d)の順で格納される。
   const longitudeLatitude = normalized.match(
     /!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/u
   );
-  return longitudeLatitude
-    ? coordinatePair(longitudeLatitude[2], longitudeLatitude[1])
-    : null;
+  if (longitudeLatitude) {
+    const coordinates = coordinatePair(
+      longitudeLatitude[2],
+      longitudeLatitude[1]
+    );
+    if (coordinates) return coordinates;
+  }
+
+  // URLへ座標を含めない共有形式は、Google Maps初期化データ内の
+  // [null,null,latitude,longitude] を対象地点または表示中心として返す。
+  const initializationIndex = normalized.indexOf("APP_INITIALIZATION_STATE");
+  if (initializationIndex >= 0) {
+    const initializationState = normalized.slice(
+      initializationIndex,
+      initializationIndex + 750_000
+    );
+    const initializationCoordinates = initializationState.match(
+      /\[\s*null\s*,\s*null\s*,\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*\]/u
+    );
+    if (initializationCoordinates) {
+      return coordinatePair(
+        initializationCoordinates[1],
+        initializationCoordinates[2]
+      );
+    }
+  }
+
+  return null;
 }

@@ -56,9 +56,30 @@ export function canOpenNativeLocationSettings(): boolean {
 
 export function isInstalledWebApp(): boolean {
   const iosNavigator = navigator as Navigator & { standalone?: boolean };
+  // manifestのstart_urlにも付与した印を使い、display-mode判定が不安定な
+  // Androidホーム画面版でもインストール向け案内を確実に選択する。
+  const installedStartMarker =
+    new URLSearchParams(window.location.search).get("source") === "installed";
   return window.matchMedia("(display-mode: standalone)").matches ||
     window.matchMedia("(display-mode: fullscreen)").matches ||
-    iosNavigator.standalone === true;
+    iosNavigator.standalone === true ||
+    installedStartMarker;
+}
+
+export async function geolocationPermissionState(): Promise<
+  PermissionState | "unsupported"
+> {
+  if (!navigator.permissions?.query) return "unsupported";
+  try {
+    return (
+      await navigator.permissions.query({
+        name: "geolocation",
+      })
+    ).state;
+  } catch {
+    // Safariなど照会未対応の環境では、getCurrentPosition本体の結果で判定する。
+    return "unsupported";
+  }
 }
 
 export function locationPermissionInstructions(
@@ -67,9 +88,9 @@ export function locationPermissionInstructions(
 ): string {
   if (platform === "android") {
     return isInstalledWebApp()
-      // Androidのホーム画面版は、端末のアプリ権限一覧ではなく
-      // Chrome本体と対象サイトの二段階で位置情報を許可する端末がある。
-      ? `位置情報はホーム画面版ではなく、Chromeとこのサイトに許可します。Chromeで「${siteLabel}」を開き、アドレスバー左のサイト情報→「権限」→「位置情報」→「許可」にしてください。位置情報が表示されない場合は、Android設定→「アプリ」→「Chrome」→「権限」→「位置情報」も許可してください。`
+      // AndroidのPWAは通常アプリの権限欄ではなく、Chromeのサイト権限として
+      // 位置情報を管理する構成があることを最初に明記する。
+      ? `このホーム画面版はWebアプリのため、Androidの「このアプリの権限」に位置情報が表示されない場合があります。Chromeで「${siteLabel}」を開き、アドレスバー左のサイト情報→「権限」→「位置情報」→「許可」にしてください。見つからない場合はChromeの︙→「設定」→「サイトの設定」→「位置情報」→「${siteLabel}」を確認します。あわせてAndroid設定→「位置情報」→「位置情報を使用」をONにしてください。`
       : `Chromeのアドレスバー左にあるサイト情報→「権限」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。`;
   }
   if (platform === "ios") {
