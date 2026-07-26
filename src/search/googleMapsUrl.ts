@@ -56,6 +56,33 @@ function coordinatePair(
     : null;
 }
 
+function extractCoordinatesFromUrl(
+  source: string
+): GoogleMapsCoordinates | null {
+  try {
+    const url = new URL(source);
+    for (const parameter of ["query", "q", "destination", "ll", "center"]) {
+      const value = url.searchParams.get(parameter);
+      const match = value?.match(
+        /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/u
+      );
+      if (!match) continue;
+      const coordinates = coordinatePair(match[1], match[2]);
+      if (coordinates) return coordinates;
+    }
+
+    // 現在のGoogle Maps短縮URLは
+    // /maps/search/緯度,+経度 の形式へ転送される場合がある。
+    const path = decodeURIComponent(url.pathname).replaceAll("+", " ");
+    const pathMatch = path.match(
+      /\/maps\/(?:search|place|dir)\/(?:[^/]+\/)*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\/|$)/iu
+    );
+    return pathMatch ? coordinatePair(pathMatch[1], pathMatch[2]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function extractGoogleMapsCoordinates(
   source: string
 ): GoogleMapsCoordinates | null {
@@ -69,11 +96,14 @@ export function extractGoogleMapsCoordinates(
     // URL全体をデコードできない場合も未デコード文字列のパターンを調べる。
   }
 
+  const urlCoordinates = extractCoordinatesFromUrl(normalized);
+  if (urlCoordinates) return urlCoordinates;
+
   const latitudeLongitudePatterns = [
     // placeの正式座標を、画面中心を表す@座標より優先する。
     /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/u,
     /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:,|\/|$)/u,
-    /[?&](?:query|q|destination|ll|center)=(-?\d+(?:\.\d+)?),(?:\s*)(-?\d+(?:\.\d+)?)/iu,
+    /[?&](?:query|q|destination|ll|center)=(-?\d+(?:\.\d+)?),(?:\+|\s)*(-?\d+(?:\.\d+)?)/iu,
     /"latitude"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*(-?\d+(?:\.\d+)?)/iu,
   ];
   for (const pattern of latitudeLongitudePatterns) {

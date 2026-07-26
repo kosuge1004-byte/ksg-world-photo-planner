@@ -136,9 +136,9 @@ import {
 import type { ActiveSpotSearchJob } from "./search/backgroundSpotSearch";
 import { enterElementFullscreen, exitElementFullscreen } from "./ui/fullscreen";
 import {
+  canOpenNativeLocationSettings,
   locationPermissionInstructions,
   openNativeLocationSettings,
-  tryOpenAndroidLocationSettings,
 } from "./device/locationSettings";
 
 const DEFAULT_CELESTIAL_VISIBILITY: CelestialVisibility = {
@@ -2090,19 +2090,17 @@ ${diagnosticMessage}
     }
   }
 
-  async function handleLocationPermissionDenied(): Promise<void> {
-    setCurrentLocationPermissionDenied(true);
-    try {
-      if (await openNativeLocationSettings()) {
-        publishCurrentLocationMessage(
-          "端末の設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
-          false
-        );
-        return;
-      }
-    } catch (error) {
-      console.warn("端末の位置情報設定を開けませんでした", error);
+  function closeCurrentLocationNotice(): void {
+    if (currentLocationMessageTimerRef.current !== null) {
+      window.clearTimeout(currentLocationMessageTimerRef.current);
+      currentLocationMessageTimerRef.current = null;
     }
+    setCurrentLocationMessage("");
+    setCurrentLocationPermissionDenied(false);
+  }
+
+  function handleLocationPermissionDenied(): void {
+    setCurrentLocationPermissionDenied(true);
     publishCurrentLocationMessage(
       `現在地の使用が許可されていません。${locationPermissionInstructions()}`,
       false
@@ -2118,16 +2116,11 @@ ${diagnosticMessage}
         );
         return;
       }
-      if (tryOpenAndroidLocationSettings()) {
-        publishCurrentLocationMessage(
-          `端末の位置情報設定を開いています。戻った後、Chromeでもこのサイトの位置情報を許可してください。`,
-          false
-        );
-        return;
-      }
     } catch (error) {
-      console.warn("位置情報設定への移動に失敗しました", error);
+      console.warn("アプリ個別設定への移動に失敗しました", error);
     }
+    // Web/PWAからはOSのアプリ個別設定やChromeのサイト権限を
+    // 確実に直接開けないため、対象サイトを明記した操作手順を表示する。
     publishCurrentLocationMessage(locationPermissionInstructions(), false);
   }
 
@@ -2164,7 +2157,7 @@ ${diagnosticMessage}
             name: "geolocation",
           });
           if (permission.state === "denied") {
-            await handleLocationPermissionDenied();
+            handleLocationPermissionDenied();
             return;
           }
         } catch (error) {
@@ -2227,7 +2220,7 @@ ${diagnosticMessage}
       const geolocationError = error as GeolocationPositionError;
       if (typeof geolocationError.code === "number") {
         if (geolocationError.code === 1) {
-          await handleLocationPermissionDenied();
+          handleLocationPermissionDenied();
         } else if (geolocationError.code === 2) {
           publishCurrentLocationMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
         } else if (geolocationError.code === 3) {
@@ -2587,12 +2580,24 @@ ${diagnosticMessage}
               >
                 <span>{currentLocationMessage}</span>
                 {currentLocationPermissionDenied && (
-                  <button
-                    type="button"
-                    onClick={() => void openLocationSettingsFromNotice()}
-                  >
-                    端末の設定を開く
-                  </button>
+                  <div className="location-notice-actions">
+                    <button
+                      type="button"
+                      onClick={() => void openLocationSettingsFromNotice()}
+                    >
+                      {canOpenNativeLocationSettings()
+                        ? "このアプリの設定を開く"
+                        : "許可方法を表示"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={closeCurrentLocationNotice}
+                      aria-label="現在地権限の案内を閉じる"
+                    >
+                      閉じる
+                    </button>
+                  </div>
                 )}
               </div>
             )}

@@ -1,5 +1,5 @@
 type KsgNativeLocationBridge = {
-  openLocationSettings?: () => void | Promise<void>;
+  openAppSettings?: () => void | Promise<void>;
 };
 
 type WebKitMessageHandler = {
@@ -10,7 +10,7 @@ type LocationSettingsWindow = Window & {
   KSGNative?: KsgNativeLocationBridge;
   webkit?: {
     messageHandlers?: {
-      ksgOpenLocationSettings?: WebKitMessageHandler;
+      ksgOpenAppSettings?: WebKitMessageHandler;
     };
   };
 };
@@ -26,18 +26,19 @@ export function locationSettingsPlatform(
 }
 
 /**
- * Android/iOSアプリのWebViewへ設定画面を開く要求を渡す。
+ * Android/iOSアプリのWebViewへ「このアプリ」の設定画面を開く要求を渡す。
  * WebブラウザからOS設定を直接開くことは保証されないため、ネイティブ側が
- * 提供する同一ブリッジだけを使用し、利用できない場合はfalseを返す。
+ * 提供するアプリ個別設定専用ブリッジだけを使用し、利用できない場合はfalseを返す。
+ * 端末全体のGPS設定を開く旧ブリッジは、対象アプリを特定できないため使用しない。
  */
 export async function openNativeLocationSettings(): Promise<boolean> {
   const runtimeWindow = window as LocationSettingsWindow;
-  if (runtimeWindow.KSGNative?.openLocationSettings) {
-    await runtimeWindow.KSGNative.openLocationSettings();
+  if (runtimeWindow.KSGNative?.openAppSettings) {
+    await runtimeWindow.KSGNative.openAppSettings();
     return true;
   }
   const iosHandler =
-    runtimeWindow.webkit?.messageHandlers?.ksgOpenLocationSettings;
+    runtimeWindow.webkit?.messageHandlers?.ksgOpenAppSettings;
   if (iosHandler) {
     iosHandler.postMessage({ source: "ksg-world-photo-planner" });
     return true;
@@ -45,25 +46,23 @@ export async function openNativeLocationSettings(): Promise<boolean> {
   return false;
 }
 
-/**
- * Androidのブラウザ／インストール済みPWAでは、ユーザー操作からIntentを
- * 開ける端末がある。失敗する端末では画面内の手順表示を残す。
- */
-export function tryOpenAndroidLocationSettings(): boolean {
-  if (locationSettingsPlatform() !== "android") return false;
-  window.location.href =
-    "intent:#Intent;action=android.settings.LOCATION_SOURCE_SETTINGS;end";
-  return true;
+export function canOpenNativeLocationSettings(): boolean {
+  const runtimeWindow = window as LocationSettingsWindow;
+  return Boolean(
+    runtimeWindow.KSGNative?.openAppSettings ||
+    runtimeWindow.webkit?.messageHandlers?.ksgOpenAppSettings
+  );
 }
 
 export function locationPermissionInstructions(
-  platform = locationSettingsPlatform()
+  platform = locationSettingsPlatform(),
+  siteLabel = window.location.host
 ): string {
   if (platform === "android") {
-    return "設定で位置情報をONにし、Chromeの「サイトの設定」→「位置情報」でこのサイトを許可してから再試行してください。";
+    return `Chromeのアドレスバー左にあるサイト情報→「権限」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。ホーム画面版では、アプリアイコン長押し→「アプリ情報」→「権限」→「位置情報」も確認してください。`;
   }
   if (platform === "ios") {
-    return "iPhoneの「設定」→「プライバシーとセキュリティ」→「位置情報サービス」で、このアプリまたはSafariの位置情報を許可してから再試行してください。";
+    return `Safariのページメニュー→「Webサイトの設定」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。ホーム画面版では「設定」→「プライバシーとセキュリティ」→「位置情報サービス」も確認してください。`;
   }
-  return "ブラウザのサイト権限で位置情報を許可し、端末の位置情報をONにしてから再試行してください。";
+  return `ブラウザのサイト権限で位置情報を許可してください。対象サイト：${siteLabel}。あわせて端末の位置情報をONにしてから再試行してください。`;
 }

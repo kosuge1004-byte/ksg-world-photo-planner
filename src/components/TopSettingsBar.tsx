@@ -103,7 +103,6 @@ export function TopSettingsBar({
       <nav className="top-quick-actions" aria-label="クイック操作">
         <button type="button" className="top-preset-button" onClick={onOpenSavedPlans}><b aria-hidden="true">▣</b><span>プリセット</span></button>
         <button type="button" className="top-favorite-button" aria-label="現在の構図を保存" onClick={onSaveCurrentPlan}><b aria-hidden="true">☆</b></button>
-        <button type="button" className="top-more-button" aria-label="その他"><b aria-hidden="true">⋮</b></button>
       </nav>
     </header>
   );
