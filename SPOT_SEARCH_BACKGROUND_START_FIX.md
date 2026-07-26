@@ -1,7 +1,9 @@
-# スポット検索のバックグラウンド起動
+# スポット検索のバックグラウンド開始方式
 
-- `/api/spot-search-start`は同期Functionとしてジョブを先に保存する。
-- 長時間計算は`/api/internal/spot-search-worker`のBackground Functionへ分離する。
-- 検索中に画面を非表示にしてもサーバー側計算を継続する。
-- クライアントは`/api/spot-search-status`から保存済み状態を確認する。
-- Background Functionの実行結果はNetlify Blobsへ保存し、元のHTTP応答本文には依存しない。
+- `/api/spot-search-start` は `spot-search-start-background.ts` で処理します。
+- NetlifyにはHTTP 202を先に返し、同一Background Function内で日時・構図候補の計算を継続します。
+- 進捗と結果はNetlify Blobsへ保存し、画面は `/api/spot-search-status` から状態を取得します。
+- アプリを非表示にしても、正常に開始済みのサーバー検索は継続します。
+- APIが未配置、起動失敗、または状態を取得できない場合は、同じ条件の端末内検索へ自動的に切り替えます。
+- 端末内検索へ切り替わった場合、画面を閉じるとブラウザーやOSにより処理が停止する可能性があります。
+- 結果は3D未確認の状態でも候補一覧へ残し、ユーザーがマップとプレビューで確認できるようにします。

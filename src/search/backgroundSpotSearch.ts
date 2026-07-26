@@ -124,6 +124,8 @@ export async function waitForBackgroundSpotSearch(
 ): Promise<SpotSearchJob> {
   let missingRetryCount = 0;
   const waitStartedAt = Date.now();
+  const missingJobTimeoutMilliseconds = 30_000;
+  const queuedTimeoutMilliseconds = 45_000;
   while (true) {
     if (signal.aborted) {
       throw new DOMException("検索結果の待機を中止しました", "AbortError");
@@ -140,13 +142,19 @@ export async function waitForBackgroundSpotSearch(
       ).includes("application/json");
       // 開始API直後は別インスタンスの状態反映に時間差が出る場合がある。
       // JSONの「ジョブ未検出」だけを待ち、HTML 404（API未配置）は即時に区別する。
-      if (isJsonResponse && missingRetryCount < 20) {
+      const missingElapsedMilliseconds = Date.now() - waitStartedAt;
+      if (
+        isJsonResponse &&
+        missingElapsedMilliseconds < missingJobTimeoutMilliseconds
+      ) {
         missingRetryCount += 1;
         onProgress(
-          `検索ジョブの起動を確認中（${missingRetryCount}/20）`,
+          `検索ジョブの起動を確認中（${Math.floor(
+            missingElapsedMilliseconds / 1_000
+          )}秒）`,
           0
         );
-        await abortableDelay(500, signal);
+        await abortableDelay(1_000, signal);
         continue;
       }
       clearActiveSpotSearchJob(active);
@@ -175,9 +183,19 @@ export async function waitForBackgroundSpotSearch(
           : "サーバー応答確認済み"}・経過 ${elapsedText}`
       : job.progress;
     onProgress(heartbeat, boundedPercent);
-    if (job.status === "queued" && elapsedSeconds >= 90) {
-      clearActiveSpotSearchJob(active);
-      throw new Error("検索処理を開始できませんでした。通信状態を確認して、もう一度検索してください");
+    const jobCreatedAtMilliseconds = Date.parse(job.createdAt);
+    const queuedElapsedMilliseconds = Number.isFinite(jobCreatedAtMilliseconds)
+      ? Date.now() - jobCreatedAtMilliseconds
+      : Date.now() - waitStartedAt;
+    if (
+      job.status === "queued" &&
+      queuedElapsedMilliseconds >= queuedTimeoutMilliseconds
+    ) {
+      // 通信成功後のqueued停止なので、利用者の通信状態を原因として表示しない。
+      // Active Jobは残し、Background Functionが遅れて開始した場合に再開できるようにする。
+      throw new Error(
+        "サーバー側の検索処理を起動できませんでした。検索画面を開き直して状態を再確認してください"
+      );
     }
     if (job.status === "failed") {
       clearActiveSpotSearchJob(active);

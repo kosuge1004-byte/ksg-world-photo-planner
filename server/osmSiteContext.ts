@@ -78,6 +78,8 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass.kumi.systems/api/interpreter",
 ] as const;
 const OVERPASS_RETRY_DELAYS_MS = [0, 450] as const;
+const OVERPASS_REQUEST_TIMEOUT_MS = 6_000;
+const OVERPASS_TOTAL_TIMEOUT_MS = 15_000;
 const PRIVATE_ACCESS_VALUES = new Set(["private", "no", "customers", "permit"]);
 const NON_WALKABLE_HIGHWAYS = new Set([
   "motorway",
@@ -523,20 +525,31 @@ async function fetchOverpass(
   signal?: AbortSignal
 ): Promise<OsmElement[]> {
   let lastError: Error | null = null;
+  const deadline = Date.now() + OVERPASS_TOTAL_TIMEOUT_MS;
   for (const retryDelay of OVERPASS_RETRY_DELAYS_MS) {
+    if (Date.now() >= deadline) break;
     await abortableDelay(retryDelay, signal);
     for (const endpoint of OVERPASS_ENDPOINTS) {
+      const remainingMilliseconds = deadline - Date.now();
+      if (remainingMilliseconds <= 0) break;
+      const requestController = new AbortController();
+      const forwardAbort = () => requestController.abort(signal?.reason);
+      signal?.addEventListener("abort", forwardAbort, { once: true });
+      const requestTimeout = setTimeout(
+        () => requestController.abort(new DOMException("Overpass API timeout", "TimeoutError")),
+        Math.min(OVERPASS_REQUEST_TIMEOUT_MS, remainingMilliseconds)
+      );
       try {
         const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          Accept: "application/json",
-          "User-Agent": "KSG-World-Photo-Planner/0.0.0",
-        },
-        body: new URLSearchParams({ data: query }),
-        signal,
-      });
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            Accept: "application/json",
+            "User-Agent": "KSG-World-Photo-Planner/0.0.0",
+          },
+          body: new URLSearchParams({ data: query }),
+          signal: requestController.signal,
+        });
         if (!response.ok) {
           throw new Error(`Overpass APIエラー：${response.status}`);
         }
@@ -546,12 +559,19 @@ async function fetchOverpass(
         }
         return data.elements.filter(isOsmElement);
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        if (signal?.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
         lastError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        clearTimeout(requestTimeout);
+        signal?.removeEventListener("abort", forwardAbort);
       }
     }
   }
-  throw lastError ?? new Error("OpenStreetMap地理データを取得できませんでした");
+  throw lastError ?? new Error(
+    "OpenStreetMap地理データの取得が時間内に完了しませんでした"
+  );
 }
 
 export async function lookupOsmSiteContexts(

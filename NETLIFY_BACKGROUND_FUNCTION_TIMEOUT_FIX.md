@@ -1,22 +1,27 @@
-# 日時・構図候補検索のジョブ消失修正
+# 日時・構図候補検索の開始失敗修正
 
 ## 症状
 
-- 日時・構図候補検索で「検索ジョブが見つかりません」と表示される。
-- 手動では候補を確認できても、検索結果一覧へ到達しない。
+- 岐阜城などで日時・構図候補検索を開始すると「検索処理を開始できませんでした」と表示される。
+- 以前の版では「検索ジョブが見つかりません」または、ジョブが `queued` のまま進まない場合もあった。
 
 ## 原因
 
-検索開始API自体をBackground Functionにしていたため、Netlifyは処理本体の開始前に
-クライアントへ202を返していました。クライアントの状態確認がジョブのBlob保存より
-先になると、状態取得APIは404を返します。
+通常Functionが検索ジョブを保存した後、同一サイト内の別Background FunctionをHTTPで呼び出す二段構成になっていました。Netlify上で内部呼び出しがBackground Functionへ届かなかった場合、SPAフォールバック等を正常応答と誤認し、保存済みジョブだけが `queued` のまま残る経路がありました。
 
 ## 修正
 
-1. 通常Functionの`spot-search-start.ts`が検索条件を検証する。
-2. 同Functionが強整合のNetlify Blobsへqueuedジョブを先に保存する。
-3. 保存完了後に`spot-search-worker-background.ts`を起動する。
-4. クライアントへ202を返す。
-5. 状態取得は開始応答直後から必ず保存済みqueuedジョブを読める。
+1. `/api/spot-search-start` 自体をBackground Functionに変更しました。
+2. 同じFunction内でジョブ保存後に `runSpotSearchJob` を直接実行します。
+3. 内部HTTP呼び出しと、分離していたworker Functionを削除しました。
+4. サーバー検索を開始できない環境では、同じ検索条件で端末内検索へ自動的に切り替えます。
+5. `queued` 停止時の表示から、利用者側の通信不良と断定する文言を削除しました。
+6. OpenStreetMap周辺情報の応答が遅い場合は15秒で打ち切り、候補自体を失わず「周辺情報未確認」として検索完了を優先します。
 
-ローカル開発・Vite previewでは、同じ公開APIをローカルミドルウェアで再現します。
+## 配置ファイル
+
+- `netlify/functions/spot-search-start-background.ts`
+- `netlify/functions/spot-search-status.ts`
+- `netlify/functions/spot-search-finalize.ts`
+
+旧 `spot-search-start.ts` と `spot-search-worker-background.ts` は使用しません。

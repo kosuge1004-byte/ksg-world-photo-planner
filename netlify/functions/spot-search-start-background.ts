@@ -1,9 +1,11 @@
 import type { Config } from "@netlify/functions";
 
-import type { SpotSearchJob, SpotSearchJobInput } from "../../src/types/backgroundSearch.ts";
+import type { SpotSearchJob } from "../../src/types/backgroundSearch.ts";
 import {
   setSpotSearchJob,
+  updateSpotSearchJob,
   validSearchJobId,
+  validSpotSearchJobInput,
 } from "../../server/spotSearchJobs.ts";
 import { runSpotSearchJob } from "../../server/runSpotSearchJob.ts";
 
@@ -13,48 +15,24 @@ type StartRequest = {
   input?: unknown;
 };
 
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
-function validInput(value: unknown): value is SpotSearchJobInput {
-  if (typeof value !== "object" || value === null) return false;
-  if (!("criteria" in value) || typeof value.criteria !== "object" || value.criteria === null) {
-    return false;
-  }
-  if (!("subject" in value) || typeof value.subject !== "object" || value.subject === null) {
-    return false;
-  }
-  return "baseDateIso" in value && typeof value.baseDateIso === "string" &&
-    Number.isFinite(Date.parse(value.baseDateIso)) &&
-    "timeZone" in value && typeof value.timeZone === "string" && value.timeZone.length <= 80 &&
-    "lensCenterHeightMeters" in value && Number.isFinite(value.lensCenterHeightMeters) &&
-    "subjectGroundHeightMeters" in value && Number.isFinite(value.subjectGroundHeightMeters) &&
-    "calculationMode" in value &&
-      (value.calculationMode === "standard" || value.calculationMode === "pro");
-}
-
 export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405);
-  }
+  let activeJob: { clientId: string; jobId: string } | null = null;
   try {
     const body = await request.json() as StartRequest;
-    if (!validSearchJobId(body.clientId) || !validSearchJobId(body.jobId) ||
-      !validInput(body.input)) {
-      return jsonResponse({ error: "バックグラウンド検索条件が不正です" }, 400);
+    if (
+      !validSearchJobId(body.clientId) ||
+      !validSearchJobId(body.jobId) ||
+      !validSpotSearchJobInput(body.input)
+    ) {
+      throw new Error("バックグラウンド検索条件が不正です");
     }
+
+    activeJob = { clientId: body.clientId, jobId: body.jobId };
     const now = new Date().toISOString();
     const job: SpotSearchJob = {
       version: 1,
-      clientId: body.clientId,
-      jobId: body.jobId,
+      clientId: activeJob.clientId,
+      jobId: activeJob.jobId,
       status: "queued",
       progress: "バックグラウンド検索を開始しています…",
       progressPercent: 0,
@@ -63,18 +41,29 @@ export default async function handler(request: Request): Promise<Response> {
       createdAt: now,
       updatedAt: now,
     };
-    await setSpotSearchJob(job);
 
-    // このエンドポイント自体をNetlify Background Functionとして実行する。
-    // 通常Functionから別のBackground Functionをfetchで起動すると、環境によっては
-    // queuedのまま実処理が開始されないため、同一実行内で検索ジョブを開始する。
+    // NetlifyがこのHandlerを直接Background Functionとして起動する。
+    // 同一サイトへの自己fetchを挟まないことで、SPAフォールバックを成功応答と
+    // 誤認してqueuedのまま残る経路を無くす。
+    await setSpotSearchJob(job);
     await runSpotSearchJob(job);
-    return jsonResponse({ jobId: body.jobId, status: "accepted" }, 202);
   } catch (error) {
-    return jsonResponse({
-      error: error instanceof Error ? error.message : String(error),
-    }, 422);
+    if (activeJob) {
+      try {
+        await updateSpotSearchJob(activeJob.clientId, activeJob.jobId, {
+          status: "failed",
+          progress: "検索処理に失敗しました",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Blob保存前の失敗では更新対象が無い。Netlifyの実行ログへ原因を残す。
+      }
+    }
+    console.error("スポット検索Background Functionエラー", error);
   }
+
+  // Background Functionの応答本文は破棄され、呼び出し元には先に202が返る。
+  return new Response(null, { status: 202 });
 }
 
 export const config: Config = {

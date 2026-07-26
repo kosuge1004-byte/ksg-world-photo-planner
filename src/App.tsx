@@ -120,6 +120,7 @@ import {
 import {
   resolveSpotLocation,
   resolveSpotTimeZone,
+  searchSpotPresets,
 } from "./search/spotPresetSearch";
 import {
   clearActiveSpotSearchJob,
@@ -1370,8 +1371,7 @@ function App() {
         : "保存済みの検索準備データを利用しています…",
       0
     );
-    // 登録完了後は画面を閉じてもサーバー側ジョブを中断しない。
-    const active = await startBackgroundSpotSearch({
+    const backgroundInput = {
       criteria,
       subject,
       baseDateIso: selectedDate.toISOString(),
@@ -1383,13 +1383,58 @@ function App() {
       calculationMode,
       cacheState,
       cacheKey,
-    });
-    const job = await waitForBackgroundSpotSearch(
-      active,
-      signal,
-      onProgress
-    );
-    return completeBackgroundSpotSearch(active, job, signal, onProgress);
+    } as const;
+
+    let active: ActiveSpotSearchJob | null = null;
+    try {
+      // 登録完了後は画面を閉じてもサーバー側ジョブを中断しない。
+      active = await startBackgroundSpotSearch(backgroundInput, signal);
+      const job = await waitForBackgroundSpotSearch(
+        active,
+        signal,
+        onProgress
+      );
+      return completeBackgroundSpotSearch(active, job, signal, onProgress);
+    } catch (error) {
+      if (
+        signal.aborted ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        throw error;
+      }
+      if (active) clearActiveSpotSearchJob(active);
+
+      // Background Functionが起動しない環境でも検索不能にしない。
+      // 同じ天文・測地計算を端末内で実行し、3D状態は未確認候補として利用者へ残す。
+      onProgress(
+        "サーバー検索を開始できないため、端末内検索へ自動的に切り替えました",
+        0
+      );
+      const localResults = await searchSpotPresets({
+        criteria,
+        subject,
+        baseDate: selectedDate,
+        timeZone: searchTimeZone,
+        cameraSettings: {
+          ...cameraSettings,
+          focalLengthMm: criteria.focalLengthMm,
+        },
+        previewAspectRatio,
+        subjectGroundHeightMeters: subjectGround.height,
+        calculationMode,
+        signal,
+        onProgress,
+        lineOfSightEvaluator: async () => ({
+          visible: true,
+          verified: false,
+          terrainObstructed: false,
+          photorealisticMeshObstructed: false,
+          reason: "unverified",
+        }),
+      });
+      if (cacheKey) markSpotSearchPrepared(cacheKey);
+      return localResults;
+    }
   }
 
   async function completeBackgroundSpotSearch(
