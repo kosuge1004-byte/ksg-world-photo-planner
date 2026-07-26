@@ -27,6 +27,7 @@ const DEFAULT_ROOT_REFINEMENT_PASSES = 3;
 const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 8;
 const CONVERGED_POSITION_METERS = 0.05;
 const CONVERGED_HORIZONTAL_DEGREES = 0.0001;
+export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;
 
 export type TerrainSampler = (
   points: Cartographic[],
@@ -394,6 +395,7 @@ async function calculateOneCandidate(
       longitude: CesiumMath.toDegrees(candidate.longitude),
       height: candidate.height,
       distanceMeters: solution.distanceMeters,
+      solutionType: "aligned",
     };
     const nextHorizontal = calculateCelestialHorizontalCoordinates(
       point.id,
@@ -551,3 +553,74 @@ export async function calculateTripodCandidates(
   return results.filter((candidate): candidate is TripodCandidate => Boolean(candidate));
 }
 
+export function buildDirectionalTripodCandidates(
+  subject: GroundPoint,
+  points: CelestialScreenPoint[],
+  distanceMeters = DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS
+): TripodCandidate[] {
+  const resolvedDistance = Math.min(
+    ABSOLUTE_MAX_DISTANCE_METERS,
+    Math.max(ABSOLUTE_MIN_DISTANCE_METERS, distanceMeters)
+  );
+  return points.flatMap((point) => {
+    if (
+      !Number.isFinite(point.azimuthDegrees) ||
+      !Number.isFinite(point.altitudeDegrees) ||
+      point.altitudeDegrees <= 0.25
+    ) {
+      return [];
+    }
+    const destination = calculateKarneyDestinationPoint(
+      subject,
+      (point.azimuthDegrees + 180) % 360,
+      resolvedDistance
+    );
+    return [{
+      id: point.id,
+      label: point.label,
+      latitude: destination.latitude,
+      longitude: destination.longitude,
+      // 3D描画側で地表へクランプする。DEM取得後は実高度へ置き換わる。
+      height: 0,
+      distanceMeters: resolvedDistance,
+      solutionType: "direction-only" as const,
+    }];
+  });
+}
+
+export async function sampleDirectionalTripodCandidates(
+  subject: GroundPoint,
+  points: CelestialScreenPoint[],
+  terrainSampler: TerrainSampler = sampleWorldTerrain,
+  signal?: AbortSignal,
+  distanceMeters = DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS
+): Promise<TripodCandidate[]> {
+  const candidates = buildDirectionalTripodCandidates(
+    subject,
+    points,
+    distanceMeters
+  );
+  if (candidates.length === 0) return [];
+  const requested = candidates.map((candidate) =>
+    Cartographic.fromDegrees(candidate.longitude, candidate.latitude, 0)
+  );
+  try {
+    const sampled = await terrainSampler(requested, signal);
+    abortIfRequested(signal);
+    return candidates.map((candidate, index) => ({
+      ...candidate,
+      height: Number.isFinite(sampled[index]?.height)
+        ? sampled[index].height
+        : 0,
+    }));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+    console.warn(
+      "三脚方位候補の地表高度を取得できないため、地表クランプ表示を使用します",
+      error
+    );
+    return candidates;
+  }
+}

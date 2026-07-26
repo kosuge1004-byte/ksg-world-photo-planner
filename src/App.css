@@ -602,6 +602,8 @@ button { cursor: pointer; }
 .map-right-actions span { font-size: 22px; line-height: .9; }
 .map-right-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
 .map-current-location-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(270px, calc(100% - 148px)); padding: 5px 8px; color: #edf4fb; border: 1px solid rgba(158,190,225,.45); border-radius: 6px; background: rgba(2,8,14,.9); font-size: 8px; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
+.map-current-location-status.permission-denied { display: grid; gap: 5px; width: min(286px, calc(100% - 116px)); pointer-events: auto !important; }
+.map-current-location-status.permission-denied button { min-height: 28px; padding: 4px 8px; color: #fff; border: 1px solid #55a7ff; border-radius: 5px; background: #0759a8; font: inherit; font-size: 9px; font-weight: 700; touch-action: manipulation; }
 .map-fullscreen-exit { top: 14px; }
 
 .map-pin-drawer { position: absolute; z-index: 12; top: 58px; left: 62px; width: min(330px, calc(100% - 140px)); max-height: calc(100% - 68px); padding: 8px; overflow-y: auto; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(2,6,10,.95); box-shadow: 0 12px 30px rgba(0,0,0,.55); }

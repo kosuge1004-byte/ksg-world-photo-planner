@@ -164,6 +164,46 @@ export async function resolveSpotLocation(
     };
   }
 
+  let result: SearchResult | undefined;
+  const apiResponse = await fetch("/api/geocode", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ query }),
+    signal,
+  });
+  const apiIsJson = (apiResponse.headers.get("content-type") ?? "")
+    .includes("application/json");
+  if (apiResponse.ok && apiIsJson) {
+    const location = await apiResponse.json() as {
+      latitude?: unknown;
+      longitude?: unknown;
+      label?: unknown;
+    };
+    const latitude = Number(location.latitude);
+    const longitude = Number(location.longitude);
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      typeof location.label === "string"
+    ) {
+      return { latitude, longitude, label: location.label };
+    }
+    throw new Error("地名検索APIの応答座標が不正です");
+  }
+  if (apiIsJson) {
+    const errorBody = await apiResponse.json() as { error?: unknown };
+    throw new Error(
+      typeof errorBody.error === "string"
+        ? errorBody.error
+        : `地名検索APIエラー：${apiResponse.status}`
+    );
+  }
+
+  // Netlify Functionsを伴わない静的プレビューでだけ従来の直接検索へ戻す。
+  // 本番・npm run devでは同一オリジンAPIを使い、ブラウザCORSや429の影響を避ける。
   const parameters = new URLSearchParams({
     q: query,
     format: "jsonv2",
@@ -173,14 +213,14 @@ export async function resolveSpotLocation(
     countrycodes: "jp",
     "accept-language": "ja",
   });
-  const response = await fetch(
+  const directResponse = await fetch(
     `https://nominatim.openstreetmap.org/search?${parameters}`,
     { headers: { Accept: "application/json" }, signal }
   );
-  if (!response.ok) {
-    throw new Error(`地名検索通信エラー：${response.status}`);
+  if (!directResponse.ok) {
+    throw new Error(`地名検索通信エラー：${directResponse.status}`);
   }
-  const result = ((await response.json()) as SearchResult[])[0];
+  result = ((await directResponse.json()) as SearchResult[])[0];
   if (!result) throw new Error("指定したスポットが見つかりませんでした");
   const latitude = Number(result.lat);
   const longitude = Number(result.lon);

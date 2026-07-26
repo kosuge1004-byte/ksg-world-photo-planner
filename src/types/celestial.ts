@@ -87,4 +87,9 @@ export type TripodCandidate = {
   longitude: number;
   height: number;
   distanceMeters: number;
+  /**
+   * alignedは被写体中心と天体中心の画角内一致をDEM上で解いた地点。
+   * direction-onlyは精密解が存在しない場合にも表示する天体方位上の確認地点。
+   */
+  solutionType?: "aligned" | "direction-only";
 };

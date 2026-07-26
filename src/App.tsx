@@ -54,7 +54,11 @@ import {
   evaluatePhotorealisticMeshLineOfSight,
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
-import { calculateTripodCandidates } from "./cesium/tripodCandidates";
+import {
+  buildDirectionalTripodCandidates,
+  calculateTripodCandidates,
+  sampleDirectionalTripodCandidates,
+} from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer } from "./cesium/createMapViewer";
@@ -132,6 +136,11 @@ import {
 } from "./search/backgroundSpotSearch";
 import type { ActiveSpotSearchJob } from "./search/backgroundSpotSearch";
 import { enterElementFullscreen, exitElementFullscreen } from "./ui/fullscreen";
+import {
+  locationPermissionInstructions,
+  openNativeLocationSettings,
+  tryOpenAndroidLocationSettings,
+} from "./device/locationSettings";
 
 const DEFAULT_CELESTIAL_VISIBILITY: CelestialVisibility = {
   sun: true,
@@ -375,6 +384,8 @@ function App() {
   const currentLocationMessageTimerRef = useRef<number | null>(null);
   const [currentLocationPending, setCurrentLocationPending] = useState(false);
   const [currentLocationMessage, setCurrentLocationMessage] = useState("");
+  const [currentLocationPermissionDenied, setCurrentLocationPermissionDenied] =
+    useState(false);
 
   const [subjectPlacementActive, setSubjectPlacementActive] =
     useState(false);
@@ -712,22 +723,46 @@ function App() {
       // 操作停止後に下のDEM精密計算を一度だけ実行する。
       return;
     }
+
+    // 被写体ピン確定直後は、重いDEM精密探索を待たず天体方位上の候補を表示する。
+    // 垂直方向まで一致する精密解が存在する天体は、計算完了後にaligned候補へ置換する。
+    const provisionalCandidates = buildDirectionalTripodCandidates(
+      subjectPoint,
+      enabledPoints
+    );
+    tripodCandidatesRef.current = provisionalCandidates;
+    setTripodCandidates(provisionalCandidates);
+
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void calculateTripodCandidates(
-        subjectPoint,
-        enabledPoints,
-        cameraSettings,
-        selectedDate,
-        calculationMode,
-        undefined,
-        controller.signal,
-        previewAspectRatio,
-        undefined
-      )
-        .then((candidates) => {
+      void Promise.all([
+        calculateTripodCandidates(
+          subjectPoint,
+          enabledPoints,
+          cameraSettings,
+          selectedDate,
+          calculationMode,
+          undefined,
+          controller.signal,
+          previewAspectRatio,
+          undefined
+        ),
+        sampleDirectionalTripodCandidates(
+          subjectPoint,
+          enabledPoints,
+          undefined,
+          controller.signal
+        ),
+      ])
+        .then(([alignedCandidates, directionalCandidates]) => {
           if (!cancelled) {
+            const alignedById = new Map(
+              alignedCandidates.map((candidate) => [candidate.id, candidate])
+            );
+            const candidates = directionalCandidates.map(
+              (candidate) => alignedById.get(candidate.id) ?? candidate
+            );
             tripodCandidatesRef.current = candidates;
             setTripodCandidates(candidates);
           }
@@ -735,10 +770,10 @@ function App() {
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
-          // 操作中の一時的な通信失敗では直前候補を保持し、追従表示を途切れさせない。
+          // 精密探索の失敗時も、先に表示した方位候補を消さない。
           if (!cancelled && !timelineInteracting) {
-            tripodCandidatesRef.current = [];
-            setTripodCandidates([]);
+            tripodCandidatesRef.current = provisionalCandidates;
+            setTripodCandidates(provisionalCandidates);
           }
         });
     }, 32);
@@ -1306,9 +1341,6 @@ function App() {
     signal: AbortSignal,
     onProgress: (message: string, percent: number) => void
   ): Promise<SpotPresetResult[]> {
-    if (!mapReady) {
-      throw new Error("3Dマップの読込完了後に検索してください");
-    }
     onProgress(criteria.useCurrentSubjectPin
       ? "現在の被写体ピンから検索条件を準備しています…"
       : "スポット位置を検索しています…", 0);
@@ -1388,7 +1420,11 @@ function App() {
       return results;
     }
     let viewer = mapViewerRef.current;
-    for (let attempt = 0; (!viewer || viewer.isDestroyed()) && attempt < 120; attempt += 1) {
+    for (
+      let attempt = 0;
+      mapReady && (!viewer || viewer.isDestroyed()) && attempt < 120;
+      attempt += 1
+    ) {
       if (signal.aborted) {
         throw new DOMException("最終3D確認を中止しました", "AbortError");
       }
@@ -1498,9 +1534,6 @@ ${diagnosticMessage}
     onProgress: (message: string, percent: number) => void
   ): Promise<void> {
     const viewer = mapViewerRef.current;
-    if (!mapReady || !viewer || viewer.isDestroyed()) {
-      throw new Error("マップの読込完了後に検索してください");
-    }
     onProgress("被写体の位置を検索しています…", 0);
     const location = await resolveSpotLocation(query, signal);
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
@@ -1511,15 +1544,17 @@ ${diagnosticMessage}
     );
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     stopAllEditModes();
-    const pinned = setSubjectPinFromPosition(
-      viewer,
-      Cartesian3.fromDegrees(
-        subject.longitude,
-        subject.latitude,
-        subject.height
-      ),
-      subject.label
-    );
+    const pinned = viewer && !viewer.isDestroyed()
+      ? setSubjectPinFromPosition(
+          viewer,
+          Cartesian3.fromDegrees(
+            subject.longitude,
+            subject.latitude,
+            subject.height
+          ),
+          subject.label
+        )
+      : subject;
     const center = {
       latitude: pinned.latitude,
       longitude: pinned.longitude,
@@ -1528,7 +1563,7 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, /^https?:\/\//i.test(query.trim()) ? "google-maps-url" : "place"));
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d") {
+    if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
       flyMapToTarget(viewer, center.latitude, center.longitude, pinned.height);
     }
     setSpotSearchOpen(false);
@@ -2023,6 +2058,47 @@ ${diagnosticMessage}
     }
   }
 
+  async function handleLocationPermissionDenied(): Promise<void> {
+    setCurrentLocationPermissionDenied(true);
+    try {
+      if (await openNativeLocationSettings()) {
+        publishCurrentLocationMessage(
+          "端末の設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
+          false
+        );
+        return;
+      }
+    } catch (error) {
+      console.warn("端末の位置情報設定を開けませんでした", error);
+    }
+    publishCurrentLocationMessage(
+      `現在地の使用が許可されていません。${locationPermissionInstructions()}`,
+      false
+    );
+  }
+
+  async function openLocationSettingsFromNotice(): Promise<void> {
+    try {
+      if (await openNativeLocationSettings()) {
+        publishCurrentLocationMessage(
+          "端末の設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
+          false
+        );
+        return;
+      }
+      if (tryOpenAndroidLocationSettings()) {
+        publishCurrentLocationMessage(
+          `端末の位置情報設定を開いています。戻った後、Chromeでもこのサイトの位置情報を許可してください。`,
+          false
+        );
+        return;
+      }
+    } catch (error) {
+      console.warn("位置情報設定への移動に失敗しました", error);
+    }
+    publishCurrentLocationMessage(locationPermissionInstructions(), false);
+  }
+
   async function showCurrentLocation() {
     if (currentLocationPending) return;
     if (!window.isSecureContext) {
@@ -2041,6 +2117,7 @@ ${diagnosticMessage}
     setTripodPlacementActive(false);
     setForegroundPlacementActive(false);
     setSpotSearchOpen(false);
+    setCurrentLocationPermissionDenied(false);
     publishCurrentLocationMessage("現在地を取得しています…", false);
 
     const getPosition = (options: PositionOptions) =>
@@ -2049,6 +2126,22 @@ ${diagnosticMessage}
       });
 
     try {
+      if (navigator.permissions?.query) {
+        try {
+          const permission = await navigator.permissions.query({
+            name: "geolocation",
+          });
+          if (permission.state === "denied") {
+            await handleLocationPermissionDenied();
+            return;
+          }
+        } catch (error) {
+          // SafariなどPermissions APIの位置情報照会に未対応の環境では、
+          // 従来どおりgetCurrentPositionの結果で判定する。
+          console.info("位置情報の事前権限確認を省略します", error);
+        }
+      }
+
       let position: GeolocationPosition;
       try {
         // まずGPSを優先する。屋内などでタイムアウトした場合は、
@@ -2081,6 +2174,7 @@ ${diagnosticMessage}
       }
 
       const center = { latitude, longitude };
+      setCurrentLocationPermissionDenied(false);
       mapCenterRef.current = center;
       // 新しいオブジェクトを必ず設定し、2D iframe・オーバーレイも再描画させる。
       setMapCenter({ latitude: center.latitude, longitude: center.longitude });
@@ -2101,7 +2195,7 @@ ${diagnosticMessage}
       const geolocationError = error as GeolocationPositionError;
       if (typeof geolocationError.code === "number") {
         if (geolocationError.code === 1) {
-          publishCurrentLocationMessage("現在地の使用が許可されていません。端末の設定で、このサイトの位置情報を許可してください");
+          await handleLocationPermissionDenied();
         } else if (geolocationError.code === 2) {
           publishCurrentLocationMessage("現在地を特定できませんでした。端末の位置情報をONにして、屋外または電波の届く場所で再試行してください");
         } else if (geolocationError.code === 3) {
@@ -2215,20 +2309,27 @@ ${diagnosticMessage}
 
   function selectTripodCandidate(candidate: TripodCandidate) {
     const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return;
     stopAllEditModes();
-    const point = setTripodPin(
-      viewer,
-      Cartesian3.fromDegrees(
-        candidate.longitude,
-        candidate.latitude,
-        candidate.height
-      )
-    );
+    const point = viewer && !viewer.isDestroyed()
+      ? setTripodPin(
+          viewer,
+          Cartesian3.fromDegrees(
+            candidate.longitude,
+            candidate.latitude,
+            candidate.height
+          )
+        )
+      : {
+          latitude: candidate.latitude,
+          longitude: candidate.longitude,
+          height: candidate.height,
+          label: "三脚位置",
+        };
     setTripodPoint(point);
     setMapCenter({ latitude: point.latitude, longitude: point.longitude });
-    setSearchMessage(
-      `${candidate.label}と被写体が重なる三脚候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）`
+    setSearchMessage(candidate.solutionType === "direction-only"
+      ? `${candidate.label}の方位上にある三脚確認地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。プレビューと現地の見通しを確認してください`
+      : `${candidate.label}と被写体が画角内で重なる三脚候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）`
     );
   }
 
@@ -2444,8 +2545,23 @@ ${diagnosticMessage}
             </div>
 
             {currentLocationMessage && (
-              <div className="map-current-location-status" role="status">
-                {currentLocationMessage}
+              <div
+                className={
+                  currentLocationPermissionDenied
+                    ? "map-current-location-status permission-denied"
+                    : "map-current-location-status"
+                }
+                role="status"
+              >
+                <span>{currentLocationMessage}</span>
+                {currentLocationPermissionDenied && (
+                  <button
+                    type="button"
+                    onClick={() => void openLocationSettingsFromNotice()}
+                  >
+                    端末の設定を開く
+                  </button>
+                )}
               </div>
             )}
 

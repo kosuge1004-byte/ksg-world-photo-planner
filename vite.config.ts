@@ -5,6 +5,7 @@ import netlify from "@netlify/vite-plugin";
 import { find } from "geo-tz";
 import type { Plugin, PluginOption } from "vite";
 import { resolveGoogleMapsSharedUrl } from "./server/googleMaps.ts";
+import { resolveJapanesePlaceName } from "./server/placeGeocode.ts";
 import { lookupGsiElevations, prefetchGsiTerrainAroundSubject } from "./server/gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./server/gsiGeoid.ts";
 import { lookupOsmSiteContexts } from "./server/osmSiteContext.ts";
@@ -84,6 +85,38 @@ function localGoogleMapsApi(): Plugin {
           }
         }
       );
+    },
+  };
+}
+
+function localPlaceGeocodeApi(): Plugin {
+  return {
+    name: "ksg-local-place-geocode-api",
+    configureServer(server) {
+      server.middlewares.use("/api/geocode", async (request, response) => {
+        response.setHeader("Content-Type", "application/json; charset=utf-8");
+        response.setHeader("Cache-Control", "no-store");
+        if (request.method !== "POST") {
+          response.statusCode = 405;
+          response.end(JSON.stringify({ error: "POSTリクエストのみ利用できます" }));
+          return;
+        }
+        try {
+          let rawBody = "";
+          for await (const chunk of request) {
+            rawBody += chunk.toString();
+            if (rawBody.length > 65_536) throw new Error("送信内容が大きすぎます");
+          }
+          const body = JSON.parse(rawBody) as { query?: unknown };
+          if (typeof body.query !== "string") throw new Error("スポット名がありません");
+          response.statusCode = 200;
+          response.end(JSON.stringify(await resolveJapanesePlaceName(body.query)));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          response.statusCode = message.includes("見つかりません") ? 404 : 422;
+          response.end(JSON.stringify({ error: message }));
+        }
+      });
     },
   };
 }
@@ -377,6 +410,7 @@ export default defineConfig(({ command }) => {
         ? [
             localTimezoneApi(),
             localGoogleMapsApi(),
+            localPlaceGeocodeApi(),
             localGsiElevationApi(),
             localGsiGeoidApi(),
             localOsmSiteContextApi(),

@@ -475,10 +475,18 @@ export function Map2DOverlay({
             className={`map-tripod-candidate-label map-candidate-label-${candidate.id}`}
             style={{ left: pixel.x, top: pixel.y }}
             onClick={() => onSelectCandidate(candidate)}
-            title={`${candidate.label}の三脚位置`}
+            title={
+              candidate.solutionType === "direction-only"
+                ? `${candidate.label}の三脚方位候補（要確認）`
+                : `${candidate.label}の三脚位置`
+            }
           >
             <span aria-hidden="true">●</span>
-            {candidate.label} 三脚候補 {Math.round(candidate.distanceMeters)}m
+            {candidate.label}{" "}
+            {candidate.solutionType === "direction-only"
+              ? "三脚方位候補"
+              : "三脚候補"}{" "}
+            {Math.round(candidate.distanceMeters)}m
           </button>
         );
       })}

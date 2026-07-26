@@ -4,6 +4,7 @@ import {
   Cartesian2,
   Cartesian3,
   Color,
+  HeightReference,
   LabelStyle,
   NearFarScalar,
   PolylineDashMaterialProperty,
@@ -132,7 +133,12 @@ function updateTripodCandidateEntities(
         candidate.latitude,
         candidate.height + 0.2
       );
-      const text = `${candidate.label} 三脚候補\n${Math.round(candidate.distanceMeters)}m`;
+      const candidateKind =
+        candidate.solutionType === "direction-only"
+          ? "三脚方位候補（要確認）"
+          : "三脚候補";
+      const text =
+        `${candidate.label} ${candidateKind}\n${Math.round(candidate.distanceMeters)}m`;
       const existing = states.get(id);
       if (existing) {
         // 時間軸ドラッグ中はEntityを作り直さず、参照中の座標だけを更新する。
@@ -146,7 +152,7 @@ function updateTripodCandidateEntities(
       states.set(id, state);
       viewer.entities.add({
         id,
-        name: `${candidate.label} 三脚候補`,
+        name: `${candidate.label} ${candidateKind}`,
         position: new CallbackPositionProperty(() => state.position, false),
         point: {
           pixelSize: 11,
@@ -154,6 +160,7 @@ function updateTripodCandidateEntities(
           outlineColor: Color.BLACK,
           outlineWidth: 2,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference: HeightReference.CLAMP_TO_GROUND,
         },
         label: {
           text: new CallbackProperty(() => state.text, false),
@@ -165,6 +172,7 @@ function updateTripodCandidateEntities(
           verticalOrigin: VerticalOrigin.BOTTOM,
           pixelOffset: new Cartesian2(0, -13),
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference: HeightReference.CLAMP_TO_GROUND,
         },
       });
     }
