@@ -67,7 +67,9 @@ export function locationPermissionInstructions(
 ): string {
   if (platform === "android") {
     return isInstalledWebApp()
-      ? `ホーム画面のKSGアイコンを長押し→「アプリ情報」→「権限」→「位置情報」→「アプリの使用中のみ許可」を選んでください。表示されない場合はChromeで対象サイト（${siteLabel}）を開き、サイト情報→「権限」→「位置情報」→「許可」を選んでからホーム画面版を再起動してください。`
+      // Androidのホーム画面版は、端末のアプリ権限一覧ではなく
+      // Chrome本体と対象サイトの二段階で位置情報を許可する端末がある。
+      ? `位置情報はホーム画面版ではなく、Chromeとこのサイトに許可します。Chromeで「${siteLabel}」を開き、アドレスバー左のサイト情報→「権限」→「位置情報」→「許可」にしてください。位置情報が表示されない場合は、Android設定→「アプリ」→「Chrome」→「権限」→「位置情報」も許可してください。`
       : `Chromeのアドレスバー左にあるサイト情報→「権限」→「位置情報」→「許可」を選んでください。対象サイト：${siteLabel}。`;
   }
   if (platform === "ios") {

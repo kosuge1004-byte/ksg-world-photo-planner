@@ -1,6 +1,7 @@
 import {
   extractGoogleMapsCoordinates,
   extractGoogleMapsSharedUrl,
+  isAllowedGoogleMapsHost,
 } from "../src/search/googleMapsUrl.ts";
 
 export type ResolvedGoogleMapsLocation = {
@@ -15,6 +16,10 @@ const GOOGLE_REQUEST_HEADERS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.7,en;q=0.6",
 } as const;
+
+// WHATWG Fetch標準のHTTP redirect countと同じ値にし、
+// 手動解析と標準fetchで異なる上限を持たないようにする。
+const MAX_REDIRECT_HOPS = 20;
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -32,13 +37,19 @@ function decodeHtmlEntities(value: string): string {
 
 function resolveRedirectUrl(location: string, baseUrl: string): string | null {
   try {
-    return new URL(decodeHtmlEntities(location), baseUrl).href;
+    const resolved = new URL(decodeHtmlEntities(location), baseUrl);
+    // Google共有リンクの解析中に外部サイトへ誘導されないよう転送先も制限する。
+    return isAllowedGoogleMapsHost(resolved.hostname) ? resolved.href : null;
   } catch {
     return null;
   }
 }
 
-function extractGoogleUrlsFromHtml(html: string, baseUrl: string): string[] {
+function extractGoogleUrlsFromHtml(
+  html: string,
+  baseUrl: string,
+  includeOrdinaryLinks = true
+): string[] {
   const decoded = decodeHtmlEntities(html);
   const values = new Set<string>();
 
@@ -63,16 +74,22 @@ function extractGoogleUrlsFromHtml(html: string, baseUrl: string): string[] {
     }
   };
 
-  // canonical / Open Graph / 通常リンク / meta refresh を順に回収する。
-  for (const pattern of [
+  // 転送先として信頼できるcanonical / Open Graph / meta refreshを先に回収する。
+  const patterns = [
     /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/giu,
     /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/giu,
     /<meta[^>]+(?:property|name)=["'](?:og:url|twitter:url)["'][^>]+content=["']([^"']+)["']/giu,
     /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:url|twitter:url)["']/giu,
     /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url\s*=\s*([^"';]+)[^"']*["']/giu,
-    /href=["'](https?:\/\/[^"']+)["']/giu,
-    /(?:https?:\\?\/\\?\/)(?:www\.)?(?:maps\.)?google(?:\.com|\.co\.jp)\\?\/[^\s"'<>]+/giu,
-  ]) {
+  ];
+  if (includeOrdinaryLinks) {
+    // 座標の抽出時だけ通常リンクも調べる。次の転送先には使用しない。
+    patterns.push(
+      /href=["'](https?:\/\/[^"']+)["']/giu,
+      /(?:https?:\\?\/\\?\/)(?:www\.)?(?:maps\.)?google(?:\.com|\.co\.jp)\\?\/[^\s"'<>]+/giu
+    );
+  }
+  for (const pattern of patterns) {
     for (const match of decoded.matchAll(pattern)) add(match[1] ?? match[0]);
   }
 
@@ -110,7 +127,9 @@ export async function resolveGoogleMapsSharedUrl(
 
     // 自動リダイレクトに任せずLocationを段階的に確認する。
     // maps.app.goo.glの仕様変更や途中の同意ページにも対応しやすくする。
-    for (let hop = 0; hop < 8; hop += 1) {
+    // 地域・言語・同意画面を経由する共有URLに備えて上限を拡張する。
+    // 通常のページ内リンクは転送先に選ばないため、無関係なGoogleページを巡回しない。
+    for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop += 1) {
       if (visited.has(currentUrl)) throw new Error("共有リンクが循環しています");
       visited.add(currentUrl);
 
@@ -136,9 +155,11 @@ export async function resolveGoogleMapsSharedUrl(
       if (fromResponse) return fromResponse;
 
       // 200応答のHTML内に次のGoogle Maps URLが埋め込まれる形式にも対応する。
-      const nextCandidates = extractGoogleUrlsFromHtml(responseText, currentUrl).filter(
-        (candidate) => !visited.has(candidate)
-      );
+      const nextCandidates = extractGoogleUrlsFromHtml(
+        responseText,
+        currentUrl,
+        false
+      ).filter((candidate) => !visited.has(candidate));
       const coordinateCandidate = nextCandidates.find((candidate) =>
         extractGoogleMapsCoordinates(candidate)
       );
@@ -158,7 +179,22 @@ export async function resolveGoogleMapsSharedUrl(
           : `Googleマップ共有リンク通信エラー：${response.status}`
       );
     }
-    throw new Error("共有リンクの転送回数が上限を超えました");
+    // 手動転送で確定しない特殊な共有リンクは、fetch標準の転送処理で最終URLを確認する。
+    const finalResponse = await fetch(sourceUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: abortController.signal,
+      headers: GOOGLE_REQUEST_HEADERS,
+    });
+    const finalUrl = finalResponse.url || sourceUrl;
+    const finalUrlCoordinates = extractGoogleMapsCoordinates(finalUrl);
+    if (finalUrlCoordinates) {
+      return { ...finalUrlCoordinates, resolvedUrl: finalUrl };
+    }
+    const finalContent = await finalResponse.text();
+    const finalCoordinates = coordinatesFromContent(finalContent, finalUrl);
+    if (finalCoordinates) return finalCoordinates;
+    throw new Error("共有リンクの最終転送先から座標を取得できませんでした");
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("Googleマップ共有リンクの解析がタイムアウトしました");

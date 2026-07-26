@@ -18,8 +18,8 @@ const ENTITY_ID = "ksg-foreground-object";
 
 const PERSON_SVG = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="80" height="200" viewBox="0 0 80 200">
-<circle cx="40" cy="22" r="18" fill="#111" stroke="#fff" stroke-width="3"/>
-<path d="M26 45 Q40 37 54 45 L62 112 53 112 58 194 43 194 40 126 37 194 22 194 27 112 18 112Z" fill="#111" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="40" cy="18" r="18" fill="#111" stroke="#fff" stroke-width="3"/>
+<path d="M26 40 Q40 34 54 40 L62 112 53 112 58 200 43 200 40 126 37 200 22 200 27 112 18 112Z" fill="#111" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
 </svg>`)} `;
 
 export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundObject | null): void {

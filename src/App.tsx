@@ -30,6 +30,7 @@ import { CelestialTransitSearchDialog } from "./components/CelestialTransitSearc
 import { PreviewGestureLayer } from "./components/PreviewGestureLayer";
 import { ForegroundPreviewOverlay } from "./components/ForegroundPreviewOverlay";
 import { ForegroundObjectControls } from "./components/ForegroundObjectControls";
+import { foregroundCoordinatesWithinSegment } from "./foreground/placement";
 import { SpotSearchScreen } from "./components/SpotSearchScreen";
 import { ProjectsScreen } from "./components/ProjectsScreen";
 import { CalendarScreen } from "./components/CalendarScreen";
@@ -298,37 +299,7 @@ function loadCelestialDateTime(): string {
   return zonedDateTimeLocalFromDate(new Date(), systemTimeZone());
 }
 
-function constrainForegroundToSegment(
-  latitude: number,
-  longitude: number,
-  tripod: GroundPoint,
-  subject: GroundPoint
-): { latitude: number; longitude: number } {
-  const line = calculateKarneyLineMetrics(tripod, subject);
-  const pointerLine = calculateKarneyLineMetrics(tripod, {
-    latitude,
-    longitude,
-    height: tripod.height,
-    label: "前景移動位置",
-  });
-  const bearingDeltaRadians =
-    (pointerLine.bearingDegrees - line.bearingDegrees) * Math.PI / 180;
-  const projectedDistanceMeters =
-    pointerLine.distanceMeters * Math.cos(bearingDeltaRadians);
-  const raw = line.distanceMeters > 0
-    ? projectedDistanceMeters / line.distanceMeters
-    : 0.5;
-  const t = Math.max(0.01, Math.min(0.99, raw));
-  const constrained = calculateKarneyDestinationPoint(
-    tripod,
-    line.bearingDegrees,
-    line.distanceMeters * t
-  );
-  return {
-    latitude: constrained.latitude,
-    longitude: constrained.longitude,
-  };
-}
+type PlacementMode = "none" | "subject" | "tripod" | "foreground";
 
 function App() {
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -339,6 +310,8 @@ function App() {
   const mapViewerRef = useRef<Viewer | null>(null);
   const mapViewModeRef = useRef<"2d" | "3d">(loadLastMapState().viewMode);
   const disablePlacementRef = useRef<(() => void) | null>(null);
+  // Reactの再描画前に連続タップされても、配置対象を一意に判定する同期状態。
+  const placementModeRef = useRef<PlacementMode>("none");
   const previewJobRef = useRef(0);
   const previewRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -1123,14 +1096,31 @@ function App() {
 
   useEffect(() => {
     const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed() || !foregroundObject) return;
+    if (
+      !viewer ||
+      viewer.isDestroyed() ||
+      !foregroundObject ||
+      subjectPlacementActive ||
+      tripodPlacementActive ||
+      foregroundPlacementActive
+    ) {
+      return;
+    }
     return enableForegroundObjectDrag(viewer, (position) => {
       const coordinates = cartesianToForegroundCoordinates(position);
       placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude);
     });
-    // foregroundObjectの値全体はドラッグ可否に不要で、ID変更時だけ再登録する。
+    // 他のピン配置中は人物ドラッグを無効化し、複数ハンドラが同じタップを処理しない。
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, foregroundObject?.id, tripodPoint, subjectPoint]);
+  }, [
+    mapReady,
+    foregroundObject?.id,
+    tripodPoint,
+    subjectPoint,
+    subjectPlacementActive,
+    tripodPlacementActive,
+    foregroundPlacementActive,
+  ]);
 
   useEffect(() => {
     const viewer = mapViewerRef.current;
@@ -1279,6 +1269,7 @@ function App() {
   function stopPlacementMode() {
     disablePlacementRef.current?.();
     disablePlacementRef.current = null;
+    placementModeRef.current = "none";
     setSubjectPlacementActive(false);
     setTripodPlacementActive(false);
     setForegroundPlacementActive(false);
@@ -1748,7 +1739,7 @@ ${diagnosticMessage}
   function removePlannerProject(id: string): void { setProjects(deleteProject(id)); }
 
   function toggleSubjectPlacement() {
-    if (subjectPlacementActive) {
+    if (placementModeRef.current === "subject") {
       stopPlacementMode();
       setSearchMessage("被写体ピン変更を終了しました");
       return;
@@ -1759,6 +1750,7 @@ ${diagnosticMessage}
     setSpotSearchOpen(false);
 
     if (mapViewMode === "2d") {
+      placementModeRef.current = "subject";
       setSubjectPlacementActive(true);
       setSearchMessage("2D地図上で被写体を置く場所をクリックしてください");
       return;
@@ -1770,9 +1762,11 @@ ${diagnosticMessage}
       return;
     }
 
+    placementModeRef.current = "subject";
     disablePlacementRef.current = enableMapPlacement(
       viewer,
       (position) => {
+        if (placementModeRef.current !== "subject") return;
         const point = setSubjectPinFromPosition(
           viewer,
           position,
@@ -1796,12 +1790,21 @@ ${diagnosticMessage}
     );
   }
 
-  function placeForegroundAtCoordinates(latitude: number, longitude: number): void {
+  function placeForegroundAtCoordinates(latitude: number, longitude: number): boolean {
     if (!tripodPoint || !subjectPoint) {
       setSearchMessage("三脚ピンと被写体ピンを先に配置してください");
-      return;
+      return false;
     }
-    const constrained = constrainForegroundToSegment(latitude, longitude, tripodPoint, subjectPoint);
+    const constrained = foregroundCoordinatesWithinSegment(
+      latitude,
+      longitude,
+      tripodPoint,
+      subjectPoint
+    );
+    if (!constrained) {
+      setSearchMessage("人物は三脚地点と被写体地点の間へ配置してください");
+      return false;
+    }
     setForegroundObjects((current) => [{
       id: current[0]?.id ?? (crypto.randomUUID?.() ?? `foreground-${Date.now()}`),
       type: "person",
@@ -1838,26 +1841,38 @@ ${diagnosticMessage}
         setSearchMessage("前景オブジェクト地点の標高を取得できませんでした。位置を再指定してください");
       });
     }, 180);
+    return true;
   }
 
   function toggleForegroundPlacement(): void {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed() || !tripodPoint || !subjectPoint) {
+    if (placementModeRef.current === "foreground") {
+      stopPlacementMode();
+      return;
+    }
+    if (!tripodPoint || !subjectPoint) {
       setSearchMessage("三脚ピンと被写体ピンを先に配置してください");
       return;
     }
-    if (foregroundPlacementActive) { stopPlacementMode(); return; }
     stopAllEditModes();
     setMapTool("pin");
     if (mapViewMode === "2d") {
+      placementModeRef.current = "foreground";
       setForegroundPlacementActive(true);
       setSearchMessage("三脚と被写体の間をタップしてください。配置後は人物をドラッグできます");
       return;
     }
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) {
+      setSearchMessage("3Dマップの読込完了後にお試しください");
+      return;
+    }
+    placementModeRef.current = "foreground";
     disablePlacementRef.current = enableMapPlacement(viewer, (position) => {
+      if (placementModeRef.current !== "foreground") return;
       const coordinates = cartesianToForegroundCoordinates(position);
-      placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude);
-      stopPlacementMode();
+      if (placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude)) {
+        stopPlacementMode();
+      }
     });
     setForegroundPlacementActive(true);
     setSearchMessage("3D地図で前景・中景オブジェクトの位置をクリックしてください");
@@ -1873,13 +1888,18 @@ ${diagnosticMessage}
   }
 
   function deleteForegroundObject(): void {
+    stopPlacementMode();
+    if (foregroundTerrainTimerRef.current !== null) {
+      window.clearTimeout(foregroundTerrainTimerRef.current);
+      foregroundTerrainTimerRef.current = null;
+    }
+    foregroundTerrainRequestRef.current += 1;
     setForegroundObjects([]);
-    setForegroundPlacementActive(false);
     setSearchMessage("前景・中景オブジェクトを削除しました");
   }
 
   function toggleTripodPlacement() {
-    if (tripodPlacementActive) {
+    if (placementModeRef.current === "tripod") {
       stopPlacementMode();
       setSearchMessage("三脚ピン設置を終了しました");
       return;
@@ -1890,6 +1910,7 @@ ${diagnosticMessage}
     setSpotSearchOpen(false);
 
     if (mapViewMode === "2d") {
+      placementModeRef.current = "tripod";
       setTripodPlacementActive(true);
       setSearchMessage("2D地図上で三脚を置く場所をクリックしてください");
       return;
@@ -1901,9 +1922,11 @@ ${diagnosticMessage}
       return;
     }
 
+    placementModeRef.current = "tripod";
     disablePlacementRef.current = enableMapPlacement(
       viewer,
       (position) => {
+        if (placementModeRef.current !== "tripod") return;
         // 橋面などDEMに存在しない歩行可能な3D表面を選べるよう、クリックした実座標を保持する。
         const point = setTripodPin(viewer, position);
         setTripodPoint(point);
@@ -1926,7 +1949,8 @@ ${diagnosticMessage}
   async function handle2dMapPlacement(
     event: ReactMouseEvent<HTMLButtonElement>
   ) {
-    if (!subjectPlacementActive && !tripodPlacementActive && !foregroundPlacementActive) return;
+    const placementMode = placementModeRef.current;
+    if (placementMode === "none") return;
     const viewer = mapViewerRef.current;
     const mapElement = mapSectionRef.current;
     if (!mapElement) return;
@@ -1939,11 +1963,12 @@ ${diagnosticMessage}
       { width: rect.width, height: rect.height }
     );
 
-    if (foregroundPlacementActive) {
-      placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude);
-      stopPlacementMode();
-      setSearchMessage("前景・中景オブジェクトを配置しました。人物をタップして移動できます");
-    } else if (subjectPlacementActive) {
+    if (placementMode === "foreground") {
+      if (placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude)) {
+        stopPlacementMode();
+        setSearchMessage("前景・中景オブジェクトを配置しました。人物をドラッグして移動できます");
+      }
+    } else if (placementMode === "subject") {
       const requestId = ++subjectPlacementRequestRef.current;
       const provisionalPoint: GroundPoint = {
         latitude: coordinates.latitude,
@@ -2138,9 +2163,7 @@ ${diagnosticMessage}
     const requestId = ++currentLocationRequestRef.current;
     setCurrentLocationPending(true);
     setMapTool("none");
-    setSubjectPlacementActive(false);
-    setTripodPlacementActive(false);
-    setForegroundPlacementActive(false);
+    stopAllEditModes();
     setSpotSearchOpen(false);
     setCurrentLocationPermissionDenied(false);
     publishCurrentLocationMessage("現在地を取得しています…", false);
@@ -2269,6 +2292,9 @@ ${diagnosticMessage}
   }
 
   function changeMapViewMode(mode: "2d" | "3d") {
+    if (mode !== mapViewModeRef.current && placementModeRef.current !== "none") {
+      stopPlacementMode();
+    }
     const viewer = mapViewerRef.current;
     let synchronizedCenter = mapCenter;
     if (
@@ -2533,7 +2559,17 @@ ${diagnosticMessage}
               <div className="map-tool-rail" aria-label="地図表示ツール">
                 <button type="button" className={mapViewMode === "2d" ? "active" : ""} onClick={() => changeMapViewMode("2d")}><span>▣</span><small>2D</small></button>
                 <button type="button" className={mapViewMode === "3d" ? "active" : ""} onClick={() => changeMapViewMode("3d")}><span>◇</span><small>3D</small></button>
-                <button type="button" className={mapTool === "pin" ? "active" : ""} onClick={() => { setSpotSearchOpen(false); setMapTool((current) => current === "pin" ? "none" : "pin"); }}><span>⌖</span><small>ピン</small></button>
+                <button
+                  type="button"
+                  className={mapTool === "pin" ? "active" : ""}
+                  onClick={() => {
+                    setSpotSearchOpen(false);
+                    stopAllEditModes();
+                    setMapTool((current) => current === "pin" ? "none" : "pin");
+                  }}
+                >
+                  <span>⌖</span><small>ピン</small>
+                </button>
               </div>
 
               <div className="map-zoom-control">
@@ -2547,6 +2583,7 @@ ${diagnosticMessage}
                 type="button"
                 className="map-search-toggle"
                 onClick={() => {
+                  stopAllEditModes();
                   setMapTool("none");
                   setSpotSearchOpen(true);
                 }}
@@ -2568,14 +2605,14 @@ ${diagnosticMessage}
                 <span>{currentLocationMessage}</span>
                 {currentLocationPermissionDenied && (
                   <div className="location-notice-actions">
-                    <button
-                      type="button"
-                      onClick={() => void openLocationSettingsFromNotice()}
-                    >
-                      {canOpenNativeLocationSettings()
-                        ? "このアプリの設定を開く"
-                        : "許可方法を表示"}
-                    </button>
+                    {canOpenNativeLocationSettings() && (
+                      <button
+                        type="button"
+                        onClick={() => void openLocationSettingsFromNotice()}
+                      >
+                        アプリ設定
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void showCurrentLocation()}
@@ -2639,7 +2676,16 @@ ${diagnosticMessage}
               <div className="map-pin-drawer">
                 <div className="map-drawer-heading">
                   <strong>ピン設定</strong>
-                  <button type="button" onClick={() => setMapTool("none")} aria-label="閉じる">×</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopAllEditModes();
+                      setMapTool("none");
+                    }}
+                    aria-label="閉じる"
+                  >
+                    ×
+                  </button>
                 </div>
                 <PinControls
                   subjectActive={subjectPlacementActive}
