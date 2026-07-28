@@ -483,6 +483,54 @@ export async function sampleWorldTerrain(
   );
 }
 
+/**
+ * 最高精度専用。通常検索の距離別詳細度・地域ジオイドキャッシュを通さず、
+ * 各地点で利用可能な最詳細DEMと地点固有ジオイドを取得する。
+ * どちらかが欠けた場合は標準データへフォールバックせず失敗させる。
+ */
+export async function sampleWorldTerrainHighestPrecision(
+  points: Cartographic[],
+  signal?: AbortSignal
+): Promise<Cartographic[]> {
+  if (points.length === 0) return [];
+  abortIfRequested(signal);
+  const requested = points.map((point) => Cartographic.clone(point));
+  const elevations = await fetchGsiElevationsBatched(
+    requested,
+    requested.map(() => "1m"),
+    signal
+  );
+  const results = await Promise.all(requested.map(async (point, index) => {
+    const elevation = elevations[index];
+    if (
+      !elevation?.source ||
+      typeof elevation.heightMeters !== "number" ||
+      !Number.isFinite(elevation.heightMeters)
+    ) {
+      throw new Error("利用可能な高精度DEMがありません");
+    }
+    const latitude = CesiumMath.toDegrees(point.latitude);
+    const longitude = CesiumMath.toDegrees(point.longitude);
+    const response = await fetch(
+      `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}&precision=point`,
+      { headers: { Accept: "application/json" }, signal }
+    );
+    const data = await response.json() as { geoidHeightMeters?: unknown; error?: unknown };
+    if (
+      !response.ok ||
+      typeof data.geoidHeightMeters !== "number" ||
+      !Number.isFinite(data.geoidHeightMeters)
+    ) {
+      throw new Error(typeof data.error === "string" ? data.error : "地点別ジオイドを取得できません");
+    }
+    point.height = elevation.heightMeters + data.geoidHeightMeters;
+    terrainSourceBySample.set(point, GSI_SOURCE_NAMES[elevation.source]);
+    return point;
+  }));
+  abortIfRequested(signal);
+  return results;
+}
+
 async function sampleTerrainWithGsiPriority(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],

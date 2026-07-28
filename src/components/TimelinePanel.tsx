@@ -16,6 +16,11 @@ import {
 import type { CalculationMode } from "../types/camera";
 import type { GroundPoint } from "../types/points";
 import {
+  weatherForDate,
+  weatherRefractionCorrectionDegrees,
+  type RefractionWeatherContext,
+} from "../search/refractionWeather";
+import {
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,
   daySerialFromDateText,
@@ -30,6 +35,7 @@ type Props = {
   location: GroundPoint | null;
   timeZone: string;
   calculationMode: CalculationMode;
+  refractionWeather?: RefractionWeatherContext;
   onChangeDateTime: (value: string) => void;
   onOpenTransitSearch: () => void;
   onInteractionChange?: (interacting: boolean) => void;
@@ -68,16 +74,23 @@ function bodyAltitude(
   body: Body,
   date: Date,
   observer: Observer,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): number {
   const equatorial = Equator(body, date, observer, true, true);
-  return Horizon(
+  const useWeather = refractionWeather?.effectiveMode === "weather";
+  const geometric = Horizon(
     date,
     observer,
     equatorial.ra,
     equatorial.dec,
-    calculationMode === "pro" ? "normal" : undefined
+    calculationMode === "pro" && !useWeather ? "normal" : undefined
   ).altitude;
+  const weather = useWeather ? weatherForDate(refractionWeather, date) : null;
+  const correction = weather
+    ? weatherRefractionCorrectionDegrees(geometric, weather)
+    : null;
+  return geometric + (correction ?? 0);
 }
 
 function findHorizonCrossing(
@@ -86,7 +99,8 @@ function findHorizonCrossing(
   observer: Observer,
   start: Date,
   end: Date,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): Date | null {
   const step = 2 * 60_000;
   let previousTime = start.getTime();
@@ -94,7 +108,8 @@ function findHorizonCrossing(
     body,
     start,
     observer,
-    calculationMode
+    calculationMode,
+    refractionWeather
   );
 
   for (
@@ -106,7 +121,8 @@ function findHorizonCrossing(
       body,
       new Date(currentTime),
       observer,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const crossed =
       direction === 1
@@ -122,7 +138,8 @@ function findHorizonCrossing(
           body,
           new Date(middle),
           observer,
-          calculationMode
+          calculationMode,
+          refractionWeather
         );
         if (direction === 1 ? altitude >= 0 : altitude < 0) high = middle;
         else low = middle;
@@ -186,7 +203,8 @@ function milkyWayShootingWindow(
   scanEnd: Date,
   selectedDaySerial: number,
   timeZone: string,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): string {
   let currentStart: Date | null = null;
   let bestStart: Date | null = null;
@@ -202,19 +220,22 @@ function milkyWayShootingWindow(
       Body.Sun,
       date,
       observer,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const moonAltitude = bodyAltitude(
       Body.Moon,
       date,
       observer,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const milkyWayAltitude = bodyAltitude(
       Body.Star2,
       date,
       observer,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const moonFraction = Illumination(Body.Moon, date).phase_fraction;
     const moonTooBright = moonAltitude > 0 && moonFraction > 0.35;
@@ -247,6 +268,7 @@ export function TimelinePanel({
   location,
   timeZone,
   calculationMode,
+  refractionWeather,
   onChangeDateTime,
   onOpenTransitSearch,
   onInteractionChange,
@@ -310,7 +332,8 @@ export function TimelinePanel({
         observer,
         start,
         end,
-        calculationMode
+        calculationMode,
+        refractionWeather
       );
     }
 
@@ -325,10 +348,11 @@ export function TimelinePanel({
         dateFromZonedDateTimeLocal(`${followingDayText}T12:00`, timeZone),
         selectedDaySerial,
         timeZone,
-        calculationMode
+        calculationMode,
+        refractionWeather
       ),
     };
-  }, [calculationMode, location, selectedDaySerial, timeZone]);
+  }, [calculationMode, location, refractionWeather, selectedDaySerial, timeZone]);
   const moonAgeDays = useMemo(() => {
     // 月齢は同じ日内で時刻スクロールのたびに朔検索を繰り返さない。
     const reference = eventTimes.moonrise ?? dateFromZonedDateTimeLocal(

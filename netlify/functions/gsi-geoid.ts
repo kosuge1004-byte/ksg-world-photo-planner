@@ -16,11 +16,13 @@ export default async function handler(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const latitude = Number(url.searchParams.get("latitude"));
   const longitude = Number(url.searchParams.get("longitude"));
+  const pointSpecific = url.searchParams.get("precision") === "point";
   try {
     const geoidHeightMeters = await lookupGsiGeoidHeight(
       latitude,
       longitude,
-      request.signal
+      request.signal,
+      pointSpecific
     );
     return json({ geoidHeightMeters });
   } catch (error) {

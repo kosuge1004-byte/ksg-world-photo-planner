@@ -229,7 +229,9 @@ function localGsiGeoidApi(): Plugin {
         try {
           const geoidHeightMeters = await lookupGsiGeoidHeight(
             Number(url.searchParams.get("latitude")),
-            Number(url.searchParams.get("longitude"))
+            Number(url.searchParams.get("longitude")),
+            undefined,
+            url.searchParams.get("precision") === "point"
           );
           response.statusCode = 200;
           response.end(JSON.stringify({ geoidHeightMeters }));

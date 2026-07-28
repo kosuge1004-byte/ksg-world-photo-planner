@@ -101,6 +101,39 @@ export function TopSettingsBar({
           </button>
           {precisionMenuOpen && (
             <fieldset className="precision-settings-panel">
+              <legend>精度設定</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="accuracy-mode"
+                  checked={precisionSettings.accuracyMode === "standard"}
+                  onChange={() => onPrecisionSettingsChange({
+                    ...precisionSettings,
+                    accuracyMode: "standard",
+                  })}
+                />
+                <span>標準</span><small>初期値・従来どおり</small>
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="accuracy-mode"
+                  checked={precisionSettings.accuracyMode === "highest"}
+                  onChange={() => onPrecisionSettingsChange({
+                    ...precisionSettings,
+                    accuracyMode: "highest",
+                  })}
+                />
+                <span>最高精度</span>
+              </label>
+              <small>
+                検索速度と検索方法は変えず、「三脚ピンを置く」の後に利用可能な最詳細データで位置を再計算します。
+                データにない樹木・工事・仮設物などは保証できません。
+              </small>
+            </fieldset>
+          )}
+          {precisionMenuOpen && (
+            <fieldset className="precision-settings-panel">
               <legend>地表屈折補正</legend>
               {(["auto", "standard", "none"] as RefractionCorrectionMode[]).map((mode) => (
                 <label key={mode}>

@@ -27,12 +27,13 @@ function validatedCoordinate(latitude: number, longitude: number): void {
 export async function lookupGsiGeoidHeight(
   latitude: number,
   longitude: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  pointSpecific = false
 ): Promise<number> {
   validatedCoordinate(latitude, longitude);
   // ジオイドは滑らかなため0.01度単位で共有し、公式APIの回数制限内で利用する。
-  const queryLatitude = Number(latitude.toFixed(2));
-  const queryLongitude = Number(longitude.toFixed(2));
+  const queryLatitude = Number(latitude.toFixed(pointSpecific ? 8 : 2));
+  const queryLongitude = Number(longitude.toFixed(pointSpecific ? 8 : 2));
   const key = `${queryLatitude},${queryLongitude}`;
   const cached = cache.get(key);
   if (cached) return cached;

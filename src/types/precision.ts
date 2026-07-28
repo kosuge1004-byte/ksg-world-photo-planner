@@ -1,4 +1,5 @@
 export type RefractionCorrectionMode = "auto" | "standard" | "none";
+export type AccuracyMode = "standard" | "highest";
 
 export type SubjectObstructionExclusionSettings = {
   under100m: number;
@@ -26,6 +27,8 @@ export const DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS: BuildingOcclusionDetail
 };
 
 export type PrecisionSettings = {
+  /** 標準は従来処理をそのまま使用し、最高精度は検索結果適用時だけ後処理する。 */
+  accuracyMode: AccuracyMode;
   refractionCorrectionMode: RefractionCorrectionMode;
   /** 被写体までの距離帯ごとに、被写体ピン手前で遮蔽物判定から除外する距離（m）。 */
   subjectObstructionExclusionMeters: SubjectObstructionExclusionSettings;
@@ -41,6 +44,7 @@ export const DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS: SubjectObstructionExc
 };
 
 export const DEFAULT_PRECISION_SETTINGS: PrecisionSettings = {
+  accuracyMode: "standard",
   refractionCorrectionMode: "auto",
   subjectObstructionExclusionMeters: DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS,
   buildingOcclusionDetailSettings: DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS,

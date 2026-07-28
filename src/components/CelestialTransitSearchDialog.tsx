@@ -13,7 +13,10 @@ import {
   type CelestialTransitResult,
   type CelestialTransitSearchMode,
 } from "../search/celestialTransitSearch";
-import { prepareRefractionWeatherContext } from "../search/refractionWeather";
+import {
+  prepareRefractionWeatherContext,
+  type RefractionWeatherContext,
+} from "../search/refractionWeather";
 import {
   JAPANESE_WEEKDAY_LABELS,
   zonedDateTimeLocalFromDate,
@@ -47,7 +50,7 @@ type Props = {
   cameraSettings: CameraSettings;
   previewAspectRatio: number;
   onClose: () => void;
-  onSelect: (result: CelestialTransitResult) => void;
+  onSelect: (result: CelestialTransitResult, refractionWeather?: RefractionWeatherContext) => void;
 };
 
 function resultLabel(result: CelestialTransitResult, timeZone: string): string {
@@ -81,6 +84,8 @@ export function CelestialTransitSearchDialog({
   const [timeRange, setTimeRange] = useSearchTimeRange();
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
   const [results, setResults] = useState<CelestialTransitResult[]>([]);
+  const [resultRefractionWeather, setResultRefractionWeather] =
+    useState<RefractionWeatherContext | undefined>(undefined);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("date");
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -144,6 +149,13 @@ export function CelestialTransitSearchDialog({
         now: currentDate,
         signal: controller.signal,
       });
+      if (
+        precisionSettings.accuracyMode === "highest" &&
+        precisionSettings.refractionCorrectionMode === "auto" &&
+        refractionWeather.effectiveMode !== "weather"
+      ) {
+        throw new Error("高精度の気象データを取得できませんでした");
+      }
       const searchCameraSettings: CameraSettings = searchMode === "in-frame"
         ? { ...cameraSettings, focalLengthMm: searchFocalLengthMm }
         : cameraSettings;
@@ -160,6 +172,7 @@ export function CelestialTransitSearchDialog({
         refractionWeather,
       }, controller.signal, setProgressPercent);
       if (controller.signal.aborted) return;
+      setResultRefractionWeather(refractionWeather);
       setResults(nextResults);
       setMessage(nextResults.length > 0
         ? `${nextResults.length}件の日時が見つかりました`
@@ -324,7 +337,7 @@ export function CelestialTransitSearchDialog({
             </div>
             {displayedResults.map((result) => (
               <button key={result.id} type="button" onClick={() => {
-                onSelect(result);
+                onSelect(result, resultRefractionWeather);
                 close();
               }}>
                 <span>{resultLabel(result, timeZone)}</span>

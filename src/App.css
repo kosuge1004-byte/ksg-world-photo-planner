@@ -1660,3 +1660,28 @@ body.pseudo-fullscreen-active {
   display: block;
   margin-top: .4rem;
 }
+
+.highest-precision-progress {
+  position: fixed;
+  z-index: 12000;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: stretch;
+  gap: .7rem;
+  width: min(32rem, calc(100% - 2rem));
+  height: fit-content;
+  margin: auto;
+  padding: 1.25rem;
+  color: #fff;
+  border: 1px solid rgba(90,185,255,.72);
+  border-radius: .9rem;
+  background: rgba(2,8,14,.97);
+  box-shadow: 0 0 0 100vmax rgba(0,0,0,.7), 0 1rem 3rem rgba(0,0,0,.55);
+  text-align: center;
+}
+.highest-precision-progress progress {
+  width: 100%;
+  height: 1rem;
+  accent-color: #42a5f5;
+}

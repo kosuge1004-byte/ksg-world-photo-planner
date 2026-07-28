@@ -41,6 +41,8 @@ import { TimelinePanel } from "./components/TimelinePanel";
 import { TopSettingsBar } from "./components/TopSettingsBar";
 import { coordinatesAtMapPixel } from "./map/webMercator";
 import { adaptiveSearchConcurrency } from "./search/adaptiveConcurrency";
+import { refineSpotPresetHighestPrecision } from "./precision/highestPrecision";
+import type { RefractionWeatherContext } from "./search/refractionWeather";
 
 import { flyMapToTarget } from "./cesium/camera";
 import {
@@ -48,12 +50,10 @@ import {
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
-  celestialAngularDiameterDegrees,
 } from "./cesium/celestial";
 import { updateCelestialMapEntities } from "./cesium/celestialMap";
 import {
   evaluateCelestialLineOfSight,
-  evaluatePhotorealisticMeshLineOfSight,
   evaluatePhotorealisticMeshSegmentLineOfSight,
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
@@ -319,6 +319,7 @@ function loadPrecisionSettings(): PrecisionSettings {
     };
 
     return {
+      accuracyMode: parsed.accuracyMode === "highest" ? "highest" : "standard",
       refractionCorrectionMode: mode,
       subjectObstructionExclusionMeters,
       buildingOcclusionDetailSettings,
@@ -372,6 +373,12 @@ function App() {
   const previewRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const [status, setStatus] = useState("3Dデータを読み込み中…");
+  const [highestPrecisionProgress, setHighestPrecisionProgress] = useState<{
+    percent: number;
+    message: string;
+  } | null>(null);
+  const [previewRefractionWeather, setPreviewRefractionWeather] =
+    useState<RefractionWeatherContext | undefined>(undefined);
   const [mapReady, setMapReady] = useState(false);
   const [previewStatus, setPreviewStatus] = useState(
     "三脚ピンと被写体点を設定してください"
@@ -572,7 +579,8 @@ function App() {
       cameraSettings,
       previewAspectRatio,
       calculationMode,
-      previewViewCorrection
+      previewViewCorrection,
+      previewRefractionWeather
     );
   }, [
     selectedDate,
@@ -582,6 +590,7 @@ function App() {
     previewAspectRatio,
     calculationMode,
     previewViewCorrection,
+    previewRefractionWeather,
   ]);
 
   const milkyWayPath = useMemo(() => {
@@ -603,7 +612,9 @@ function App() {
       cameraSettings,
       previewAspectRatio,
       calculationMode,
-      previewViewCorrection
+      previewViewCorrection,
+      5,
+      previewRefractionWeather
     );
   }, [
     selectedDate,
@@ -614,6 +625,7 @@ function App() {
     calculationMode,
     previewViewCorrection,
     timelineInteracting,
+    previewRefractionWeather,
   ]);
 
   const visibleMilkyWayPath = useMemo(
@@ -639,7 +651,8 @@ function App() {
       selectedDayStart,
       selectedDayEnd,
       timeZone,
-      previewViewCorrection
+      previewViewCorrection,
+      previewRefractionWeather
     );
   }, [
     selectedDayStart,
@@ -651,6 +664,7 @@ function App() {
     calculationMode,
     timeZone,
     previewViewCorrection,
+    previewRefractionWeather,
   ]);
 
   useEffect(() => {
@@ -686,7 +700,8 @@ function App() {
         id,
         selectedDate,
         initialObserver,
-        calculationMode
+        calculationMode,
+        previewRefractionWeather
       ),
       xPercent: 50,
       yPercent: 50,
@@ -699,7 +714,14 @@ function App() {
     selectedDate,
     cameraSettings.lensCenterHeightMeters,
     calculationMode,
+    previewRefractionWeather,
   ]);
+
+  useEffect(() => {
+    if (precisionSettings.accuracyMode !== "highest") {
+      setPreviewRefractionWeather(undefined);
+    }
+  }, [precisionSettings.accuracyMode]);
 
   const tripodSearchLines = useMemo(
     () => buildTripodSearchBaseLines(
@@ -1704,45 +1726,76 @@ ${diagnosticMessage}
     setFavoriteSubjects(toggleFavoriteSubject(subjectPoint));
   }
 
-  function applySpotPreset(result: SpotPresetResult): void {
+  async function applySpotPreset(result: SpotPresetResult): Promise<void> {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) {
       setSearchMessage("マップの読込完了後に構図を適用してください");
       return;
     }
+    let appliedResult = result;
+    if (precisionSettings.accuracyMode === "highest") {
+      setSpotSearchOpen(false);
+      setHighestPrecisionProgress({
+        percent: 2,
+        message: "三脚位置を高精度計算中",
+      });
+      try {
+        const refined = await refineSpotPresetHighestPrecision(
+          viewer,
+          result,
+          cameraSettings.lensCenterHeightMeters,
+          setHighestPrecisionProgress
+        );
+        appliedResult = {
+          ...result,
+          subject: refined.subject,
+          tripod: refined.tripod,
+        };
+      } catch (error) {
+        console.warn("最高精度処理を完了できませんでした", error);
+        setHighestPrecisionProgress(null);
+        setSearchMessage("高精度データを取得できませんでした");
+        return;
+      }
+    }
     stopAllEditModes();
     const subject = setSubjectPinFromPosition(
       viewer,
-      Cartesian3.fromDegrees(result.subject.longitude, result.subject.latitude, result.subject.height),
-      result.subject.label
+      Cartesian3.fromDegrees(appliedResult.subject.longitude, appliedResult.subject.latitude, appliedResult.subject.height),
+      appliedResult.subject.label
     );
     const tripod = setTripodPin(
       viewer,
-      Cartesian3.fromDegrees(result.tripod.longitude, result.tripod.latitude, result.tripod.height)
+      Cartesian3.fromDegrees(appliedResult.tripod.longitude, appliedResult.tripod.latitude, appliedResult.tripod.height)
     );
-    const localizedDate = zonedDateTimeLocalFromDate(result.date, result.timeZone);
+    const localizedDate = zonedDateTimeLocalFromDate(appliedResult.date, appliedResult.timeZone);
     setSubjectPoint(subject);
     setTripodPoint(tripod);
     setCameraSettings((current) => ({
       ...current,
-      focalLengthMm: result.focalLengthMm,
+      focalLengthMm: appliedResult.focalLengthMm,
     }));
     setCelestialVisibility({
-      sun: result.celestialId === "sun",
-      moon: result.celestialId === "moon",
-      milkyWay: result.celestialId === "milkyWay",
+      sun: appliedResult.celestialId === "sun",
+      moon: appliedResult.celestialId === "moon",
+      milkyWay: appliedResult.celestialId === "milkyWay",
       polaris: false,
     });
-    timeZoneRef.current = result.timeZone;
-    setTimeZone(result.timeZone);
+    timeZoneRef.current = appliedResult.timeZone;
+    setTimeZone(appliedResult.timeZone);
     dateTimeLocalRef.current = localizedDate;
     setDateTimeLocal(localizedDate);
-    const center = { latitude: result.subject.latitude, longitude: result.subject.longitude };
+    const center = { latitude: appliedResult.subject.latitude, longitude: appliedResult.subject.longitude };
     mapCenterRef.current = center;
     setMapCenter(center);
     if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude, subject.height);
     setSpotSearchOpen(false);
-    setSearchMessage(`${result.celestialLabel}の構図を適用しました`);
+    setHighestPrecisionProgress(null);
+    setSearchMessage(
+      precisionSettings.accuracyMode === "highest"
+        ? `${appliedResult.celestialLabel}の高精度構図を適用しました`
+        : `${appliedResult.celestialLabel}の構図を適用しました`
+    );
   }
 
   function saveCurrentComposition(): void {
@@ -2587,6 +2640,7 @@ ${diagnosticMessage}
         location={tripodPoint ?? subjectPoint}
         timeZone={timeZone}
         calculationMode={calculationMode}
+        refractionWeather={previewRefractionWeather}
         onChangeDateTime={setDateTimeLocal}
         onOpenTransitSearch={() => setCelestialTransitSearchOpen(true)}
         onInteractionChange={setTimelineInteracting}
@@ -2853,6 +2907,20 @@ ${diagnosticMessage}
 
       <div className="app-status" aria-live="polite">{status}</div>
 
+      {highestPrecisionProgress && (
+        <div
+          className="highest-precision-progress"
+          role="dialog"
+          aria-modal="true"
+          aria-label="三脚位置を高精度計算中"
+        >
+          <strong>三脚位置を高精度計算中</strong>
+          <span>{highestPrecisionProgress.message}</span>
+          <progress max={100} value={highestPrecisionProgress.percent} />
+          <small>{highestPrecisionProgress.percent}%</small>
+        </div>
+      )}
+
       <SubjectEditOverlay
         active={subjectEditActive}
         onConfirm={confirmSubjectEdit}
@@ -2870,8 +2938,14 @@ ${diagnosticMessage}
         cameraSettings={cameraSettings}
         previewAspectRatio={previewAspectRatio}
         onClose={() => setCelestialTransitSearchOpen(false)}
-        onSelect={(result) => {
+        onSelect={(result, refractionWeather) => {
           const localized = zonedDateTimeLocalFromDate(result.date, timeZone);
+          setPreviewRefractionWeather(
+            precisionSettings.accuracyMode === "highest" &&
+            refractionWeather?.effectiveMode === "weather"
+              ? refractionWeather
+              : undefined
+          );
           dateTimeLocalRef.current = localized;
           setDateTimeLocal(localized);
         }}

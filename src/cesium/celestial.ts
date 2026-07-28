@@ -27,6 +27,11 @@ import { zonedDateParts } from "../time/zonedTime";
 import { sensorDimensionsMm } from "./camera";
 import { calculateElevationAngleDegrees } from "./geometry";
 import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
+import {
+  weatherForDate,
+  weatherRefractionCorrectionDegrees,
+  type RefractionWeatherContext,
+} from "../search/refractionWeather";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -83,7 +88,8 @@ export function calculateCelestialHorizontalCoordinates(
   id: CelestialBodyId,
   date: Date,
   observerPoint: GroundPoint,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): HorizontalCoordinates {
   const observer = new Observer(
     observerPoint.latitude,
@@ -102,18 +108,27 @@ export function calculateCelestialHorizontalCoordinates(
 
   // ofdate=true is required before converting to horizontal coordinates.
   const equatorial = Equator(body, date, observer, true, true);
+  const useWeather = refractionWeather?.effectiveMode === "weather";
   const horizon = Horizon(
     date,
     observer,
     equatorial.ra,
     equatorial.dec,
     // 通常モードは幾何学的位置、ProだけAstronomy Engineの標準大気差を適用する。
-    calculationMode === "pro" ? "normal" : undefined
+    calculationMode === "pro" && !useWeather ? "normal" : undefined
   );
+  let altitudeDegrees = horizon.altitude;
+  if (useWeather) {
+    const weather = weatherForDate(refractionWeather, date);
+    const correction = weather
+      ? weatherRefractionCorrectionDegrees(altitudeDegrees, weather)
+      : null;
+    if (correction !== null) altitudeDegrees += correction;
+  }
 
   return {
     azimuthDegrees: normalizeDegrees(horizon.azimuth),
-    altitudeDegrees: horizon.altitude,
+    altitudeDegrees,
   };
 }
 
@@ -389,7 +404,8 @@ export function calculateCelestialScreenPoints(
   settings: CameraSettings,
   previewAspectRatio: number,
   calculationMode: CalculationMode,
-  viewCorrection?: CameraViewCorrection
+  viewCorrection?: CameraViewCorrection,
+  refractionWeather?: RefractionWeatherContext
 ): CelestialScreenPoint[] {
   const projection = cameraProjection(
     tripod,
@@ -419,7 +435,8 @@ export function calculateCelestialScreenPoints(
       id,
       date,
       lensObserver,
-      calculationMode
+      calculationMode,
+      refractionWeather
     ),
   }));
   const sunHorizontal = observations.find(({ id }) => id === "sun")?.horizontal;
@@ -501,7 +518,8 @@ export function calculateCelestialScreenTracks(
   dayStart: Date,
   dayEnd: Date,
   timeZone: string,
-  viewCorrection?: CameraViewCorrection
+  viewCorrection?: CameraViewCorrection,
+  refractionWeather?: RefractionWeatherContext
 ): CelestialTrack[] {
   const projection = cameraProjection(
     tripod,
@@ -546,7 +564,8 @@ export function calculateCelestialScreenTracks(
         id,
         sampleDate,
         lensObserver,
-        calculationMode
+        calculationMode,
+        refractionWeather
       );
       const screenPoint = projectHorizontalToPreview(horizontal, projection);
       const projected = {
@@ -610,7 +629,8 @@ export function calculateMilkyWayScreenPath(
   previewAspectRatio: number,
   calculationMode: CalculationMode,
   viewCorrection?: CameraViewCorrection,
-  sampleStepDegrees = 5
+  sampleStepDegrees = 5,
+  refractionWeather?: RefractionWeatherContext
 ): MilkyWayPathPoint[] {
   const projection = cameraProjection(
     tripod,
@@ -630,16 +650,21 @@ export function calculateMilkyWayScreenPath(
   for (let l = 0; l <= 360; l += safeStep) {
     const projectGalactic = (latitudeDegrees: number) => {
       const eq = galacticCoordinatesEquatorial(l, latitudeDegrees);
+      const useWeather = refractionWeather?.effectiveMode === "weather";
       const horizon = Horizon(
         date,
         observer,
         eq.raHours,
         eq.decDegrees,
-        calculationMode === "pro" ? "normal" : undefined
+        calculationMode === "pro" && !useWeather ? "normal" : undefined
       );
+      const weather = useWeather ? weatherForDate(refractionWeather, date) : null;
+      const correction = weather
+        ? weatherRefractionCorrectionDegrees(horizon.altitude, weather)
+        : null;
       const horizontal = {
         azimuthDegrees: normalizeDegrees(horizon.azimuth),
-        altitudeDegrees: horizon.altitude,
+        altitudeDegrees: horizon.altitude + (correction ?? 0),
       };
       return {
         ...horizontal,
