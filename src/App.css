@@ -209,6 +209,50 @@ button { cursor: pointer; }
 .top-quick-actions .top-preset-button span { font-size: clamp(5px, .9vw, 7px); }
 .top-quick-actions .top-favorite-button { place-content: center; padding: 0; }
 
+.focal-length-validation-backdrop {
+  position: fixed;
+  z-index: 800;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .72);
+}
+
+.focal-length-validation-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(340px, 100%);
+  padding: 20px;
+  color: #f7f9fc;
+  border: 1px solid #667386;
+  border-radius: 14px;
+  background: #101821;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .8);
+}
+
+.focal-length-validation-dialog strong {
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.focal-length-validation-dialog p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.focal-length-validation-dialog button {
+  min-height: 44px;
+  padding: 8px 18px;
+  color: #fff;
+  border: 1px solid #69788c;
+  border-radius: 9px;
+  background: #1a2a3b;
+  font-size: 15px;
+  font-weight: 700;
+}
+
 /* Shared preview/map surfaces */
 .preview-section, .map-section {
   position: relative;
@@ -1571,4 +1615,48 @@ body.pseudo-fullscreen-active {
   border-right: 0;
   border-left: 0;
   border-radius: 0;
+}
+
+.spot-search-results-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.spot-search-results-heading h2 {
+  margin: 0;
+}
+
+.spot-search-results-heading label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.spot-search-results-heading select {
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  padding: 0.35rem 1.8rem 0.35rem 0.55rem;
+}
+
+.precision-number-setting {
+  margin-top: .65rem;
+  padding-top: .65rem;
+  border-top: 1px solid rgba(255,255,255,.14);
+}
+.precision-number-setting > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.precision-number-setting input {
+  width: 5.5rem;
+}
+.spot-condition-note.warning {
+  display: block;
+  margin-top: .4rem;
 }

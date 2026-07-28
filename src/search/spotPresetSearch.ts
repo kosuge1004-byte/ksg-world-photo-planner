@@ -35,6 +35,10 @@ import {
   extractGoogleMapsCoordinates,
   extractGoogleMapsSharedUrl,
 } from "./googleMapsUrl";
+import {
+  canResolveGoogleMapsNatively,
+  resolveGoogleMapsSharedUrlNatively,
+} from "./nativeGoogleMapsResolver";
 import { isLocalTimeWithinSearchRange } from "./searchTimeRange";
 import {
   phaseMessage,
@@ -137,6 +141,17 @@ export async function resolveSpotLocation(
     if (direct) {
       return {
         ...direct,
+        label: "Googleマップ共有地点",
+      };
+    }
+    if (canResolveGoogleMapsNatively()) {
+      const nativeLocation = await resolveGoogleMapsSharedUrlNatively(
+        googleMapsUrl,
+        signal
+      );
+      return {
+        latitude: nativeLocation.latitude,
+        longitude: nativeLocation.longitude,
         label: "Googleマップ共有地点",
       };
     }

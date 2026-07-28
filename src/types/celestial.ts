@@ -16,6 +16,8 @@ export type CelestialOcclusion = {
   obstructionElevationDegrees?: number;
   obstructionDistanceMeters?: number;
   terrainDataSource?: import("./geospatial").TerrainDataSource;
+  /** ②建物3D遮蔽の詳細判定（縁サンプリング）を使った場合の、遮蔽サンプル割合（%）。 */
+  obstructedFractionPercent?: number;
 };
 
 export type CelestialOcclusionMap = Partial<

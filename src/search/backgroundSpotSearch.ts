@@ -126,6 +126,11 @@ export async function waitForBackgroundSpotSearch(
   const waitStartedAt = Date.now();
   const missingJobTimeoutMilliseconds = 30_000;
   const queuedTimeoutMilliseconds = 45_000;
+  // サーバー側の処理（外部API呼び出しの無応答等）で更新が完全に止まった場合、
+  // running のまま無期限に待ち続けないようにする。
+  const runningStallTimeoutMilliseconds = 90_000;
+  let lastUpdatedAtMilliseconds = waitStartedAt;
+  let lastObservedUpdatedAtIso: string | null = null;
   while (true) {
     if (signal.aborted) {
       throw new DOMException("検索結果の待機を中止しました", "AbortError");
@@ -168,6 +173,24 @@ export async function waitForBackgroundSpotSearch(
     if (!isSpotSearchJob(job)) {
       clearActiveSpotSearchJob(active);
       throw new Error("バックグラウンド検索の応答形式が不正です");
+    }
+    const jobUpdatedAtIso = typeof job.updatedAt === "string" ? job.updatedAt : null;
+    const now = Date.now();
+    if (jobUpdatedAtIso && jobUpdatedAtIso !== lastObservedUpdatedAtIso) {
+      lastObservedUpdatedAtIso = jobUpdatedAtIso;
+      lastUpdatedAtMilliseconds = now;
+    } else if (!jobUpdatedAtIso) {
+      // updatedAt が取得できない古い形式の応答では、経過時間の基準を待機開始時刻のままにする。
+      lastUpdatedAtMilliseconds = Math.max(lastUpdatedAtMilliseconds, waitStartedAt);
+    }
+    if (
+      job.status === "running" &&
+      now - lastUpdatedAtMilliseconds >= runningStallTimeoutMilliseconds
+    ) {
+      clearActiveSpotSearchJob(active);
+      throw new Error(
+        "検索処理の進行が長時間止まりました。国土地理院や地図情報サービスの応答遅延が原因の可能性があります。時間帯の範囲を狭めるか、時間をおいてもう一度お試しください"
+      );
     }
     const percent = typeof job.progressPercent === "number" ? job.progressPercent : 0;
     const boundedPercent = Math.max(0, Math.min(100, Math.round(percent)));

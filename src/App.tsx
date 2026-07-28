@@ -48,11 +48,13 @@ import {
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
+  celestialAngularDiameterDegrees,
 } from "./cesium/celestial";
 import { updateCelestialMapEntities } from "./cesium/celestialMap";
 import {
   evaluateCelestialLineOfSight,
   evaluatePhotorealisticMeshLineOfSight,
+  evaluatePhotorealisticMeshSegmentLineOfSight,
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
 import {
@@ -87,7 +89,7 @@ import {
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
 import type { PrecisionSettings } from "./types/precision";
-import { DEFAULT_PRECISION_SETTINGS } from "./types/precision";
+import { DEFAULT_PRECISION_SETTINGS, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS, DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS, selectSubjectObstructionExclusionMeters } from "./types/precision";
 import type {
   CalculationMode,
   CameraSettings,
@@ -273,8 +275,54 @@ function loadPrecisionSettings(): PrecisionSettings {
     if (mode !== "auto" && mode !== "standard" && mode !== "none") {
       return DEFAULT_PRECISION_SETTINGS;
     }
+    const storedExclusion = parsed.subjectObstructionExclusionMeters;
+    const clamp = (value: unknown, fallback: number) => {
+      const parsedValue = Number(value);
+      return Number.isFinite(parsedValue)
+        ? Math.min(500, Math.max(0, parsedValue))
+        : fallback;
+    };
+    // 旧版の単一数値設定は、全距離帯へ同じ値を適用して移行する。
+    const legacyValue = typeof storedExclusion === "number" ? storedExclusion : undefined;
+    const storedObject =
+      storedExclusion && typeof storedExclusion === "object"
+        ? storedExclusion as Partial<typeof DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS>
+        : {};
+    const subjectObstructionExclusionMeters = {
+      under100m: clamp(storedObject.under100m ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.under100m),
+      from100mTo500m: clamp(storedObject.from100mTo500m ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.from100mTo500m),
+      from500mTo2km: clamp(storedObject.from500mTo2km ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.from500mTo2km),
+      over2km: clamp(storedObject.over2km ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.over2km),
+    };
 
-    return { refractionCorrectionMode: mode };
+    const storedBuildingDetail = parsed.buildingOcclusionDetailSettings;
+    const storedBuildingDetailObject =
+      storedBuildingDetail && typeof storedBuildingDetail === "object"
+        ? storedBuildingDetail as Partial<typeof DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS>
+        : {};
+    const edgeSampleCount = storedBuildingDetailObject.edgeSampleCount;
+    const clampPercent = (value: unknown, fallback: number) => {
+      const parsedValue = Number(value);
+      return Number.isFinite(parsedValue)
+        ? Math.min(100, Math.max(0, parsedValue))
+        : fallback;
+    };
+    const buildingOcclusionDetailSettings = {
+      detailedEdgeCheckEnabled: storedBuildingDetailObject.detailedEdgeCheckEnabled === true,
+      edgeSampleCount: edgeSampleCount === 4 || edgeSampleCount === 8 || edgeSampleCount === 12
+        ? edgeSampleCount
+        : DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.edgeSampleCount,
+      obstructedThresholdPercent: clampPercent(
+        storedBuildingDetailObject.obstructedThresholdPercent,
+        DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.obstructedThresholdPercent
+      ),
+    };
+
+    return {
+      refractionCorrectionMode: mode,
+      subjectObstructionExclusionMeters,
+      buildingOcclusionDetailSettings,
+    };
   } catch {
     return DEFAULT_PRECISION_SETTINGS;
   }
@@ -1448,6 +1496,16 @@ function App() {
     const diagnosticMessage = job.progress.includes("検索診断")
       ? job.progress.slice(job.progress.indexOf("検索診断"))
       : "";
+    if (!job.input.criteria.subjectObstructionCheckEnabled) {
+      const uncheckedResults = results.map((result) => ({
+        ...result,
+        candidate3dStatus: "disabled" as const,
+      }));
+      await finalizeBackgroundSpotSearch(active, uncheckedResults);
+      if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+      onProgress(`${uncheckedResults.length}件を取得しました（遮蔽物確認OFF）`, 100);
+      return uncheckedResults;
+    }
     if (job.status === "complete") {
       clearActiveSpotSearchJob(active);
       return results;
@@ -1502,14 +1560,32 @@ function App() {
               job.input.lensCenterHeightMeters,
               signal
             );
-            const visibility = await evaluatePhotorealisticMeshLineOfSight(
+            const subjectPosition = Cartesian3.fromDegrees(
+              result.subject.longitude,
+              result.subject.latitude,
+              result.subject.height
+            );
+            const subjectDistanceMeters = Cartesian3.distance(
+              observer.meshOrigin,
+              subjectPosition
+            );
+            const configuredExclusionSettings =
+              job.input.criteria.subjectObstructionExclusionMeters ??
+              DEFAULT_PRECISION_SETTINGS.subjectObstructionExclusionMeters;
+            const subjectExclusionMeters = selectSubjectObstructionExclusionMeters(
+              subjectDistanceMeters,
+              configuredExclusionSettings
+            );
+            const maximumObstructionDistanceMeters = Math.max(
+              3,
+              subjectDistanceMeters - subjectExclusionMeters
+            );
+            const visibility = await evaluatePhotorealisticMeshSegmentLineOfSight(
               viewer,
               observer,
-              {
-                azimuthDegrees: result.cameraAzimuthDegrees,
-                altitudeDegrees: result.cameraAltitudeDegrees,
-              },
-              signal
+              subjectPosition,
+              signal,
+              maximumObstructionDistanceMeters
             );
             return {
               ...result,
@@ -1518,6 +1594,7 @@ function App() {
                   ? "visible" as const
                   : "possibly-obstructed" as const
                 : "unverified" as const,
+              buildingObstructedFractionPercent: visibility.obstructedFractionPercent,
             };
           } catch (error) {
             if (error instanceof DOMException && error.name === "AbortError") {
@@ -2811,6 +2888,7 @@ ${diagnosticMessage}
         initialFocalLengthMm={cameraSettings.focalLengthMm}
         initialDate={selectedDate}
         initialTimeZone={timeZone}
+        precisionSettings={precisionSettings}
         onBack={() => setSpotSearchOpen(false)}
         onSearch={searchFromSpotScreen}
         onResumeSearch={resumeSpotSearch}

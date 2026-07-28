@@ -43,7 +43,8 @@ export type SpotSearchDisplayCount = 1 | 3 | 5 | 10 | 20 | 50 | 100;
 export type SpotCandidate3dStatus =
   | "visible"
   | "possibly-obstructed"
-  | "unverified";
+  | "unverified"
+  | "disabled";
 
 export type SpotSearchCriteria = {
   query: string;
@@ -68,6 +69,12 @@ export type SpotSearchCriteria = {
   interval: SpotSearchInterval;
   displayCount: SpotSearchDisplayCount;
   siteConstraints: SiteConstraintFlags;
+  /** 三脚候補から被写体ピンまでのPhotorealistic 3D遮蔽物確認。 */
+  subjectObstructionCheckEnabled: boolean;
+  /** 被写体までの距離帯ごとに、被写体ピン直前で判定から除外する距離（m）。 */
+  subjectObstructionExclusionMeters: import("./precision").SubjectObstructionExclusionSettings;
+  /** ②建物3D遮蔽の詳細判定（視直径を考慮した縁サンプリング）設定。 */
+  buildingOcclusionDetailSettings: import("./precision").BuildingOcclusionDetailSettings;
 };
 
 export type SpotPresetResult = {
@@ -83,6 +90,8 @@ export type SpotPresetResult = {
   cameraAzimuthDegrees: number;
   cameraAltitudeDegrees: number;
   candidate3dStatus: SpotCandidate3dStatus;
+  /** ②建物3D遮蔽の詳細判定を使った場合の、遮蔽サンプル割合（%）。未使用時は未設定。 */
+  buildingObstructedFractionPercent?: number;
   nearbyLandmarks: NearbyLandmark[];
   nearbyBuildings: NearbyBuilding[];
   nearbyStructures: NearbyStructure[];

@@ -36,6 +36,31 @@ const BODY_RADIUS_KILOMETERS = {
   moon: 1_737.4,
 } as const;
 
+/**
+ * 太陽・月の視直径（度）を返す。天の川・北極星は点光源として扱い 0 を返す。
+ * ②の建物3D遮蔽の詳細判定（円盤の縁を複数点サンプリング）で使用する。
+ */
+export function celestialAngularDiameterDegrees(
+  celestialId: CelestialBodyId,
+  date: Date,
+  observerPoint: GroundPoint
+): number {
+  if (celestialId !== "sun" && celestialId !== "moon") return 0;
+  const body = celestialId === "sun" ? Body.Sun : Body.Moon;
+  const observer = new Observer(
+    observerPoint.latitude,
+    observerPoint.longitude,
+    observerPoint.height
+  );
+  const equatorial = Equator(body, date, observer, true, true);
+  const distanceKilometers = equatorial.dist * AU_KILOMETERS;
+  const radius = BODY_RADIUS_KILOMETERS[body === Body.Moon ? "moon" : "sun"];
+  const angularRadius = Math.asin(
+    Math.min(1, radius / Math.max(radius, distanceKilometers))
+  );
+  return 2 * angularRadius * RAD;
+}
+
 type LocalVector = { east: number; north: number; up: number };
 
 type CameraProjection = {

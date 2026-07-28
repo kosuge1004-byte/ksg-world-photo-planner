@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -22,6 +23,7 @@ import {
 } from "../time/zonedTime";
 import type { SiteConstraintFlags } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
+import type { PrecisionSettings } from "../types/precision";
 import type { SubjectRecord } from "../subjectStorage";
 import {
   DisplayCountSelect,
@@ -29,6 +31,7 @@ import {
   WeekdaySelector,
 } from "./SearchOptionControls";
 import { useSearchTimeRange } from "../search/searchUiPreferences";
+import { calculateKarneySurfaceDistanceMeters } from "../geodesy/karneyGeodesic";
 
 type Props = {
   open: boolean;
@@ -36,6 +39,7 @@ type Props = {
   initialFocalLengthMm: number;
   initialDate: Date;
   initialTimeZone: string;
+  precisionSettings: PrecisionSettings;
   onBack: () => void;
   onSearch: (
     criteria: SpotSearchCriteria,
@@ -101,6 +105,8 @@ const TRIPOD_DISTANCE_DEFAULT_MIN_METERS = 500;
 const TRIPOD_DISTANCE_DEFAULT_MAX_METERS = 3_000;
 const TRIPOD_DISTANCE_STORAGE_KEY = "ksg-spot-search-tripod-distance-v1";
 const RETAINED_RESULTS_STORAGE_KEY = "ksg-retained-spot-search-results-v1";
+const RESULT_SORT_STORAGE_KEY = "ksg-spot-search-result-sort-v1";
+type SpotResultSort = "date" | "distance";
 
 type StoredTripodDistance = { minMeters: number; maxMeters: number };
 type StoredSpotPresetResult = Omit<SpotPresetResult, "date"> & { date: string };
@@ -108,7 +114,8 @@ type StoredSpotPresetResult = Omit<SpotPresetResult, "date"> & { date: string };
 function isCandidate3dStatus(value: unknown): value is SpotCandidate3dStatus {
   return value === "visible" ||
     value === "possibly-obstructed" ||
-    value === "unverified";
+    value === "unverified" ||
+    value === "disabled";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -164,10 +171,22 @@ function saveRetainedResults(results: SpotPresetResult[]): void {
   }
 }
 
-function candidate3dStatusLabel(status: SpotCandidate3dStatus): string {
-  if (status === "visible") return "天体方向3D：見通し確認済み";
-  if (status === "possibly-obstructed") return "天体方向3D：遮蔽の可能性あり";
-  return "天体方向3D：未確認";
+function candidate3dStatusLabel(
+  status: SpotCandidate3dStatus,
+  obstructedFractionPercent?: number
+): string {
+  if (status === "visible") {
+    return typeof obstructedFractionPercent === "number"
+      ? `被写体までの3D：見通し確認済み（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
+      : "被写体までの3D：見通し確認済み";
+  }
+  if (status === "possibly-obstructed") {
+    return typeof obstructedFractionPercent === "number"
+      ? `被写体までの3D：遮蔽物あり（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
+      : "被写体までの3D：遮蔽物あり";
+  }
+  if (status === "disabled") return "被写体までの3D：確認OFF";
+  return "被写体までの3D：未確認";
 }
 
 function clampTripodDistance(value: number): number {
@@ -205,6 +224,23 @@ function loadTripodDistance(): StoredTripodDistance {
 }
 
 
+function loadResultSort(): SpotResultSort {
+  if (typeof window === "undefined") return "date";
+  return window.localStorage.getItem(RESULT_SORT_STORAGE_KEY) === "distance"
+    ? "distance"
+    : "date";
+}
+
+function resultDistanceMeters(result: SpotPresetResult): number {
+  return calculateKarneySurfaceDistanceMeters(result.tripod, result.subject);
+}
+
+function formatResultDistance(distanceMeters: number): string {
+  return distanceMeters < 1_000
+    ? `${Math.round(distanceMeters)}m`
+    : `${(distanceMeters / 1_000).toFixed(distanceMeters < 10_000 ? 2 : 1)}km`;
+}
+
 function resultDateTime(result: SpotPresetResult): string {
   return formatZonedDateTimeWithWeekday(result.date, result.timeZone);
 }
@@ -215,6 +251,7 @@ export function SpotSearchScreen({
   initialFocalLengthMm,
   initialDate,
   initialTimeZone,
+  precisionSettings,
   onBack,
   onSearch,
   onResumeSearch,
@@ -251,6 +288,7 @@ export function SpotSearchScreen({
   const [timeRange, setTimeRange] = useSearchTimeRange();
   const [interval, setInterval] = useState<SpotSearchInterval>("30-minutes");
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
+  const [subjectObstructionCheckEnabled, setSubjectObstructionCheckEnabled] = useState(true);
   const [siteConstraints, setSiteConstraints] = useState<SiteConstraintFlags>({
     walkingOnly: false,
     roadsAndPathsOnly: false,
@@ -259,6 +297,7 @@ export function SpotSearchScreen({
     excludeRoads: false,
   });
   const [results, setResults] = useState<SpotPresetResult[]>(loadRetainedResults);
+  const [resultSort, setResultSort] = useState<SpotResultSort>(loadResultSort);
   const [selectedResult, setSelectedResult] = useState<SpotPresetResult | null>(null);
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -279,6 +318,23 @@ export function SpotSearchScreen({
       })
     );
   }, [tripodDistanceMaxMeters, tripodDistanceMinMeters]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RESULT_SORT_STORAGE_KEY, resultSort);
+  }, [resultSort]);
+
+  const sortedResults = useMemo(() => {
+    const sorted = [...results];
+    sorted.sort((left, right) => {
+      if (resultSort === "distance") {
+        const distanceDifference = resultDistanceMeters(left) - resultDistanceMeters(right);
+        if (Math.abs(distanceDifference) > 0.01) return distanceDifference;
+      }
+      return left.date.getTime() - right.date.getTime();
+    });
+    return sorted;
+  }, [resultSort, results]);
 
   useEffect(() => {
     // メイン画面へ構図を適用しても検索結果を失わず、
@@ -403,6 +459,9 @@ export function SpotSearchScreen({
         interval,
         displayCount,
         siteConstraints,
+        subjectObstructionCheckEnabled,
+        subjectObstructionExclusionMeters: precisionSettings.subjectObstructionExclusionMeters,
+        buildingOcclusionDetailSettings: precisionSettings.buildingOcclusionDetailSettings,
       };
       const nextResults = await onSearch(
         criteria,
@@ -461,7 +520,7 @@ ${diagnostic}` : ""}`
               <div><dt>カメラ仰角</dt><dd>{selectedResult.cameraAltitudeDegrees.toFixed(2)}°</dd></div>
               <div>
                 <dt>3D確認状態</dt>
-                <dd>{candidate3dStatusLabel(selectedResult.candidate3dStatus)}</dd>
+                <dd>{candidate3dStatusLabel(selectedResult.candidate3dStatus, selectedResult.buildingObstructedFractionPercent)}</dd>
               </div>
               <div><dt>三脚位置</dt><dd>{selectedResult.tripod.latitude.toFixed(6)}, {selectedResult.tripod.longitude.toFixed(6)}</dd></div>
               <div><dt>被写体位置</dt><dd>{selectedResult.subject.latitude.toFixed(6)}, {selectedResult.subject.longitude.toFixed(6)}</dd></div>
@@ -789,9 +848,20 @@ ${diagnostic}` : ""}`
               />
               <span>歩行可能のみ</span>
             </label>
+            <label className={subjectObstructionCheckEnabled ? "selected" : ""}>
+              <input
+                type="checkbox"
+                checked={subjectObstructionCheckEnabled}
+                onChange={(event) => setSubjectObstructionCheckEnabled(event.target.checked)}
+              />
+              <span>三脚－被写体間の遮蔽物確認</span>
+            </label>
           </div>
           <small className="spot-condition-note">
-            ONの場合、OpenStreetMap登録情報を使って歩行可能と判定できる地点だけを採用します。未登録情報や現地の立入可否は保証対象外です。
+            「歩行可能のみ」をONにすると、OpenStreetMap登録情報を使って歩行可能と判定できる地点だけを採用します。未登録情報や現地の立入可否は保証対象外です。
+          </small>
+          <small className="spot-condition-note warning">
+            「三脚－被写体間の遮蔽物確認」をONにすると、各候補を3Dデータで追加確認するため検索時間が長くなります。
           </small>
         </fieldset>
 
@@ -881,9 +951,22 @@ ${diagnostic}` : ""}`
         )}
 
         {searchDateTime && <section className="spot-search-results" aria-live="polite">
-          <h2>検索結果一覧</h2>
+          <div className="spot-search-results-heading">
+            <h2>検索結果一覧</h2>
+            <label>
+              並び順
+              <select
+                value={resultSort}
+                onChange={(event) => setResultSort(event.target.value as SpotResultSort)}
+                aria-label="スポット検索結果の並べ替え"
+              >
+                <option value="date">日付順</option>
+                <option value="distance">距離順</option>
+              </select>
+            </label>
+          </div>
           {message && <p className="spot-search-message">{message}</p>}
-          {results.map((result) => (
+          {sortedResults.map((result) => (
             <button
               type="button"
               key={result.id}
@@ -892,11 +975,12 @@ ${diagnostic}` : ""}`
             >
               <strong>{resultDateTime(result)}　天体：{result.celestialLabel}</strong>
               <span>{result.placeLabel}</span>
+              <small>被写体まで {formatResultDistance(resultDistanceMeters(result))}</small>
               <small>
                 {result.focalLengthMm}mm　方位{result.cameraAzimuthDegrees.toFixed(1)}°　仰角{result.cameraAltitudeDegrees.toFixed(1)}°
               </small>
               <small className={`spot-result-3d-status status-${result.candidate3dStatus}`}>
-                {candidate3dStatusLabel(result.candidate3dStatus)}
+                {candidate3dStatusLabel(result.candidate3dStatus, result.buildingObstructedFractionPercent)}
               </small>
               {result.nearbyLandmarks.length > 0 && (
                 <small className="spot-result-landmarks">

@@ -342,6 +342,26 @@ function writePersistentDecodedTile(
   persistentWritePromises.set(key, write);
 }
 
+const GSI_TILE_REQUEST_TIMEOUT_MS = 8_000;
+
+async function fetchGsiTileWithTimeout(url: string): Promise<Response> {
+  // 通信自体に打ち切りが無いと、国土地理院側が応答しない場合に検索処理全体が
+  // 無期限に停止してしまうため、タイル取得だけ独自タイムアウトを持たせる。
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException("国土地理院標高タイル取得タイムアウト", "TimeoutError")),
+    GSI_TILE_REQUEST_TIMEOUT_MS
+  );
+  try {
+    return await fetch(url, {
+      headers: { Accept: "image/png" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchDecodedTile(
   source: ElevationTileSource,
   x: number,
@@ -359,11 +379,8 @@ async function fetchDecodedTile(
     const persistent = await readPersistentDecodedTile(source, x, y);
     if (persistent) return persistent;
 
-    const response = await fetch(
-      `https://cyberjapandata.gsi.go.jp/xyz/${source.id}/${source.zoom}/${x}/${y}.png`,
-      {
-        headers: { Accept: "image/png" },
-      }
+    const response = await fetchGsiTileWithTimeout(
+      `https://cyberjapandata.gsi.go.jp/xyz/${source.id}/${source.zoom}/${x}/${y}.png`
     );
     if (response.status === 404) return null;
     if (!response.ok) {
