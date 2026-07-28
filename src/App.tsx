@@ -2230,7 +2230,7 @@ ${diagnosticMessage}
         publishCurrentLocationMessage(
           currentLocationSettingsTarget === "system-location"
             ? "Androidの位置情報設定を開きました。「位置情報を使用」をONにしてからアプリへ戻り、現在地を再実行してください"
-            : "KSGアプリの設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
+            : "AstroSightの設定画面を開きました。位置情報を許可してからアプリへ戻り、現在地を再実行してください",
           false
         );
         return;

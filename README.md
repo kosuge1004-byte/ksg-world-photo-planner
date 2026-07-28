@@ -1,4 +1,4 @@
-# KSG World Photo Planner
+# AstroSight
 
 スマートフォン縦画面向けの高精度撮影計画アプリです。Cesium、Google Photorealistic 3D Tiles、Astronomy Engine、国土地理院DEM、OpenStreetMapを組み合わせて、太陽・月・天の川・北極星と被写体の構図を計算します。
 

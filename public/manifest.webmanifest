@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "KSG World Photo Planner",
-  "short_name": "KSG Planner",
+  "name": "AstroSight",
+  "short_name": "AstroSight",
   "description": "太陽・月・天の川と被写体の精密な撮影計画アプリ",
   "lang": "ja",
   "start_url": "/?source=installed",

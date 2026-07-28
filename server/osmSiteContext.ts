@@ -545,7 +545,7 @@ async function fetchOverpass(
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             Accept: "application/json",
-            "User-Agent": "KSG-World-Photo-Planner/0.0.0",
+            "User-Agent": "AstroSight/0.0.0",
           },
           body: new URLSearchParams({ data: query }),
           signal: requestController.signal,

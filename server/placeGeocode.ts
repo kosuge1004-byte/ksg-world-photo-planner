@@ -55,7 +55,7 @@ export async function resolveJapanesePlaceName(
       headers: {
         Accept: "application/json",
         "Accept-Language": "ja-JP,ja;q=0.9",
-        "User-Agent": "KSG-World-Photo-Planner/0.0.0",
+        "User-Agent": "AstroSight/0.0.0",
       },
       signal,
     }

@@ -228,7 +228,7 @@ export async function openNativeLocationSettings(): Promise<boolean> {
   const iosHandler =
     runtimeWindow.webkit?.messageHandlers?.ksgOpenAppSettings;
   if (iosHandler) {
-    iosHandler.postMessage({ source: "ksg-world-photo-planner" });
+    iosHandler.postMessage({ source: "astrosight" });
     return true;
   }
   return false;
@@ -294,7 +294,7 @@ export function locationPermissionInstructions(
   siteLabel = window.location.host
 ): string {
   if (isNativeAndroidApp()) {
-    return "Android設定→「アプリ」→「KSG World Photo Planner」→「権限」→「位置情報」で「アプリの使用中のみ許可」を選んでください。正確な三脚位置には「正確な位置情報」もONにしてください。";
+    return "Android設定→「アプリ」→「AstroSight」→「権限」→「位置情報」で「アプリの使用中のみ許可」を選んでください。正確な三脚位置には「正確な位置情報」もONにしてください。";
   }
   if (platform === "android") {
     return isInstalledWebApp()

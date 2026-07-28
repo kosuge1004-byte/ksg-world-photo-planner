@@ -134,7 +134,7 @@ async function resolvePlaceQueryNatively(
     headers: {
       Accept: "application/json",
       "Accept-Language": "ja-JP,ja;q=0.9",
-      "User-Agent": "KSG-World-Photo-Planner/1.0",
+      "User-Agent": "AstroSight/1.0",
     },
     connectTimeout: 10_000,
     readTimeout: 18_000,
