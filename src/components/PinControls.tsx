@@ -4,6 +4,8 @@ type Props = {
   onSubjectToggle: () => void;
   onSubjectEdit: () => void;
   onTripodToggle: () => void;
+  onOpenTripodInGoogleMaps: () => void;
+  tripodAvailable: boolean;
 };
 
 export function PinControls({
@@ -12,6 +14,8 @@ export function PinControls({
   onSubjectToggle,
   onSubjectEdit,
   onTripodToggle,
+  onOpenTripodInGoogleMaps,
+  tripodAvailable,
 }: Props) {
   return (
     <section className="pin-controls" aria-label="ピン設定">
@@ -49,6 +53,15 @@ export function PinControls({
         {tripodActive
           ? "地図をクリックして三脚設置"
           : "三脚ピンを設置"}
+      </button>
+
+      <button
+        type="button"
+        className="tripod-google-maps-button"
+        onClick={onOpenTripodInGoogleMaps}
+        disabled={!tripodAvailable}
+      >
+        Googlemapへ三脚位置を送る
       </button>
     </section>
   );

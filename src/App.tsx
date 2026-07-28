@@ -2813,6 +2813,8 @@ ${diagnosticMessage}
                   onSubjectToggle={toggleSubjectPlacement}
                   onSubjectEdit={startSubjectEdit}
                   onTripodToggle={toggleTripodPlacement}
+                  onOpenTripodInGoogleMaps={openTripodInGoogleMaps}
+                  tripodAvailable={Boolean(tripodPoint)}
                 />
                 <ForegroundObjectControls
                   object={foregroundObject}
@@ -2823,14 +2825,6 @@ ${diagnosticMessage}
                   onHeight={updateForegroundHeight}
                   onDelete={deleteForegroundObject}
                 />
-                <button
-                  type="button"
-                  className="tripod-google-maps-button"
-                  onClick={openTripodInGoogleMaps}
-                  disabled={!tripodPoint}
-                >
-                  Google Mapsで三脚位置を開く
-                </button>
               </div>
             )}
 
