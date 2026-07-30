@@ -601,15 +601,36 @@ export async function searchSpotPresets({
 
   let sampleDate = range.start;
   let checkedCount = 0;
+  let celestialMatchCount = 0;
   let coarseSamples: SearchSample[] = [];
+  const progressReportInterval = Math.max(1, Math.ceil(sampleCount / 100));
+  const explorationProgressPercent = (): number =>
+    Math.min(
+      90,
+      10 + Math.floor(
+        (checkedCount / Math.max(1, sampleCount)) * 80
+      )
+    );
+  const currentSearchDateLabel = (): string =>
+    zonedDateTimeLocalFromDate(sampleDate, timeZone)
+      .replace("T", " ")
+      .slice(0, 16);
+  const explorationDetail = (prefix: string): string =>
+    `${prefix}\n検索中 ${currentSearchDateLabel()}・` +
+    `${checkedCount.toLocaleString()}/${sampleCount.toLocaleString()}時点を確認・` +
+    `天体候補 ${celestialMatchCount.toLocaleString()}件・` +
+    `確定 ${results.length}/${criteria.displayCount}件`;
 
   const refineWindow = async (samples: SearchSample[]): Promise<void> => {
     if (samples.length === 0 || results.length >= criteria.displayCount) return;
     abortIfRequested(signal);
     performanceTracker.enterPhase(10);
     onProgress?.(
-      phaseMessage(10, `候補日時${samples.length}件を精密探索中（確定 ${results.length}/${criteria.displayCount}件）`),
-      phaseProgress(10, checkedCount / Math.max(1, sampleCount)),
+      phaseMessage(
+        10,
+        explorationDetail(`候補日時${samples.length}件を精密探索中`)
+      ),
+      explorationProgressPercent(),
     );
 
     const azimuthBand = minimalAzimuthBand(
@@ -618,8 +639,11 @@ export async function searchSpotPresets({
     if (terrainPrefetcher && azimuthBand) {
       performanceTracker.enterPhase(7);
       onProgress?.(
-        phaseMessage(7, "候補天体の必要方位帯だけ地形を先行取得しています"),
-        phaseProgress(7, checkedCount / Math.max(1, sampleCount)),
+        phaseMessage(
+          7,
+          explorationDetail("候補天体の必要方位帯だけ地形を先行取得しています")
+        ),
+        explorationProgressPercent(),
       );
       try {
         performanceTracker.increment("terrainPrefetches");
@@ -801,8 +825,11 @@ export async function searchSpotPresets({
       }
       performanceTracker.enterPhase(11);
       onProgress?.(
-        phaseMessage(11, `${results.length}/${criteria.displayCount}件を確定（${checkedCount}/${sampleCount}時点を確認）`),
-        phaseProgress(11, checkedCount / Math.max(1, sampleCount)),
+        phaseMessage(
+          11,
+          explorationDetail("候補地点の見通しを確認しています")
+        ),
+        explorationProgressPercent(),
       );
     }
   };
@@ -833,6 +860,7 @@ export async function searchSpotPresets({
       : null;
     if (sample) {
       performanceTracker.increment("celestialMatches");
+      celestialMatchCount += 1;
       coarseSamples.push(sample);
     }
 
@@ -845,16 +873,19 @@ export async function searchSpotPresets({
       if (results.length >= criteria.displayCount) break;
     }
 
-    if (checkedCount % 50 === 0) {
+    if (
+      checkedCount % progressReportInterval === 0 ||
+      checkedCount >= sampleCount
+    ) {
       const scanFraction = checkedCount / Math.max(1, sampleCount);
       const scanPhase = scanFraction < 0.5 ? 5 : 6;
       performanceTracker.enterPhase(scanPhase);
       onProgress?.(
         phaseMessage(
           scanPhase,
-          `${checkedCount}/${sampleCount}時点を確認（候補 ${coarseSamples.length}件、確定 ${results.length}/${criteria.displayCount}件）`,
+          explorationDetail("日時・天体条件を走査しています"),
         ),
-        phaseProgress(scanPhase, scanFraction < 0.5 ? scanFraction * 2 : (scanFraction - 0.5) * 2),
+        explorationProgressPercent(),
       );
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
@@ -872,7 +903,7 @@ export async function searchSpotPresets({
     performanceTracker.enterPhase(11);
     onProgress?.(
       phaseMessage(11, "候補地点の建物・ランドマーク情報を一括取得しています"),
-      phaseProgress(11, 0.85),
+      94,
     );
     try {
       performanceTracker.increment("siteContextRequests");
@@ -912,7 +943,7 @@ export async function searchSpotPresets({
   performanceTracker.enterPhase(12);
   onProgress?.(
     phaseMessage(12, `${results.length}件の候補を日時順に整理しています`),
-    phaseProgress(12, 0.5),
+    98,
   );
   const sortedResults = results.sort((a, b) => a.date.getTime() - b.date.getTime());
   const metrics = performanceTracker.complete(sortedResults.length);

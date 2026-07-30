@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type {
   CelestialScreenPoint,
   CelestialOcclusionMap,
@@ -5,6 +6,7 @@ import type {
   CelestialVisibility,
   MilkyWayPathPoint,
 } from "../types/celestial";
+import { isCelestialOcclusionConfirmedHidden } from "../types/celestial";
 
 type Props = {
   points: CelestialScreenPoint[];
@@ -132,7 +134,9 @@ function milkyWayBandSegments(
   for (const point of points) {
     if (
       !point.visibleInFrame ||
-      (point.lineOfSightVisible === true) !== lineOfSightVisible
+      (lineOfSightVisible
+        ? point.lineOfSightVisible === false
+        : point.lineOfSightVisible !== false)
     ) {
       flush();
       continue;
@@ -217,7 +221,7 @@ function trackSegments(track: CelestialTrack): string[] {
   );
 }
 
-export function CelestialOverlay({
+function CelestialOverlayComponent({
   points,
   tracks,
   milkyWayPath,
@@ -235,6 +239,11 @@ export function CelestialOverlay({
       data-occlusion-sun={occlusion.sun?.reason ?? "pending"}
       data-occlusion-moon={occlusion.moon?.reason ?? "pending"}
       data-occlusion-polaris={occlusion.polaris?.reason ?? "pending"}
+      data-occlusion-milky-way={occlusion.milkyWay?.reason ?? "pending"}
+      data-occlusion-sun-state={occlusion.sun?.verificationState ?? "checking"}
+      data-occlusion-moon-state={occlusion.moon?.verificationState ?? "checking"}
+      data-occlusion-polaris-state={occlusion.polaris?.verificationState ?? "checking"}
+      data-occlusion-milky-way-state={occlusion.milkyWay?.verificationState ?? "checking"}
     >
       <svg className="celestial-track-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
         {tracks.map((track) => {
@@ -292,7 +301,7 @@ export function CelestialOverlay({
             </g>
           ))}
           {milkyWayPath.filter((point, index) => point.visibleInFrame && index % 9 === 0).map((point, index) => {
-            const visible = point.lineOfSightVisible === true;
+            const visible = point.lineOfSightVisible !== false;
             const width = Math.hypot(
               point.northEdgeXPercent - point.southEdgeXPercent,
               point.northEdgeYPercent - point.southEdgeYPercent
@@ -325,7 +334,9 @@ export function CelestialOverlay({
         }
 
         const physicalDisc = point.id === "sun" || point.id === "moon";
-        const hiddenByScene = occlusion[point.id]?.visible !== true;
+        const hiddenByScene = isCelestialOcclusionConfirmedHidden(
+          occlusion[point.id]
+        );
         const positionOnly = hiddenByScene || offscreenPosition;
         const markerStyle = offscreenPosition
           ? offscreenPositionStyle(point)
@@ -394,3 +405,5 @@ export function CelestialOverlay({
     </div>
   );
 }
+
+export const CelestialOverlay = memo(CelestialOverlayComponent);

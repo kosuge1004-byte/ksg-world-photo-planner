@@ -1,4 +1,5 @@
 import type { PlannerProject } from "./types/project";
+import { publishUserNotice } from "./errors/userFeedback";
 
 const KEY = "ksg-planner-projects-v1";
 
@@ -26,6 +27,11 @@ export function saveProjects(projects: PlannerProject[]): PlannerProject[] {
     // QuotaExceededErrorやプライベートブラウズ時の書き込み拒否で
     // アプリ全体を停止させない。保存前の永続データを返す。
     console.error("プロジェクトを端末へ保存できませんでした", error);
+    publishUserNotice({
+      key: "project-storage-failed",
+      tone: "error",
+      message: "撮影計画を端末へ保存できませんでした。空き容量やブラウザの保存設定を確認してください。変更前の保存内容は残っています。",
+    });
     return loadProjects();
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN, type CameraSettings } from "../types/camera";
+import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN, type CameraSettings, type CameraViewCorrection } from "../types/camera";
 import type { PrecisionSettings } from "../types/precision";
 import type { CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
@@ -10,6 +10,7 @@ import {
   celestialTransitDateRange,
   searchCelestialTransitDates,
   type CelestialTransitCriteria,
+  type CelestialTransitProgress,
   type CelestialTransitResult,
   type CelestialTransitSearchMode,
 } from "../search/celestialTransitSearch";
@@ -17,6 +18,10 @@ import {
   prepareRefractionWeatherContext,
   type RefractionWeatherContext,
 } from "../search/refractionWeather";
+import {
+  publishUserNotice,
+  toUserFacingErrorMessage,
+} from "../errors/userFeedback";
 import {
   JAPANESE_WEEKDAY_LABELS,
   zonedDateTimeLocalFromDate,
@@ -28,6 +33,11 @@ import {
   WeekdaySelector,
 } from "./SearchOptionControls";
 import { useSearchTimeRange } from "../search/searchUiPreferences";
+import {
+  createSearchProgressEstimator,
+  formatEstimatedRemainingTime,
+  type SearchProgressEstimator,
+} from "../search/searchProgress";
 
 const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
   { value: "1-month", label: "30日" },
@@ -49,6 +59,7 @@ type Props = {
   precisionSettings: PrecisionSettings;
   cameraSettings: CameraSettings;
   previewAspectRatio: number;
+  viewCorrection: CameraViewCorrection;
   onClose: () => void;
   onSelect: (result: CelestialTransitResult, refractionWeather?: RefractionWeatherContext) => void;
 };
@@ -71,6 +82,7 @@ export function CelestialTransitSearchDialog({
   precisionSettings,
   cameraSettings,
   previewAspectRatio,
+  viewCorrection,
   onClose,
   onSelect,
 }: Props) {
@@ -90,7 +102,12 @@ export function CelestialTransitSearchDialog({
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [progressDetail, setProgressDetail] = useState("");
+  const [estimatedRemainingSeconds, setEstimatedRemainingSeconds] =
+    useState<number | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const searchGenerationRef = useRef(0);
+  const progressEstimatorRef = useRef<SearchProgressEstimator | null>(null);
 
   useEffect(() => {
     if (!open || controllerRef.current) return;
@@ -105,9 +122,15 @@ export function CelestialTransitSearchDialog({
     setResultSortOrder("date");
     setMessage("");
     setProgressPercent(0);
+    setProgressDetail("");
+    setEstimatedRemainingSeconds(null);
   }, [cameraSettings.focalLengthMm, currentDate, open, timeZone]);
 
-  useEffect(() => () => controllerRef.current?.abort(), []);
+  useEffect(() => () => {
+    searchGenerationRef.current += 1;
+    progressEstimatorRef.current = null;
+    controllerRef.current?.abort();
+  }, []);
 
   function close() {
     // 検索中に画面を閉じても処理は継続する。
@@ -122,10 +145,14 @@ export function CelestialTransitSearchDialog({
       return;
     }
     controllerRef.current?.abort();
+    const searchGeneration = ++searchGenerationRef.current;
     const controller = new AbortController();
+    progressEstimatorRef.current = createSearchProgressEstimator(searchGeneration);
     controllerRef.current = controller;
     setIsSearching(true);
     setProgressPercent(0);
+    setProgressDetail("");
+    setEstimatedRemainingSeconds(null);
     setResults([]);
     setMessage("天体通過日時を検索中…");
     try {
@@ -139,6 +166,7 @@ export function CelestialTransitSearchDialog({
         endTime: timeRange.endTime,
         displayCount,
         includeBelowSubject,
+        viewCorrection: { ...viewCorrection },
       };
       const range = celestialTransitDateRange({ currentDate, timeZone, criteria });
       const refractionWeather = await prepareRefractionWeatherContext({
@@ -156,6 +184,16 @@ export function CelestialTransitSearchDialog({
       ) {
         throw new Error("高精度の気象データを取得できませんでした");
       }
+      if (
+        precisionSettings.refractionCorrectionMode === "auto" &&
+        refractionWeather.source === "fallback"
+      ) {
+        publishUserNotice({
+          key: "weather-refraction-fallback",
+          tone: "warning",
+          message: "天気データを取得できないため、標準的な大気条件で屈折を計算します。検索は続行できます。",
+        });
+      }
       const searchCameraSettings: CameraSettings = searchMode === "in-frame"
         ? { ...cameraSettings, focalLengthMm: searchFocalLengthMm }
         : cameraSettings;
@@ -170,18 +208,57 @@ export function CelestialTransitSearchDialog({
         previewAspectRatio,
         criteria,
         refractionWeather,
-      }, controller.signal, setProgressPercent);
-      if (controller.signal.aborted) return;
+      }, controller.signal, (progress: CelestialTransitProgress) => {
+        if (
+          searchGenerationRef.current === searchGeneration &&
+          !controller.signal.aborted
+        ) {
+          const estimate = progressEstimatorRef.current?.update(
+            searchGeneration,
+            progress.percent
+          );
+          if (!estimate) return;
+          setProgressPercent(estimate.percent);
+          setEstimatedRemainingSeconds(estimate.estimatedRemainingSeconds);
+          const dateLabel = progress.currentDate
+            ? zonedDateTimeLocalFromDate(
+                progress.currentDate,
+                timeZone
+              ).replace("T", " ").slice(0, 16)
+            : "";
+          setProgressDetail(
+            `${dateLabel ? `検索中 ${dateLabel}・` : ""}` +
+            `${progress.processed.toLocaleString()}/${progress.total.toLocaleString()}時点・` +
+            `候補 ${progress.candidateCount.toLocaleString()}件`
+          );
+        }
+      });
+      if (
+        searchGenerationRef.current !== searchGeneration ||
+        controller.signal.aborted
+      ) return;
       setResultRefractionWeather(refractionWeather);
       setResults(nextResults);
+      setProgressPercent(100);
+      setEstimatedRemainingSeconds(null);
       setMessage(nextResults.length > 0
         ? `${nextResults.length}件の日時が見つかりました`
         : "指定条件に一致する日時は見つかりませんでした");
     } catch (error) {
+      if (searchGenerationRef.current !== searchGeneration) return;
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setMessage(error instanceof Error ? error.message : "検索に失敗しました");
+      setEstimatedRemainingSeconds(null);
+      setMessage(toUserFacingErrorMessage(
+        error,
+        precisionSettings.accuracyMode === "highest"
+          ? "highest-precision"
+          : "transit-search"
+      ));
     } finally {
-      if (controllerRef.current === controller) {
+      if (
+        searchGenerationRef.current === searchGeneration &&
+        controllerRef.current === controller
+      ) {
         controllerRef.current = null;
         setIsSearching(false);
       }
@@ -317,6 +394,14 @@ export function CelestialTransitSearchDialog({
                 <span style={{ width: `${progressPercent}%` }} />
               </div>
               <strong>{progressPercent}%</strong>
+              {(progressDetail || estimatedRemainingSeconds !== null) && (
+                <small className="search-progress-detail">
+                  {progressDetail}
+                  {estimatedRemainingSeconds !== null && (
+                    <>・残り予想 {formatEstimatedRemainingTime(estimatedRemainingSeconds)}</>
+                  )}
+                </small>
+              )}
             </div>
           )}
           {!isSearching && message && <p className="celestial-transit-message" role="status">{message}</p>}

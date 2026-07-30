@@ -68,7 +68,7 @@ export function celestialAngularDiameterDegrees(
 
 type LocalVector = { east: number; north: number; up: number };
 
-type CameraProjection = {
+export type CameraProjection = {
   horizontalFov: number;
   verticalFov: number;
   right: LocalVector;
@@ -169,7 +169,7 @@ function horizontalDirection(
   };
 }
 
-function cameraProjection(
+export function createCameraProjection(
   tripod: GroundPoint,
   subject: GroundPoint,
   settings: CameraSettings,
@@ -229,7 +229,7 @@ function projectDirectionToImagePlane(
   };
 }
 
-function projectHorizontalToPreview(
+export function projectHorizontalToPreview(
   horizontal: HorizontalCoordinates,
   projection: CameraProjection
 ): {
@@ -260,6 +260,14 @@ function projectHorizontalToPreview(
       yPercent <= 100,
     inFront: plane.inFront,
   };
+}
+
+export function angularDistanceFromCameraCenterDegrees(
+  horizontal: HorizontalCoordinates,
+  projection: CameraProjection
+): number {
+  const direction = horizontalDirection(horizontal);
+  return Math.acos(Math.max(-1, Math.min(1, dot(direction, projection.forward)))) * RAD;
 }
 
 function apparentDisc(
@@ -312,6 +320,45 @@ function apparentDisc(
       Math.tan(projection.verticalFov * DEG / 2),
     distanceKilometers,
   };
+}
+
+/**
+ * プレビューと日時検索で共有するフレーム内判定。
+ * 太陽・月は現行プレビュー仕様どおり円盤の一部が入れば可視、
+ * 天の川・北極星は中心点が入る場合だけ可視とする。
+ */
+export function isCelestialInCameraFrame(
+  id: CelestialBodyId,
+  date: Date,
+  observerPoint: GroundPoint,
+  horizontal: HorizontalCoordinates,
+  projection: CameraProjection,
+  calculationMode: CalculationMode
+): boolean {
+  const projected = projectHorizontalToPreview(horizontal, projection);
+  if (id !== "sun" && id !== "moon") return projected.visibleInFrame;
+  const geometricAltitudeDegrees = calculateCelestialHorizontalCoordinates(
+    id,
+    date,
+    observerPoint,
+    "standard"
+  ).altitudeDegrees;
+  const disc = apparentDisc(
+    id === "sun" ? Body.Sun : Body.Moon,
+    date,
+    observerPoint,
+    projection,
+    geometricAltitudeDegrees,
+    calculationMode
+  );
+  return (
+    projected.inFront &&
+    horizontal.altitudeDegrees + disc.angularDiameterDegrees / 2 > -1 &&
+    projected.xPercent + disc.diameterWidthPercent / 2 >= 0 &&
+    projected.xPercent - disc.diameterWidthPercent / 2 <= 100 &&
+    projected.yPercent + disc.diameterHeightPercent / 2 >= 0 &&
+    projected.yPercent - disc.diameterHeightPercent / 2 <= 100
+  );
 }
 
 function brightLimbAngleDegrees(
@@ -407,7 +454,7 @@ export function calculateCelestialScreenPoints(
   viewCorrection?: CameraViewCorrection,
   refractionWeather?: RefractionWeatherContext
 ): CelestialScreenPoint[] {
-  const projection = cameraProjection(
+  const projection = createCameraProjection(
     tripod,
     subject,
     settings,
@@ -466,13 +513,14 @@ export function calculateCelestialScreenPoints(
         : horizontal.altitudeDegrees,
       calculationMode
     );
-    const visibleInFrame =
-      inFront &&
-      horizontal.altitudeDegrees + disc.angularDiameterDegrees / 2 > -1 &&
-      projected.xPercent + disc.diameterWidthPercent / 2 >= 0 &&
-      projected.xPercent - disc.diameterWidthPercent / 2 <= 100 &&
-      projected.yPercent + disc.diameterHeightPercent / 2 >= 0 &&
-      projected.yPercent - disc.diameterHeightPercent / 2 <= 100;
+    const visibleInFrame = isCelestialInCameraFrame(
+      id,
+      date,
+      lensObserver,
+      horizontal,
+      projection,
+      calculationMode
+    );
 
     return {
       id,
@@ -521,7 +569,7 @@ export function calculateCelestialScreenTracks(
   viewCorrection?: CameraViewCorrection,
   refractionWeather?: RefractionWeatherContext
 ): CelestialTrack[] {
-  const projection = cameraProjection(
+  const projection = createCameraProjection(
     tripod,
     subject,
     settings,
@@ -632,7 +680,7 @@ export function calculateMilkyWayScreenPath(
   sampleStepDegrees = 5,
   refractionWeather?: RefractionWeatherContext
 ): MilkyWayPathPoint[] {
-  const projection = cameraProjection(
+  const projection = createCameraProjection(
     tripod,
     subject,
     settings,

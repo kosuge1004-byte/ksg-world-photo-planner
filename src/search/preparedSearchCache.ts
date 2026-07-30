@@ -1,4 +1,5 @@
-const STORAGE_KEY = "ksg-spot-search-prepared-cache-v2";
+const STORAGE_KEY = "ksg-spot-search-prepared-cache-v3";
+const PREVIOUS_STORAGE_KEY = "ksg-spot-search-prepared-cache-v2";
 const LEGACY_STORAGE_KEY = "ksg-spot-search-prepared-cache-v1";
 const MAX_ENTRIES = 120;
 const MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -20,6 +21,8 @@ function loadRaw(): unknown[] {
   try {
     const current = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as unknown;
     if (Array.isArray(current)) return current;
+    // v2以前のキーは条件不足のためwarm判定へ移行しない。
+    localStorage.removeItem(PREVIOUS_STORAGE_KEY);
     const legacy = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY) ?? "[]") as unknown;
     return Array.isArray(legacy) ? legacy : [];
   } catch {
@@ -53,6 +56,7 @@ export function readPreparedSearchCache(): PreparedSearchCacheRecord[] {
 function persistPreparedSearchCache(records: PreparedSearchCacheRecord[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    localStorage.removeItem(PREVIOUS_STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
     // 容量不足やプライベートモードでは、検索自体を止めずキャッシュだけ無効化する。

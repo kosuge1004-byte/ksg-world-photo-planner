@@ -18,10 +18,15 @@ export const JAPANESE_WEEKDAY_LABELS = [
 ] as const;
 
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
+const FORMATTER_CACHE_MAX_ENTRIES = 64;
 
 function formatter(timeZone: string): Intl.DateTimeFormat {
   const cached = formatterCache.get(timeZone);
-  if (cached) return cached;
+  if (cached) {
+    formatterCache.delete(timeZone);
+    formatterCache.set(timeZone, cached);
+    return cached;
+  }
   const created = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     hourCycle: "h23",
@@ -33,6 +38,11 @@ function formatter(timeZone: string): Intl.DateTimeFormat {
     second: "2-digit",
   });
   formatterCache.set(timeZone, created);
+  while (formatterCache.size > FORMATTER_CACHE_MAX_ENTRIES) {
+    const oldestTimeZone = formatterCache.keys().next().value;
+    if (oldestTimeZone === undefined) break;
+    formatterCache.delete(oldestTimeZone);
+  }
   return created;
 }
 

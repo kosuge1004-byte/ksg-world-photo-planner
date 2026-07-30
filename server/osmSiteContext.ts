@@ -510,13 +510,21 @@ function queryForPoints(
 }
 
 function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
   if (milliseconds <= 0) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal?.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
       reject(new DOMException("Aborted", "AbortError"));
-    }, { once: true });
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 

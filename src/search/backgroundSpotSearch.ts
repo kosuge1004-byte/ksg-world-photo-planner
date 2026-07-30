@@ -13,13 +13,30 @@ const CLIENT_ID_KEY = "ksg-spot-search-client-id-v1";
 const ACTIVE_JOB_KEY = "ksg-active-spot-search-v1";
 
 export function spotSearchPreparationKey(input: Pick<SpotSearchJobInput,
-  "subject" | "criteria" | "calculationMode"
+  "subject" | "criteria" | "calculationMode" | "baseDateIso" | "timeZone" |
+  "lensCenterHeightMeters" | "cameraSettings" | "previewAspectRatio" |
+  "subjectGroundHeightMeters" | "viewCorrection" | "precisionSettings"
 >): string {
-  const lat = input.subject.latitude.toFixed(4);
-  const lon = input.subject.longitude.toFixed(4);
-  return [
-    "v2", lat, lon, input.criteria.celestialId, input.calculationMode,
-  ].join(":");
+  // 条件の一部だけを丸めた旧キーでは、ピン・日時・焦点距離・精度設定の変更後も
+  // warm扱いになるため、検索と投影へ影響する全スナップショットを含める。
+  return JSON.stringify({
+    version: 3,
+    subject: {
+      latitude: input.subject.latitude,
+      longitude: input.subject.longitude,
+      height: input.subject.height,
+    },
+    subjectGroundHeightMeters: input.subjectGroundHeightMeters,
+    baseDateIso: input.baseDateIso,
+    timeZone: input.timeZone,
+    criteria: input.criteria,
+    calculationMode: input.calculationMode,
+    lensCenterHeightMeters: input.lensCenterHeightMeters,
+    cameraSettings: input.cameraSettings,
+    previewAspectRatio: input.previewAspectRatio,
+    viewCorrection: input.viewCorrection,
+    precisionSettings: input.precisionSettings,
+  });
 }
 
 export function spotSearchCacheState(cacheKey: string): "cold" | "warm" {
@@ -101,12 +118,22 @@ export async function startBackgroundSpotSearch(
 }
 
 function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(
+      new DOMException("検索結果の待機を中止しました", "AbortError")
+    );
+  }
   return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal?.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
       reject(new DOMException("検索結果の待機を中止しました", "AbortError"));
-    }, { once: true });
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -131,6 +158,7 @@ export async function waitForBackgroundSpotSearch(
   const runningStallTimeoutMilliseconds = 90_000;
   let lastUpdatedAtMilliseconds = waitStartedAt;
   let lastObservedUpdatedAtIso: string | null = null;
+  let lastReportedProgressPercent = 0;
   while (true) {
     if (signal.aborted) {
       throw new DOMException("検索結果の待機を中止しました", "AbortError");
@@ -193,7 +221,11 @@ export async function waitForBackgroundSpotSearch(
       );
     }
     const percent = typeof job.progressPercent === "number" ? job.progressPercent : 0;
-    const boundedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+    const boundedPercent = Math.max(
+      lastReportedProgressPercent,
+      Math.max(0, Math.min(100, Math.round(percent)))
+    );
+    lastReportedProgressPercent = boundedPercent;
     const elapsedSeconds = Math.max(0, Math.floor((Date.now() - waitStartedAt) / 1000));
     const elapsedText = elapsedSeconds < 60
       ? `${elapsedSeconds}秒`

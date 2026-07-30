@@ -16,6 +16,10 @@ import type {
   CelestialOcclusion,
   HorizontalCoordinates,
 } from "../types/celestial";
+import { publishUserNotice } from "../errors/userFeedback";
+import {
+  failedCelestialOcclusion,
+} from "../types/celestial";
 import type { BuildingOcclusionDetailSettings } from "../types/precision";
 import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
@@ -51,6 +55,7 @@ export type CelestialLineOfSightObserver = {
   lensCenterHeightMeters: number;
   terrainOrigin: Cartesian3;
   meshOrigin: Cartesian3;
+  meshSurfaceVerified: boolean;
 };
 
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
@@ -59,8 +64,20 @@ const MAX_TERRAIN_CACHE_ENTRIES = 384;
 const terrainHorizonCache = new Map<string, Promise<TerrainHorizon>>();
 const MAX_MESH_LINE_OF_SIGHT_CACHE_ENTRIES = 512;
 type MeshIntersectionResult = { verified: boolean; distanceMeters: number | null };
+type MeshIntersectionOutcome =
+  | { ok: true; result: MeshIntersectionResult }
+  | { ok: false; error: unknown };
 const meshLineOfSightCache = new WeakMap<Viewer, Map<string, Promise<MeshIntersectionResult>>>();
 const observerPreparationCache = new WeakMap<Viewer, Map<string, Promise<CelestialLineOfSightObserver>>>();
+
+/** 条件変更後に古い地形・3Dレイ判定を再利用しないための一元化された無効化入口。 */
+export function invalidateCelestialOcclusionCaches(viewer?: Viewer): void {
+  terrainHorizonCache.clear();
+  if (viewer) {
+    meshLineOfSightCache.delete(viewer);
+    observerPreparationCache.delete(viewer);
+  }
+}
 
 function abortIfRequested(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -289,6 +306,7 @@ async function calculatePhotorealisticMeshIntersection(
 ): Promise<MeshIntersectionResult> {
   const scene = viewer.scene as RayPickingScene;
   if (
+    !observer.meshSurfaceVerified ||
     scene.mode !== SceneMode.SCENE3D ||
     typeof scene.drillPickFromRayMostDetailed !== "function"
   ) {
@@ -375,6 +393,7 @@ async function calculateCelestialLineOfSightObserver(
     tripod.height
   );
   let meshSurface = approximateSurface;
+  let meshSurfaceVerified = false;
   try {
     const clamped = (
       await viewer.scene.clampToHeightMostDetailed(
@@ -383,7 +402,10 @@ async function calculateCelestialLineOfSightObserver(
         0.2
       )
     )[0];
-    if (clamped) meshSurface = clamped;
+    if (clamped) {
+      meshSurface = clamped;
+      meshSurfaceVerified = true;
+    }
   } catch (error) {
     console.warn("Google実景メッシュの三脚地表を取得できませんでした", error);
   }
@@ -401,6 +423,7 @@ async function calculateCelestialLineOfSightObserver(
     lensCenterHeightMeters,
     terrainOrigin,
     meshOrigin,
+    meshSurfaceVerified,
   };
 }
 
@@ -438,10 +461,12 @@ export async function evaluateCelestialLineOfSight(
   viewer: Viewer,
   observer: CelestialLineOfSightObserver,
   horizontal: HorizontalCoordinates,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onDemVerified?: (result: CelestialOcclusion) => void,
 ): Promise<CelestialOcclusion> {
   if (horizontal.altitudeDegrees <= 0) {
     return {
+      verificationState: "dem-and-google-3d",
       visible: false,
       verified: true,
       terrainObstructed: true,
@@ -451,27 +476,86 @@ export async function evaluateCelestialLineOfSight(
       obstructionDistanceMeters: 0,
     };
   }
-  const [terrain, mesh] = await Promise.all([
-    cachedTerrainHorizon(observer, horizontal.azimuthDegrees, signal),
-    photorealisticMeshIntersection(viewer, observer, horizontal, signal),
-  ]);
+  const meshPromise: Promise<MeshIntersectionOutcome> =
+    photorealisticMeshIntersection(viewer, observer, horizontal, signal)
+      .then((result) => ({ ok: true as const, result }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+  let terrain: TerrainHorizon;
+  try {
+    terrain = await cachedTerrainHorizon(
+      observer,
+      horizontal.azimuthDegrees,
+      signal
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    publishUserNotice({
+      key: "terrain-occlusion-failed",
+      tone: "warning",
+      message: "地形データを取得できないため、遮蔽物を確認できませんでした。天体は未確認として表示しています。",
+    });
+    return failedCelestialOcclusion(
+      error instanceof Error ? error.message : "DEM遮蔽判定に失敗しました"
+    );
+  }
   const terrainObstructed =
     terrain.maximumElevationDegrees >= horizontal.altitudeDegrees - 0.015;
+  const demOnlyResult: CelestialOcclusion = {
+    verificationState: "dem-only",
+    visible: !terrainObstructed,
+    verified: false,
+    terrainObstructed,
+    photorealisticMeshObstructed: false,
+    reason: terrainObstructed ? "terrain" : "unverified",
+    obstructionElevationDegrees: terrain.maximumElevationDegrees,
+    obstructionDistanceMeters: terrainObstructed
+      ? terrain.distanceMeters
+      : undefined,
+    terrainDataSource: terrain.dataSource,
+  };
+  abortIfRequested(signal);
+  onDemVerified?.(demOnlyResult);
+
+  const meshOutcome = await meshPromise;
+  abortIfRequested(signal);
+  if (!meshOutcome.ok) {
+    publishUserNotice({
+      key: "google-3d-occlusion-fallback",
+      tone: "warning",
+      message: "Google 3Dによる遮蔽物確認が完了しなかったため、地形データのみの結果を表示しています。",
+    });
+    return {
+      ...demOnlyResult,
+      failureMessage: meshOutcome.error instanceof Error
+        ? meshOutcome.error.message
+        : "Google 3D遮蔽判定に失敗しました",
+    };
+  }
+  const mesh = meshOutcome.result;
+  if (!mesh.verified) {
+    publishUserNotice({
+      key: "google-3d-occlusion-fallback",
+      tone: "warning",
+      message: "Google 3Dによる遮蔽物確認が完了しなかったため、地形データのみの結果を表示しています。",
+    });
+    return {
+      ...demOnlyResult,
+      failureMessage: "Google 3D遮蔽判定を完了できませんでした",
+    };
+  }
   const photorealisticMeshObstructed = mesh.distanceMeters !== null;
-  const verified = mesh.verified;
-  const visible = verified && !terrainObstructed && !photorealisticMeshObstructed;
+  const visible = !terrainObstructed && !photorealisticMeshObstructed;
   return {
+    verificationState: "dem-and-google-3d",
     visible,
-    verified,
+    verified: true,
     terrainObstructed,
     photorealisticMeshObstructed,
-    reason: !verified
-      ? "unverified"
-      : terrainObstructed
-        ? "terrain"
-        : photorealisticMeshObstructed
-          ? "building-or-surface"
-          : "visible",
+    reason: terrainObstructed
+      ? "terrain"
+      : photorealisticMeshObstructed
+        ? "building-or-surface"
+        : "visible",
     obstructionElevationDegrees: terrain.maximumElevationDegrees,
     obstructionDistanceMeters: terrainObstructed
       ? terrain.distanceMeters
@@ -535,6 +619,7 @@ export async function evaluatePhotorealisticMeshSegmentLineOfSight(
   );
   if (Cartesian3.magnitudeSquared(worldDirection) < 1e-6) {
     return {
+      verificationState: "dem-and-google-3d",
       visible: true,
       verified: true,
       terrainObstructed: false,
@@ -571,6 +656,9 @@ export async function evaluatePhotorealisticMeshSegmentLineOfSight(
   );
   const obstructed = sample.distanceMeters !== null;
   return {
+    verificationState: sample.verified
+      ? "dem-and-google-3d"
+      : "dem-only",
     visible: sample.verified && !obstructed,
     verified: sample.verified,
     terrainObstructed: false,
@@ -598,6 +686,7 @@ export async function evaluatePhotorealisticMeshLineOfSight(
 ): Promise<CelestialOcclusion> {
   if (horizontal.altitudeDegrees <= 0) {
     return {
+      verificationState: "dem-and-google-3d",
       visible: false,
       verified: true,
       terrainObstructed: false,
@@ -635,6 +724,9 @@ export async function evaluatePhotorealisticMeshLineOfSight(
     null
   );
   return {
+    verificationState: verified
+      ? "dem-and-google-3d"
+      : "dem-only",
     visible: verified && !photorealisticMeshObstructed,
     verified,
     terrainObstructed: false,

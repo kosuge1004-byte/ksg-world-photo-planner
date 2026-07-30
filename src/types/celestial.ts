@@ -7,7 +7,14 @@ export type CelestialVisibility = {
 
 export type CelestialBodyId = keyof CelestialVisibility;
 
+export type CelestialOcclusionVerificationState =
+  | "checking"
+  | "dem-only"
+  | "dem-and-google-3d"
+  | "failed";
+
 export type CelestialOcclusion = {
+  verificationState: CelestialOcclusionVerificationState;
   visible: boolean;
   verified: boolean;
   terrainObstructed: boolean;
@@ -18,11 +25,55 @@ export type CelestialOcclusion = {
   terrainDataSource?: import("./geospatial").TerrainDataSource;
   /** ②建物3D遮蔽の詳細判定（縁サンプリング）を使った場合の、遮蔽サンプル割合（%）。 */
   obstructedFractionPercent?: number;
+  failureMessage?: string;
 };
 
 export type CelestialOcclusionMap = Partial<
   Record<CelestialBodyId, CelestialOcclusion>
 >;
+
+export function checkingCelestialOcclusion(): CelestialOcclusion {
+  return {
+    verificationState: "checking",
+    visible: false,
+    verified: false,
+    terrainObstructed: false,
+    photorealisticMeshObstructed: false,
+    reason: "unverified",
+  };
+}
+
+export function failedCelestialOcclusion(
+  failureMessage?: string
+): CelestialOcclusion {
+  return {
+    verificationState: "failed",
+    visible: false,
+    verified: false,
+    terrainObstructed: false,
+    photorealisticMeshObstructed: false,
+    reason: "unverified",
+    failureMessage,
+  };
+}
+
+/** 判定中・失敗・未検証を遮蔽確定として扱わない、表示共通の判定。 */
+export function isCelestialOcclusionConfirmedHidden(
+  occlusion: CelestialOcclusion | undefined
+): boolean {
+  if (
+    !occlusion ||
+    occlusion.verificationState === "checking" ||
+    occlusion.verificationState === "failed"
+  ) {
+    return false;
+  }
+  return (
+    occlusion.reason === "below-horizon" ||
+    occlusion.reason === "terrain" ||
+    occlusion.reason === "building-or-surface"
+  );
+}
 
 export type HorizontalCoordinates = {
   azimuthDegrees: number;

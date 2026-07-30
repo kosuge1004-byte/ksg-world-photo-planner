@@ -131,7 +131,7 @@ type MilkyWayDomePoint = {
   center: MapPixelPoint;
   north: MapPixelPoint;
   south: MapPixelPoint;
-  lineOfSightVisible: boolean;
+  lineOfSightVisible?: boolean;
 };
 
 function milkyWayDomeSegments(
@@ -174,7 +174,7 @@ function milkyWayDomeSegments(
         Math.max(0, point.southEdgeAltitudeDegrees),
         radius
       ),
-      lineOfSightVisible: point.lineOfSightVisible === true,
+      lineOfSightVisible: point.lineOfSightVisible,
     });
   }
   flush();
@@ -307,7 +307,7 @@ export function Map2DOverlay({
               return (
                 <circle
                   key={`${segmentIndex}-${pointIndex}`}
-                  className={point.lineOfSightVisible ? "map-milky-way-marker visible" : "map-milky-way-marker hidden"}
+                  className={point.lineOfSightVisible === false ? "map-milky-way-marker hidden" : "map-milky-way-marker visible"}
                   cx={point.center.x}
                   cy={point.center.y}
                   r={Math.max(3, Math.min(18, halfWidth * 0.42))}

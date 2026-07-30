@@ -10,6 +10,7 @@ import type {
   GsiElevationApiSample,
   TerrainDataSource,
 } from "../types/geospatial";
+import { publishUserNotice } from "../errors/userFeedback";
 
 let terrainPromise: ReturnType<typeof createWorldTerrainAsync> | null = null;
 const terrainSourceBySample = new WeakMap<Cartographic, TerrainDataSource>();
@@ -18,6 +19,7 @@ let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
 const geoidHeightCache = new Map<string, Promise<number>>();
+const GEOID_MEMORY_CACHE_MAX_ENTRIES = 4_096;
 const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
 const GEOID_CACHE_STORE = "geoid";
 const GEOID_CACHE_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -38,12 +40,36 @@ const pendingGsiRequests = new Map<
 
 // 同じ被写体周辺を再検索した際にDEM通信を繰り返さない。
 // 約1m単位（緯度経度5桁）でメモリとIndexedDBへ保存する。
-const TERRAIN_CACHE_DB = "ksg-world-photo-planner-terrain-v1";
+const TERRAIN_CACHE_DB = "ksg-world-photo-planner-terrain-v2";
 const TERRAIN_CACHE_STORE = "terrain";
 const TERRAIN_CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const terrainHeightMemoryCache = new Map<string, number>();
+const TERRAIN_MEMORY_CACHE_MAX_ENTRIES = 32_768;
 
 type TerrainCacheRecord = { key: string; height: number; updatedAt: number };
+
+function readMemoryCache<K, V>(cache: Map<K, V>, key: K): V | undefined {
+  const value = cache.get(key);
+  if (value === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function writeMemoryCache<K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  maximumEntries: number
+): void {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maximumEntries) {
+    const oldestKey = cache.keys().next().value as K | undefined;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
 
 // IndexedDBの実行時APIだけを構造型で扱う。
 // TypeScriptのDOM型定義がビルド環境で解決されない場合でも、
@@ -83,8 +109,15 @@ function getIndexedDbFactory(): KsgIndexedDbFactory | null {
   return runtimeGlobal.indexedDB ?? null;
 }
 
-function terrainCacheKey(point: Cartographic): string {
-  return `${CesiumMath.toDegrees(point.latitude).toFixed(5)},${CesiumMath.toDegrees(point.longitude).toFixed(5)}`;
+function terrainCacheKey(
+  point: Cartographic,
+  maximumDetail?: GsiMaximumDetail
+): string {
+  return [
+    CesiumMath.toDegrees(point.latitude).toFixed(5),
+    CesiumMath.toDegrees(point.longitude).toFixed(5),
+    maximumDetail ?? "auto",
+  ].join(",");
 }
 
 function openTerrainCache(): Promise<KsgIdbDatabase | null> {
@@ -103,21 +136,34 @@ function openTerrainCache(): Promise<KsgIdbDatabase | null> {
   });
 }
 
-async function readTerrainCache(points: Cartographic[]): Promise<Array<number | null>> {
-  const values = points.map((point) => terrainHeightMemoryCache.get(terrainCacheKey(point)) ?? null);
+async function readTerrainCache(
+  points: Cartographic[],
+  maximumDetails?: GsiMaximumDetail[]
+): Promise<Array<number | null>> {
+  const values = points.map((point, index) =>
+    readMemoryCache(
+      terrainHeightMemoryCache,
+      terrainCacheKey(point, maximumDetails?.[index])
+    ) ?? null
+  );
   const missing = values.map((value, index) => value === null ? index : -1).filter((index) => index >= 0);
   if (missing.length === 0) return values;
   const database = await openTerrainCache();
   if (!database) return values;
   await Promise.all(missing.map((index) => new Promise<void>((resolve) => {
-    const key = terrainCacheKey(points[index]);
+    const key = terrainCacheKey(points[index], maximumDetails?.[index]);
     const request = database.transaction(TERRAIN_CACHE_STORE, "readonly")
       .objectStore(TERRAIN_CACHE_STORE).get(key);
     request.onsuccess = () => {
       const record = request.result as TerrainCacheRecord | undefined;
       if (record && Date.now() - record.updatedAt <= TERRAIN_CACHE_MAX_AGE_MS && Number.isFinite(record.height)) {
         values[index] = record.height;
-        terrainHeightMemoryCache.set(key, record.height);
+        writeMemoryCache(
+          terrainHeightMemoryCache,
+          key,
+          record.height,
+          TERRAIN_MEMORY_CACHE_MAX_ENTRIES
+        );
       }
       resolve();
     };
@@ -127,13 +173,23 @@ async function readTerrainCache(points: Cartographic[]): Promise<Array<number | 
   return values;
 }
 
-async function writeTerrainCache(points: Cartographic[]): Promise<void> {
-  const records = points.filter((point) => Number.isFinite(point.height)).map((point) => ({
-    key: terrainCacheKey(point),
-    height: point.height,
-    updatedAt: Date.now(),
-  }));
-  records.forEach((record) => terrainHeightMemoryCache.set(record.key, record.height));
+async function writeTerrainCache(
+  points: Cartographic[],
+  maximumDetails?: GsiMaximumDetail[]
+): Promise<void> {
+  const records = points.flatMap((point, index) => Number.isFinite(point.height)
+    ? [{
+        key: terrainCacheKey(point, maximumDetails?.[index]),
+        height: point.height,
+        updatedAt: Date.now(),
+      }]
+    : []);
+  records.forEach((record) => writeMemoryCache(
+    terrainHeightMemoryCache,
+    record.key,
+    record.height,
+    TERRAIN_MEMORY_CACHE_MAX_ENTRIES
+  ));
   const database = await openTerrainCache();
   if (!database || records.length === 0) return;
   await new Promise<void>((resolve) => {
@@ -153,7 +209,7 @@ async function sampleTerrainCached(
   signal?: AbortSignal
 ): Promise<Cartographic[]> {
   if (points.length === 0) return [];
-  const cachedHeights = await readTerrainCache(points);
+  const cachedHeights = await readTerrainCache(points, maximumDetails);
   abortIfRequested(signal);
   const result = points.map((point) => Cartographic.clone(point));
   const missingIndexes: number[] = [];
@@ -170,7 +226,12 @@ async function sampleTerrainCached(
     sampled.forEach((point, sampledIndex) => {
       result[missingIndexes[sampledIndex]] = point;
     });
-    void writeTerrainCache(sampled);
+    void writeTerrainCache(
+      sampled,
+      maximumDetails
+        ? missingIndexes.map((index) => maximumDetails[index])
+        : undefined
+    );
   }
   return result;
 }
@@ -239,6 +300,11 @@ async function fetchGsiElevations(
     // 一時障害時は連続要求を避け、Cesium World Terrainへ安全にフォールバックする。
     gsiUnavailableUntil = Date.now() + 60_000;
     console.warn("国土地理院DEMを取得できないためWorld Terrainを使用します", error);
+    publishUserNotice({
+      key: "gsi-dem-fallback",
+      tone: "warning",
+      message: "国土地理院の詳細地形データを取得できないため、別の地形データで計算を続けています。",
+    });
     return points.map(() => ({ heightMeters: null, source: null }));
   }
 }
@@ -403,7 +469,7 @@ async function fetchGsiGeoidHeight(
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
   const key = geoidRegionKey(point);
-  const cached = geoidHeightCache.get(key);
+  const cached = readMemoryCache(geoidHeightCache, key);
   if (cached) return cached;
 
   const request = (async () => {
@@ -437,7 +503,12 @@ async function fetchGsiGeoidHeight(
     }
     throw error;
   });
-  geoidHeightCache.set(key, request);
+  writeMemoryCache(
+    geoidHeightCache,
+    key,
+    request,
+    GEOID_MEMORY_CACHE_MAX_ENTRIES
+  );
   return request;
 }
 

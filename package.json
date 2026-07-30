@@ -19,6 +19,16 @@
     "verify:geodesic": "node scripts/verify-geodesic-comparison.mjs",
     "verify:geodesic:reference": "python scripts/verify-geodesic-reference-python.py",
     "verify:geodesic:direct": "node scripts/verify-geodesic-direct.mjs"
+    ,"verify:view-correction": "node scripts/verify-view-correction.mjs",
+    "verify:frame-boundaries": "node scripts/verify-frame-boundaries.mjs",
+    "verify:cache-keys": "node scripts/verify-cache-keys.mjs",
+    "verify:search-generation": "node scripts/verify-search-generation.mjs",
+    "verify:occlusion-state": "node scripts/verify-occlusion-state.mjs",
+    "verify:search-progress": "node scripts/verify-search-progress.mjs",
+    "verify:performance-lifecycle": "node scripts/verify-performance-lifecycle.mjs",
+    "verify:user-error-handling": "node scripts/verify-user-error-handling.mjs",
+    "verify:precision-descriptions": "node scripts/verify-precision-descriptions.mjs",
+    "verify:occlusion-reasons": "node scripts/verify-occlusion-reasons.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

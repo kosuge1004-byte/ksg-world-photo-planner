@@ -32,6 +32,12 @@ import {
 } from "./SearchOptionControls";
 import { useSearchTimeRange } from "../search/searchUiPreferences";
 import { calculateKarneySurfaceDistanceMeters } from "../geodesy/karneyGeodesic";
+import {
+  createSearchProgressEstimator,
+  formatEstimatedRemainingTime,
+  type SearchProgressEstimator,
+} from "../search/searchProgress";
+import { toUserFacingErrorMessage } from "../errors/userFeedback";
 
 type Props = {
   open: boolean;
@@ -177,8 +183,8 @@ function candidate3dStatusLabel(
 ): string {
   if (status === "visible") {
     return typeof obstructedFractionPercent === "number"
-      ? `被写体までの3D：見通し確認済み（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
-      : "被写体までの3D：見通し確認済み";
+      ? `被写体までの建物3D：見通し確認済み（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
+      : "被写体までの建物3D：見通し確認済み";
   }
   if (status === "possibly-obstructed") {
     return typeof obstructedFractionPercent === "number"
@@ -289,6 +295,7 @@ export function SpotSearchScreen({
   const [interval, setInterval] = useState<SpotSearchInterval>("30-minutes");
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
   const [subjectObstructionCheckEnabled, setSubjectObstructionCheckEnabled] = useState(true);
+  const [verifiedVisibilityOnly, setVerifiedVisibilityOnly] = useState(false);
   const [siteConstraints, setSiteConstraints] = useState<SiteConstraintFlags>({
     walkingOnly: false,
     roadsAndPathsOnly: false,
@@ -303,7 +310,11 @@ export function SpotSearchScreen({
   const [isSearching, setIsSearching] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [estimatedRemainingSeconds, setEstimatedRemainingSeconds] =
+    useState<number | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const searchGenerationRef = useRef(0);
+  const progressEstimatorRef = useRef<SearchProgressEstimator | null>(null);
   const lastProgressMessageRef = useRef("");
   const resumeSearchRef = useRef(onResumeSearch);
   resumeSearchRef.current = onResumeSearch;
@@ -356,6 +367,7 @@ export function SpotSearchScreen({
     );
     setMessage("");
     setProgressPercent(0);
+    setEstimatedRemainingSeconds(null);
     setIsPaused(false);
     setSelectedResult(null);
     setSubjectListOpen(null);
@@ -369,15 +381,30 @@ export function SpotSearchScreen({
     // 検索ボタンが「検索中」のまま無効になるため。
     if (!open || !searchDateTime || controllerRef.current) return;
     const controller = new AbortController();
+    const searchGeneration = ++searchGenerationRef.current;
+    progressEstimatorRef.current = createSearchProgressEstimator(searchGeneration);
     controllerRef.current = controller;
     setIsSearching(true);
     void resumeSearchRef.current(controller.signal, (nextMessage, percent) => {
+      if (searchGenerationRef.current !== searchGeneration || controller.signal.aborted) return;
+      const estimate = progressEstimatorRef.current?.update(
+        searchGeneration,
+        percent
+      );
+      if (!estimate) return;
       setMessage(nextMessage);
-      setProgressPercent(percent);
+      setProgressPercent(estimate.percent);
+      setEstimatedRemainingSeconds(estimate.estimatedRemainingSeconds);
     })
       .then((resumedResults) => {
-        if (controller.signal.aborted || resumedResults === null) return;
+        if (
+          searchGenerationRef.current !== searchGeneration ||
+          controller.signal.aborted ||
+          resumedResults === null
+        ) return;
         setResults(resumedResults);
+        setProgressPercent(100);
+        setEstimatedRemainingSeconds(null);
         setMessage(
           resumedResults.length > 0
             ? `${resumedResults.length}件のバックグラウンド検索結果を取得しました`
@@ -385,23 +412,38 @@ export function SpotSearchScreen({
         );
       })
       .catch((error: unknown) => {
+        if (searchGenerationRef.current !== searchGeneration) return;
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setMessage(error instanceof Error ? error.message : "検索の再開に失敗しました");
+        setMessage(toUserFacingErrorMessage(error, "spot-search"));
       })
       .finally(() => {
-        if (controllerRef.current === controller) {
+        if (
+          searchGenerationRef.current === searchGeneration &&
+          controllerRef.current === controller
+        ) {
           controllerRef.current = null;
           setIsSearching(false);
         }
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (searchGenerationRef.current === searchGeneration) {
+        searchGenerationRef.current += 1;
+      }
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+    };
   }, [open, searchDateTime]);
 
   function closeScreen() {
+    searchGenerationRef.current += 1;
+    progressEstimatorRef.current = null;
     controllerRef.current?.abort();
     controllerRef.current = null;
     setIsSearching(false);
     setProgressPercent(0);
+    setEstimatedRemainingSeconds(null);
     setIsPaused(false);
     onBack();
   }
@@ -428,16 +470,24 @@ export function SpotSearchScreen({
       return;
     }
     controllerRef.current?.abort();
+    const searchGeneration = ++searchGenerationRef.current;
     const controller = new AbortController();
+    progressEstimatorRef.current = createSearchProgressEstimator(searchGeneration);
     controllerRef.current = controller;
     setIsSearching(true);
     lastProgressMessageRef.current = "";
     setProgressPercent(0);
+    setEstimatedRemainingSeconds(null);
     setIsPaused(false);
     setMessage("スポットを検索しています…");
     try {
       if (!searchDateTime) {
-        await onLocateSubject(query.trim(), controller.signal, setMessage);
+        await onLocateSubject(query.trim(), controller.signal, (nextMessage) => {
+          if (
+            searchGenerationRef.current === searchGeneration &&
+            !controller.signal.aborted
+          ) setMessage(nextMessage);
+        });
         return;
       }
       const criteria: SpotSearchCriteria = {
@@ -460,6 +510,7 @@ export function SpotSearchScreen({
         displayCount,
         siteConstraints,
         subjectObstructionCheckEnabled,
+        verifiedVisibilityOnly,
         subjectObstructionExclusionMeters: precisionSettings.subjectObstructionExclusionMeters,
         buildingOcclusionDetailSettings: precisionSettings.buildingOcclusionDetailSettings,
       };
@@ -467,14 +518,28 @@ export function SpotSearchScreen({
         criteria,
         controller.signal,
         (nextMessage, percent) => {
+          if (
+            searchGenerationRef.current !== searchGeneration ||
+            controller.signal.aborted
+          ) return;
+          const estimate = progressEstimatorRef.current?.update(
+            searchGeneration,
+            percent
+          );
+          if (!estimate) return;
           lastProgressMessageRef.current = nextMessage;
           setMessage(nextMessage);
-          setProgressPercent(percent);
+          setProgressPercent(estimate.percent);
+          setEstimatedRemainingSeconds(estimate.estimatedRemainingSeconds);
         }
       );
-      if (controller.signal.aborted) return;
+      if (
+        searchGenerationRef.current !== searchGeneration ||
+        controller.signal.aborted
+      ) return;
       setResults(nextResults);
       setProgressPercent(100);
+      setEstimatedRemainingSeconds(null);
       const diagnostic = lastProgressMessageRef.current.includes("検索診断")
         ? lastProgressMessageRef.current.slice(
             lastProgressMessageRef.current.indexOf("検索診断")
@@ -487,10 +552,22 @@ export function SpotSearchScreen({
 ${diagnostic}` : ""}`
       );
     } catch (error) {
+      if (searchGenerationRef.current !== searchGeneration) return;
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setMessage(error instanceof Error ? error.message : "検索に失敗しました");
+      setEstimatedRemainingSeconds(null);
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      setMessage(toUserFacingErrorMessage(
+        error,
+        normalizedQuery.includes("maps.app.goo.gl") ||
+        normalizedQuery.includes("google.com/maps")
+          ? "google-maps-url"
+          : "spot-search"
+      ));
     } finally {
-      if (controllerRef.current === controller) {
+      if (
+        searchGenerationRef.current === searchGeneration &&
+        controllerRef.current === controller
+      ) {
         controllerRef.current = null;
         setIsSearching(false);
       }
@@ -856,12 +933,24 @@ ${diagnostic}` : ""}`
               />
               <span>三脚－被写体間の遮蔽物確認</span>
             </label>
+            <label className={verifiedVisibilityOnly ? "selected" : ""}>
+              <input
+                type="checkbox"
+                checked={verifiedVisibilityOnly}
+                onChange={(event) => {
+                  setVerifiedVisibilityOnly(event.target.checked);
+                  if (event.target.checked) setSubjectObstructionCheckEnabled(true);
+                }}
+              />
+              <span>見通し確認済みのみ</span>
+            </label>
           </div>
           <small className="spot-condition-note">
             「歩行可能のみ」をONにすると、OpenStreetMap登録情報を使って歩行可能と判定できる地点だけを採用します。未登録情報や現地の立入可否は保証対象外です。
           </small>
           <small className="spot-condition-note warning">
             「三脚－被写体間の遮蔽物確認」をONにすると、各候補を3Dデータで追加確認するため検索時間が長くなります。
+            「見通し確認済みのみ」をONにすると、Google 3D Tilesを読み込めない候補・未確認候補・建物遮蔽のある候補は結果に表示しません。
           </small>
         </fieldset>
 
@@ -882,10 +971,13 @@ ${diagnostic}` : ""}`
               className="spot-search-pause"
               type="button"
               onClick={() => {
+                searchGenerationRef.current += 1;
+                progressEstimatorRef.current = null;
                 controllerRef.current?.abort();
                 controllerRef.current = null;
                 setIsSearching(false);
                 setIsPaused(true);
+                setEstimatedRemainingSeconds(null);
                 setMessage("構図検索の待機を一時停止しました。登録済みの検索処理と結果は保持されます。");
               }}
             >
@@ -897,22 +989,44 @@ ${diagnostic}` : ""}`
               className="spot-search-pause resume"
               type="button"
               onClick={() => {
+                controllerRef.current?.abort();
+                const searchGeneration = ++searchGenerationRef.current;
                 const controller = new AbortController();
+                progressEstimatorRef.current = createSearchProgressEstimator(
+                  searchGeneration
+                );
                 controllerRef.current = controller;
                 setIsSearching(true);
                 setMessage("構図検索を再開しています…");
                 void resumeSearchRef.current(controller.signal, (nextMessage, percent) => {
-      setMessage(nextMessage);
-      setProgressPercent(percent);
-    })
+                  if (
+                    searchGenerationRef.current !== searchGeneration ||
+                    controller.signal.aborted
+                  ) return;
+                  const estimate = progressEstimatorRef.current?.update(
+                    searchGeneration,
+                    percent
+                  );
+                  if (!estimate) return;
+                  setMessage(nextMessage);
+                  setProgressPercent(estimate.percent);
+                  setEstimatedRemainingSeconds(
+                    estimate.estimatedRemainingSeconds
+                  );
+                })
                   .then((resumedResults) => {
-                    if (controller.signal.aborted) return;
+                    if (
+                      searchGenerationRef.current !== searchGeneration ||
+                      controller.signal.aborted
+                    ) return;
                     if (resumedResults === null) {
                       setMessage("再開できる一時停止中の構図検索がありません");
                       setIsPaused(false);
                       return;
                     }
                     setResults(resumedResults);
+                    setProgressPercent(100);
+                    setEstimatedRemainingSeconds(null);
                     setMessage(
                       resumedResults.length > 0
                         ? `${resumedResults.length}件の構図候補が見つかりました`
@@ -921,11 +1035,16 @@ ${diagnostic}` : ""}`
                     setIsPaused(false);
                   })
                   .catch((error: unknown) => {
+                    if (searchGenerationRef.current !== searchGeneration) return;
                     if (error instanceof DOMException && error.name === "AbortError") return;
-                    setMessage(error instanceof Error ? error.message : "検索の再開に失敗しました");
+                    setEstimatedRemainingSeconds(null);
+                    setMessage(toUserFacingErrorMessage(error, "spot-search"));
                   })
                   .finally(() => {
-                    if (controllerRef.current === controller) {
+                    if (
+                      searchGenerationRef.current === searchGeneration &&
+                      controllerRef.current === controller
+                    ) {
                       controllerRef.current = null;
                       setIsSearching(false);
                     }
@@ -943,6 +1062,11 @@ ${diagnostic}` : ""}`
               <span style={{ width: `${progressPercent}%` }} />
             </div>
             <strong>{progressPercent}%</strong>
+            {estimatedRemainingSeconds !== null && (
+              <small className="search-progress-eta">
+                残り予想 {formatEstimatedRemainingTime(estimatedRemainingSeconds)}
+              </small>
+            )}
           </div>
         )}
 

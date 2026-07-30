@@ -1,9 +1,14 @@
-import type { CalculationMode, CameraSettings } from "../types/camera";
+import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import type { CelestialBodyId, CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import type { SpotSearchDisplayCount, SpotSearchPeriod } from "../types/search";
-import { calculateCelestialHorizontalCoordinates } from "../cesium/celestial";
-import { sensorDimensionsMm } from "../cesium/camera";
+import {
+  angularDistanceFromCameraCenterDegrees,
+  calculateCelestialHorizontalCoordinates,
+  createCameraProjection,
+  isCelestialInCameraFrame,
+  type CameraProjection,
+} from "../cesium/celestial";
 import { calculateElevationAngleDegrees } from "../cesium/geometry";
 import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 import { isLocalTimeWithinSearchRange } from "./searchTimeRange";
@@ -29,6 +34,14 @@ export type CelestialTransitResult = {
   angularDistanceDegrees: number;
 };
 
+export type CelestialTransitProgress = {
+  percent: number;
+  processed: number;
+  total: number;
+  candidateCount: number;
+  currentDate?: Date;
+};
+
 export type CelestialTransitCriteria = {
   mode: CelestialTransitSearchMode;
   period: SpotSearchPeriod;
@@ -39,6 +52,7 @@ export type CelestialTransitCriteria = {
   endTime: string;
   displayCount: SpotSearchDisplayCount;
   includeBelowSubject: boolean;
+  viewCorrection: CameraViewCorrection;
 };
 
 type SearchInput = {
@@ -89,18 +103,6 @@ function signedAngularDifference(value: number, target: number): number {
   return ((value - target + 540) % 360) - 180;
 }
 
-function horizontalDirection(azimuthDegrees: number, altitudeDegrees: number) {
-  const az = azimuthDegrees * DEG;
-  const alt = altitudeDegrees * DEG;
-  const horizontal = Math.cos(alt);
-  return { east: horizontal * Math.sin(az), north: horizontal * Math.cos(az), up: Math.sin(alt) };
-}
-
-function dot(a: { east: number; north: number; up: number }, b: { east: number; north: number; up: number }) {
-  return a.east * b.east + a.north * b.north + a.up * b.up;
-}
-
-
 function horizontalCoordinatesForSearch(
   body: Exclude<CelestialBodyId, "polaris">,
   date: Date,
@@ -140,30 +142,21 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 }
 
-type FrameProjection = {
-  forward: { east: number; north: number; up: number };
-  right: { east: number; north: number; up: number };
-  up: { east: number; north: number; up: number };
+type FrameProjection = CameraProjection & {
   horizontalLimit: number;
   verticalLimit: number;
   sampleIntervalMs: number;
 };
 
 function createFrameProjection(input: SearchInput): FrameProjection {
-  const cameraAzimuth = calculateKarneyLineMetrics(
+  const shared = createCameraProjection(
     input.tripod,
-    input.subject
-  ).bearingDegrees;
-  const cameraAltitude = calculateElevationAngleDegrees(
-    observerAtLens(input),
-    input.subject
+    input.subject,
+    input.cameraSettings,
+    input.previewAspectRatio,
+    input.criteria.viewCorrection
   );
-  const sensor = sensorDimensionsMm(input.previewAspectRatio);
-  const horizontalFov = 2 * Math.atan(sensor.width / (2 * input.cameraSettings.focalLengthMm));
-  const verticalFov = 2 * Math.atan(sensor.height / (2 * input.cameraSettings.focalLengthMm));
-  const az = cameraAzimuth * DEG;
-  const alt = cameraAltitude * DEG;
-  const shortestFovDegrees = Math.min(horizontalFov, verticalFov) / DEG;
+  const shortestFovDegrees = Math.min(shared.horizontalFov, shared.verticalFov);
   const estimatedTraversalMinutes = shortestFovDegrees / MAX_APPARENT_MOTION_DEGREES_PER_MINUTE;
   const sampleIntervalMs = Math.max(
     MIN_FRAME_SAMPLE_MS,
@@ -173,31 +166,30 @@ function createFrameProjection(input: SearchInput): FrameProjection {
     )
   );
   return {
-    forward: horizontalDirection(cameraAzimuth, cameraAltitude),
-    right: { east: Math.cos(az), north: -Math.sin(az), up: 0 },
-    up: {
-      east: -Math.sin(az) * Math.sin(alt),
-      north: -Math.cos(az) * Math.sin(alt),
-      up: Math.cos(alt),
-    },
-    horizontalLimit: Math.tan(horizontalFov / 2),
-    verticalLimit: Math.tan(verticalFov / 2),
+    ...shared,
+    horizontalLimit: Math.tan(shared.horizontalFov * DEG / 2),
+    verticalLimit: Math.tan(shared.verticalFov * DEG / 2),
     sampleIntervalMs,
   };
 }
 
 function isBodyInFrame(
-  azimuthDegrees: number,
-  altitudeDegrees: number,
-  projection: FrameProjection
+  body: Exclude<CelestialBodyId, "polaris">,
+  date: Date,
+  horizontal: { azimuthDegrees: number; altitudeDegrees: number },
+  observer: GroundPoint,
+  projection: FrameProjection,
+  calculationMode: CalculationMode
 ): boolean {
-  if (altitudeDegrees <= 0.25) return false;
-  const direction = horizontalDirection(azimuthDegrees, altitudeDegrees);
-  const front = dot(direction, projection.forward);
-  if (front <= 1e-8) return false;
-  const x = dot(direction, projection.right) / front;
-  const y = dot(direction, projection.up) / front;
-  return Math.abs(x) <= projection.horizontalLimit && Math.abs(y) <= projection.verticalLimit;
+  if (horizontal.altitudeDegrees <= 0.25) return false;
+  return isCelestialInCameraFrame(
+    body,
+    date,
+    observer,
+    horizontal,
+    projection,
+    calculationMode
+  );
 }
 
 function angularDistanceToFrameCenterDegrees(
@@ -205,9 +197,10 @@ function angularDistanceToFrameCenterDegrees(
   altitudeDegrees: number,
   projection: FrameProjection
 ): number {
-  const direction = horizontalDirection(azimuthDegrees, altitudeDegrees);
-  const cosine = Math.max(-1, Math.min(1, dot(direction, projection.forward)));
-  return Math.acos(cosine) / DEG;
+  return angularDistanceFromCameraCenterDegrees(
+    { azimuthDegrees, altitudeDegrees },
+    projection
+  );
 }
 
 
@@ -228,9 +221,12 @@ function refineFrameBoundaryTime(
     const mid = Math.round((low + high) / 2);
     const horizontal = horizontalCoordinatesForSearch(body, new Date(mid), observer, input);
     const midInside = isBodyInFrame(
-      horizontal.azimuthDegrees,
-      horizontal.altitudeDegrees,
-      projection
+      body,
+      new Date(mid),
+      horizontal,
+      observer,
+      projection,
+      input.calculationMode
     );
     if (midInside === lowInside) low = mid;
     else high = mid;
@@ -307,7 +303,7 @@ function refineCrossing(
 export async function searchCelestialTransitDates(
   input: SearchInput,
   signal: AbortSignal,
-  onProgress: (percent: number) => void
+  onProgress: (progress: CelestialTransitProgress) => void
 ): Promise<CelestialTransitResult[]> {
   const bodies = BODY_ORDER.filter((body) => input.visibility[body]);
   if (bodies.length === 0) throw new Error("検索対象の天体が表示されていません");
@@ -323,7 +319,8 @@ export async function searchCelestialTransitDates(
   const isCountableAltitude = (altitudeDegrees: number): boolean =>
     input.criteria.includeBelowSubject || altitudeDegrees >= subjectAltitudeDegrees;
   const targetAzimuth = input.criteria.mode === "direction-crossing"
-    ? calculateKarneyLineMetrics(input.tripod, input.subject).bearingDegrees
+    ? calculateKarneyLineMetrics(input.tripod, input.subject).bearingDegrees +
+      input.criteria.viewCorrection.azimuthDegrees
     : null;
   // 並べ替え用の角距離は両検索モードで必要なため、被写体を中心とする
   // 投影座標系を常に作成する。画角内判定自体は in-frame のときだけ使用する。
@@ -349,13 +346,22 @@ export async function searchCelestialTransitDates(
   let processed = 0;
   let lastReportedPercent = -1;
 
-  const reportProgress = (forceComplete = false): void => {
+  const reportProgress = (
+    forceComplete = false,
+    currentDate?: Date
+  ): void => {
     const percent = forceComplete
       ? 100
       : Math.min(99, Math.max(0, Math.floor((processed / totalSamples) * 100)));
     if (percent === lastReportedPercent) return;
     lastReportedPercent = percent;
-    onProgress(percent);
+    onProgress({
+      percent,
+      processed,
+      total: totalSamples,
+      candidateCount: results.length,
+      currentDate,
+    });
   };
 
   reportProgress();
@@ -415,9 +421,25 @@ export async function searchCelestialTransitDates(
       frameProjection,
       signal
     );
+    const closestHorizontal = horizontalCoordinatesForSearch(
+      body,
+      closestDate,
+      observer,
+      input
+    );
     const id = `${body}-${closestDate.getTime()}`;
-    if (isDateEligible(closestDate) && !resultIds.has(id)) {
-      const closestHorizontal = horizontalCoordinatesForSearch(body, closestDate, observer, input);
+    if (
+      isDateEligible(closestDate) &&
+      isBodyInFrame(
+        body,
+        closestDate,
+        closestHorizontal,
+        observer,
+        resultProjection,
+        input.calculationMode
+      ) &&
+      !resultIds.has(id)
+    ) {
       resultIds.add(id);
       results.push({
         id,
@@ -455,6 +477,14 @@ export async function searchCelestialTransitDates(
             isDateEligible(crossingDate) &&
             crossingHorizontal.altitudeDegrees > 0.25 &&
             isCountableAltitude(crossingHorizontal.altitudeDegrees) &&
+            isBodyInFrame(
+              body,
+              crossingDate,
+              crossingHorizontal,
+              observer,
+              resultProjection,
+              input.calculationMode
+            ) &&
             !resultIds.has(id)
           ) {
             resultIds.add(id);
@@ -473,7 +503,14 @@ export async function searchCelestialTransitDates(
         previousErrors.set(body, { time, error });
       } else {
         if (frameProjection === null) throw new Error("画角検索の初期化に失敗しました");
-        const inside = isBodyInFrame(horizontal.azimuthDegrees, horizontal.altitudeDegrees, frameProjection) &&
+        const inside = isBodyInFrame(
+          body,
+          date,
+          horizontal,
+          observer,
+          frameProjection,
+          input.calculationMode
+        ) &&
           isCountableAltitude(horizontal.altitudeDegrees);
         const distanceDegrees = angularDistanceToFrameCenterDegrees(
           horizontal.azimuthDegrees,
@@ -547,7 +584,7 @@ export async function searchCelestialTransitDates(
     }
 
     processed += 1;
-    reportProgress();
+    reportProgress(false, date);
     if (processed % 100 === 0) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
@@ -560,7 +597,7 @@ export async function searchCelestialTransitDates(
     }
   }
 
-  reportProgress(true);
+  reportProgress(true, end);
 
   // UI側で「日付順」と「被写体と天体の距離順」を切り替えるため、
   // ここでは全候補を返す。表示件数の制限は並べ替え後にUI側で適用する。

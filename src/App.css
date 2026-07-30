@@ -70,7 +70,10 @@ button { cursor: pointer; }
   display: grid;
   gap: 5px;
   width: min(210px, 72vw);
+  max-height: calc(100dvh - 58px - env(safe-area-inset-bottom));
   padding: 9px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid #3a424d;
   border-radius: 9px;
   background: rgba(5, 7, 10, .97);
@@ -78,6 +81,9 @@ button { cursor: pointer; }
 }
 
 .calculation-mode-menu > strong { font-size: 11px; }
+.calculation-mode-menu.precision-open {
+  width: min(340px, calc(100vw - 10px));
+}
 .calculation-mode-menu > .calculation-menu-section { margin-top: 3px; padding-top: 6px; border-top: 1px solid #313944; color: #8ea0b3; font-size: 8px; }
 .calculation-mode-menu button {
   display: grid;
@@ -319,6 +325,69 @@ button { cursor: pointer; }
 .preview-empty-state strong { color: #fff; font-size: 18px; line-height: 1.1; white-space: nowrap; }
 .preview-load-status, .app-status { display: none; }
 
+.user-notice {
+  position: fixed;
+  z-index: 13000;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  box-sizing: border-box;
+  width: min(520px, calc(100% - 20px));
+  min-height: 48px;
+  padding: 9px 10px 9px 12px;
+  color: #f7fbff;
+  border: 1px solid rgba(255, 190, 86, .72);
+  border-radius: 9px;
+  background: rgba(25, 18, 5, .96);
+  box-shadow: 0 7px 24px rgba(0, 0, 0, .45);
+  font-size: 12px;
+  line-height: 1.45;
+  transform: translateX(-50%);
+}
+.user-notice.error {
+  border-color: rgba(255, 112, 112, .78);
+  background: rgba(40, 8, 10, .97);
+}
+.user-notice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.user-notice-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+.user-notice button {
+  min-height: 34px;
+  padding: 5px 9px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .45);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .12);
+  font: inherit;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.user-notice button:active { background: rgba(255, 255, 255, .24); }
+.user-notice .user-notice-dismiss {
+  width: 34px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+@media (max-width: 480px) {
+  .user-notice {
+    align-items: flex-start;
+    font-size: 11px;
+  }
+  .user-notice-actions { align-self: center; }
+}
+
 /* Preview controls */
 .preview-chrome { position: absolute; z-index: 30; inset: 0; pointer-events: none; }
 .preview-chrome button, .preview-chrome input { pointer-events: auto; }
@@ -468,6 +537,48 @@ button { cursor: pointer; }
 .celestial-hidden-position .celestial-label,
 .celestial-hidden-label { color: #dce8f3; border: 1px dashed rgba(210,228,244,.55); background: rgba(5,10,16,.58); font-size: 7px; font-weight: 500; }
 .celestial-hidden-label { position: absolute; z-index: 5; padding: 2px 4px; border-radius: 4px; white-space: nowrap; transform: translate(-50%, -50%); }
+.celestial-occlusion-status {
+  position: absolute;
+  z-index: 24;
+  bottom: 7px;
+  left: 7px;
+  display: grid;
+  gap: 3px;
+  max-width: min(235px, calc(100% - 104px));
+  color: #eef5fb;
+  font-size: clamp(7px, 1.3vw, 9px);
+  line-height: 1.35;
+  pointer-events: none;
+}
+.celestial-occlusion-status > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, .32);
+  border-radius: 5px;
+  background: rgba(3, 8, 13, .78);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, .35);
+}
+.celestial-occlusion-status b {
+  flex: 0 0 auto;
+  color: #fff;
+  font-size: inherit;
+}
+.celestial-occlusion-status .blocked {
+  border-color: rgba(255, 176, 91, .64);
+  background: rgba(33, 15, 4, .82);
+}
+.celestial-occlusion-status .checking {
+  color: #c8d8e7;
+  border-style: dashed;
+}
+.celestial-occlusion-status .unavailable {
+  color: #ffd9a1;
+  border-color: rgba(255, 194, 100, .58);
+}
 .milky-way-hidden-position { opacity: .34; }
 .milky-way-hidden-position .milky-way-outline { fill: rgba(174,129,255,.1); stroke: rgba(220,197,255,.8); stroke-width: .28; stroke-dasharray: 1.1 1; }
 .milky-way-hidden-position .milky-way-core-line { stroke: rgba(221,198,255,.9); stroke-width: .3; stroke-dasharray: 1 1; }
@@ -1441,6 +1552,45 @@ button { cursor: pointer; }
   font-size: 11px;
 }
 
+.precision-settings-panel .precision-choice {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  min-height: 48px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.precision-choice-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.precision-choice-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 16px;
+}
+
+.precision-choice-title b { color: #edf2f7; font-size: 11px; }
+.precision-choice-title small {
+  padding: 1px 4px;
+  color: #101318;
+  border-radius: 999px;
+  background: #ffdc25;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.precision-choice-copy > small {
+  color: #aeb9c7;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
 .precision-settings-panel input {
   width: 15px;
   height: 15px;
@@ -1451,10 +1601,38 @@ button { cursor: pointer; }
 .precision-settings-panel small {
   color: #8ea0b3;
   font-size: 8px;
+  line-height: 1.45;
+}
+
+.precision-data-guide {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border-top: 1px solid #313944;
+  color: #aeb9c7;
+}
+.precision-data-guide strong { color: #edf2f7; font-size: 10px; }
+.precision-data-guide small b { color: #dce8f5; }
+.precision-setting-intro {
+  display: block;
+  margin: 4px 0 6px;
+  color: #aeb9c7 !important;
+}
+.precision-control-help {
+  display: block;
+  margin: -2px 0 3px 24px;
 }
 
 /* スポット検索の進捗表示は通過日時検索と同じ視認性を使用する。 */
 .spot-search-progress { margin-top: -2px; }
+.search-progress-eta,
+.search-progress-detail {
+  grid-column: 1 / -1;
+  color: #aeb8c5;
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: left;
+}
 
 
 /* Fullscreen control layout: keep the same control sizes and relative placement as split view. */

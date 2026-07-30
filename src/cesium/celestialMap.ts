@@ -20,6 +20,7 @@ import type {
   MilkyWayPathPoint,
   TripodCandidate,
 } from "../types/celestial";
+import { isCelestialOcclusionConfirmedHidden } from "../types/celestial";
 import type { TripodSearchBaseLine } from "./tripodSearchLine";
 import type { GroundPoint } from "../types/points";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
@@ -260,9 +261,6 @@ function contiguousMilkyWaySegments(
 ): MilkyWayPathPoint[][] {
   const segments: MilkyWayPathPoint[][] = [];
   let current: MilkyWayPathPoint[] = [];
-  const requiresVerifiedLineOfSight = path.some(
-    (point) => point.lineOfSightVisible !== undefined
-  );
   for (const point of path) {
     const visible = (
       Math.max(
@@ -270,7 +268,7 @@ function contiguousMilkyWaySegments(
         point.northEdgeAltitudeDegrees,
         point.southEdgeAltitudeDegrees
       ) > -6 &&
-      (!requiresVerifiedLineOfSight || point.lineOfSightVisible === true)
+      point.lineOfSightVisible !== false
     );
     if (!visible) {
       if (current.length > 1) segments.push(current);
@@ -304,9 +302,12 @@ export function updateCelestialMapEntities(
     visibility,
     tracks: tracks.map((track) => [
       track.id,
-      track.points.length,
-      track.points[0]?.timestampMilliseconds,
-      track.points.at(-1)?.timestampMilliseconds,
+      track.points.map((point) => [
+        point.timestampMilliseconds,
+        point.xPercent,
+        point.yPercent,
+        point.inFront,
+      ]),
     ]),
   });
   const previousCache = entityCache.get(viewer);
@@ -420,7 +421,7 @@ export function updateCelestialMapEntities(
         );
     const color = COLORS[point.id];
     const positionOnly = mapViewMode === "3d" &&
-      occlusion[point.id]?.visible !== true;
+      isCelestialOcclusionConfirmedHidden(occlusion[point.id]);
     const displayLabel = positionOnly ? `${point.label}の位置` : point.label;
     viewer.entities.add({
       id: `${PREFIX}${point.id}`,

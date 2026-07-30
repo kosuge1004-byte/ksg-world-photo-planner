@@ -20,6 +20,7 @@ import "./App.css";
 
 import { CelestialMenu } from "./components/CelestialMenu";
 import { CelestialOverlay } from "./components/CelestialOverlay";
+import { CelestialOcclusionStatus } from "./components/CelestialOcclusionStatus";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { Map2DOverlay } from "./components/Map2DOverlay";
 import { Map2DInteractionLayer } from "./components/Map2DInteractionLayer";
@@ -39,10 +40,20 @@ import { ProjectSaveDialog } from "./components/ProjectSaveDialog";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { TopSettingsBar } from "./components/TopSettingsBar";
+import { UserNotice } from "./components/UserNotice";
 import { coordinatesAtMapPixel } from "./map/webMercator";
 import { adaptiveSearchConcurrency } from "./search/adaptiveConcurrency";
-import { refineSpotPresetHighestPrecision } from "./precision/highestPrecision";
+import {
+  refineSpotPresetHighestPrecision,
+  type HighestPrecisionProgress,
+} from "./precision/highestPrecision";
 import type { RefractionWeatherContext } from "./search/refractionWeather";
+import { formatEstimatedRemainingTime } from "./search/searchProgress";
+import {
+  subscribeUserNotices,
+  toUserFacingErrorMessage,
+  type UserNoticeEvent,
+} from "./errors/userFeedback";
 
 import { flyMapToTarget } from "./cesium/camera";
 import {
@@ -55,6 +66,7 @@ import { updateCelestialMapEntities } from "./cesium/celestialMap";
 import {
   evaluateCelestialLineOfSight,
   evaluatePhotorealisticMeshSegmentLineOfSight,
+  invalidateCelestialOcclusionCaches,
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
 import {
@@ -85,6 +97,7 @@ import { cartesianToForegroundCoordinates, enableForegroundObjectDrag, updateFor
 
 import {
   DEFAULT_CAMERA_SETTINGS,
+  DEFAULT_CAMERA_VIEW_CORRECTION,
   FOCAL_LENGTH_MAX,
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
@@ -98,8 +111,14 @@ import type {
 } from "./types/camera";
 import type {
   CelestialVisibility,
+  CelestialOcclusion,
   CelestialOcclusionMap,
   TripodCandidate,
+} from "./types/celestial";
+import {
+  checkingCelestialOcclusion,
+  failedCelestialOcclusion,
+  isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
 import type { ForegroundObject } from "./types/foreground";
@@ -265,6 +284,24 @@ function loadCameraSettings(): CameraSettings {
   }
 }
 
+function loadCameraViewCorrection(): CameraViewCorrection {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem("ksg-camera-view-correction") ?? "{}"
+    ) as Partial<CameraViewCorrection>;
+    return {
+      azimuthDegrees: Number.isFinite(parsed.azimuthDegrees)
+        ? parsed.azimuthDegrees!
+        : DEFAULT_CAMERA_VIEW_CORRECTION.azimuthDegrees,
+      altitudeDegrees: Number.isFinite(parsed.altitudeDegrees)
+        ? parsed.altitudeDegrees!
+        : DEFAULT_CAMERA_VIEW_CORRECTION.altitudeDegrees,
+    };
+  } catch {
+    return DEFAULT_CAMERA_VIEW_CORRECTION;
+  }
+}
+
 function loadPrecisionSettings(): PrecisionSettings {
   try {
     const saved = localStorage.getItem("ksg-precision-settings");
@@ -358,6 +395,12 @@ function loadCelestialDateTime(): string {
 
 type PlacementMode = "none" | "subject" | "tripod" | "foreground";
 
+type AppNotice = UserNoticeEvent & {
+  id: number;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
 function App() {
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewSectionRef = useRef<HTMLElement>(null);
@@ -371,12 +414,16 @@ function App() {
   const placementModeRef = useRef<PlacementMode>("none");
   const previewJobRef = useRef(0);
   const previewRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const userNoticeSequenceRef = useRef(0);
 
   const [status, setStatus] = useState("3Dデータを読み込み中…");
-  const [highestPrecisionProgress, setHighestPrecisionProgress] = useState<{
-    percent: number;
-    message: string;
-  } | null>(null);
+  const [userNotice, setUserNotice] = useState<AppNotice | null>(null);
+  const [mapInitializationAttempt, setMapInitializationAttempt] = useState(0);
+  const [tripodCandidateRetrySequence, setTripodCandidateRetrySequence] = useState(0);
+  const [occlusionRetrySequence, setOcclusionRetrySequence] = useState(0);
+  const [previewRetrySequence, setPreviewRetrySequence] = useState(0);
+  const [highestPrecisionProgress, setHighestPrecisionProgress] =
+    useState<HighestPrecisionProgress | null>(null);
   const [previewRefractionWeather, setPreviewRefractionWeather] =
     useState<RefractionWeatherContext | undefined>(undefined);
   const [mapReady, setMapReady] = useState(false);
@@ -393,8 +440,23 @@ function App() {
     (message: string) => setStatus(message),
     []
   );
+  const showUserNotice = useCallback((
+    notice: UserNoticeEvent & {
+      actionLabel?: string;
+      onAction?: () => void;
+    }
+  ) => {
+    setUserNotice({
+      ...notice,
+      id: ++userNoticeSequenceRef.current,
+    });
+  }, []);
   const [spotSearchOpen, setSpotSearchOpen] = useState(false);
   const [celestialTransitSearchOpen, setCelestialTransitSearchOpen] = useState(false);
+  const openCelestialTransitSearch = useCallback(
+    () => setCelestialTransitSearchOpen(true),
+    []
+  );
   const [savedPlansOpen, setSavedPlansOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [moonAgeCalendarOpen, setMoonAgeCalendarOpen] = useState(false);
@@ -434,6 +496,8 @@ function App() {
 
   const [cameraSettings, setCameraSettings] =
     useState<CameraSettings>(loadCameraSettings);
+  const [previewViewCorrection] =
+    useState<CameraViewCorrection>(loadCameraViewCorrection);
   const [precisionSettings, setPrecisionSettings] =
     useState<PrecisionSettings>(loadPrecisionSettings);
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
@@ -455,7 +519,7 @@ function App() {
   const [celestialOcclusion, setCelestialOcclusion] =
     useState<CelestialOcclusionMap>({});
   const [milkyWayLineOfSight, setMilkyWayLineOfSight] =
-    useState<Record<number, boolean>>({});
+    useState<Partial<Record<number, boolean>>>({});
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
@@ -471,6 +535,22 @@ function App() {
   mapCenterRef.current = mapCenter;
   dateTimeLocalRef.current = dateTimeLocal;
   timeZoneRef.current = timeZone;
+
+  useEffect(
+    () => subscribeUserNotices((notice) => showUserNotice(notice)),
+    [showUserNotice]
+  );
+
+  useEffect(() => {
+    if (!userNotice) return;
+    const timeout = window.setTimeout(
+      () => setUserNotice((current) =>
+        current?.id === userNotice.id ? null : current
+      ),
+      userNotice.actionLabel ? 20_000 : userNotice.tone === "error" ? 14_000 : 9_000
+    );
+    return () => window.clearTimeout(timeout);
+  }, [userNotice]);
 
   useEffect(() => {
     // 起動時は必ずプレビュー＋マップのメイン画面を表示する。
@@ -562,7 +642,6 @@ function App() {
     mapReady && subjectPoint && tripodPoint
   );
 
-  const previewViewCorrection: CameraViewCorrection | undefined = undefined;
   const celestialPoints = useMemo(() => {
     if (!tripodPoint || !subjectPoint) {
       return [];
@@ -591,6 +670,24 @@ function App() {
     calculationMode,
     previewViewCorrection,
     previewRefractionWeather,
+  ]);
+
+  useEffect(() => {
+    // 投影・日時・地点・精度・データ準備状態の変更後は、前条件の遮蔽結果を表示しない。
+    invalidateCelestialOcclusionCaches(mapViewerRef.current ?? undefined);
+    setCelestialOcclusion({});
+    setMilkyWayLineOfSight({});
+  }, [
+    tripodPoint,
+    subjectPoint,
+    selectedDate,
+    cameraSettings.focalLengthMm,
+    cameraSettings.lensCenterHeightMeters,
+    previewAspectRatio,
+    precisionSettings,
+    previewRefractionWeather,
+    previewViewCorrection,
+    mapReady,
   ]);
 
   const milkyWayPath = useMemo(() => {
@@ -631,7 +728,7 @@ function App() {
   const visibleMilkyWayPath = useMemo(
     () => milkyWayPath.map((point, index) => ({
       ...point,
-      lineOfSightVisible: milkyWayLineOfSight[index] === true,
+      lineOfSightVisible: milkyWayLineOfSight[index],
     })),
     [milkyWayLineOfSight, milkyWayPath]
   );
@@ -815,6 +912,13 @@ function App() {
             tripodCandidatesRef.current = [];
             setTripodCandidates([]);
             setTripodCandidateCalculationStatus("error");
+            showUserNotice({
+              key: "tripod-candidate-calculation",
+              tone: "error",
+              message: "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",
+              actionLabel: "再試行",
+              onAction: () => setTripodCandidateRetrySequence((current) => current + 1),
+            });
           }
         });
     }, 0);
@@ -833,6 +937,8 @@ function App() {
     calculationMode,
     previewAspectRatio,
     timelineInteracting,
+    tripodCandidateRetrySequence,
+    showUserNotice,
   ]);
 
   useEffect(() => {
@@ -843,7 +949,14 @@ function App() {
     const token = import.meta.env.VITE_CESIUM_ION_TOKEN;
 
     if (!token) {
-      setStatus(".env.localのCesiumトークンを読み込めません");
+      const message = "3D地図を開始するためのアプリ設定が不足しています。2D地図は利用できます。";
+      console.error("Cesium Ion token is not configured");
+      setStatus(message);
+      showUserNotice({
+        key: "map-initialization",
+        tone: "error",
+        message,
+      });
       return;
     }
 
@@ -873,14 +986,21 @@ function App() {
         });
         setMapReady(true);
         setSearchMessage("3Dマップの読込が完了しました");
+        setUserNotice((current) =>
+          current?.key === "map-initialization" ? null : current
+        );
       })
       .catch((error) => {
         console.error("3Dマップ初期化エラー:", error);
-
-        const message =
-          error instanceof Error ? error.message : String(error);
-
-        setStatus(`3Dマップ読込失敗：${message}`);
+        const message = toUserFacingErrorMessage(error, "map");
+        setStatus(message);
+        showUserNotice({
+          key: "map-initialization",
+          tone: "error",
+          message,
+          actionLabel: "再試行",
+          onAction: () => setMapInitializationAttempt((current) => current + 1),
+        });
       });
 
     return () => {
@@ -895,7 +1015,7 @@ function App() {
         localViewer.destroy();
       }
     };
-  }, [setSearchMessage]);
+  }, [mapInitializationAttempt, setSearchMessage, showUserNotice]);
 
   useEffect(() => {
     const element = previewSectionRef.current;
@@ -906,8 +1026,9 @@ function App() {
 
     const updateAspect = () => {
       const rect = element.getBoundingClientRect();
-      setPreviewViewportAspectRatio(
-        rect.height > 0 ? rect.width / rect.height : 16 / 9
+      const nextAspectRatio = rect.height > 0 ? rect.width / rect.height : 16 / 9;
+      setPreviewViewportAspectRatio((current) =>
+        current === nextAspectRatio ? current : nextAspectRatio
       );
     };
 
@@ -923,10 +1044,13 @@ function App() {
     if (!element) return;
     const updateSize = () => {
       const rect = element.getBoundingClientRect();
-      setMapSize({
-        width: Math.max(1, rect.width),
-        height: Math.max(1, rect.height),
-      });
+      const width = Math.max(1, rect.width);
+      const height = Math.max(1, rect.height);
+      setMapSize((current) =>
+        current.width === width && current.height === height
+          ? current
+          : { width, height }
+      );
     };
     updateSize();
     const observer = new ResizeObserver(updateSize);
@@ -940,6 +1064,13 @@ function App() {
       JSON.stringify(cameraSettings)
     );
   }, [cameraSettings]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "ksg-camera-view-correction",
+      JSON.stringify(previewViewCorrection)
+    );
+  }, [previewViewCorrection]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -998,11 +1129,22 @@ function App() {
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         console.warn("撮影地点のタイムゾーンを取得できませんでした", error);
+        showUserNotice({
+          key: "timezone-fallback",
+          tone: "warning",
+          message: "撮影地点の時刻設定を取得できなかったため、現在のタイムゾーンをそのまま使用しています。",
+        });
       });
 
     return () => controller.abort();
     // タイムゾーン検索は地点が変わった時だけ行い、日時スクロールでは再取得しない。
-  }, [subjectPoint?.latitude, subjectPoint?.longitude, tripodPoint?.latitude, tripodPoint?.longitude]);
+  }, [
+    subjectPoint?.latitude,
+    subjectPoint?.longitude,
+    tripodPoint?.latitude,
+    tripodPoint?.longitude,
+    showUserNotice,
+  ]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1039,8 +1181,14 @@ function App() {
     }
     const controller = new AbortController();
     let cancelled = false;
-    // 時刻スクロール中は旧時刻の可視判定を表示せず、停止後に高精度判定する。
-    setCelestialOcclusion({});
+    const enabledPoints = celestialPoints.filter(
+      (point) => celestialVisibility[point.id]
+    );
+    const checkingEntries = Object.fromEntries(
+      enabledPoints.map((point) => [point.id, checkingCelestialOcclusion()])
+    ) as CelestialOcclusionMap;
+    // 判定中は旧時刻の結果を捨てるが、未検証を遮蔽確定として天体円盤を隠さない。
+    setCelestialOcclusion(checkingEntries);
     setMilkyWayLineOfSight({});
     const timer = window.setTimeout(() => {
       void prepareCelestialLineOfSightObserver(
@@ -1049,25 +1197,32 @@ function App() {
         cameraSettings.lensCenterHeightMeters,
         controller.signal
       ).then(async (observer) => {
-        const enabledPoints = celestialPoints.filter(
-          (point) => celestialVisibility[point.id]
-        );
-        const entries = await Promise.all(enabledPoints.map(async (point) => [
-          point.id,
-          await evaluateCelestialLineOfSight(
+        const updatePointOcclusion = (
+          pointId: keyof CelestialVisibility,
+          result: CelestialOcclusion
+        ) => {
+          if (cancelled || controller.signal.aborted) return;
+          setCelestialOcclusion((current) => ({
+            ...current,
+            [pointId]: result,
+          }));
+        };
+        await Promise.all(enabledPoints.map(async (point) => {
+          const result = await evaluateCelestialLineOfSight(
             viewer,
             observer,
             point,
-            controller.signal
-          ),
-        ] as const));
-        if (!cancelled) setCelestialOcclusion(Object.fromEntries(entries));
+            controller.signal,
+            (demResult) => updatePointOcclusion(point.id, demResult)
+          );
+          updatePointOcclusion(point.id, result);
+        }));
         if (!celestialVisibility.milkyWay) return;
-        const pathVisibility: Record<number, boolean> = {};
+        const pathVisibility: Partial<Record<number, boolean>> = {};
         const visibleIndexes = milkyWayPath.flatMap((point, index) =>
           point.visibleInFrame ? [index] : []
         );
-        // 帯の中心と両端をすべて検証し、未検証部分を風景の手前へ描かない。
+        // 帯の中心と両端を検証する。判定中・失敗は遮蔽確定にせず表示を維持する。
         for (let offset = 0; offset < visibleIndexes.length; offset += 2) {
           const batch = visibleIndexes.slice(offset, offset + 2);
           const batchResults = await Promise.all(batch.map(async (index) => {
@@ -1094,10 +1249,20 @@ function App() {
                 controller.signal
               )
             ));
-            return [index, checks.every((check) => check.visible && check.verified)] as const;
+            const confirmedHidden = checks.some(
+              isCelestialOcclusionConfirmedHidden
+            );
+            const failed = checks.some(
+              (check) => check.verificationState === "failed"
+            );
+            return [
+              index,
+              failed ? undefined : !confirmedHidden,
+            ] as const;
           }));
           for (const [index, isVisible] of batchResults) {
-            pathVisibility[index] = isVisible;
+            if (isVisible === undefined) delete pathVisibility[index];
+            else pathVisibility[index] = isVisible;
           }
           if (!cancelled) setMilkyWayLineOfSight({ ...pathVisibility });
         }
@@ -1105,8 +1270,23 @@ function App() {
         if (error instanceof DOMException && error.name === "AbortError") return;
         console.warn("天体の地形・建物遮蔽を検証できませんでした", error);
         if (!cancelled) {
-          setCelestialOcclusion({});
+          const message = error instanceof Error
+            ? error.message
+            : "遮蔽判定の準備に失敗しました";
+          setCelestialOcclusion(Object.fromEntries(
+            enabledPoints.map((point) => [
+              point.id,
+              failedCelestialOcclusion(message),
+            ])
+          ));
           setMilkyWayLineOfSight({});
+          showUserNotice({
+            key: "celestial-occlusion",
+            tone: "warning",
+            message: "地形・建物の遮蔽物確認を完了できませんでした。天体は未確認として表示しています。",
+            actionLabel: "再試行",
+            onAction: () => setOcclusionRetrySequence((current) => current + 1),
+          });
         }
       });
     }, 360);
@@ -1123,6 +1303,8 @@ function App() {
     milkyWayPath,
     cameraSettings.lensCenterHeightMeters,
     timelineInteracting,
+    occlusionRetrySequence,
+    showUserNotice,
   ]);
 
   useEffect(() => {
@@ -1214,9 +1396,8 @@ function App() {
     if (!viewer || viewer.isDestroyed()) {
       return;
     }
-    // 2D表示中のCesiumは非表示なので、スクロール中は2Dオーバーレイだけを更新する。
-    // 操作停止後に一度同期し、見えない3D Entity更新でフレームを落とさない。
-    if (timelineInteracting && mapViewMode === "2d") return;
+    // 2D表示中のCesiumは非表示なので、3Dへ切り替わるまでEntityを更新しない。
+    if (mapViewMode !== "3d") return;
 
     try {
       updateCelestialMapEntities(
@@ -1225,7 +1406,7 @@ function App() {
         subjectPoint,
         celestialPoints,
         celestialTracks,
-        mapViewMode === "3d" ? visibleMilkyWayPath : milkyWayPath,
+        visibleMilkyWayPath,
         celestialVisibility,
         displayedTripodCandidates,
         tripodSearchLines,
@@ -1244,7 +1425,6 @@ function App() {
     subjectPoint,
     celestialPoints,
     celestialTracks,
-    milkyWayPath,
     visibleMilkyWayPath,
     celestialVisibility,
     displayedTripodCandidates,
@@ -1301,10 +1481,16 @@ function App() {
           }
         } catch (error) {
           console.error("プレビュー生成エラー:", error);
-          const message =
-            error instanceof Error ? error.message : String(error);
+          const message = toUserFacingErrorMessage(error, "preview");
           if (!cancelled && jobId === previewJobRef.current) {
-            setPreviewStatus(`プレビュー生成失敗：${message}`);
+            setPreviewStatus(message);
+            showUserNotice({
+              key: "preview-render",
+              tone: "error",
+              message,
+              actionLabel: "再試行",
+              onAction: () => setPreviewRetrySequence((current) => current + 1),
+            });
           }
         }
       };
@@ -1344,6 +1530,8 @@ function App() {
     previewFrameMode,
     previewViewCorrection,
     timelineInteracting,
+    previewRetrySequence,
+    showUserNotice,
   ]);
 
   function stopPlacementMode() {
@@ -1383,6 +1571,11 @@ function App() {
         }
       } catch (error) {
         console.warn("検索地点の3D表面高を取得できませんでした", error);
+        showUserNotice({
+          key: "search-subject-3d-fallback",
+          tone: "warning",
+          message: "Google 3Dの高さを取得できないため、地形データの高さで被写体地点を計算します。",
+        });
       }
     }
     return groundPointFromCoordinates(latitude, longitude, label);
@@ -1434,15 +1627,7 @@ function App() {
       `${location.label} 地表`
     );
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
-    const cacheKey = spotSearchPreparationKey({ criteria, subject, calculationMode });
-    const cacheState = spotSearchCacheState(cacheKey);
-    onProgress(
-      cacheState === "cold"
-        ? "初回検索データを準備しています。初回は通常より時間がかかります。次回以降は保存済みデータを利用して高速化されます。"
-        : "保存済みの検索準備データを利用しています…",
-      0
-    );
-    const backgroundInput = {
+    const preparationInput = {
       criteria,
       subject,
       baseDateIso: selectedDate.toISOString(),
@@ -1452,6 +1637,19 @@ function App() {
       previewAspectRatio,
       subjectGroundHeightMeters: subjectGround.height,
       calculationMode,
+      viewCorrection: previewViewCorrection,
+      precisionSettings,
+    } as const;
+    const cacheKey = spotSearchPreparationKey(preparationInput);
+    const cacheState = spotSearchCacheState(cacheKey);
+    onProgress(
+      cacheState === "cold"
+        ? "初回検索データを準備しています。初回は通常より時間がかかります。次回以降は保存済みデータを利用して高速化されます。"
+        : "保存済みの検索準備データを利用しています…",
+      0
+    );
+    const backgroundInput = {
+      ...preparationInput,
       cacheState,
       cacheKey,
     } as const;
@@ -1496,6 +1694,7 @@ function App() {
         signal,
         onProgress,
         lineOfSightEvaluator: async () => ({
+          verificationState: "failed",
           visible: true,
           verified: false,
           terrainObstructed: false,
@@ -1523,14 +1722,19 @@ function App() {
         ...result,
         candidate3dStatus: "disabled" as const,
       }));
-      await finalizeBackgroundSpotSearch(active, uncheckedResults);
+      const returnedResults = job.input.criteria.verifiedVisibilityOnly
+        ? []
+        : uncheckedResults;
+      await finalizeBackgroundSpotSearch(active, returnedResults);
       if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
       onProgress(`${uncheckedResults.length}件を取得しました（遮蔽物確認OFF）`, 100);
-      return uncheckedResults;
+      return returnedResults;
     }
     if (job.status === "complete") {
       clearActiveSpotSearchJob(active);
-      return results;
+      return job.input.criteria.verifiedVisibilityOnly
+        ? results.filter((result) => result.candidate3dStatus === "visible")
+        : results;
     }
     let viewer = mapViewerRef.current;
     for (
@@ -1552,13 +1756,16 @@ function App() {
         ...result,
         candidate3dStatus: "unverified" as const,
       }));
-      await finalizeBackgroundSpotSearch(active, unverifiedResults);
+      const returnedResults = job.input.criteria.verifiedVisibilityOnly
+        ? []
+        : unverifiedResults;
+      await finalizeBackgroundSpotSearch(active, returnedResults);
       if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
       onProgress(
         `${unverifiedResults.length}件を候補として保持しました（3D未確認）`,
         100
       );
-      return unverifiedResults;
+      return returnedResults;
     }
     const assessedResults: SpotPresetResult[] = [];
     const concurrency = adaptiveSearchConcurrency("mesh-los", job.input.calculationMode);
@@ -1571,7 +1778,10 @@ function App() {
           results.length,
           offset + concurrency
         )}/${results.length}`,
-        98 + Math.floor((Math.min(results.length, offset + concurrency) / Math.max(1, results.length)) * 2)
+        98 + Math.floor(
+          Math.min(results.length, offset + concurrency) /
+          Math.max(1, results.length)
+        )
       );
       const batch = await Promise.all(
         results.slice(offset, offset + concurrency).map(async (result) => {
@@ -1629,8 +1839,11 @@ function App() {
       );
       assessedResults.push(...batch);
     }
-    onProgress("最終3D確認結果を保存しています…", 100);
-    await finalizeBackgroundSpotSearch(active, assessedResults);
+    const returnedResults = job.input.criteria.verifiedVisibilityOnly
+      ? assessedResults.filter((result) => result.candidate3dStatus === "visible")
+      : assessedResults;
+    onProgress("最終3D確認結果を保存しています…", 99);
+    await finalizeBackgroundSpotSearch(active, returnedResults);
     if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
     const visibleCount = assessedResults.filter(
       (result) => result.candidate3dStatus === "visible"
@@ -1645,7 +1858,7 @@ ${diagnosticMessage}
 候補保持: ${assessedResults.length}件` : ""}`,
       100
     );
-    return assessedResults;
+    return returnedResults;
   }
 
   async function resumeSpotSearch(
@@ -1743,7 +1956,12 @@ ${diagnosticMessage}
         const refined = await refineSpotPresetHighestPrecision(
           viewer,
           result,
-          cameraSettings.lensCenterHeightMeters,
+          {
+            ...cameraSettings,
+            focalLengthMm: result.focalLengthMm,
+          },
+          previewAspectRatio,
+          calculationMode,
           setHighestPrecisionProgress
         );
         appliedResult = {
@@ -1754,7 +1972,15 @@ ${diagnosticMessage}
       } catch (error) {
         console.warn("最高精度処理を完了できませんでした", error);
         setHighestPrecisionProgress(null);
-        setSearchMessage("高精度データを取得できませんでした");
+        const message = toUserFacingErrorMessage(error, "highest-precision");
+        setSearchMessage(message);
+        showUserNotice({
+          key: "highest-precision",
+          tone: "error",
+          message,
+          actionLabel: "検索結果へ戻る",
+          onAction: () => setSpotSearchOpen(true),
+        });
         return;
       }
     }
@@ -2586,6 +2812,11 @@ ${diagnosticMessage}
             fastMode={timelineInteracting}
           />
 
+          <CelestialOcclusionStatus
+            visibility={celestialVisibility}
+            occlusion={celestialOcclusion}
+          />
+
           <ForegroundPreviewOverlay
             object={foregroundObject}
             tripod={tripodPoint}
@@ -2642,7 +2873,7 @@ ${diagnosticMessage}
         calculationMode={calculationMode}
         refractionWeather={previewRefractionWeather}
         onChangeDateTime={setDateTimeLocal}
-        onOpenTransitSearch={() => setCelestialTransitSearchOpen(true)}
+        onOpenTransitSearch={openCelestialTransitSearch}
         onInteractionChange={setTimelineInteracting}
       />
 
@@ -2907,6 +3138,22 @@ ${diagnosticMessage}
 
       <div className="app-status" aria-live="polite">{status}</div>
 
+      {userNotice && (
+        <UserNotice
+          key={userNotice.id}
+          tone={userNotice.tone}
+          message={userNotice.message}
+          actionLabel={userNotice.actionLabel}
+          onAction={userNotice.onAction
+            ? () => {
+                userNotice.onAction?.();
+                setUserNotice(null);
+              }
+            : undefined}
+          onDismiss={() => setUserNotice(null)}
+        />
+      )}
+
       {highestPrecisionProgress && (
         <div
           className="highest-precision-progress"
@@ -2918,6 +3165,13 @@ ${diagnosticMessage}
           <span>{highestPrecisionProgress.message}</span>
           <progress max={100} value={highestPrecisionProgress.percent} />
           <small>{highestPrecisionProgress.percent}%</small>
+          {highestPrecisionProgress.estimatedRemainingSeconds != null && (
+            <small>
+              残り予想 {formatEstimatedRemainingTime(
+                highestPrecisionProgress.estimatedRemainingSeconds
+              )}
+            </small>
+          )}
         </div>
       )}
 
@@ -2937,6 +3191,7 @@ ${diagnosticMessage}
         precisionSettings={precisionSettings}
         cameraSettings={cameraSettings}
         previewAspectRatio={previewAspectRatio}
+        viewCorrection={previewViewCorrection}
         onClose={() => setCelestialTransitSearchOpen(false)}
         onSelect={(result, refractionWeather) => {
           const localized = zonedDateTimeLocalFromDate(result.date, timeZone);

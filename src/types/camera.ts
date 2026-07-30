@@ -10,6 +10,11 @@ export type CameraViewCorrection = {
   altitudeDegrees: number;
 };
 
+export const DEFAULT_CAMERA_VIEW_CORRECTION: CameraViewCorrection = {
+  azimuthDegrees: 0,
+  altitudeDegrees: 0,
+};
+
 /**
  * standard は幾何学的な天体位置、pro は標準大気モデルによる大気差補正を使う。
  * 実測の気温・気圧が未入力のため、Proでも現地気象に固有の補正ではない。

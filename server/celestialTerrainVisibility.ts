@@ -187,6 +187,7 @@ export function createServerLineOfSightEvaluator(
   return async (tripod, horizontal, subjectDistanceMeters, signal) => {
     if (horizontal.altitudeDegrees <= 0) {
       return {
+        verificationState: "dem-only",
         visible: false,
         verified: true,
         terrainObstructed: true,
@@ -217,6 +218,7 @@ export function createServerLineOfSightEvaluator(
       horizon.maximumElevationDegrees >=
       horizontal.altitudeDegrees - TERRAIN_CLEARANCE_DEGREES;
     return {
+      verificationState: "dem-only",
       visible: !terrainObstructed,
       verified: true,
       terrainObstructed,

@@ -60,6 +60,8 @@ export async function createMapViewer(
     sceneModePicker: false,
     selectionIndicator: false,
     timeline: false,
+    requestRenderMode: true,
+    maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
 
   let tileset: GooglePhotorealisticTileset | null = null;

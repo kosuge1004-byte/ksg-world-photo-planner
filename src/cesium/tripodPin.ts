@@ -12,6 +12,7 @@ import {
 } from "cesium";
 
 import type { GroundPoint } from "../types/points";
+import { publishUserNotice } from "../errors/userFeedback";
 import { groundPointFromCoordinates } from "./worldTerrain";
 
 const TRIPOD_PIN_ID = "ksg-tripod-pin";
@@ -82,6 +83,11 @@ export async function setTripodPinFromCoordinates(
         if (clamped) return setTripodPin(viewer, clamped);
       } catch (error) {
         console.warn("橋面を含む3D表面高を取得できないためDEM高を使用します", error);
+        publishUserNotice({
+          key: "tripod-pin-3d-fallback",
+          tone: "warning",
+          message: "Google 3Dの高さを取得できないため、地形データの高さで三脚ピンを配置しました。",
+        });
       }
     }
     return setTripodPin(
@@ -90,6 +96,11 @@ export async function setTripodPinFromCoordinates(
     );
   } catch (error) {
     console.warn("三脚ピンの地形標高を取得できなかったため楕円体表面を使用します", error);
+    publishUserNotice({
+      key: "tripod-pin-terrain-fallback",
+      tone: "warning",
+      message: "地形の高さを取得できなかったため、三脚ピンを暫定高度で配置しました。位置を現地で確認してください。",
+    });
     return setTripodPin(viewer, Cartesian3.fromDegrees(longitude, latitude, 0));
   }
 }

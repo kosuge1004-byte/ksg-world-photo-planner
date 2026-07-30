@@ -7,6 +7,7 @@ import {
 } from "cesium";
 
 import type { GroundPoint } from "../types/points";
+import { publishUserNotice } from "../errors/userFeedback";
 import { groundPointFromCoordinates } from "./worldTerrain";
 
 const SUBJECT_PIN_ID = "ksg-subject-pin";
@@ -106,6 +107,11 @@ export async function setSubjectPinFromCoordinates(
       "3D表面への被写体ピン配置に失敗。地形標高へフォールバックします。",
       error
     );
+    publishUserNotice({
+      key: "subject-pin-3d-fallback",
+      tone: "warning",
+      message: "Google 3Dの高さを取得できないため、地形データの高さで被写体ピンを配置します。",
+    });
 
     // clampToHeightMostDetailed() はPhotorealistic 3D Tilesが未読込・対象外の場合に
     // undefinedを返すことがある。従来は高さ0mへ落としていたため、被写体が実際の
@@ -131,6 +137,11 @@ export async function setSubjectPinFromCoordinates(
         "地形標高も取得できないため楕円体高0mを使用します。",
         terrainError
       );
+      publishUserNotice({
+        key: "subject-pin-terrain-fallback",
+        tone: "warning",
+        message: "地形の高さも取得できなかったため、被写体ピンを暫定高度で配置しました。位置を現地で確認してください。",
+      });
       return addVisibleSubjectPin(
         viewer,
         Cartesian3.fromDegrees(longitude, latitude, 0),

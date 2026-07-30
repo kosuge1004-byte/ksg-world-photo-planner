@@ -105,15 +105,24 @@ export async function runSpotSearchJob(
 
   let progressQueue = Promise.resolve();
   let lastProgressWrite = 0;
+  let lastSavedProgressPercent = 0;
   const saveProgress = (message: string, progressPercent: number): void => {
+    // 端末側のGoogle 3D最終確認へ2%を残し、サーバー進捗も後戻りさせない。
+    const boundedProgressPercent = Math.max(
+      lastSavedProgressPercent,
+      Math.min(97, Math.max(0, Math.round(progressPercent)))
+    );
+    lastSavedProgressPercent = boundedProgressPercent;
     const now = Date.now();
     if (now - lastProgressWrite < 750) return;
     lastProgressWrite = now;
     progressQueue = progressQueue
       .catch(() => undefined)
       .then(() => updateJob(clientId, jobId, {
-        progress: progressPercent < 96 ? `${message}\n${firstRunNotice}` : message,
-        progressPercent,
+        progress: boundedProgressPercent < 96
+          ? `${message}\n${firstRunNotice}`
+          : message,
+        progressPercent: boundedProgressPercent,
       }))
       .then(() => undefined);
   };

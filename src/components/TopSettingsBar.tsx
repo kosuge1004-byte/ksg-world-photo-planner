@@ -7,6 +7,12 @@ import {
 import type { CameraSettings } from "../types/camera";
 import type { PrecisionSettings, RefractionCorrectionMode } from "../types/precision";
 import { DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS, DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS, REFRACTION_MODE_LABELS } from "../types/precision";
+
+const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
+  auto: "利用できる天気データで空気による光の曲がりを補正します。地平線付近ほど効果が大きく、取得時は通信と待ち時間が増えます。",
+  standard: "一般的な気温・気圧を使って補正します。追加通信なしで安定して計算できます。",
+  none: "空気による光の曲がりを加えず、天文学上の位置を表示します。追加通信はありません。",
+};
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import { parseFocalLengthInput } from "../utils/focalLengthInput";
 
@@ -82,7 +88,13 @@ export function TopSettingsBar({
         <span aria-hidden="true">☰</span>
       </button>
       {modeMenuOpen && (
-        <div className="calculation-mode-menu" role="dialog" aria-label="メニュー">
+        <div
+          className={precisionMenuOpen
+            ? "calculation-mode-menu precision-open"
+            : "calculation-mode-menu"}
+          role="dialog"
+          aria-label="メニュー"
+        >
           <strong>メニュー</strong>
           <button type="button" onClick={() => {
             setModeMenuOpen(false);
@@ -97,12 +109,12 @@ export function TopSettingsBar({
             <b>月齢</b><small>月の形と月齢をオフライン表示</small>
           </button>
           <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
-            <b>精度設定</b><small>地表屈折補正などの計算精度</small>
+            <b>精度設定</b><small>精度・速度・通信量を確認</small>
           </button>
           {precisionMenuOpen && (
             <fieldset className="precision-settings-panel">
               <legend>精度設定</legend>
-              <label>
+              <label className="precision-choice">
                 <input
                   type="radio"
                   name="accuracy-mode"
@@ -112,9 +124,16 @@ export function TopSettingsBar({
                     accuracyMode: "standard",
                   })}
                 />
-                <span>標準</span><small>初期値・従来どおり</small>
+                <span className="precision-choice-copy">
+                  <span className="precision-choice-title">
+                    <b>標準</b><small>初期値</small>
+                  </span>
+                  <small>
+                    現在の検索・三脚位置・プレビュー・遮蔽物判定をそのまま使います。処理が速く、通信量も通常どおりです。
+                  </small>
+                </span>
               </label>
-              <label>
+              <label className="precision-choice">
                 <input
                   type="radio"
                   name="accuracy-mode"
@@ -124,19 +143,32 @@ export function TopSettingsBar({
                     accuracyMode: "highest",
                   })}
                 />
-                <span>最高精度</span>
+                <span className="precision-choice-copy">
+                  <span className="precision-choice-title"><b>最高精度</b></span>
+                  <small>
+                    検索結果を選んだ後だけ、地形や建物を詳しく確認して三脚位置を再計算します。検索速度は変わりませんが、確定処理の時間と通信量が増える場合があります。
+                  </small>
+                </span>
               </label>
-              <small>
-                検索速度と検索方法は変えず、「三脚ピンを置く」の後に利用可能な最詳細データで位置を再計算します。
-                データにない樹木・工事・仮設物などは保証できません。
-              </small>
+              <div className="precision-data-guide">
+                <strong>使用する地形・3Dデータ</strong>
+                <small>
+                  <b>DEM（地形の高さデータ）</b>は地面の起伏を確認します。最高精度では利用可能な最も細かいデータを使います。
+                </small>
+                <small>
+                  <b>Google 3D（建物を含む立体データ）</b>は三脚・被写体の高さと建物の遮蔽確認に使います。詳しいデータほど読込時間と通信量が増える場合があります。
+                </small>
+                <small>
+                  樹木、工事、仮設物など、データに収録されていない障害物は確認できません。
+                </small>
+              </div>
             </fieldset>
           )}
           {precisionMenuOpen && (
             <fieldset className="precision-settings-panel">
               <legend>地表屈折補正</legend>
               {(["auto", "standard", "none"] as RefractionCorrectionMode[]).map((mode) => (
-                <label key={mode}>
+                <label key={mode} className="precision-choice">
                   <input
                     type="radio"
                     name="refraction-correction-mode"
@@ -147,12 +179,20 @@ export function TopSettingsBar({
                       refractionCorrectionMode: mode,
                     })}
                   />
-                  <span>{REFRACTION_MODE_LABELS[mode]}</span>
-                  {mode === "auto" && <small>初期値</small>}
+                  <span className="precision-choice-copy">
+                    <span className="precision-choice-title">
+                      <b>{REFRACTION_MODE_LABELS[mode]}</b>
+                      {mode === "auto" && <small>初期値</small>}
+                    </span>
+                    <small>{REFRACTION_MODE_DESCRIPTIONS[mode]}</small>
+                  </span>
                 </label>
               ))}
               <div className="precision-number-setting">
                 <strong>被写体を遮蔽物として扱わない距離</strong>
+                <small className="precision-setting-intro">
+                  被写体そのものを建物などの遮蔽物と誤判定しないため、ピン直前を確認対象から外す距離です。距離を大きくすると被写体付近の別の障害物を見落とす場合があります。速度と通信量への影響はほぼありません。
+                </small>
                 {([
                   ["under100m", "被写体まで100m未満"],
                   ["from100mTo500m", "被写体まで100～500m"],
@@ -199,10 +239,13 @@ export function TopSettingsBar({
                 >
                   初期値に戻す
                 </button>
-                <small>三脚－被写体間の遮蔽物確認で、被写体ピン直前の指定範囲を判定対象から除外します。初期値は3m／10m／20m／50mです。</small>
+                <small>被写体までの距離帯ごとの初期値は3m／10m／20m／50mです。</small>
               </div>
               <div className="precision-number-setting">
-                <strong>②建物3D遮蔽の詳細判定</strong>
+                <strong>建物3D遮蔽の詳細判定</strong>
+                <small className="precision-setting-intro">
+                  Google 3Dの建物が太陽・月の円盤をどの程度隠すか詳しく確認します。ONにすると判定精度が上がりますが、処理時間と通信量が増える場合があります。
+                </small>
                 <label>
                   <input
                     type="checkbox"
@@ -236,6 +279,9 @@ export function TopSettingsBar({
                     <option value={12}>12点</option>
                   </select>
                 </label>
+                <small className="precision-control-help">
+                  点数が多いほど円盤の縁を細かく確認できますが、判定に時間がかかります。
+                </small>
                 <label htmlFor="building-occlusion-threshold-percent">
                   <span>「遮蔽物あり」と判定する遮蔽割合</span>
                   <span>
@@ -265,6 +311,9 @@ export function TopSettingsBar({
                     <small>%</small>
                   </span>
                 </label>
+                <small className="precision-control-help">
+                  小さい値ほど一部が隠れただけでも遮蔽物ありと判定し、大きい値ほど広く隠れた場合だけ判定します。
+                </small>
                 <button
                   type="button"
                   onClick={() => onPrecisionSettingsChange({
@@ -277,9 +326,7 @@ export function TopSettingsBar({
                   初期値に戻す
                 </button>
                 <small>
-                  OFFの場合は従来どおり天体の中心1点だけで建物との遮蔽を判定します。ONにすると太陽・月の円盤の縁も追加でサンプリングし、
-                  遮蔽されたサンプルの割合が指定した割合以上のときだけ「遮蔽物あり」と判定します（天の川・北極星は対象外）。
-                  サンプル点が増えるほど②の検索時間が長くなります。初期値はOFF／8点／50%です。
+                  OFFの場合は従来どおり天体の中心1点だけを確認します。天の川・北極星は対象外です。初期値はOFF／8点／50%です。
                 </small>
               </div>
             </fieldset>

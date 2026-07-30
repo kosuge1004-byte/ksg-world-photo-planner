@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
@@ -263,7 +263,7 @@ function milkyWayShootingWindow(
   return formatWindow(bestStart, bestEnd, selectedDaySerial, timeZone);
 }
 
-export function TimelinePanel({
+function TimelinePanelComponent({
   dateTimeLocal,
   location,
   timeZone,
@@ -572,3 +572,5 @@ export function TimelinePanel({
     </section>
   );
 }
+
+export const TimelinePanel = memo(TimelinePanelComponent);

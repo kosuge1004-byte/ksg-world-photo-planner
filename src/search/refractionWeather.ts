@@ -32,6 +32,7 @@ const inFlightRequests = new Map<string, Promise<RefractionWeatherContext>>();
 const CACHE_PREFIX = "ksg-refraction-weather-v1:";
 const FORECAST_CACHE_MS = 3 * 60 * 60_000;
 const CLIMATOLOGY_CACHE_MS = 30 * 24 * 60 * 60_000;
+const WEATHER_CACHE_MAX_ENTRIES = 24;
 
 function roundedCoordinate(value: number): string {
   return (Math.round(value * 20) / 20).toFixed(2);
@@ -60,6 +61,28 @@ function writeCache(key: string, context: RefractionWeatherContext, ttlMs: numbe
   try {
     const cached: CachedWeather = { expiresAt: Date.now() + ttlMs, context };
     localStorage.setItem(key, JSON.stringify(cached));
+    const entries: Array<{ key: string; expiresAt: number }> = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const storedKey = localStorage.key(index);
+      if (!storedKey?.startsWith(CACHE_PREFIX)) continue;
+      try {
+        const raw = localStorage.getItem(storedKey);
+        const stored = raw ? JSON.parse(raw) as CachedWeather : null;
+        if (!stored || !Number.isFinite(stored.expiresAt) || stored.expiresAt <= Date.now()) {
+          localStorage.removeItem(storedKey);
+          index -= 1;
+          continue;
+        }
+        entries.push({ key: storedKey, expiresAt: stored.expiresAt });
+      } catch {
+        localStorage.removeItem(storedKey);
+        index -= 1;
+      }
+    }
+    entries
+      .sort((left, right) => right.expiresAt - left.expiresAt)
+      .slice(WEATHER_CACHE_MAX_ENTRIES)
+      .forEach((entry) => localStorage.removeItem(entry.key));
   } catch {
     // Storage quota/private mode failures must never stop a search.
   }
