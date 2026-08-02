@@ -59,6 +59,16 @@ const cases = [
     expected: { state: "unavailable", message: "遮蔽を確認できません" },
   },
   {
+    name: "terrain boundary uncertainty",
+    input: occlusion({
+      visible: true,
+      verified: false,
+      reason: "unverified",
+      terrainBoundaryUncertain: true,
+    }),
+    expected: { state: "checking", message: "地形稜線との僅差のため遮蔽は未確定です" },
+  },
+  {
     name: "below horizon",
     input: occlusion({ visible: false, reason: "below-horizon" }),
     expected: { state: "blocked", message: "地平線の下です" },

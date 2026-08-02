@@ -10,6 +10,13 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: false,
   },
+  ios: {
+    // CSSのsafe-area-insetでノッチを処理するため、WKWebView側の自動余白は重ねない。
+    contentInset: "never",
+    preferredContentMode: "mobile",
+    allowsLinkPreview: false,
+    backgroundColor: "#05070a",
+  },
 };
 
 export default config;

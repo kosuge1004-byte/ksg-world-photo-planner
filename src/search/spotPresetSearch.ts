@@ -948,7 +948,6 @@ export async function searchSpotPresets({
   const sortedResults = results.sort((a, b) => a.date.getTime() - b.date.getTime());
   const metrics = performanceTracker.complete(sortedResults.length);
   onPerformance?.(metrics);
-  console.info("[spot-search-performance]", metrics);
   onProgress?.(
     phaseMessage(12, `検索結果を確定しました（所要時間 ${formatSearchDuration(metrics.totalMilliseconds)}）`),
     100,

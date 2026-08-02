@@ -109,15 +109,28 @@ export function calculateCelestialHorizontalCoordinates(
   // ofdate=true is required before converting to horizontal coordinates.
   const equatorial = Equator(body, date, observer, true, true);
   const useWeather = refractionWeather?.effectiveMode === "weather";
-  const horizon = Horizon(
+  const geometricHorizon = Horizon(
     date,
     observer,
     equatorial.ra,
     equatorial.dec,
-    // 通常モードは幾何学的位置、ProだけAstronomy Engineの標準大気差を適用する。
-    calculationMode === "pro" && !useWeather ? "normal" : undefined
+    undefined
   );
-  let altitudeDegrees = horizon.altitude;
+  const geometricAltitudeDegrees = geometricHorizon.altitude;
+  let azimuthDegrees = geometricHorizon.azimuth;
+  let altitudeDegrees = geometricAltitudeDegrees;
+  if (calculationMode === "pro" && !useWeather) {
+    // 標準大気差を使う場合も、診断と幾何比較用に補正前高度を保持する。
+    const apparentHorizon = Horizon(
+      date,
+      observer,
+      equatorial.ra,
+      equatorial.dec,
+      "normal"
+    );
+    azimuthDegrees = apparentHorizon.azimuth;
+    altitudeDegrees = apparentHorizon.altitude;
+  }
   if (useWeather) {
     const weather = weatherForDate(refractionWeather, date);
     const correction = weather
@@ -127,8 +140,9 @@ export function calculateCelestialHorizontalCoordinates(
   }
 
   return {
-    azimuthDegrees: normalizeDegrees(horizon.azimuth),
+    azimuthDegrees: normalizeDegrees(azimuthDegrees),
     altitudeDegrees,
+    geometricAltitudeDegrees,
   };
 }
 

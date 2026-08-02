@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "npm run test:regression",
+    "test:regression": "node scripts/run-regression-tests.mjs",
     "preview": "vite preview",
     "android:add": "npm run build && cap add android",
     "android:sync": "npm run build && cap sync android",
@@ -18,8 +20,8 @@
     "verify:google-maps-url:live": "node scripts/verify-google-maps-url-live.mjs",
     "verify:geodesic": "node scripts/verify-geodesic-comparison.mjs",
     "verify:geodesic:reference": "python scripts/verify-geodesic-reference-python.py",
-    "verify:geodesic:direct": "node scripts/verify-geodesic-direct.mjs"
-    ,"verify:view-correction": "node scripts/verify-view-correction.mjs",
+    "verify:geodesic:direct": "node scripts/verify-geodesic-direct.mjs",
+    "verify:view-correction": "node scripts/verify-view-correction.mjs",
     "verify:frame-boundaries": "node scripts/verify-frame-boundaries.mjs",
     "verify:cache-keys": "node scripts/verify-cache-keys.mjs",
     "verify:search-generation": "node scripts/verify-search-generation.mjs",
@@ -28,7 +30,11 @@
     "verify:performance-lifecycle": "node scripts/verify-performance-lifecycle.mjs",
     "verify:user-error-handling": "node scripts/verify-user-error-handling.mjs",
     "verify:precision-descriptions": "node scripts/verify-precision-descriptions.mjs",
-    "verify:occlusion-reasons": "node scripts/verify-occlusion-reasons.mjs"
+    "verify:occlusion-reasons": "node scripts/verify-occlusion-reasons.mjs",
+    "verify:platform-compatibility": "node scripts/verify-platform-compatibility.mjs",
+    "verify:final-cleanup": "node scripts/verify-final-cleanup.mjs",
+    "verify:search-engine-exclusion": "node scripts/verify-search-engine-exclusion.mjs",
+    "verify:celestial-occlusion-stability": "node scripts/verify-celestial-occlusion-stability.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
@@ -39,10 +45,8 @@
     "cesium": "^1.143.0",
     "geo-tz": "^8.1.8",
     "geographiclib-geodesic": "^2.2.0",
-    "ol": "^10.9.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "resium": "^1.24.0"
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.2",

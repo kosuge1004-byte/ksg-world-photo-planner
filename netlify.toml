@@ -12,6 +12,7 @@
 [[headers]]
   for = "/*"
   [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
     Permissions-Policy = "camera=(self), geolocation=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)"
 
 # 各Functionはexport const config.pathで公開API経路を直接定義する。

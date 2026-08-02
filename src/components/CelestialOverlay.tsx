@@ -242,6 +242,13 @@ function CelestialOverlayComponent({
       data-occlusion-milky-way={occlusion.milkyWay?.reason ?? "pending"}
       data-occlusion-sun-state={occlusion.sun?.verificationState ?? "checking"}
       data-occlusion-moon-state={occlusion.moon?.verificationState ?? "checking"}
+      data-occlusion-moon-apparent-altitude={occlusion.moon?.celestialApparentAltitudeDegrees}
+      data-occlusion-moon-geometric-altitude={occlusion.moon?.celestialGeometricAltitudeDegrees}
+      data-occlusion-moon-terrain-elevation={occlusion.moon?.obstructionElevationDegrees}
+      data-occlusion-moon-terrain-clearance={occlusion.moon?.terrainClearanceDegrees}
+      data-occlusion-moon-obstruction-distance={occlusion.moon?.obstructionDistanceMeters}
+      data-occlusion-moon-terrain-source={occlusion.moon?.terrainDataSource}
+      data-occlusion-moon-failure={occlusion.moon?.failureMessage}
       data-occlusion-polaris-state={occlusion.polaris?.verificationState ?? "checking"}
       data-occlusion-milky-way-state={occlusion.milkyWay?.verificationState ?? "checking"}
     >

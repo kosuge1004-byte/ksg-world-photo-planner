@@ -21,6 +21,14 @@ export type CelestialOcclusion = {
   photorealisticMeshObstructed: boolean;
   reason: "visible" | "below-horizon" | "terrain" | "building-or-surface" | "unverified";
   obstructionElevationDegrees?: number;
+  /** 遮蔽判定へ渡した見かけの天体高度。 */
+  celestialApparentAltitudeDegrees?: number;
+  /** 大気差適用前の幾何学的な天体高度。 */
+  celestialGeometricAltitudeDegrees?: number;
+  /** 見かけの天体高度 - DEM稜線高度。正なら天体が上。 */
+  terrainClearanceDegrees?: number;
+  /** DEM稜線との僅差により遮蔽を確定しなかった場合。 */
+  terrainBoundaryUncertain?: boolean;
   obstructionDistanceMeters?: number;
   terrainDataSource?: import("./geospatial").TerrainDataSource;
   /** ②建物3D遮蔽の詳細判定（縁サンプリング）を使った場合の、遮蔽サンプル割合（%）。 */
@@ -78,6 +86,8 @@ export function isCelestialOcclusionConfirmedHidden(
 export type HorizontalCoordinates = {
   azimuthDegrees: number;
   altitudeDegrees: number;
+  /** 大気差適用前の幾何学的な高度。未指定時はaltitudeDegreesと同じ。 */
+  geometricAltitudeDegrees?: number;
 };
 
 export type CelestialScreenPoint = HorizontalCoordinates & {

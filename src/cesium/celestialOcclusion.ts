@@ -23,6 +23,7 @@ import {
 import type { BuildingOcclusionDetailSettings } from "../types/precision";
 import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
+import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import {
   groundPointFromCoordinates,
@@ -474,6 +475,9 @@ export async function evaluateCelestialLineOfSight(
       reason: "below-horizon",
       obstructionElevationDegrees: 0,
       obstructionDistanceMeters: 0,
+      celestialApparentAltitudeDegrees: horizontal.altitudeDegrees,
+      celestialGeometricAltitudeDegrees:
+        horizontal.geometricAltitudeDegrees ?? horizontal.altitudeDegrees,
     };
   }
   const meshPromise: Promise<MeshIntersectionOutcome> =
@@ -498,8 +502,12 @@ export async function evaluateCelestialLineOfSight(
       error instanceof Error ? error.message : "DEM遮蔽判定に失敗しました"
     );
   }
-  const terrainObstructed =
-    terrain.maximumElevationDegrees >= horizontal.altitudeDegrees - 0.015;
+  const terrainDecision = classifyTerrainOcclusion(
+    horizontal.altitudeDegrees,
+    terrain.maximumElevationDegrees
+  );
+  const terrainObstructed = terrainDecision.status === "obstructed";
+  const terrainBoundaryUncertain = terrainDecision.status === "uncertain";
   const demOnlyResult: CelestialOcclusion = {
     verificationState: "dem-only",
     visible: !terrainObstructed,
@@ -508,6 +516,11 @@ export async function evaluateCelestialLineOfSight(
     photorealisticMeshObstructed: false,
     reason: terrainObstructed ? "terrain" : "unverified",
     obstructionElevationDegrees: terrain.maximumElevationDegrees,
+    celestialApparentAltitudeDegrees: horizontal.altitudeDegrees,
+    celestialGeometricAltitudeDegrees:
+      horizontal.geometricAltitudeDegrees ?? horizontal.altitudeDegrees,
+    terrainClearanceDegrees: terrainDecision.clearanceDegrees,
+    terrainBoundaryUncertain,
     obstructionDistanceMeters: terrainObstructed
       ? terrain.distanceMeters
       : undefined,
@@ -548,19 +561,24 @@ export async function evaluateCelestialLineOfSight(
   return {
     verificationState: "dem-and-google-3d",
     visible,
-    verified: true,
+    verified: !terrainBoundaryUncertain,
     terrainObstructed,
     photorealisticMeshObstructed,
     reason: terrainObstructed
       ? "terrain"
       : photorealisticMeshObstructed
         ? "building-or-surface"
-        : "visible",
+        : terrainBoundaryUncertain
+          ? "unverified"
+          : "visible",
     obstructionElevationDegrees: terrain.maximumElevationDegrees,
     obstructionDistanceMeters: terrainObstructed
       ? terrain.distanceMeters
       : mesh.distanceMeters ?? undefined,
     terrainDataSource: terrain.dataSource,
+    failureMessage: terrainBoundaryUncertain
+      ? "天体高度と地形稜線が0.015度以内のため遮蔽を確定していません"
+      : undefined,
   };
 }
 

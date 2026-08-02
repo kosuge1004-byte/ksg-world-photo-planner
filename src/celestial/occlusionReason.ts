@@ -20,6 +20,12 @@ export function presentCelestialOcclusionReason(
       message: "遮蔽を確認できません",
     };
   }
+  if (occlusion.terrainBoundaryUncertain) {
+    return {
+      state: "checking",
+      message: "地形稜線との僅差のため遮蔽は未確定です",
+    };
+  }
   if (
     occlusion.reason === "below-horizon" &&
     occlusion.verificationState === "dem-and-google-3d"

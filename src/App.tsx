@@ -672,21 +672,52 @@ function App() {
     previewRefractionWeather,
   ]);
 
+  const celestialOcclusionDirections = useMemo(
+    () => {
+      if (
+        !tripodPoint ||
+        !subjectPoint ||
+        Number.isNaN(selectedDate.getTime())
+      ) {
+        return [];
+      }
+      const observerAtLens = {
+        ...tripodPoint,
+        height: tripodPoint.height + cameraSettings.lensCenterHeightMeters,
+      };
+      return (["sun", "moon", "milkyWay", "polaris"] as const).map((id) => ({
+        id,
+        ...calculateCelestialHorizontalCoordinates(
+          id,
+          selectedDate,
+          observerAtLens,
+          calculationMode,
+          previewRefractionWeather
+        ),
+      }));
+    },
+    // 焦点距離・画角・構図補正は水平座標を変えないため依存させない。
+    [
+      tripodPoint,
+      subjectPoint,
+      selectedDate,
+      cameraSettings.lensCenterHeightMeters,
+      calculationMode,
+      previewRefractionWeather,
+    ]
+  );
+
   useEffect(() => {
-    // 投影・日時・地点・精度・データ準備状態の変更後は、前条件の遮蔽結果を表示しない。
+    // 遮蔽キャッシュは観測地点・日時・大気条件が変わった場合だけ無効化する。
+    // 焦点距離・画角・構図補正は天体の方位高度を変えないため対象外。
     invalidateCelestialOcclusionCaches(mapViewerRef.current ?? undefined);
     setCelestialOcclusion({});
     setMilkyWayLineOfSight({});
   }, [
     tripodPoint,
-    subjectPoint,
     selectedDate,
-    cameraSettings.focalLengthMm,
     cameraSettings.lensCenterHeightMeters,
-    previewAspectRatio,
-    precisionSettings,
     previewRefractionWeather,
-    previewViewCorrection,
     mapReady,
   ]);
 
@@ -950,7 +981,7 @@ function App() {
 
     if (!token) {
       const message = "3D地図を開始するためのアプリ設定が不足しています。2D地図は利用できます。";
-      console.error("Cesium Ion token is not configured");
+      console.warn("Cesium Ion token is not configured; keeping the 2D map available");
       setStatus(message);
       showUserNotice({
         key: "map-initialization",
@@ -1167,21 +1198,19 @@ function App() {
       !viewer ||
       viewer.isDestroyed() ||
       !tripodPoint ||
-      celestialPoints.length === 0
+      celestialOcclusionDirections.length === 0
     ) {
       setCelestialOcclusion({});
-      setMilkyWayLineOfSight({});
       return;
     }
     if (timelineInteracting) {
       // スクロール中は座標描画を優先し、地形・建物の高精度判定は停止後に行う。
       setCelestialOcclusion({});
-      setMilkyWayLineOfSight({});
       return;
     }
     const controller = new AbortController();
     let cancelled = false;
-    const enabledPoints = celestialPoints.filter(
+    const enabledPoints = celestialOcclusionDirections.filter(
       (point) => celestialVisibility[point.id]
     );
     const checkingEntries = Object.fromEntries(
@@ -1189,7 +1218,6 @@ function App() {
     ) as CelestialOcclusionMap;
     // 判定中は旧時刻の結果を捨てるが、未検証を遮蔽確定として天体円盤を隠さない。
     setCelestialOcclusion(checkingEntries);
-    setMilkyWayLineOfSight({});
     const timer = window.setTimeout(() => {
       void prepareCelestialLineOfSightObserver(
         viewer,
@@ -1217,12 +1245,75 @@ function App() {
           );
           updatePointOcclusion(point.id, result);
         }));
-        if (!celestialVisibility.milkyWay) return;
+      }).catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.warn("天体の地形・建物遮蔽を検証できませんでした", error);
+        if (!cancelled) {
+          const message = error instanceof Error
+            ? error.message
+            : "遮蔽判定の準備に失敗しました";
+          setCelestialOcclusion(Object.fromEntries(
+            enabledPoints.map((point) => [
+              point.id,
+              failedCelestialOcclusion(message),
+            ])
+          ));
+          showUserNotice({
+            key: "celestial-occlusion",
+            tone: "warning",
+            message: "地形・建物の遮蔽物確認を完了できませんでした。天体は未確認として表示しています。",
+            actionLabel: "再試行",
+            onAction: () => setOcclusionRetrySequence((current) => current + 1),
+          });
+        }
+      });
+    }, 360);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [
+    mapReady,
+    tripodPoint,
+    celestialOcclusionDirections,
+    celestialVisibility,
+    cameraSettings.lensCenterHeightMeters,
+    timelineInteracting,
+    occlusionRetrySequence,
+    showUserNotice,
+  ]);
+
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (
+      !mapReady ||
+      !viewer ||
+      viewer.isDestroyed() ||
+      !tripodPoint ||
+      !celestialVisibility.milkyWay ||
+      milkyWayPath.length === 0 ||
+      timelineInteracting
+    ) {
+      setMilkyWayLineOfSight({});
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setMilkyWayLineOfSight({});
+    const timer = window.setTimeout(() => {
+      void prepareCelestialLineOfSightObserver(
+        viewer,
+        tripodPoint,
+        cameraSettings.lensCenterHeightMeters,
+        controller.signal
+      ).then(async (observer) => {
         const pathVisibility: Partial<Record<number, boolean>> = {};
         const visibleIndexes = milkyWayPath.flatMap((point, index) =>
           point.visibleInFrame ? [index] : []
         );
-        // 帯の中心と両端を検証する。判定中・失敗は遮蔽確定にせず表示を維持する。
+        // 帯の中心と両端を検証する。判定中・失敗・僅差は遮蔽確定にしない。
         for (let offset = 0; offset < visibleIndexes.length; offset += 2) {
           const batch = visibleIndexes.slice(offset, offset + 2);
           const batchResults = await Promise.all(batch.map(async (index) => {
@@ -1255,41 +1346,22 @@ function App() {
             const failed = checks.some(
               (check) => check.verificationState === "failed"
             );
-            return [
-              index,
-              failed ? undefined : !confirmedHidden,
-            ] as const;
+            return [index, failed ? undefined : !confirmedHidden] as const;
           }));
+          if (cancelled || controller.signal.aborted) return;
           for (const [index, isVisible] of batchResults) {
             if (isVisible === undefined) delete pathVisibility[index];
             else pathVisibility[index] = isVisible;
           }
-          if (!cancelled) setMilkyWayLineOfSight({ ...pathVisibility });
+          setMilkyWayLineOfSight({ ...pathVisibility });
         }
       }).catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        console.warn("天体の地形・建物遮蔽を検証できませんでした", error);
-        if (!cancelled) {
-          const message = error instanceof Error
-            ? error.message
-            : "遮蔽判定の準備に失敗しました";
-          setCelestialOcclusion(Object.fromEntries(
-            enabledPoints.map((point) => [
-              point.id,
-              failedCelestialOcclusion(message),
-            ])
-          ));
-          setMilkyWayLineOfSight({});
-          showUserNotice({
-            key: "celestial-occlusion",
-            tone: "warning",
-            message: "地形・建物の遮蔽物確認を完了できませんでした。天体は未確認として表示しています。",
-            actionLabel: "再試行",
-            onAction: () => setOcclusionRetrySequence((current) => current + 1),
-          });
-        }
+        console.warn("天の川の地形・建物遮蔽を検証できませんでした", error);
+        if (!cancelled) setMilkyWayLineOfSight({});
       });
     }, 360);
+
     return () => {
       cancelled = true;
       controller.abort();
@@ -1298,13 +1370,11 @@ function App() {
   }, [
     mapReady,
     tripodPoint,
-    celestialPoints,
-    celestialVisibility,
+    celestialVisibility.milkyWay,
     milkyWayPath,
     cameraSettings.lensCenterHeightMeters,
     timelineInteracting,
     occlusionRetrySequence,
-    showUserNotice,
   ]);
 
   useEffect(() => {
@@ -2693,6 +2763,14 @@ ${diagnosticMessage}
       stopPlacementMode();
     }
     const viewer = mapViewerRef.current;
+    if (mode === "3d" && (!mapReady || !viewer || viewer.isDestroyed())) {
+      setSearchMessage(
+        import.meta.env.VITE_CESIUM_ION_TOKEN
+          ? "3Dマップを読み込み中です。準備が完了してからもう一度お試しください"
+          : "3Dマップに必要な設定がないため、2D地図を表示しています"
+      );
+      return;
+    }
     let synchronizedCenter = mapCenter;
     if (
       viewer &&
