@@ -3,7 +3,10 @@ import react from "@vitejs/plugin-react";
 import cesiumPlugin from "vite-plugin-cesium";
 import { find } from "geo-tz";
 import type { Plugin, PluginOption, ViteDevServer } from "vite";
-import { resolveGoogleMapsSharedUrl } from "./server/googleMaps.ts";
+import {
+  GoogleMapsResolutionError,
+  resolveGoogleMapsSharedUrl,
+} from "./server/googleMaps.ts";
 import { resolveJapanesePlaceName } from "./server/placeGeocode.ts";
 import { lookupGsiElevations, prefetchGsiTerrainAroundSubject } from "./server/gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./server/gsiGeoid.ts";
@@ -97,6 +100,14 @@ function localGoogleMapsApi(): Plugin {
             response.end(
               JSON.stringify({
                 error: error instanceof Error ? error.message : String(error),
+                code:
+                  error instanceof GoogleMapsResolutionError
+                    ? error.code
+                    : "UNEXPECTED_RESOLVER_ERROR",
+                details:
+                  error instanceof GoogleMapsResolutionError
+                    ? error.diagnostics
+                    : undefined,
               })
             );
           }

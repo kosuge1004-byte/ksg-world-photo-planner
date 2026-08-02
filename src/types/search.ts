@@ -10,6 +10,19 @@ export type GoogleMapsResolveResponse = {
   latitude?: number;
   longitude?: number;
   resolvedUrl?: string;
+  label?: string;
+  place?: {
+    placeId?: string | null;
+    placeIdType?: "places-api" | "maps-feature-id" | "cid" | null;
+    googleMapsFeatureId?: string | null;
+    cid?: string | null;
+    name?: string | null;
+    formattedAddress?: string | null;
+    query?: string | null;
+  };
+  code?: string;
+  requestId?: string;
+  details?: unknown;
   error?: string;
 };
 

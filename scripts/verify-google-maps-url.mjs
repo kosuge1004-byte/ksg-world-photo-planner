@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 
 import {
   extractGoogleMapsCoordinates,
+  extractGoogleMapsPlaceMetadata,
   extractGoogleMapsSharedUrl,
+  isSupportedGoogleMapsUrl,
 } from "../src/search/googleMapsUrl.ts";
 import {
   resolveGoogleMapsSharedUrlNatively,
@@ -23,6 +25,39 @@ const directCases = [
 for (const url of directCases) {
   assert.deepEqual(extractGoogleMapsCoordinates(url), expected);
 }
+
+for (const url of [
+  "https://maps.app.goo.gl/7Xtp3LoZpuDc5Rqe7",
+  "https://goo.gl/maps/S9AoZqcctLiwGHHY8",
+  "https://www.google.com/maps/place/Gifu",
+  "https://maps.google.com/?q=35.4339171,136.782051",
+]) {
+  assert.equal(isSupportedGoogleMapsUrl(new URL(url)), true);
+}
+
+const featureMetadata = extractGoogleMapsPlaceMetadata(
+  "https://www.google.com/maps/place/%E5%B2%90%E9%98%9C%E5%9F%8E/" +
+    "data=!4m2!3m1!1s0x6003a9798f2e0eab:0x2871c3655542c94a"
+);
+assert.equal(featureMetadata.placeId, "0x6003a9798f2e0eab:0x2871c3655542c94a");
+assert.equal(featureMetadata.placeIdType, "maps-feature-id");
+assert.equal(featureMetadata.placeName, "岐阜城");
+assert.equal(featureMetadata.cid, "2914325273874975050");
+
+const placesApiMetadata = extractGoogleMapsPlaceMetadata(
+  "https://www.google.com/maps/search/?api=1&query=Gifu+Castle&" +
+    "query_place_id=ChIJExamplePlaceId123"
+);
+assert.equal(placesApiMetadata.placeId, "ChIJExamplePlaceId123");
+assert.equal(placesApiMetadata.placeIdType, "places-api");
+
+// 現行HTMLのstaticmap/APP_INITIALIZATION_STATEは表示中心であり、
+// 名前付き地点の正式座標として採用しない。
+const viewportOnlyHtml = `
+  <meta content="https://maps.google.com/maps/api/staticmap?center=35.241984%2C136.8358912" itemprop="image">
+  <script>window.APP_INITIALIZATION_STATE=[[[26068.5,136.8358912,35.241984]]]</script>
+`;
+assert.equal(extractGoogleMapsCoordinates(viewportOnlyHtml), null);
 
 assert.equal(
   extractGoogleMapsSharedUrl(
@@ -84,6 +119,9 @@ assert.equal(requestCount, 3);
 console.log(
   JSON.stringify({
     directAddressCases: directCases.length,
+    supportedHostCases: 4,
+    placeMetadata: true,
+    viewportCoordinatesRejected: true,
     shortUrlAutomaticRedirect: true,
     shortUrlManualRedirect: true,
   })

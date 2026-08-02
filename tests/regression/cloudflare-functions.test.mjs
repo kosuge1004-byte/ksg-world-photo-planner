@@ -11,7 +11,11 @@ import { onRequest as startSearch } from "../../functions/api/spot-search-start.
 import { onRequest as searchStatus } from "../../functions/api/spot-search-status.ts";
 import { onRequest as resolveTimezone } from "../../functions/api/timezone.ts";
 import { findCloudflareTimeZones } from "../../server/cloudflareGeoTz.ts";
-import { googleMapsPlaceQueryCandidates } from "../../server/googleMaps.ts";
+import {
+  GoogleMapsResolutionError,
+  googleMapsPlaceQueryCandidates,
+  resolveGoogleMapsSharedUrl,
+} from "../../server/googleMaps.ts";
 
 const DATA_PART_BYTES = 4 * 1024 * 1024;
 const geoTzEntry = fileURLToPath(import.meta.resolve("geo-tz"));
@@ -115,11 +119,138 @@ test("Google Maps Pages Function parses direct supported URLs", async () => {
   });
   const response = await resolveGoogleMaps(eventContext(request, {}));
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
-    latitude: 35.4339171,
-    longitude: 136.782051,
-    resolvedUrl: "https://maps.google.com/?q=35.4339171,136.782051",
+  const body = await response.json();
+  assert.equal(body.latitude, 35.4339171);
+  assert.equal(body.longitude, 136.782051);
+  assert.equal(
+    body.resolvedUrl,
+    "https://maps.google.com/?q=35.4339171,136.782051"
+  );
+  assert.equal(body.place.placeId, null);
+  assert.equal(body.diagnostics.extractionSource, "input-url");
+  assert.equal(typeof body.diagnostics.requestId, "string");
+});
+
+test("Google Maps resolver follows the full redirect and rejects viewport coordinates", async () => {
+  const shortUrl = "https://maps.app.goo.gl/currentHtmlFixture";
+  const finalUrl =
+    "https://www.google.com/maps/place/%E5%B2%90%E9%98%9C%E5%9F%8E/" +
+    "data=!4m5!3m4!1s0x6003a9798f2e0eab:0x2871c3655542c94a!8m2!3d35.4339171!4d136.782051";
+  const html = `
+    <meta content="https://maps.google.com/maps/api/staticmap?center=35.241984%2C136.8358912" itemprop="image">
+    <meta content="岐阜県岐阜市天主閣18番地" itemprop="address">
+    <script>window.APP_INITIALIZATION_STATE=[[[26068.5,136.8358912,35.241984]]]</script>
+  `;
+  const calls = [];
+  const result = await resolveGoogleMapsSharedUrl(shortUrl, {
+    requestId: "resolver-test",
+    fetcher: async (url, init) => {
+      calls.push({ url: String(url), redirect: init?.redirect });
+      if (String(url) === shortUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: finalUrl },
+        });
+      }
+      assert.equal(String(url), finalUrl);
+      return new Response(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=UTF-8" },
+      });
+    },
   });
+
+  assert.equal(result.latitude, 35.4339171);
+  assert.equal(result.longitude, 136.782051);
+  assert.equal(result.place.placeId, "0x6003a9798f2e0eab:0x2871c3655542c94a");
+  assert.equal(result.place.placeIdType, "maps-feature-id");
+  assert.equal(result.place.name, "岐阜城");
+  assert.equal(result.place.formattedAddress, "岐阜県岐阜市天主閣18番地");
+  assert.equal(result.diagnostics.redirectCount, 1);
+  assert.equal(result.diagnostics.extractionSource, "final-url");
+  assert.deepEqual(calls.map((call) => call.redirect), ["manual", "manual"]);
+});
+
+test("Google Maps resolver enriches a Maps Feature ID with a Places API Place ID", async () => {
+  const shortUrl = "https://maps.app.goo.gl/placesApiFixture";
+  const finalUrl =
+    "https://www.google.com/maps/place/%E5%B2%90%E9%98%9C%E5%9F%8E/" +
+    "data=!4m2!3m1!1s0x6003a9798f2e0eab:0x2871c3655542c94a";
+  const result = await resolveGoogleMapsSharedUrl(shortUrl, {
+    requestId: "places-api-test",
+    googleMapsApiKey: "test-api-key",
+    fetcher: async (url, init) => {
+      const value = String(url);
+      if (value === shortUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: finalUrl },
+        });
+      }
+      if (value === finalUrl) {
+        return new Response("<html><title>Google Maps</title></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      assert.equal(value, "https://places.googleapis.com/v1/places:searchText");
+      assert.equal(init?.method, "POST");
+      assert.equal(init?.headers["X-Goog-Api-Key"], "test-api-key");
+      return Response.json({
+        places: [{
+          id: "ChIJGifuCastleExample",
+          displayName: { text: "岐阜城", languageCode: "ja" },
+          formattedAddress: "岐阜県岐阜市金華山天守閣18",
+          location: { latitude: 35.4339171, longitude: 136.782051 },
+        }],
+      });
+    },
+  });
+
+  assert.equal(result.latitude, 35.4339171);
+  assert.equal(result.longitude, 136.782051);
+  assert.equal(result.place.placeId, "ChIJGifuCastleExample");
+  assert.equal(result.place.placeIdType, "places-api");
+  assert.equal(
+    result.place.googleMapsFeatureId,
+    "0x6003a9798f2e0eab:0x2871c3655542c94a"
+  );
+  assert.equal(result.diagnostics.extractionSource, "google-places-api");
+});
+
+test("Google Maps resolver errors include HTTP and redirect diagnostics", async () => {
+  await assert.rejects(
+    resolveGoogleMapsSharedUrl("https://maps.app.goo.gl/failingFixture", {
+      requestId: "resolver-error-test",
+      fetcher: async () => new Response("temporary upstream failure", {
+        status: 503,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    }),
+    (error) => {
+      assert.ok(error instanceof GoogleMapsResolutionError);
+      assert.equal(error.code, "GOOGLE_HTTP_ERROR");
+      assert.equal(error.diagnostics.requestId, "resolver-error-test");
+      assert.equal(error.diagnostics.redirectChain[0].status, 503);
+      assert.match(error.diagnostics.attempts[0].detail, /temporary upstream failure/u);
+      return true;
+    }
+  );
+});
+
+test("Google Maps Pages Function returns structured error logs", async () => {
+  const request = new Request("https://astrosight.example/api/resolve-google-maps", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: "https://example.com/not-google-maps" }),
+  });
+  const response = await resolveGoogleMaps(eventContext(request, {}));
+  assert.equal(response.status, 422);
+  const body = await response.json();
+  assert.equal(body.code, "INVALID_GOOGLE_MAPS_URL");
+  assert.equal(typeof body.requestId, "string");
+  assert.equal(body.details.sourceUrl, null);
+  assert.equal(Array.isArray(body.details.attempts), true);
 });
 
 test("Google Maps postal-address place URLs retain a landmark fallback", () => {
@@ -130,6 +261,10 @@ test("Google Maps postal-address place URLs retain a landmark fallback", () => {
       "岐阜県岐阜市天主閣18番地 岐阜城",
       "岐阜城",
     ]
+  );
+  assert.deepEqual(
+    googleMapsPlaceQueryCandidates("Barbara Oliver Jewelry, 5820 Main St"),
+    ["Barbara Oliver Jewelry, 5820 Main St"]
   );
 });
 

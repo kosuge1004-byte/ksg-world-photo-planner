@@ -7,8 +7,7 @@
   "kv_namespaces": [
     {
       "binding": "SPOT_SEARCH_JOBS",
-      "id": "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID",
-      "preview_id": "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+      "id": "92197c3bd81d48489ef4fdd25b1b9a58"
     }
   ],
   "queues": {

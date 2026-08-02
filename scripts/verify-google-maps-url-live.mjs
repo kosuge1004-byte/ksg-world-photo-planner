@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { onRequest as resolveGoogleMapsApi } from "../functions/api/resolve-google-maps.ts";
 import {
   resolveGoogleMapsSharedUrlNatively,
 } from "../src/search/nativeGoogleMapsResolver.ts";
@@ -47,11 +48,51 @@ const postalAddressShortLinkResult = await resolveGoogleMapsSharedUrl(
 );
 assert.ok(Math.abs(postalAddressShortLinkResult.latitude - 35.4339171) < 0.001);
 assert.ok(Math.abs(postalAddressShortLinkResult.longitude - 136.782051) < 0.001);
+assert.equal(
+  postalAddressShortLinkResult.place.placeId,
+  "0x6003a9798f2e0eab:0x2871c3655542c94a"
+);
+assert.equal(postalAddressShortLinkResult.place.placeIdType, "maps-feature-id");
+assert.equal(postalAddressShortLinkResult.place.name, "岐阜城");
+
+const apiRequest = new Request(
+  "https://astrosight.example/api/resolve-google-maps",
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: "https://maps.app.goo.gl/by9q32wUuTdT3AVN8?g_st=ac",
+    }),
+  }
+);
+const apiResponse = await resolveGoogleMapsApi({
+  request: apiRequest,
+  env: {},
+  params: {},
+  data: {},
+  functionPath: "/api/resolve-google-maps",
+  waitUntil() {},
+  passThroughOnException() {},
+  next: async () => new Response(null, { status: 404 }),
+});
+assert.equal(apiResponse.status, 200);
+assert.match(apiResponse.headers.get("content-type") ?? "", /application\/json/iu);
+const apiResult = await apiResponse.json();
+assert.ok(Math.abs(apiResult.latitude - 35.4339171) < 0.001);
+assert.ok(Math.abs(apiResult.longitude - 136.782051) < 0.001);
+assert.equal(apiResult.place.placeIdType, "maps-feature-id");
+assert.equal(apiResult.place.name, "岐阜城");
+assert.equal(typeof apiResult.diagnostics.requestId, "string");
 
 console.log(
   JSON.stringify({
     shortLinkResult,
     gifuCastleResult,
     postalAddressShortLinkResult,
+    api: {
+      status: apiResponse.status,
+      contentType: apiResponse.headers.get("content-type"),
+      result: apiResult,
+    },
   })
 );

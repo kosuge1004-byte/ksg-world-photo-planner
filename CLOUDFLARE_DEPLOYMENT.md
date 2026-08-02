@@ -32,7 +32,7 @@ npx.cmd wrangler queues create astrosight-spot-search
 Cloudflare Pagesの「Settings > Variables and Secrets」で次を設定します。
 
 - Build variable `VITE_CESIUM_ION_TOKEN`: 必須。Cesiumのクライアント配信用トークン
-- Secret `GOOGLE_MAPS_API_KEY`: 将来Google APIを直接使用する場合のみ。現在の共有URL解析には不要
+- Secret `GOOGLE_MAPS_API_KEY`: 推奨。共有URLにPlaces API Place IDや正式座標がない場合、Places API (New)でPlace ID・地点名・住所・座標を補完します。未設定でもURL座標、Maps Feature ID、HTML、地名検索の順で解析します。
 
 Consumer WorkerのWorld Terrainフォールバックにもトークンを設定します。
 

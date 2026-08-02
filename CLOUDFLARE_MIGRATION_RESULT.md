@@ -1,7 +1,7 @@
 # Cloudflare完全移行 実施結果
 
-実施日: 2026-08-03  
-対象: `kosuge1004-byte/ksg-world-photo-planner`  
+実施日: 2026-08-03
+対象: `kosuge1004-byte/ksg-world-photo-planner`
 ベースコミット: `927fa00722d5ef95a0e798f57bcd941d964947db`
 
 ## 実装結果

@@ -175,7 +175,11 @@ export async function resolveSpotLocation(
     return {
       latitude: data.latitude,
       longitude: data.longitude,
-      label: "Googleマップ共有地点",
+      label:
+        data.place?.name ??
+        data.place?.formattedAddress ??
+        data.label ??
+        "Googleマップ共有地点",
     };
   }
 
