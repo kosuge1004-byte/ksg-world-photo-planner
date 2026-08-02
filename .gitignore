@@ -11,6 +11,13 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+.dev.vars*
+.wrangler
+.wrangler-*
+public/__astro_internal_geo_tz/
 .npm-cache
 .chrome-*
 .edge-*
@@ -25,7 +32,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Local Netlify folder
-.netlify
-.netlify-*

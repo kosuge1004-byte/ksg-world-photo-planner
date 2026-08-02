@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   resolveGoogleMapsSharedUrlNatively,
 } from "../src/search/nativeGoogleMapsResolver.ts";
+import { resolveGoogleMapsSharedUrl } from "../server/googleMaps.ts";
 
 const headers = {
   "User-Agent":
@@ -41,9 +42,16 @@ const gifuCastleResult = await resolveGoogleMapsSharedUrlNatively(
 assert.ok(Math.abs(gifuCastleResult.latitude - 35.4339171) < 0.001);
 assert.ok(Math.abs(gifuCastleResult.longitude - 136.782051) < 0.001);
 
+const postalAddressShortLinkResult = await resolveGoogleMapsSharedUrl(
+  "https://maps.app.goo.gl/by9q32wUuTdT3AVN8?g_st=ac"
+);
+assert.ok(Math.abs(postalAddressShortLinkResult.latitude - 35.4339171) < 0.001);
+assert.ok(Math.abs(postalAddressShortLinkResult.longitude - 136.782051) < 0.001);
+
 console.log(
   JSON.stringify({
     shortLinkResult,
     gifuCastleResult,
+    postalAddressShortLinkResult,
   })
 );

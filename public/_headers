@@ -1,2 +1,3 @@
 /*
   X-Robots-Tag: noindex, nofollow
+  Permissions-Policy: camera=(self), geolocation=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)

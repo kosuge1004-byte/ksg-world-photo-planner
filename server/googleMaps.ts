@@ -118,6 +118,27 @@ function coordinatesFromContent(
   return null;
 }
 
+export function googleMapsPlaceQueryCandidates(query: string): string[] {
+  const normalized = query.replace(/\s+/gu, " ").trim();
+  const candidates = new Set<string>();
+  const add = (value: string): void => {
+    const candidate = value.trim();
+    if (candidate) candidates.add(candidate.slice(0, 200));
+  };
+  add(normalized);
+
+  // 共有URLのplace部分が「郵便番号 住所 地点名」になる場合がある。
+  // NominatimはGoogle形式の住所全文を認識しないことがあるため、地点名も候補にする。
+  const withoutPostalCode = normalized.replace(/^〒?\d{3}-?\d{4}\s*/u, "");
+  add(withoutPostalCode);
+  const words = withoutPostalCode.split(" ").filter(Boolean);
+  if (words.length > 1) {
+    add(words.at(-1) ?? "");
+    add(words.slice(-2).join(" "));
+  }
+  return [...candidates];
+}
+
 export async function resolveGoogleMapsSharedUrl(
   input: string
 ): Promise<ResolvedGoogleMapsLocation> {
@@ -210,15 +231,23 @@ export async function resolveGoogleMapsSharedUrl(
       .map((candidate) => extractGoogleMapsPlaceQuery(candidate))
       .find((candidate): candidate is string => Boolean(candidate));
     if (placeQuery) {
-      const place = await resolveJapanesePlaceName(
-        placeQuery,
-        abortController.signal
-      );
-      return {
-        latitude: place.latitude,
-        longitude: place.longitude,
-        resolvedUrl: finalUrl,
-      };
+      let lastPlaceError: unknown;
+      for (const candidate of googleMapsPlaceQueryCandidates(placeQuery)) {
+        try {
+          const place = await resolveJapanesePlaceName(
+            candidate,
+            abortController.signal
+          );
+          return {
+            latitude: place.latitude,
+            longitude: place.longitude,
+            resolvedUrl: finalUrl,
+          };
+        } catch (error) {
+          lastPlaceError = error;
+        }
+      }
+      if (lastPlaceError) throw lastPlaceError;
     }
 
     if (/\/maps\/d\//u.test(new URL(finalUrl).pathname)) {

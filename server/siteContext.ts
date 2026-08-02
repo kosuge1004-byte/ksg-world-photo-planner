@@ -4,7 +4,7 @@ import { lookupOsmSiteContexts } from "./osmSiteContext.ts";
 
 const MAX_POINTS_PER_REQUEST = 8;
 
-/** Netlify内部から相対HTTP APIを経由せず、同じOSM判定を直接実行する。 */
+/** バックグラウンド処理から相対HTTP APIを経由せず、同じOSM判定を直接実行する。 */
 export async function fetchServerSiteContexts(
   points: GroundPoint[],
   signal?: AbortSignal,

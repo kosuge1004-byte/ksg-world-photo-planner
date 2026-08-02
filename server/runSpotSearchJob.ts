@@ -8,7 +8,6 @@ import type { CameraSettings } from "../src/types/camera.ts";
 import type { SpotSearchJob } from "../src/types/backgroundSearch.ts";
 import { createServerLineOfSightEvaluator } from "./celestialTerrainVisibility.ts";
 import { fetchServerSiteContexts } from "./siteContext.ts";
-import { updateSpotSearchJob } from "./spotSearchJobs.ts";
 import { sampleServerWorldTerrain } from "./worldTerrain.ts";
 import { prefetchGsiTerrainAroundSubject } from "./gsiElevation.ts";
 import { formatSearchDuration, type SpotSearchPerformanceMetrics } from "../src/search/searchPerformance.ts";
@@ -90,7 +89,7 @@ export type SpotSearchJobUpdater = (
 
 export async function runSpotSearchJob(
   job: SpotSearchJob,
-  updateJob: SpotSearchJobUpdater = updateSpotSearchJob
+  updateJob: SpotSearchJobUpdater
 ): Promise<void> {
   const { clientId, jobId, input } = job;
   const firstRunNotice = input.cacheState !== "warm"

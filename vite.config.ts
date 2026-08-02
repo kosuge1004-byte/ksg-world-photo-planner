@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import cesiumPlugin from "vite-plugin-cesium";
-import netlify from "@netlify/vite-plugin";
 import { find } from "geo-tz";
 import type { Plugin, PluginOption, ViteDevServer } from "vite";
 import { resolveGoogleMapsSharedUrl } from "./server/googleMaps.ts";
@@ -409,8 +408,6 @@ function localBackgroundSpotSearchApi(): Plugin {
 }
 
 export default defineConfig(({ command }) => {
-  const isNetlifyBuild = process.env.NETLIFY === "true";
-
   return {
     server: {
       // ヘッドレス確認用プロファイルとnpmキャッシュのロックファイルを監視しない。
@@ -419,7 +416,7 @@ export default defineConfig(({ command }) => {
           "**/.edge-*/**",
           "**/.chrome-*/**",
           "**/.npm-cache/**",
-          "**/.netlify-*/**",
+          "**/.wrangler/**",
         ],
       },
     },
@@ -438,8 +435,6 @@ export default defineConfig(({ command }) => {
           ]
         : []),
       // ローカルの npm.cmd run dev では .netlify の監視を起動しません。
-      // Netlify上のビルド時だけ有効にすることで、Windowsの EBUSY を防ぎます。
-      ...(command === "build" && isNetlifyBuild ? [netlify()] : []),
     ],
   };
 });

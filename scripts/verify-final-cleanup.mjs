@@ -37,6 +37,7 @@ for (const dependency of ["ol", "resium"]) {
 
 const removedFiles = [
   "src/components/FocalLengthPanel.tsx",
+  "src/components/FocalLengthNumberInput.tsx",
   "src/components/MobileBottomNav.tsx",
   "src/assets/hero.png",
   "src/assets/react.svg",

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/prepare-cloudflare-geo-tz-assets.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "npm run test:regression",
@@ -34,31 +35,41 @@
     "verify:platform-compatibility": "node scripts/verify-platform-compatibility.mjs",
     "verify:final-cleanup": "node scripts/verify-final-cleanup.mjs",
     "verify:search-engine-exclusion": "node scripts/verify-search-engine-exclusion.mjs",
-    "verify:celestial-occlusion-stability": "node scripts/verify-celestial-occlusion-stability.mjs"
+    "verify:celestial-occlusion-stability": "node scripts/verify-celestial-occlusion-stability.mjs",
+    "verify:cloudflare": "node scripts/verify-cloudflare-migration.mjs",
+    "cf:pages:dev": "npm run build && wrangler pages dev dist",
+    "cf:pages:deploy": "npm run build && wrangler pages deploy dist",
+    "cf:consumer:dev": "wrangler dev --config wrangler.spot-search.jsonc",
+    "cf:consumer:deploy": "wrangler deploy --config wrangler.spot-search.jsonc"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
     "@capacitor/core": "^8.4.2",
     "@capacitor/geolocation": "^8.2.0",
-    "@netlify/blobs": "^10.7.9",
+    "@turf/boolean-point-in-polygon": "^7.1.0",
+    "@turf/helpers": "^7.1.0",
     "astronomy-engine": "^2.1.19",
     "cesium": "^1.143.0",
     "geo-tz": "^8.1.8",
+    "geobuf": "^3.0.2",
     "geographiclib-geodesic": "^2.2.0",
+    "pbf": "^3.2.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.2",
-    "@netlify/functions": "^5.3.0",
-    "@netlify/vite-plugin": "^2.12.8",
+    "@cloudflare/workers-types": "^5.20260801.1",
+    "@types/geobuf": "^3.0.4",
     "@types/node": "^24.13.2",
+    "@types/pbf": "^3.0.4",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vite-plugin-cesium": "^1.2.23"
+    "vite-plugin-cesium": "^1.2.23",
+    "wrangler": "^4.118.0"
   }
 }

@@ -82,6 +82,19 @@ const cases = [
     name: "celestial occlusion recalculation and boundary stability",
     arguments: ["./scripts/verify-celestial-occlusion-stability.mjs"],
   },
+  {
+    name: "Cloudflare Pages Functions migration contracts",
+    arguments: ["./scripts/verify-cloudflare-migration.mjs"],
+  },
+  {
+    name: "Cloudflare API and geo-tz runtime contracts",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/cloudflare-functions.test.mjs",
+    ],
+  },
 ];
 
 for (const testCase of cases) {

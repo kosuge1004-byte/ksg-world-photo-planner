@@ -1,5 +1,8 @@
 import { inflateSync } from "node:zlib";
-import { getStore } from "@netlify/blobs";
+import {
+  keepServerTaskAlive,
+  serverPersistentCache,
+} from "./cloudflareRuntime.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -49,8 +52,8 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_TILE_CACHE_ENTRIES = 512;
-const PERSISTENT_TILE_STORE_NAME = "ksg-decoded-dem-tiles-v1";
 const PERSISTENT_TILE_FORMAT_VERSION = 1;
+const PERSISTENT_TILE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 8;
 const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
@@ -255,12 +258,8 @@ function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   });
 }
 
-function persistentTileStore() {
-  return getStore({ name: PERSISTENT_TILE_STORE_NAME, consistency: "eventual" });
-}
-
 function persistentTileKey(source: ElevationTileSource, x: number, y: number): string {
-  return `${source.id}/${source.zoom}/${x}/${y}.bin`;
+  return `gsi-decoded-dem-v1/${source.id}/${source.zoom}/${x}/${y}.bin`;
 }
 
 function serializeDecodedElevationTile(tile: DecodedElevationTile): ArrayBuffer {
@@ -306,8 +305,10 @@ async function readPersistentDecodedTile(
   x: number,
   y: number
 ): Promise<DecodedElevationTile | null> {
+  const persistentCache = serverPersistentCache();
+  if (!persistentCache) return null;
   try {
-    const bytes = await persistentTileStore().get(persistentTileKey(source, x, y), {
+    const bytes = await persistentCache.get(persistentTileKey(source, x, y), {
       type: "arrayBuffer",
     });
     return bytes instanceof ArrayBuffer ? deserializeDecodedElevationTile(bytes) : null;
@@ -323,9 +324,12 @@ function writePersistentDecodedTile(
   y: number,
   tile: DecodedElevationTile
 ): void {
+  const persistentCache = serverPersistentCache();
+  if (!persistentCache) return;
   const key = persistentTileKey(source, x, y);
   if (persistentWritePromises.has(key)) return;
-  const write = persistentTileStore().set(key, serializeDecodedElevationTile(tile), {
+  const write = persistentCache.put(key, serializeDecodedElevationTile(tile), {
+    expirationTtl: PERSISTENT_TILE_TTL_SECONDS,
     metadata: {
       source: source.label,
       zoom: source.zoom,
@@ -340,6 +344,7 @@ function writePersistentDecodedTile(
     persistentWritePromises.delete(key);
   });
   persistentWritePromises.set(key, write);
+  keepServerTaskAlive(write);
 }
 
 const GSI_TILE_REQUEST_TIMEOUT_MS = 8_000;

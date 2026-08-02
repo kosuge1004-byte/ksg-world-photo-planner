@@ -9,6 +9,7 @@ import {
 import { lookupGsiElevations } from "./gsiElevation.ts";
 import type { GsiElevationRequestPoint } from "./gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./gsiGeoid.ts";
+import { serverCesiumIonToken } from "./cloudflareRuntime.ts";
 
 type GsiMaximumDetail = NonNullable<GsiElevationRequestPoint["maximumDetail"]>;
 
@@ -75,7 +76,7 @@ async function fallbackToWorldTerrain(
   signal?: AbortSignal
 ): Promise<Cartographic[]> {
   abortIfRequested(signal);
-  const token = (
+  const token = serverCesiumIonToken() ?? (
     process.env.CESIUM_ION_TOKEN ?? process.env.VITE_CESIUM_ION_TOKEN
   )?.trim();
   if (token) Ion.defaultAccessToken = token;

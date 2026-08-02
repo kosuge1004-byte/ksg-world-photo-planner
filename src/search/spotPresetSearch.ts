@@ -217,7 +217,7 @@ export async function resolveSpotLocation(
     );
   }
 
-  // Netlify Functionsを伴わない静的プレビューでだけ従来の直接検索へ戻す。
+  // バックグラウンドAPIを伴わない静的プレビューでだけ従来の直接検索へ戻す。
   // 本番・npm run devでは同一オリジンAPIを使い、ブラウザCORSや429の影響を避ける。
   const parameters = new URLSearchParams({
     q: query,
