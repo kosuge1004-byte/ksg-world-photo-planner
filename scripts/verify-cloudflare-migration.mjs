@@ -49,11 +49,37 @@ for (const dependency of [
 
 const pagesConfig = read("wrangler.jsonc");
 const consumerConfig = read("wrangler.spot-search.jsonc");
-if (!/SPOT_SEARCH_JOBS/.test(pagesConfig) || !/SPOT_SEARCH_QUEUE/.test(pagesConfig)) {
-  throw new Error("Pages bindings are incomplete");
+const pagesConfigJson = JSON.parse(pagesConfig);
+const consumerConfigJson = JSON.parse(consumerConfig);
+const expectedKvNamespaceId = "92197c38d81d48489ef4fdd25b1b9a58";
+const expectedKvBinding = "SPOT_SEARCH_JOBS";
+const expectedQueue = "astrosight-spot-search";
+
+if (pagesConfigJson.name !== "astrosight") {
+  throw new Error("Pages project name must be astrosight");
 }
-if (!/astrosight-spot-search/.test(consumerConfig) ||
-    !/spot-search-consumer\.ts/.test(consumerConfig)) {
+for (const [configName, config] of [
+  ["Pages", pagesConfigJson],
+  ["Consumer", consumerConfigJson],
+]) {
+  const kvBindings = config.kv_namespaces ?? [];
+  const kvBinding = kvBindings.find((entry) => entry.binding === expectedKvBinding);
+  if (kvBindings.length !== 1 || kvBinding?.id !== expectedKvNamespaceId) {
+    throw new Error(`${configName} KV binding must map ${expectedKvBinding} to ${expectedKvNamespaceId}`);
+  }
+  if ("preview_id" in kvBinding || /REPLACE_WITH_/.test(JSON.stringify(config))) {
+    throw new Error(`${configName} KV binding contains a preview ID or placeholder`);
+  }
+}
+
+const queueProducer = pagesConfigJson.queues?.producers?.find(
+  (entry) => entry.binding === "SPOT_SEARCH_QUEUE",
+);
+if (queueProducer?.queue !== expectedQueue) {
+  throw new Error("Pages queue producer binding is incomplete");
+}
+if (consumerConfigJson.main !== "./workers/spot-search-consumer.ts" ||
+    consumerConfigJson.queues?.consumers?.[0]?.queue !== expectedQueue) {
   throw new Error("Queue consumer configuration is incomplete");
 }
 
@@ -73,6 +99,8 @@ if (!/X-Robots-Tag:\s*noindex,\s*nofollow/i.test(headers)) {
 
 console.log(JSON.stringify({
   pagesFunctions: expectedFunctions.length,
+  pagesProject: pagesConfigJson.name,
+  kvNamespaceId: expectedKvNamespaceId,
   kvBinding: true,
   queueConsumer: true,
   netlifyRemoved: true,

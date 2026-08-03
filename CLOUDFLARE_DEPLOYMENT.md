@@ -10,22 +10,35 @@
 
 Pages FunctionsのHTTP応答後処理には実行時間の上限があるため、スポット検索本体だけはQueue Consumer Workerで実行します。公開APIパス、リクエスト、レスポンスおよびブラウザー側の状態名は従来どおりです。
 
-## 1. Cloudflareリソースを作成
+## 1. Cloudflareリソースを確認
 
 Cloudflareへログイン済みの環境で実行します。
 
 ```powershell
-npx.cmd wrangler kv namespace create SPOT_SEARCH_JOBS
-npx.cmd wrangler kv namespace create SPOT_SEARCH_JOBS_PREVIEW
-npx.cmd wrangler queues create astrosight-spot-search
+npx.cmd wrangler whoami
+npx.cmd wrangler kv namespace list
+npx.cmd wrangler pages project list
+npx.cmd wrangler queues list
 ```
 
-表示されたKV namespace IDを、次の2ファイルに設定します。
+使用するリソースは次のとおりです。
+
+- Pages project: `astrosight`
+- KV namespace name: `astrosight-cache`
+- KV namespace ID: `92197c38d81d48489ef4fdd25b1b9a58`
+- KV binding: `SPOT_SEARCH_JOBS`
+- Queue: `astrosight-spot-search`
+
+同じ本番KV namespace IDを次の2ファイルに設定します。
 
 - `wrangler.jsonc`
 - `wrangler.spot-search.jsonc`
 
-`REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID`を本番ID、`REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID`をプレビューIDへ置換してください。同じ本番IDをPagesとConsumer Workerの両方へ設定します。
+`preview_id`は使用しません。Queueが存在しない場合だけ次を実行します。
+
+```powershell
+npx.cmd wrangler queues create astrosight-spot-search
+```
 
 ## 2. 環境変数とSecrets
 
@@ -48,9 +61,9 @@ npx.cmd wrangler secret put CESIUM_ION_TOKEN --config wrangler.spot-search.jsonc
 npm.cmd run cf:consumer:deploy
 ```
 
-QueueはConsumerを別Workerとして必要とします。`wrangler.spot-search.jsonc`は1件ずつ処理し、最大3回再試行する設定です。既存検索の計算量に対応するため、Workers PaidプランのCPU上限を前提に`cpu_ms: 300000`を指定しています。
+QueueはConsumerを別Workerとして必要とします。`wrangler.spot-search.jsonc`は1件ずつ処理し、最大3回再試行する設定です。Freeプランでもデプロイできるよう、Paidプラン専用の`cpu_ms`明示設定は使用しません。長時間検索がプラン既定のCPU上限を超える場合はWorkers Paidプランへ変更し、必要なCPU上限をCloudflareの現行制限内で設定してください。
 
-## 4. Cloudflare Pagesを設定
+## 4. Cloudflare Pages `astrosight`を設定
 
 GitHubリポジトリ`kosuge1004-byte/ksg-world-photo-planner`をPagesへ接続し、次を設定します。
 

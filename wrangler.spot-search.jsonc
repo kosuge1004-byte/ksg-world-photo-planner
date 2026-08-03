@@ -7,7 +7,7 @@
   "kv_namespaces": [
     {
       "binding": "SPOT_SEARCH_JOBS",
-      "id": "92197c3bd81d48489ef4fdd25b1b9a58"
+      "id": "92197c38d81d48489ef4fdd25b1b9a58"
     }
   ],
   "queues": {
@@ -19,9 +19,6 @@
         "max_retries": 3
       }
     ]
-  },
-  "limits": {
-    "cpu_ms": 300000
   },
   "observability": {
     "enabled": true
