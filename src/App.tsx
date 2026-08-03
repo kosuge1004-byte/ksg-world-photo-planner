@@ -2523,27 +2523,6 @@ ${diagnosticMessage}
     stopPlacementMode();
   }
 
-  function startSubjectEdit() {
-    const viewer = mapViewerRef.current;
-
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage(
-        "3Dマップの読込完了後にお試しください"
-      );
-      return;
-    }
-
-    if (mapViewMode === "2d") {
-      changeMapViewMode("3d");
-    }
-
-    stopPlacementMode();
-    setSubjectEditActive(true);
-    setSearchMessage(
-      "3D画面を動かし、狙う位置を中央の十字へ合わせてください"
-    );
-  }
-
   function cancelSubjectEdit() {
     setSubjectEditActive(false);
     setSearchMessage("被写体編集をキャンセルしました");
