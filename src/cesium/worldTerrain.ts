@@ -11,10 +11,10 @@ import type {
   TerrainDataSource,
 } from "../types/geospatial";
 import { publishUserNotice } from "../errors/userFeedback";
+import { fetchGsiElevationSamples } from "./gsiElevationClient";
 
 let terrainPromise: ReturnType<typeof createWorldTerrainAsync> | null = null;
 const terrainSourceBySample = new WeakMap<Cartographic, TerrainDataSource>();
-const GSI_BATCH_SIZE = 2_048;
 let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
@@ -259,46 +259,35 @@ async function fetchGsiElevations(
   if (Date.now() < gsiUnavailableUntil) {
     return points.map(() => ({ heightMeters: null, source: null }));
   }
-  const samples: GsiElevationApiSample[] = [];
   try {
-    for (let offset = 0; offset < points.length; offset += GSI_BATCH_SIZE) {
-      const batch = points.slice(offset, offset + GSI_BATCH_SIZE);
-      const response = await fetch("/api/gsi-elevation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          points: batch.map((point, batchIndex) => ({
-            latitude: CesiumMath.toDegrees(point.latitude),
-            longitude: CesiumMath.toDegrees(point.longitude),
-            maximumDetail: maximumDetails?.[offset + batchIndex],
-          })),
-        }),
-        signal,
+    const result = await fetchGsiElevationSamples(
+      points.map((point, index) => ({
+        latitude: CesiumMath.toDegrees(point.latitude),
+        longitude: CesiumMath.toDegrees(point.longitude),
+        maximumDetail: maximumDetails?.[index],
+      })),
+      signal
+    );
+    if (result.failedPointCount > 0) {
+      const allFailed = result.failedPointCount === points.length;
+      if (allFailed) gsiUnavailableUntil = Date.now() + 15_000;
+      console.warn(
+        `国土地理院DEMの${result.failedPointCount}地点を取得できないためWorld Terrainを使用します`,
+        result.lastError
+      );
+      publishUserNotice({
+        key: "gsi-dem-fallback",
+        tone: "warning",
+        message: allFailed
+          ? "国土地理院の詳細地形データを取得できないため、別の地形データで計算を続けています。"
+          : `国土地理院の詳細地形データを一部取得できなかったため、${result.failedPointCount}地点だけ別の地形データで補完しています。`,
       });
-      const data = (await response.json()) as {
-        samples?: unknown;
-        error?: unknown;
-      };
-      if (!response.ok || !Array.isArray(data.samples)) {
-        throw new Error(
-          typeof data.error === "string"
-            ? data.error
-            : `国土地理院標高APIエラー：${response.status}`
-        );
-      }
-      samples.push(...(data.samples as GsiElevationApiSample[]));
     }
-    if (samples.length !== points.length) {
-      throw new Error("国土地理院標高APIの応答点数が一致しません");
-    }
-    return samples;
+    return result.samples;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    // 一時障害時は連続要求を避け、Cesium World Terrainへ安全にフォールバックする。
-    gsiUnavailableUntil = Date.now() + 60_000;
+    // 予期しないクライアント障害時だけ短時間の連続要求を避ける。
+    gsiUnavailableUntil = Date.now() + 15_000;
     console.warn("国土地理院DEMを取得できないためWorld Terrainを使用します", error);
     publishUserNotice({
       key: "gsi-dem-fallback",

@@ -15,6 +15,7 @@ const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
 };
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import { parseFocalLengthInput } from "../utils/focalLengthInput";
+import { usePwaInstall } from "../pwa/install";
 
 type Props = {
   settings: CameraSettings;
@@ -43,8 +44,10 @@ export function TopSettingsBar({
     String(settings.focalLengthMm)
   );
   const [focalLengthErrorOpen, setFocalLengthErrorOpen] = useState(false);
+  const [installHint, setInstallHint] = useState("");
   const focalLengthInputRef = useRef<HTMLInputElement>(null);
   const focalLengthErrorCloseRef = useRef<HTMLButtonElement>(null);
+  const pwaInstall = usePwaInstall();
 
   useEffect(() => {
     // プレビューのズーム操作など、入力欄以外から変更された焦点距離も同期する。
@@ -75,6 +78,23 @@ export function TopSettingsBar({
     onChange({ ...settings, focalLengthMm: result.value });
   };
   const setHeight = (value: number) => onChange({ ...settings, lensCenterHeightMeters: Math.min(10, Math.max(0.1, value)) });
+
+  const installWebApp = async () => {
+    setInstallHint("");
+    const result = await pwaInstall.install();
+    if (result === "accepted" || result === "installed") {
+      setModeMenuOpen(false);
+      return;
+    }
+    if (result === "dismissed") {
+      setInstallHint("インストールはキャンセルされました。もう一度選択できます。");
+      return;
+    }
+    const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    setInstallHint(isIos
+      ? "Safariの共有ボタンから「ホーム画面に追加」を選択してください。"
+      : "Chromeの︙メニューから「アプリをインストール」または「ホーム画面に追加」を選択してください。");
+  };
 
   return (
     <header className="mobile-top-settings" aria-label="撮影設定">
@@ -108,6 +128,27 @@ export function TopSettingsBar({
           }}>
             <b>月齢</b><small>月の形と月齢をオフライン表示</small>
           </button>
+          {pwaInstall.supported && !pwaInstall.installed && (
+            <>
+              <button
+                type="button"
+                onClick={() => void installWebApp()}
+                disabled={pwaInstall.installing}
+              >
+                <b>アプリ</b>
+                <small>
+                  {pwaInstall.installing
+                    ? "インストール画面を準備中"
+                    : pwaInstall.canInstall
+                      ? "この端末にインストール"
+                      : "ホーム画面に追加"}
+                </small>
+              </button>
+              {installHint && (
+                <small className="pwa-install-hint" role="status">{installHint}</small>
+              )}
+            </>
+          )}
           <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
             <b>精度設定</b><small>精度・速度・通信量を確認</small>
           </button>

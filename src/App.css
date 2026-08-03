@@ -118,6 +118,12 @@ button { cursor: pointer; }
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.calculation-mode-menu .pwa-install-hint {
+  padding: 2px 4px;
+  color: #b9c8d8;
+  font-size: 8px;
+  line-height: 1.45;
+}
 
 .top-setting {
   display: grid;

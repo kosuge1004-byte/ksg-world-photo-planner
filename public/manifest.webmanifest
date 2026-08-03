@@ -7,10 +7,12 @@
   "start_url": "/?source=installed",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#05070a",
   "theme_color": "#05070a",
   "prefer_related_applications": false,
+  "categories": ["photo", "utilities"],
   "icons": [
     {
       "src": "/app-icon-192.png",

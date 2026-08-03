@@ -35,6 +35,7 @@
     "verify:platform-compatibility": "node scripts/verify-platform-compatibility.mjs",
     "verify:final-cleanup": "node scripts/verify-final-cleanup.mjs",
     "verify:search-engine-exclusion": "node scripts/verify-search-engine-exclusion.mjs",
+    "verify:pwa-installability": "node scripts/verify-pwa-installability.mjs",
     "verify:celestial-occlusion-stability": "node scripts/verify-celestial-occlusion-stability.mjs",
     "verify:cloudflare": "node scripts/verify-cloudflare-migration.mjs",
     "cf:pages:dev": "npm run build && wrangler pages dev dist",
