@@ -11,6 +11,7 @@ import { onRequest as startSearch } from "../../functions/api/spot-search-start.
 import { onRequest as searchStatus } from "../../functions/api/spot-search-status.ts";
 import { onRequest as resolveTimezone } from "../../functions/api/timezone.ts";
 import { findCloudflareTimeZones } from "../../server/cloudflareGeoTz.ts";
+import { resolveJapanesePlaceName } from "../../server/placeGeocode.ts";
 import {
   GoogleMapsResolutionError,
   googleMapsPlaceQueryCandidates,
@@ -107,6 +108,50 @@ test("timezone Pages Function preserves the public response contract", async () 
   const response = await resolveTimezone(eventContext(request, { ASSETS: assets }));
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { timeZone: "Asia/Tokyo" });
+});
+
+test("place geocoder uses the best GSI candidate when Nominatim returns no results", async () => {
+  const calls = [];
+  const result = await resolveJapanesePlaceName("東京駅", undefined, async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.startsWith("https://nominatim.openstreetmap.org/")) {
+      return Response.json([]);
+    }
+    assert.match(url, /^https:\/\/msearch\.gsi\.go\.jp\/address-search\/AddressSearch\?/u);
+    return Response.json([
+      {
+        geometry: { type: "Point", coordinates: [139.6917, 35.6895] },
+        properties: { title: "東京都" },
+      },
+      {
+        geometry: { type: "Point", coordinates: [139.767125, 35.681236] },
+        properties: { title: "東京駅" },
+      },
+    ]);
+  });
+
+  assert.deepEqual(result, {
+    latitude: 35.681236,
+    longitude: 139.767125,
+    label: "東京駅",
+  });
+  assert.equal(calls.length, 2);
+});
+
+test("place geocoder keeps Nominatim as the primary provider", async () => {
+  let callCount = 0;
+  const result = await resolveJapanesePlaceName("東京駅", undefined, async () => {
+    callCount += 1;
+    return Response.json([{
+      lat: "35.681236",
+      lon: "139.767125",
+      display_name: "東京駅, 千代田区, 東京都",
+    }]);
+  });
+
+  assert.equal(result.label, "東京駅, 千代田区, 東京都");
+  assert.equal(callCount, 1);
 });
 
 test("Google Maps Pages Function parses direct supported URLs", async () => {
