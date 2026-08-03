@@ -70,6 +70,7 @@ import {
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
 import {
+  buildDirectionalTripodCandidates,
   calculateTripodCandidates,
 } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
@@ -907,10 +908,14 @@ function App() {
       return;
     }
 
-    // 任意の500m地点を候補として見せると確定点と誤認されるため、
-    // 精密DEM計算中は点を消し、計算状態だけを明示する。
-    tripodCandidatesRef.current = [];
-    setTripodCandidates([]);
+    // DEM精密解を待つ間も天体方位をすぐ確認できるよう、明確に「要確認」と
+    // 表示される方位候補を先に描画する。精密解が完了した時だけ確定候補へ置換する。
+    const directionalCandidates = buildDirectionalTripodCandidates(
+      subjectPoint,
+      enabledPoints
+    );
+    tripodCandidatesRef.current = directionalCandidates;
+    setTripodCandidates(directionalCandidates);
     setTripodCandidateCalculationStatus("calculating");
 
     let cancelled = false;
@@ -3122,7 +3127,7 @@ ${diagnosticMessage}
                 aria-live="polite"
               >
                 {tripodCandidateCalculationStatus === "calculating"
-                  ? "三脚候補を計算中…"
+                  ? "三脚方位候補を表示中・精密計算中…"
                   : tripodCandidateCalculationStatus === "complete"
                     ? `確定した三脚候補：${tripodCandidates.length}件`
                     : tripodCandidateCalculationStatus === "no-solution"

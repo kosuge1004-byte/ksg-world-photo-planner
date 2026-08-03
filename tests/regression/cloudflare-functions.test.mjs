@@ -263,6 +263,58 @@ test("Google Maps resolver enriches a Maps Feature ID with a Places API Place ID
   assert.equal(result.diagnostics.extractionSource, "google-places-api");
 });
 
+test("Google Maps resolver resolves registered places without an API key", async () => {
+  const shortUrl = "https://maps.app.goo.gl/registeredPlaceFixture";
+  const finalUrl =
+    "https://www.google.com/maps/place/Registered+Observatory/" +
+    "data=!4m2!3m1!1s0x6003a9798f2e0eab:0x2871c3655542c94a";
+  const embedUrl =
+    "https://www.google.com/maps?q=Registered+Observatory&output=embed";
+  const embedHtml = `
+    <script>
+      window.__place = [[[
+        "0x6003a9798f2e0eab:0x2871c3655542c94a",
+        "1 Observatory Road, Gifu",
+        [35.433918,136.7820713],
+        "2914325273874975050"
+      ],"Registered Observatory",[]]];
+    </script>
+  `;
+  const calls = [];
+  const result = await resolveGoogleMapsSharedUrl(shortUrl, {
+    requestId: "registered-place-test",
+    fetcher: async (url) => {
+      const value = String(url);
+      calls.push(value);
+      if (value === shortUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: finalUrl },
+        });
+      }
+      if (value === finalUrl) {
+        return new Response("<html><title>Google Maps</title></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      assert.equal(value, embedUrl);
+      return new Response(embedHtml, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    },
+  });
+
+  assert.equal(result.latitude, 35.433918);
+  assert.equal(result.longitude, 136.7820713);
+  assert.equal(result.place.name, "Registered Observatory");
+  assert.equal(result.place.formattedAddress, "1 Observatory Road, Gifu");
+  assert.equal(result.place.placeIdType, "maps-feature-id");
+  assert.equal(result.diagnostics.extractionSource, "google-maps-embed");
+  assert.deepEqual(calls, [shortUrl, finalUrl, embedUrl]);
+});
+
 test("Google Maps resolver errors include HTTP and redirect diagnostics", async () => {
   await assert.rejects(
     resolveGoogleMapsSharedUrl("https://maps.app.goo.gl/failingFixture", {

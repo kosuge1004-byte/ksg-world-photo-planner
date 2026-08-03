@@ -279,6 +279,9 @@ export function extractGoogleMapsPlaceMetadata(
   source: string
 ): GoogleMapsPlaceMetadata {
   const normalized = normalizeGoogleMapsText(source);
+  const registeredPlace = normalized.match(
+    /\[\s*["']((?:0x[0-9a-f]+:0x[0-9a-f]+)|(?:ChI[A-Za-z0-9_-]{8,}))["']\s*,\s*["']((?:\\.|[^"'])*)["']\s*,\s*\[\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*\]\s*,\s*["']?(\d{3,30})?["']?\s*\]\s*,\s*["']((?:\\.|[^"'])+)["']/iu
+  );
   let parsedUrl: URL | null = null;
   try {
     parsedUrl = new URL(normalized.trim());
@@ -307,8 +310,12 @@ export function extractGoogleMapsPlaceMetadata(
 
   const featureId =
     googleMapsFeatureId(parsedUrl?.searchParams.get("ftid")) ??
+    googleMapsFeatureId(registeredPlace?.[1]) ??
     googleMapsFeatureId(normalized);
-  const explicitCid = parsedUrl?.searchParams.get("cid")?.trim() ?? null;
+  const explicitCid =
+    parsedUrl?.searchParams.get("cid")?.trim() ??
+    registeredPlace?.[5]?.trim() ??
+    null;
   const cid = /^\d{3,30}$/u.test(explicitCid ?? "")
     ? explicitCid
     : featureIdCid(featureId);
@@ -321,14 +328,17 @@ export function extractGoogleMapsPlaceMetadata(
         .filter(Boolean)
     : [];
   const pathName = cleanMetadataText(queryCandidates.at(-1));
-  const htmlName = htmlMetadataValue(normalized, ["og:title", "twitter:title", "name"]);
+  const htmlName =
+    htmlMetadataValue(normalized, ["og:title", "twitter:title", "name"]) ??
+    cleanMetadataText(registeredPlace?.[6]);
   const htmlAddress =
     htmlMetadataValue(normalized, ["address", "formattedAddress"]) ??
     cleanMetadataText(
       normalized.match(
         /["'](?:formattedAddress|formatted_address|address)["']\s*:\s*["']([^"']+)["']/iu
       )?.[1]
-    );
+    ) ??
+    cleanMetadataText(registeredPlace?.[2]);
 
   return {
     placeId: placeId ?? featureId ?? (/^\d{3,30}$/u.test(explicitCid ?? "") ? explicitCid : null),
@@ -354,6 +364,17 @@ export function extractGoogleMapsCoordinates(
 
   const urlCoordinates = extractCoordinatesFromUrl(normalized);
   if (urlCoordinates) return urlCoordinates;
+
+  // 現行の登録済みスポット用埋め込み応答は
+  // [地点ID, 住所, [緯度, 経度], CID], 地点名 の順で地点を保持する。
+  // 画面中心や周辺候補の座標ではなく、この正式地点レコードを最優先する。
+  const registeredPlace = normalized.match(
+    /\[\s*["'](?:0x[0-9a-f]+:0x[0-9a-f]+|ChI[A-Za-z0-9_-]{8,})["']\s*,\s*["'](?:\\.|[^"'])*["']\s*,\s*\[\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*\]/iu
+  );
+  if (registeredPlace) {
+    const coordinates = coordinatePair(registeredPlace[1], registeredPlace[2]);
+    if (coordinates) return coordinates;
+  }
 
   const latitudeLongitudePatterns = [
     // placeの正式座標を、画面中心を表す@座標より優先する。

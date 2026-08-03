@@ -421,6 +421,40 @@ async function googlePlacesLookup(
   return metadataFromPlaceLookup(json);
 }
 
+async function googleMapsEmbedLookup(
+  query: string,
+  fetcher: typeof fetch,
+  signal: AbortSignal
+): Promise<PlaceLookupResult | null> {
+  for (const candidate of googleMapsPlaceQueryCandidates(query)) {
+    const parameters = new URLSearchParams({ q: candidate, output: "embed" });
+    const response = await fetcher(
+      `https://www.google.com/maps?${parameters}`,
+      {
+        method: "GET",
+        headers: GOOGLE_REQUEST_HEADERS,
+        signal,
+        redirect: "follow",
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Google Maps登録地点検索エラー：${response.status}`);
+    }
+    const html = await responseText(response);
+    const coordinates = extractGoogleMapsCoordinates(html);
+    if (!coordinates) continue;
+    return {
+      coordinates,
+      metadata: mergeMetadata(
+        extractGoogleMapsPlaceMetadata(response.url),
+        extractGoogleMapsPlaceMetadata(html),
+        { ...EMPTY_PLACE_METADATA, placeQuery: query }
+      ),
+    };
+  }
+  return null;
+}
+
 export function googleMapsPlaceQueryCandidates(query: string): string[] {
   const normalized = query.replace(/\s+/gu, " ").trim();
   const candidates = new Set<string>();
@@ -816,6 +850,36 @@ export async function resolveGoogleMapsSharedUrl(
           ...placesResult.coordinates,
           source: "google-places-api",
         };
+      }
+    }
+
+    if (!coordinateCandidate && metadata.placeQuery) {
+      try {
+        const embeddedPlace = await googleMapsEmbedLookup(
+          metadata.placeQuery,
+          fetcher,
+          abortController.signal
+        );
+        addAttempt(diagnostics, {
+          stage: "google-maps-embed",
+          outcome: embeddedPlace ? "success" : "miss",
+          detail: embeddedPlace
+            ? "Google Maps登録地点データから座標と地点情報を取得しました"
+            : "Google Maps登録地点データに座標がありませんでした",
+        });
+        if (embeddedPlace) {
+          metadata = mergeMetadata(embeddedPlace.metadata, metadata);
+          coordinateCandidate = {
+            ...embeddedPlace.coordinates!,
+            source: "google-maps-embed",
+          };
+        }
+      } catch (error) {
+        addAttempt(diagnostics, {
+          stage: "google-maps-embed",
+          outcome: "error",
+          detail: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
