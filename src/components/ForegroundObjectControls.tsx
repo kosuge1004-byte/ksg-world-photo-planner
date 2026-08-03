@@ -63,7 +63,7 @@ export function ForegroundObjectControls({
         disabled={disabled}
         onClick={onToggle}
       >
-        {active ? "配置を終了" : object ? "配置・移動" : "人物を配置"}
+        {active ? "配置場所の選択を終了" : object ? "人物を移動する場所を選択" : "人物を配置する場所を選択"}
       </button>
       <div className="foreground-height-control">
         <label htmlFor="foreground-height-range">高さ</label>

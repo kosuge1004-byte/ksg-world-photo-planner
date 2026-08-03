@@ -31,7 +31,7 @@ export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundO
   const position = Cartesian3.fromDegrees(
     object.longitude,
     object.latitude,
-    (object.groundHeightMeters as number) + 0.03
+    (object.groundHeightMeters as number) + 0.08
   );
   const heightMeters = Math.max(0.5, Math.min(3, object.heightCm / 100));
   const widthMeters = heightMeters * 0.4;
@@ -42,7 +42,7 @@ export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundO
       existing.billboard.width = new ConstantProperty(widthMeters);
       existing.billboard.sizeInMeters = new ConstantProperty(true);
       existing.billboard.heightReference = new ConstantProperty(HeightReference.NONE);
-      existing.billboard.disableDepthTestDistance = new ConstantProperty(0);
+      existing.billboard.disableDepthTestDistance = new ConstantProperty(1000);
     }
     return;
   }
@@ -58,7 +58,7 @@ export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundO
       verticalOrigin: VerticalOrigin.BOTTOM,
       heightReference: HeightReference.NONE,
       color: Color.WHITE,
-      disableDepthTestDistance: 0,
+      disableDepthTestDistance: 1000,
     },
   });
 }

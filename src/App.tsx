@@ -2251,7 +2251,8 @@ ${diagnosticMessage}
     latitude: number,
     longitude: number,
     preferredGroundHeightMeters?: number,
-    allowSubjectEndpoint = false
+    allowSubjectEndpoint = false,
+    preferredHeightCm?: number
   ): boolean {
     if (!tripodPoint || !subjectPoint) {
       setSearchMessage("三脚ピンと被写体ピンを先に配置してください");
@@ -2295,7 +2296,7 @@ ${diagnosticMessage}
       longitude: constrained.longitude,
       // 配置直後から暫定高度で表示し、DEM取得後に正確な地表高度へ補正する。
       groundHeightMeters: immediateGroundHeight,
-      heightCm: current[0]?.heightCm ?? plannedForegroundHeightCmRef.current,
+      heightCm: preferredHeightCm ?? plannedForegroundHeightCmRef.current,
       enabled: true,
     }]);
 
@@ -2338,9 +2339,10 @@ ${diagnosticMessage}
       subjectPoint.latitude,
       subjectPoint.longitude,
       subjectPoint.height,
-      true
+      true,
+      plannedForegroundHeightCmRef.current
     )) {
-      setSearchMessage("被写体ピン位置に人物を配置しました");
+      setSearchMessage(`被写体ピン位置に人物を配置しました（高さ ${plannedForegroundHeightCmRef.current}cm）`);
     }
   }
 
@@ -2358,7 +2360,7 @@ ${diagnosticMessage}
     if (mapViewMode === "2d") {
       placementModeRef.current = "foreground";
       setForegroundPlacementActive(true);
-      setSearchMessage("三脚と被写体の間をタップしてください。配置後は人物をドラッグできます");
+      setSearchMessage("人物を配置する場所をタップしてください。配置後は人物をドラッグして移動できます");
       return;
     }
     const viewer = mapViewerRef.current;
@@ -2379,7 +2381,7 @@ ${diagnosticMessage}
       }
     });
     setForegroundPlacementActive(true);
-    setSearchMessage("3D地図で前景・中景オブジェクトの位置をクリックしてください");
+    setSearchMessage("3D地図で人物を配置する場所をクリックしてください");
   }
 
   function updateForegroundHeight(heightCm: number): void {
@@ -2470,7 +2472,7 @@ ${diagnosticMessage}
     if (placementMode === "foreground") {
       if (placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude)) {
         stopPlacementMode();
-        setSearchMessage("前景・中景オブジェクトを配置しました。人物をドラッグして移動できます");
+        setSearchMessage("人物を配置しました。ドラッグして移動できます");
       }
     } else if (placementMode === "subject") {
       const requestId = ++subjectPlacementRequestRef.current;
@@ -3093,11 +3095,11 @@ ${diagnosticMessage}
                   ? "被写体ピンを置く地点を選択"
                   : tripodPlacementActive
                     ? "三脚ピンを置く地点を選択"
-                    : "前景・中景オブジェクトを置く地点を選択"
+                    : "人物を配置する場所を選択"
               }
             >
               <span>
-                {subjectPlacementActive ? "被写体" : tripodPlacementActive ? "三脚" : "前景・中景"}を置く地面をクリック
+                {subjectPlacementActive ? "被写体" : tripodPlacementActive ? "三脚" : "人物"}を置く地面をクリック
               </span>
             </button>
           )}

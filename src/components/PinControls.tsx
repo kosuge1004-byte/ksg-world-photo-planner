@@ -56,7 +56,7 @@ export function PinControls({
         onClick={onPlacePersonAtSubject}
         disabled={!subjectAvailable}
       >
-        被写体ピン位置に人物を配置
+        人物を配置
       </button>
 
       <button

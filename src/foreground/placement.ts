@@ -13,23 +13,29 @@ export function foregroundCoordinatesWithinSegment(
 ): { latitude: number; longitude: number } | null {
   const line = calculateKarneyLineMetrics(tripod, subject);
   if (line.distanceMeters <= 0.02) return null;
+
   const pointer: GroundPoint = {
     latitude,
     longitude,
     height: tripod.height,
-    label: "前景移動位置",
+    label: "人物配置位置",
   };
   const pointerLine = calculateKarneyLineMetrics(tripod, pointer);
   const bearingDeltaRadians =
     (pointerLine.bearingDegrees - line.bearingDegrees) * Math.PI / 180;
   const projectedDistanceMeters =
     pointerLine.distanceMeters * Math.cos(bearingDeltaRadians);
-  const subjectDistance = calculateKarneyLineMetrics(pointer, subject);
-  const endpointClearanceMeters = Math.min(0.5, line.distanceMeters * 0.01);
+  const crossTrackDistanceMeters = Math.abs(
+    pointerLine.distanceMeters * Math.sin(bearingDeltaRadians)
+  );
+
+  // スマートフォンのタップ誤差を許容しつつ、三脚より後方・被写体より奥は除外する。
+  const endpointClearanceMeters = Math.min(0.25, line.distanceMeters * 0.005);
+  const corridorWidthMeters = Math.max(5, Math.min(30, line.distanceMeters * 0.2));
   const isBetween =
-    projectedDistanceMeters > endpointClearanceMeters &&
-    projectedDistanceMeters < line.distanceMeters - endpointClearanceMeters &&
-    pointerLine.distanceMeters < line.distanceMeters &&
-    subjectDistance.distanceMeters < line.distanceMeters;
+    projectedDistanceMeters >= endpointClearanceMeters &&
+    projectedDistanceMeters <= line.distanceMeters - endpointClearanceMeters &&
+    crossTrackDistanceMeters <= corridorWidthMeters;
+
   return isBetween ? { latitude, longitude } : null;
 }
