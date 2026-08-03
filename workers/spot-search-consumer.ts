@@ -28,7 +28,9 @@ export default {
     const kv = env.SPOT_SEARCH_JOBS as unknown as SpotSearchJobKv;
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: env.SPOT_SEARCH_JOBS,
+      // 三脚候補検索中のDEM取得をWorkers KVへ永続化しない。
+      // 検索中はプロセスメモリのタイルキャッシュだけを使用する。
+      persistentCache: undefined,
       waitUntil: (promise) => context.waitUntil(promise),
     });
 
@@ -53,7 +55,11 @@ export default {
         const activeJob = storedJob ?? queuedJob;
         await runSpotSearchJob(
           activeJob,
-          createSpotSearchJobUpdater(kv, activeJob)
+          createSpotSearchJobUpdater(kv, activeJob, {
+            source: "queue/spot-search-consumer",
+            requestId: message.id,
+            queueAttempt: message.attempts,
+          })
         );
         message.ack();
       } catch (error) {
@@ -61,7 +67,11 @@ export default {
           message.retry({ delaySeconds: Math.min(60, 5 * message.attempts) });
           continue;
         }
-        const updateJob = createSpotSearchJobUpdater(kv, queuedJob);
+        const updateJob = createSpotSearchJobUpdater(kv, queuedJob, {
+          source: "queue/spot-search-consumer:terminal-failure",
+          requestId: message.id,
+          queueAttempt: message.attempts,
+        });
         await updateJob(queuedJob.clientId, queuedJob.jobId, {
           status: "failed",
           progress: "検索に失敗しました",

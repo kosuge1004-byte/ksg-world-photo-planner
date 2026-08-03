@@ -47,6 +47,7 @@ const assets = {
 
 class MemoryKv {
   values = new Map();
+  putCount = 0;
 
   async get(key, options) {
     const value = this.values.get(key);
@@ -55,6 +56,7 @@ class MemoryKv {
   }
 
   async put(key, value) {
+    this.putCount += 1;
     this.values.set(key, value);
   }
 }
@@ -392,6 +394,18 @@ test("spot search Pages Functions preserve API status while KV stores Cloudflare
   assert.equal(startResponse.status, 202);
   assert.deepEqual(await startResponse.json(), { jobId, status: "queued" });
   assert.equal(queue.messages.length, 1);
+  assert.equal(kv.putCount, 1);
+
+  const duplicateStartRequest = new Request("https://astrosight.example/api/spot-search-start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, jobId, input }),
+  });
+  const duplicateStartResponse = await startSearch(eventContext(duplicateStartRequest, env));
+  assert.equal(duplicateStartResponse.status, 202);
+  assert.deepEqual(await duplicateStartResponse.json(), { jobId, status: "queued" });
+  assert.equal(queue.messages.length, 1);
+  assert.equal(kv.putCount, 1);
 
   const storedKey = [...kv.values.keys()][0];
   const stored = JSON.parse(kv.values.get(storedKey));
@@ -420,11 +434,13 @@ test("spot search Pages Functions preserve API status while KV stores Cloudflare
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ clientId, jobId, results: [] }),
   });
+  const putCountBeforeFinalize = kv.putCount;
   const finalizeResponse = await finalizeSearch(eventContext(finalizeRequest, env));
   assert.equal(finalizeResponse.status, 200);
   assert.equal((await finalizeResponse.json()).status, "complete");
+  assert.equal(kv.putCount, putCountBeforeFinalize);
   const finalized = JSON.parse(kv.values.get(storedKey));
-  assert.equal(finalized.status, "completed");
+  assert.equal(finalized.job.status, "awaiting-3d");
   assert.deepEqual(finalized.partialResult, partialResult);
-  assert.deepEqual(finalized.finalResult, []);
+  assert.equal(finalized.finalResult, undefined);
 });

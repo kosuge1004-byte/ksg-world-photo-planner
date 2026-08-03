@@ -41,7 +41,8 @@
     "cf:pages:dev": "npm run build && wrangler pages dev dist",
     "cf:pages:deploy": "npm run build && wrangler pages deploy dist",
     "cf:consumer:dev": "wrangler dev --config wrangler.spot-search.jsonc",
-    "cf:consumer:deploy": "wrangler deploy --config wrangler.spot-search.jsonc"
+    "cf:consumer:deploy": "wrangler deploy --config wrangler.spot-search.jsonc",
+    "verify:workers-kv-writes": "node scripts/verify-workers-kv-writes.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

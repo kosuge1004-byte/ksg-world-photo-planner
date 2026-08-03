@@ -1,6 +1,7 @@
 import type { SpotSearchJob } from "../../src/types/backgroundSearch.ts";
 import {
   createSpotSearchJobUpdater,
+  getStoredSpotSearchJob,
   setSpotSearchJob,
   validSearchJobId,
   validSpotSearchJobInput,
@@ -18,6 +19,13 @@ type StartRequest = {
 };
 
 export const onRequest: PagesFunction<CloudflareEnv> = async ({ request, env }) => {
+  const requestId = request.headers.get("cf-ray") ??
+    request.headers.get("x-request-id") ??
+    crypto.randomUUID();
+  const diagnostic = {
+    source: "api/spot-search-start",
+    requestId,
+  };
   if (request.method !== "POST") {
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405);
   }
@@ -41,11 +49,26 @@ export const onRequest: PagesFunction<CloudflareEnv> = async ({ request, env }) 
       updatedAt: now,
     };
     const kv = spotSearchJobKv(env);
-    await setSpotSearchJob(kv, job);
+    const existing = await getStoredSpotSearchJob(kv, job.clientId, job.jobId);
+    if (existing) {
+      const sameRequest = JSON.stringify(existing.request) === JSON.stringify(job.input);
+      if (!sameRequest) {
+        return jsonResponse({ error: "同じ検索ジョブIDに異なる条件が指定されています" }, 409);
+      }
+      return jsonResponse({
+        jobId: existing.job.jobId,
+        status: existing.job.status,
+      }, existing.job.status === "complete" || existing.job.status === "failed" ? 200 : 202);
+    }
+
+    await setSpotSearchJob(kv, job, undefined, diagnostic);
     try {
       await env.SPOT_SEARCH_QUEUE.send({ version: 1, job });
     } catch (error) {
-      const updateJob = createSpotSearchJobUpdater(kv, job);
+      const updateJob = createSpotSearchJobUpdater(kv, job, {
+        source: "api/spot-search-start:queue-send-failed",
+        requestId,
+      });
       await updateJob(job.clientId, job.jobId, {
         status: "failed",
         progress: "検索処理を起動できませんでした",

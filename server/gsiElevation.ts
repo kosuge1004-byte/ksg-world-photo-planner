@@ -53,11 +53,9 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_TILE_CACHE_ENTRIES = 512;
 const PERSISTENT_TILE_FORMAT_VERSION = 1;
-const PERSISTENT_TILE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 8;
 const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
-const persistentWritePromises = new Map<string, Promise<void>>();
 let activeTileRequests = 0;
 const tileRequestWaiters: Array<() => void> = [];
 
@@ -318,34 +316,12 @@ async function readPersistentDecodedTile(
   }
 }
 
-function writePersistentDecodedTile(
-  source: ElevationTileSource,
-  x: number,
-  y: number,
-  tile: DecodedElevationTile
-): void {
-  const persistentCache = serverPersistentCache();
-  if (!persistentCache) return;
-  const key = persistentTileKey(source, x, y);
-  if (persistentWritePromises.has(key)) return;
-  const write = persistentCache.put(key, serializeDecodedElevationTile(tile), {
-    expirationTtl: PERSISTENT_TILE_TTL_SECONDS,
-    metadata: {
-      source: source.label,
-      zoom: source.zoom,
-      width: tile.width,
-      height: tile.height,
-      formatVersion: PERSISTENT_TILE_FORMAT_VERSION,
-      savedAt: new Date().toISOString(),
-    },
-  }).then(() => undefined).catch(() => {
-    // 永続化失敗は検索結果に影響させない。メモリキャッシュと通常取得を維持する。
-  }).finally(() => {
-    persistentWritePromises.delete(key);
-  });
-  persistentWritePromises.set(key, write);
-  keepServerTaskAlive(write);
-}
+/**
+ * DEMタイルは検索中に大量取得されるためWorkers KVへ書き込まない。
+ * 既存KVの読み取り互換性だけ維持し、新規取得分はプロセスメモリの
+ * tileCacheで再利用する。時間変更・三脚候補更新・検索進捗による
+ * KV PUTを確実に0回にするための設計。
+ */
 
 const GSI_TILE_REQUEST_TIMEOUT_MS = 8_000;
 
@@ -392,7 +368,6 @@ async function fetchDecodedTile(
       throw new Error(`国土地理院標高タイル取得エラー：${response.status}`);
     }
     const decoded = decodeElevationTile(new Uint8Array(await response.arrayBuffer()));
-    writePersistentDecodedTile(source, x, y, decoded);
     return decoded;
   }).catch((error: unknown) => {
     // 中断や一時的な通信失敗をキャッシュせず、次の判定で再取得できるようにする。

@@ -53,6 +53,12 @@ export type SpotSearchQueueMessage = {
   job: SpotSearchJob;
 };
 
+export type KvWriteDiagnosticContext = {
+  source: string;
+  requestId?: string;
+  queueAttempt?: number;
+};
+
 export function validSearchJobId(value: unknown): value is string {
   return typeof value === "string" && ID_PATTERN.test(value);
 }
@@ -133,6 +139,31 @@ function isStoredSpotSearchJob(value: unknown): value is StoredSpotSearchJob {
     "job" in value && isSpotSearchJob(value.job);
 }
 
+function persistedJobSignature(job: SpotSearchJob): string {
+  return JSON.stringify({
+    status: job.status,
+    results: job.results,
+    error: job.error,
+  });
+}
+
+/**
+ * Workers KVへ永続化する状態を、外部プロセスとの受け渡しに必要な
+ * チェックポイントだけに限定する。
+ *
+ * queued: Queueへ渡したジョブの初期状態
+ * awaiting-3d: サーバー検索結果を端末へ引き渡す状態
+ * failed: エラー復旧に必要な最終状態
+ *
+ * running と進捗表示はQueue Consumer内のメモリだけで管理し、
+ * 時間変更・候補更新・進捗通知によるPUTを発生させない。
+ */
+function shouldPersistJob(job: SpotSearchJob): boolean {
+  return job.status === "queued" ||
+    job.status === "awaiting-3d" ||
+    job.status === "failed";
+}
+
 export async function getStoredSpotSearchJob(
   kv: SpotSearchJobKv,
   clientId: string,
@@ -153,24 +184,54 @@ export async function getSpotSearchJob(
 export async function setSpotSearchJob(
   kv: SpotSearchJobKv,
   job: SpotSearchJob,
-  previous?: StoredSpotSearchJob
+  previous?: StoredSpotSearchJob,
+  diagnostic?: KvWriteDiagnosticContext
 ): Promise<void> {
   const record = storedRecord(job, previous);
-  await kv.put(key(job.clientId, job.jobId), JSON.stringify(record), {
-    expirationTtl: JOB_TTL_SECONDS,
-    metadata: {
-      status: record.status,
-      updatedAt: record.updatedAt,
-      expiresAt: record.expiresAt,
-    },
-  });
+  const kvKey = key(job.clientId, job.jobId);
+  const logEntry = {
+    event: "workers_kv_put",
+    namespace: "SPOT_SEARCH_JOBS",
+    key: kvKey,
+    source: diagnostic?.source ?? "unknown",
+    requestId: diagnostic?.requestId,
+    queueAttempt: diagnostic?.queueAttempt,
+    clientId: job.clientId,
+    jobId: job.jobId,
+    previousStatus: previous?.job.status,
+    nextStatus: job.status,
+    storageStatus: record.status,
+    resultCount: job.results.length,
+    hasError: Boolean(job.error),
+    updatedAt: record.updatedAt,
+  };
+  try {
+    await kv.put(kvKey, JSON.stringify(record), {
+      expirationTtl: JOB_TTL_SECONDS,
+      metadata: {
+        status: record.status,
+        updatedAt: record.updatedAt,
+        expiresAt: record.expiresAt,
+      },
+    });
+    console.info(JSON.stringify({ ...logEntry, outcome: "success" }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      ...logEntry,
+      event: "workers_kv_put_failed",
+      outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    throw error;
+  }
 }
 
 export async function updateSpotSearchJob(
   kv: SpotSearchJobKv,
   clientId: string,
   jobId: string,
-  update: JobUpdate
+  update: JobUpdate,
+  diagnostic?: KvWriteDiagnosticContext
 ): Promise<SpotSearchJob> {
   const currentRecord = await getStoredSpotSearchJob(kv, clientId, jobId);
   if (!currentRecord) throw new Error("検索ジョブが見つかりません");
@@ -180,7 +241,10 @@ export async function updateSpotSearchJob(
     ...update,
     updatedAt: new Date().toISOString(),
   };
-  await setSpotSearchJob(kv, next, currentRecord);
+  if (shouldPersistJob(next) &&
+    persistedJobSignature(next) !== persistedJobSignature(current)) {
+    await setSpotSearchJob(kv, next, currentRecord, diagnostic);
+  }
   return next;
 }
 
@@ -190,13 +254,15 @@ export async function updateSpotSearchJob(
  */
 export function createSpotSearchJobUpdater(
   kv: SpotSearchJobKv,
-  initialJob: SpotSearchJob
+  initialJob: SpotSearchJob,
+  diagnostic?: KvWriteDiagnosticContext
 ): (
   clientId: string,
   jobId: string,
   update: JobUpdate
 ) => Promise<SpotSearchJob> {
   let current = initialJob;
+  let lastPersistedSignature = persistedJobSignature(initialJob);
   return async (clientId, jobId, update) => {
     if (clientId !== current.clientId || jobId !== current.jobId) {
       throw new Error("検索ジョブIDが一致しません");
@@ -206,7 +272,22 @@ export function createSpotSearchJobUpdater(
       ...update,
       updatedAt: new Date().toISOString(),
     };
-    await setSpotSearchJob(kv, current);
+
+    // 検索ループ中の進捗通知はQueue Consumer内のメモリだけで保持する。
+    // Workers KVへ保存するのは状態遷移・結果・エラーだけに限定し、
+    // 進捗率やメッセージ更新ごとのPUTを発生させない。
+    const hasPersistentField =
+      update.status !== undefined ||
+      update.results !== undefined ||
+      update.error !== undefined;
+    const nextSignature = persistedJobSignature(current);
+    const shouldPersist = shouldPersistJob(current) &&
+      hasPersistentField &&
+      nextSignature !== lastPersistedSignature;
+    if (shouldPersist) {
+      await setSpotSearchJob(kv, current, undefined, diagnostic);
+      lastPersistedSignature = nextSignature;
+    }
     return current;
   };
 }

@@ -23,7 +23,9 @@ export function configureCloudflareServerRuntime(
   configureServerRuntime({
     cesiumIonToken:
       context.env.CESIUM_ION_TOKEN ?? context.env.VITE_CESIUM_ION_TOKEN,
-    persistentCache: context.env.SPOT_SEARCH_JOBS,
+    // 時間変更・ピン移動・標高参照などの通常UI操作でWorkers KVへ
+    // DEMタイルを書き込まない。ブラウザ/サーバーメモリキャッシュを使用する。
+    persistentCache: undefined,
     waitUntil: (promise) => context.waitUntil(promise),
   });
 }
