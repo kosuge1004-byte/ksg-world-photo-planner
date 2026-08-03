@@ -1,8 +1,5 @@
 import { inflateSync } from "node:zlib";
-import {
-  keepServerTaskAlive,
-  serverPersistentCache,
-} from "./cloudflareRuntime.ts";
+import { serverPersistentCache } from "./cloudflareRuntime.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -258,24 +255,6 @@ function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
 
 function persistentTileKey(source: ElevationTileSource, x: number, y: number): string {
   return `gsi-decoded-dem-v1/${source.id}/${source.zoom}/${x}/${y}.bin`;
-}
-
-function serializeDecodedElevationTile(tile: DecodedElevationTile): ArrayBuffer {
-  const headerBytes = 12;
-  const output = new Uint8Array(headerBytes + tile.heightsCentimeters.byteLength);
-  const view = new DataView(output.buffer);
-  view.setUint32(0, PERSISTENT_TILE_FORMAT_VERSION, true);
-  view.setUint32(4, tile.width, true);
-  view.setUint32(8, tile.height, true);
-  output.set(
-    new Uint8Array(
-      tile.heightsCentimeters.buffer,
-      tile.heightsCentimeters.byteOffset,
-      tile.heightsCentimeters.byteLength
-    ),
-    headerBytes
-  );
-  return output.buffer;
 }
 
 function deserializeDecodedElevationTile(bytes: ArrayBuffer): DecodedElevationTile | null {
