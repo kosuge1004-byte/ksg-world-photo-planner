@@ -97,11 +97,12 @@ Wranglerの`node:zlib`警告は表示されますが、両Wrangler設定で必�
 
 ## 未解決・デプロイ前に必要な作業
 
-1. `wrangler.jsonc`と`wrangler.spot-search.jsonc`のKV namespace IDプレースホルダーを実IDへ置換する。
-2. Cloudflare Queue `astrosight-spot-search`を作成し、Consumer WorkerをPagesより先にデプロイする。
+1. Pages project `astrosight`とKV namespace `astrosight-cache`が同一Cloudflareアカウントに存在することを、認証済みWranglerで確認する。
+2. Cloudflare Queue `astrosight-spot-search`が未作成なら作成し、Consumer WorkerをPagesより先にデプロイする。
 3. Pagesのビルド変数`VITE_CESIUM_ION_TOKEN`と、Consumer WorkerのSecret `CESIUM_ION_TOKEN`を設定する。
-4. 実Cloudflareアカウントへのデプロイは、アカウント・KV・Queue・Secretsが未指定のため未実施。ローカルWrangler実行と両Workerのバンドル/dry-runまで確認済み。
+4. KV IDはCloudflare実値`92197c38d81d48489ef4fdd25b1b9a58`、Binding名は`SPOT_SEARCH_JOBS`として両Wrangler設定へ反映済み。`preview_id`は使用しない。
 5. 本番デプロイ後にCesium 3Dの目視、実データを使った長時間スポット検索の完走、進捗更新を確認する。
 6. Workers KVは結果整合性のため、別リージョンから同時に状態を読むと短時間の反映遅延が起こり得る。強整合性が必要になった場合はDurable Objectsへの置換を検討する。
+7. 現在のCloudflareアカウントはFreeプランのため、Consumer Workerに`cpu_ms`を明示できない。長時間検索がプラン既定CPU上限を超える場合はWorkers Paidプランが必要。
 
 リソース作成とデプロイの具体的な順序は`CLOUDFLARE_DEPLOYMENT.md`に記載しています。
