@@ -15,9 +15,9 @@ export type GsiElevationClientResult = {
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const REQUEST_BATCH_SIZE = 32;
-const MINIMUM_RETRY_BATCH_SIZE = 8;
-const REQUEST_TIMEOUT_MS = 12_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_CONCURRENT_REQUESTS = 2;
+const SINGLE_POINT_RETRY_DELAY_MS = 250;
 
 function emptySamples(count: number): GsiElevationApiSample[] {
   return Array.from({ length: count }, () => ({ heightMeters: null, source: null }));
@@ -75,14 +75,70 @@ async function requestBatch(
   }
 }
 
+type ScheduledRequest = (
+  points: GsiElevationClientPoint[]
+) => Promise<GsiElevationApiSample[]>;
+
+function createRequestScheduler(
+  signal: AbortSignal | undefined,
+  fetcher: FetchLike
+): ScheduledRequest {
+  type Job = {
+    points: GsiElevationClientPoint[];
+    resolve: (samples: GsiElevationApiSample[]) => void;
+    reject: (error: unknown) => void;
+  };
+
+  const queue: Job[] = [];
+  let activeRequests = 0;
+
+  const pump = (): void => {
+    while (activeRequests < MAX_CONCURRENT_REQUESTS && queue.length > 0) {
+      const job = queue.shift();
+      if (!job) return;
+      if (signal?.aborted) {
+        job.reject(abortError());
+        continue;
+      }
+      activeRequests += 1;
+      void requestBatch(job.points, signal, fetcher)
+        .then(job.resolve, job.reject)
+        .finally(() => {
+          activeRequests -= 1;
+          pump();
+        });
+    }
+  };
+
+  return (points) => new Promise<GsiElevationApiSample[]>((resolve, reject) => {
+    queue.push({ points, resolve, reject });
+    pump();
+  });
+}
+
+async function waitForSinglePointRetry(signal: AbortSignal | undefined): Promise<void> {
+  if (signal?.aborted) throw abortError();
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(resolve, SINGLE_POINT_RETRY_DELAY_MS);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal) {
+      setTimeout(() => signal.removeEventListener("abort", onAbort), SINGLE_POINT_RETRY_DELAY_MS);
+    }
+  });
+}
+
 async function requestBatchWithRecovery(
   points: GsiElevationClientPoint[],
   signal: AbortSignal | undefined,
-  fetcher: FetchLike
+  request: ScheduledRequest
 ): Promise<GsiElevationClientResult> {
   try {
     return {
-      samples: await requestBatch(points, signal, fetcher),
+      samples: await request(points),
       failedPointCount: 0,
       lastError: null,
     };
@@ -90,10 +146,11 @@ async function requestBatchWithRecovery(
     if (signal?.aborted) {
       throw abortError();
     }
-    if (points.length <= MINIMUM_RETRY_BATCH_SIZE) {
+    if (points.length === 1) {
       try {
+        await waitForSinglePointRetry(signal);
         return {
-          samples: await requestBatch(points, signal, fetcher),
+          samples: await request(points),
           failedPointCount: 0,
           lastError: null,
         };
@@ -111,8 +168,8 @@ async function requestBatchWithRecovery(
 
     const middle = Math.ceil(points.length / 2);
     const [left, right] = await Promise.all([
-      requestBatchWithRecovery(points.slice(0, middle), signal, fetcher),
-      requestBatchWithRecovery(points.slice(middle), signal, fetcher),
+      requestBatchWithRecovery(points.slice(0, middle), signal, request),
+      requestBatchWithRecovery(points.slice(middle), signal, request),
     ]);
     return {
       samples: [...left.samples, ...right.samples],
@@ -138,13 +195,14 @@ export async function fetchGsiElevationSamples(
     )
   );
   const results = new Array<GsiElevationClientResult>(batches.length);
+  const request = createRequestScheduler(signal, fetcher);
   let nextBatchIndex = 0;
 
   async function worker(): Promise<void> {
     while (nextBatchIndex < batches.length) {
       const index = nextBatchIndex;
       nextBatchIndex += 1;
-      results[index] = await requestBatchWithRecovery(batches[index], signal, fetcher);
+      results[index] = await requestBatchWithRecovery(batches[index], signal, request);
     }
   }
 

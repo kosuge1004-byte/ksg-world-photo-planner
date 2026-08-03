@@ -20,9 +20,15 @@ function jsonResponse(body, status = 200) {
 
 test("large DEM requests split until Cloudflare can complete them", async () => {
   const requestSizes = [];
+  let activeRequests = 0;
+  let maximumActiveRequests = 0;
   const fetcher = async (_url, init) => {
+    activeRequests += 1;
+    maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
+    await new Promise((resolve) => setTimeout(resolve, 1));
     const requested = JSON.parse(init.body).points;
     requestSizes.push(requested.length);
+    activeRequests -= 1;
     if (requested.length > 8) {
       return jsonResponse({ error: "upstream timeout" }, 524);
     }
@@ -43,12 +49,13 @@ test("large DEM requests split until Cloudflare can complete them", async () => 
   assert.ok(requestSizes.includes(16));
   assert.ok(requestSizes.includes(8));
   assert.ok(Math.max(...requestSizes) <= 32);
+  assert.ok(maximumActiveRequests <= 2);
 });
 
-test("unrecoverable DEM subsets fall back without discarding other points", async () => {
+test("an unrecoverable DEM point does not discard its neighboring points", async () => {
   const fetcher = async (_url, init) => {
     const requested = JSON.parse(init.body).points;
-    if (requested.some((point) => point.latitude < 35.0008)) {
+    if (requested.some((point) => point.latitude === 35)) {
       return new Response("gateway failure", {
         status: 502,
         headers: { "Content-Type": "text/html" },
@@ -62,9 +69,9 @@ test("unrecoverable DEM subsets fall back without discarding other points", asyn
   const result = await fetchGsiElevationSamples(points(16), undefined, fetcher);
 
   assert.equal(result.samples.length, 16);
-  assert.equal(result.failedPointCount, 8);
-  assert.equal(result.samples.slice(0, 8).every((sample) => sample.source === null), true);
-  assert.equal(result.samples.slice(8).every((sample) => sample.source === "DEM10B"), true);
+  assert.equal(result.failedPointCount, 1);
+  assert.equal(result.samples[0].source, null);
+  assert.equal(result.samples.slice(1).every((sample) => sample.source === "DEM10B"), true);
 });
 
 test("DEM requests preserve user cancellation", async () => {

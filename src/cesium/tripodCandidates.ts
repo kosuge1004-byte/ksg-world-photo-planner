@@ -23,8 +23,10 @@ const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
 const DEFAULT_SAMPLE_COUNT = 32;
-const DEFAULT_ROOT_REFINEMENT_PASSES = 3;
-const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 8;
+// 8分割を3往復（512分割相当）する代わりに、24分割を2往復する。
+// 576分割相当へ精度を上げつつ、DEM APIの待機を1往復減らす。
+const DEFAULT_ROOT_REFINEMENT_PASSES = 2;
+const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 24;
 const CONVERGED_POSITION_METERS = 0.05;
 const CONVERGED_HORIZONTAL_DEGREES = 0.0001;
 export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;
@@ -218,8 +220,7 @@ async function scanTerrainDistanceRange(
     searchProfile?.refinementSegments ?? DEFAULT_ROOT_REFINEMENT_SEGMENTS
   ));
   for (let pass = 0; pass < refinementPasses; pass += 1) {
-    // 7点を一括取得して8分割する。3段階で9回二分探索相当の区間精度を保ち、
-    // 高精度DEMへの逐次通信を最大9往復から3往復へ減らす。
+    // 区間内の複数点を一括取得し、逐次二分探索より少ない通信往復で精密化する。
     const step = (highDistance - lowDistance) / refinementSegments;
     const refinementDistances = Array.from(
       { length: refinementSegments - 1 },
