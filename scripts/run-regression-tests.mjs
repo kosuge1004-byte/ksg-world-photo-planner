@@ -79,6 +79,19 @@ const cases = [
     arguments: ["./scripts/verify-search-engine-exclusion.mjs"],
   },
   {
+    name: "Chrome PWA installability contracts",
+    arguments: ["./scripts/verify-pwa-installability.mjs"],
+  },
+  {
+    name: "resilient Cloudflare DEM batching",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/gsi-elevation-client.test.mjs",
+    ],
+  },
+  {
     name: "celestial occlusion recalculation and boundary stability",
     arguments: ["./scripts/verify-celestial-occlusion-stability.mjs"],
   },
