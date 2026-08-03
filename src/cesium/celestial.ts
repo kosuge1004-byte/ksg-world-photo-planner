@@ -290,7 +290,8 @@ function apparentDisc(
   observerPoint: GroundPoint,
   projection: CameraProjection,
   geometricAltitudeDegrees: number,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): {
   angularDiameterDegrees: number;
   verticalAngularDiameterDegrees: number;
@@ -312,13 +313,26 @@ function apparentDisc(
     Math.min(1, radius / Math.max(radius, distanceKilometers))
   );
   const angularDiameterDegrees = 2 * angularRadius * RAD;
+  // 中心高度の大気差補正と同じ経路（実況気象のBennett式、なければ標準大気式）を
+  // 円盤上端・下端にも使う。円盤中心と縁で補正元が食い違うと、天気補正の
+  // 適用時だけ「潰れ」の見え方が標準大気のままになる非対称が生じるため。
+  const weather = refractionWeather?.effectiveMode === "weather"
+    ? weatherForDate(refractionWeather, date)
+    : null;
+  const refractionAtDegrees = (altitudeDegrees: number): number => {
+    if (weather) {
+      const correction = weatherRefractionCorrectionDegrees(altitudeDegrees, weather);
+      if (correction !== null) return correction;
+    }
+    return Refraction("normal", altitudeDegrees);
+  };
   const verticalAngularDiameterDegrees = calculationMode === "pro"
     ? (
         geometricAltitudeDegrees + angularDiameterDegrees / 2 +
-        Refraction("normal", geometricAltitudeDegrees + angularDiameterDegrees / 2)
+        refractionAtDegrees(geometricAltitudeDegrees + angularDiameterDegrees / 2)
       ) - (
         geometricAltitudeDegrees - angularDiameterDegrees / 2 +
-        Refraction("normal", geometricAltitudeDegrees - angularDiameterDegrees / 2)
+        refractionAtDegrees(geometricAltitudeDegrees - angularDiameterDegrees / 2)
       )
     : angularDiameterDegrees;
 
@@ -347,7 +361,8 @@ export function isCelestialInCameraFrame(
   observerPoint: GroundPoint,
   horizontal: HorizontalCoordinates,
   projection: CameraProjection,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): boolean {
   const projected = projectHorizontalToPreview(horizontal, projection);
   if (id !== "sun" && id !== "moon") return projected.visibleInFrame;
@@ -363,7 +378,8 @@ export function isCelestialInCameraFrame(
     observerPoint,
     projection,
     geometricAltitudeDegrees,
-    calculationMode
+    calculationMode,
+    refractionWeather
   );
   return (
     projected.inFront &&
@@ -525,7 +541,8 @@ export function calculateCelestialScreenPoints(
             "standard"
           ).altitudeDegrees
         : horizontal.altitudeDegrees,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const visibleInFrame = isCelestialInCameraFrame(
       id,
@@ -533,7 +550,8 @@ export function calculateCelestialScreenPoints(
       lensObserver,
       horizontal,
       projection,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
 
     return {

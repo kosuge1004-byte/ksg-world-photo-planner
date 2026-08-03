@@ -493,36 +493,58 @@ function TimelinePanelComponent({
           時間
         </div>
 
-        <div
-          ref={timelineRulerRef}
-          className="timeline-ruler timeline-scroll-ruler"
-          role="slider"
-          tabIndex={0}
-          aria-label="撮影時刻。左右にドラッグして変更"
-          aria-valuetext={selectedTimeText}
-          onPointerDown={startTimelineDrag}
-          onPointerMove={moveTimelineDrag}
-          onPointerUp={stopTimelineDrag}
-          onPointerCancel={stopTimelineDrag}
-          onKeyDown={useTimelineKeyboard}
-        >
-          <output
-            className="timeline-current-time"
+        <div className="timeline-ruler-shell">
+          <div
+            ref={timelineRulerRef}
+            className="timeline-ruler timeline-scroll-ruler"
+            role="slider"
+            tabIndex={0}
+            aria-label="撮影時刻。左右にドラッグして変更"
+            aria-valuetext={selectedTimeText}
+            onPointerDown={startTimelineDrag}
+            onPointerMove={moveTimelineDrag}
+            onPointerUp={stopTimelineDrag}
+            onPointerCancel={stopTimelineDrag}
+            onKeyDown={useTimelineKeyboard}
           >
-            {selectedTimeText}
-          </output>
-          <div className="timeline-scroll-track" aria-hidden="true">
-            {timelineTicks.map((tick) => (
-              <span
-                key={tick.time}
-                className={tick.major ? "timeline-scroll-tick major" : "timeline-scroll-tick"}
-                style={{ left: tick.left }}
-              >
-                {tick.label && <b>{tick.label}</b>}
-              </span>
-            ))}
+            <output
+              className="timeline-current-time"
+            >
+              {selectedTimeText}
+            </output>
+            <div className="timeline-scroll-track" aria-hidden="true">
+              {timelineTicks.map((tick) => (
+                <span
+                  key={tick.time}
+                  className={tick.major ? "timeline-scroll-tick major" : "timeline-scroll-tick"}
+                  style={{ left: tick.left }}
+                >
+                  {tick.label && <b>{tick.label}</b>}
+                </span>
+              ))}
+            </div>
+            <span className="timeline-selection-line" aria-hidden="true" />
           </div>
-          <span className="timeline-selection-line" aria-hidden="true" />
+          <button
+            type="button"
+            className="timeline-minute-step timeline-minute-step-back"
+            aria-label="時刻を1分戻す"
+            title="1分戻す"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => updateTimelineTime(selectedTime - TIMELINE_SNAP_MS)}
+          >
+            −1
+          </button>
+          <button
+            type="button"
+            className="timeline-minute-step timeline-minute-step-forward"
+            aria-label="時刻を1分進める"
+            title="1分進める"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => updateTimelineTime(selectedTime + TIMELINE_SNAP_MS)}
+          >
+            +1
+          </button>
         </div>
 
         <div className="timeline-date-actions">

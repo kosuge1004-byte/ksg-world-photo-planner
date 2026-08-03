@@ -40,6 +40,7 @@ export function TopSettingsBar({
 }: Props) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
+  const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
   const [focalLengthInput, setFocalLengthInput] = useState(
     String(settings.focalLengthMm)
   );
@@ -152,6 +153,48 @@ export function TopSettingsBar({
           <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
             <b>精度設定</b><small>精度・速度・通信量を確認</small>
           </button>
+          <button
+            type="button"
+            onClick={() => setMapSourcesOpen((current) => !current)}
+            aria-expanded={mapSourcesOpen}
+          >
+            <b>地図出典</b><small>使用中の地図・標高データ</small>
+          </button>
+          {mapSourcesOpen && (
+            <section className="map-data-sources" aria-label="地図データ出典元">
+              <strong>地図データ出典元</strong>
+              <dl>
+                <div>
+                  <dt>2D地図・地点共有</dt>
+                  <dd>Google Maps</dd>
+                </div>
+                <div>
+                  <dt>3D地図・建物・地表形状</dt>
+                  <dd>Google Photorealistic 3D Tiles</dd>
+                </div>
+                <div>
+                  <dt>日本国内の標高・地形</dt>
+                  <dd>国土地理院 標高タイル・ジオイド関連データ</dd>
+                </div>
+                <div>
+                  <dt>地名検索・道路等の登録情報</dt>
+                  <dd>© OpenStreetMap contributors / Nominatim</dd>
+                </div>
+                <div>
+                  <dt>標高データの補完</dt>
+                  <dd>Cesium World Terrain</dd>
+                </div>
+              </dl>
+              <small>表示・検索・計算内容に応じて、上記の一部または複数を使用します。</small>
+              <nav aria-label="出典元の詳細">
+                <a href="https://www.google.com/maps" target="_blank" rel="noreferrer">Google Maps</a>
+                <a href="https://developers.google.com/maps/documentation/tile/3d-tiles" target="_blank" rel="noreferrer">Google 3D Tiles</a>
+                <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noreferrer">国土地理院</a>
+                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
+                <a href="https://cesium.com/platform/cesium-ion/content/cesium-world-terrain/" target="_blank" rel="noreferrer">Cesium World Terrain</a>
+              </nav>
+            </section>
+          )}
           {precisionMenuOpen && (
             <fieldset className="precision-settings-panel">
               <legend>精度設定</legend>

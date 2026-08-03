@@ -9,12 +9,13 @@ import type {
   HorizontalCoordinates,
 } from "../src/types/celestial.ts";
 import { calculateKarneyDestinationPoint } from "../src/geodesy/karneyGeodesic.ts";
+import { terrestrialRefractionCorrectionDegrees } from "../src/geodesy/terrestrialRefraction.ts";
+import { classifyTerrainOcclusion } from "../src/celestial/terrainOcclusionPolicy.ts";
 import type { GroundPoint } from "../src/types/points.ts";
 import { sampleServerLineOfSightTerrain } from "./worldTerrain.ts";
 import { LruPromiseCache } from "./lruPromiseCache.ts";
 
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
-const TERRAIN_CLEARANCE_DEGREES = 0.015;
 const horizonCache = new LruPromiseCache<TerrainHorizon>({
   maxEntries: 4_096,
   ttlMs: 6 * 60 * 60 * 1_000,
@@ -101,11 +102,14 @@ function profileMaximum(
   let maximumElevationDegrees = -90;
   let maximumIndex = 0;
   samples.forEach((sample, index) => {
-    const elevation = elevationAngleDegrees(
-      origin,
-      localUp,
-      Cartesian3.fromRadians(sample.longitude, sample.latitude, sample.height)
-    );
+    // クライアント側 (celestialOcclusion.ts) と同一の地表屈折補正を適用し、
+    // 検索結果とプレビューの遮蔽判定を一致させる。
+    const elevation =
+      elevationAngleDegrees(
+        origin,
+        localUp,
+        Cartesian3.fromRadians(sample.longitude, sample.latitude, sample.height)
+      ) + terrestrialRefractionCorrectionDegrees(distances[index]);
     if (elevation > maximumElevationDegrees) {
       maximumElevationDegrees = elevation;
       maximumIndex = index;
@@ -214,9 +218,13 @@ export function createServerLineOfSightEvaluator(
       )
     );
     const horizon = await awaitWithAbort(pending, signal);
-    const terrainObstructed =
-      horizon.maximumElevationDegrees >=
-      horizontal.altitudeDegrees - TERRAIN_CLEARANCE_DEGREES;
+    const terrainDecision = classifyTerrainOcclusion(
+      horizontal.altitudeDegrees,
+      horizon.maximumElevationDegrees,
+      undefined,
+      horizon.distanceMeters
+    );
+    const terrainObstructed = terrainDecision.status === "obstructed";
     return {
       verificationState: "dem-only",
       visible: !terrainObstructed,

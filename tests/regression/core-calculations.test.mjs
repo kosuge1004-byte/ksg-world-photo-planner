@@ -174,10 +174,11 @@ test("Sun and Moon screen coordinates use the shared pinhole projection", () => 
   const moon = points.find((point) => point.id === "moon");
   assert.ok(sun, "Sun screen point is missing");
   assert.ok(moon, "Moon screen point is missing");
-  closeTo(sun.xPercent, 55.36369299290154, TOLERANCE.screenPercent, "Sun x");
-  closeTo(sun.yPercent, -15.600027488591977, TOLERANCE.screenPercent, "Sun y");
-  closeTo(moon.xPercent, 32.07467942050593, TOLERANCE.screenPercent, "Moon x");
-  closeTo(moon.yPercent, -41.55463328908209, TOLERANCE.screenPercent, "Moon y");
+  // 被写体方向の仰角に地表屈折補正（k=0.13、距離1000m）を追加したことに伴う参照値。
+  closeTo(sun.xPercent, 55.36366837728845, TOLERANCE.screenPercent, "Sun x");
+  closeTo(sun.yPercent, -15.598238569553587, TOLERANCE.screenPercent, "Sun y");
+  closeTo(moon.xPercent, 32.074794233380516, TOLERANCE.screenPercent, "Moon x");
+  closeTo(moon.yPercent, -41.55255901627045, TOLERANCE.screenPercent, "Moon y");
 });
 
 test("frame rule includes the center and excludes a point outside the pinhole frame", () => {

@@ -2,8 +2,12 @@ type Props = {
   subjectActive: boolean;
   tripodActive: boolean;
   onSubjectToggle: () => void;
-  onSubjectEdit: () => void;
+  onOpenSubjectInGoogleMaps: () => void;
+  subjectAvailable: boolean;
+  onPlacePersonAtSubject: () => void;
   onTripodToggle: () => void;
+  onPlaceTripodAtCandidate: () => void;
+  tripodCandidateAvailable: boolean;
   onOpenTripodInGoogleMaps: () => void;
   tripodAvailable: boolean;
 };
@@ -12,8 +16,12 @@ export function PinControls({
   subjectActive,
   tripodActive,
   onSubjectToggle,
-  onSubjectEdit,
+  onOpenSubjectInGoogleMaps,
+  subjectAvailable,
+  onPlacePersonAtSubject,
   onTripodToggle,
+  onPlaceTripodAtCandidate,
+  tripodCandidateAvailable,
   onOpenTripodInGoogleMaps,
   tripodAvailable,
 }: Props) {
@@ -35,10 +43,20 @@ export function PinControls({
 
       <button
         type="button"
-        className="subject-edit-start-button"
-        onClick={onSubjectEdit}
+        className="subject-google-maps-button"
+        onClick={onOpenSubjectInGoogleMaps}
+        disabled={!subjectAvailable}
       >
-        3Dで被写体を指定
+        Googleマップへ被写体位置を送る
+      </button>
+
+      <button
+        type="button"
+        className="subject-person-placement-button"
+        onClick={onPlacePersonAtSubject}
+        disabled={!subjectAvailable}
+      >
+        被写体ピン位置に人物を配置
       </button>
 
       <button
@@ -53,6 +71,15 @@ export function PinControls({
         {tripodActive
           ? "地図をクリックして三脚設置"
           : "三脚ピンを設置"}
+      </button>
+
+      <button
+        type="button"
+        className="tripod-candidate-placement-button"
+        onClick={onPlaceTripodAtCandidate}
+        disabled={!tripodCandidateAvailable}
+      >
+        三脚候補点に三脚ピンを置く
       </button>
 
       <button

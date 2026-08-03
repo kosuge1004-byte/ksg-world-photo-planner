@@ -25,6 +25,7 @@ import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
 import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
+import { terrestrialRefractionCorrectionDegrees } from "../geodesy/terrestrialRefraction";
 import {
   groundPointFromCoordinates,
   sampleTerrainLineOfSightProfile,
@@ -144,7 +145,11 @@ function profileMaximum(
       sample.latitude,
       Number.isFinite(sample.height) ? sample.height : 0
     );
-    const elevation = elevationAngleDegrees(observer.terrainOrigin, localUp, target);
+    // 天体側の大気差補正との非対称性を避けるため、稜線までの距離に
+    // 応じた地表屈折補正を加えた上で稜線最高点を探す。
+    const elevation =
+      elevationAngleDegrees(observer.terrainOrigin, localUp, target) +
+      terrestrialRefractionCorrectionDegrees(distances[index]);
     if (elevation > maximumElevationDegrees) {
       maximumElevationDegrees = elevation;
       maximumIndex = index;
@@ -504,7 +509,9 @@ export async function evaluateCelestialLineOfSight(
   }
   const terrainDecision = classifyTerrainOcclusion(
     horizontal.altitudeDegrees,
-    terrain.maximumElevationDegrees
+    terrain.maximumElevationDegrees,
+    undefined,
+    terrain.distanceMeters
   );
   const terrainObstructed = terrainDecision.status === "obstructed";
   const terrainBoundaryUncertain = terrainDecision.status === "uncertain";

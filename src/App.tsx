@@ -523,6 +523,8 @@ function App() {
     useState<Partial<Record<number, boolean>>>({});
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
+  const [tripodCandidateSelectionOpen, setTripodCandidateSelectionOpen] =
+    useState(false);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
   const [tripodCandidateCalculationStatus, setTripodCandidateCalculationStatus] =
     useState<"idle" | "calculating" | "complete" | "no-solution" | "error">("idle");
@@ -891,6 +893,16 @@ function App() {
     tripodCandidateSourcePoints,
     tripodCandidates,
   ]);
+
+  const selectableDisplayedTripodCandidates = useMemo(() => {
+    const byCelestialBody = new Map<TripodCandidate["id"], TripodCandidate>();
+    for (const candidate of displayedTripodCandidates) {
+      if (!byCelestialBody.has(candidate.id)) {
+        byCelestialBody.set(candidate.id, candidate);
+      }
+    }
+    return Array.from(byCelestialBody.values());
+  }, [displayedTripodCandidates]);
 
   useEffect(() => {
     const enabledPoints = tripodCandidateSourcePoints.filter(
@@ -1445,7 +1457,11 @@ function App() {
     }
     return enableForegroundObjectDrag(viewer, (position) => {
       const coordinates = cartesianToForegroundCoordinates(position);
-      placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude);
+      placeForegroundAtCoordinates(
+        coordinates.latitude,
+        coordinates.longitude,
+        coordinates.groundHeightMeters
+      );
     });
     // 他のピン配置中は人物ドラッグを無効化し、複数ハンドラが同じタップを処理しない。
     // oxlint-disable-next-line react-hooks/exhaustive-deps
@@ -2231,28 +2247,54 @@ ${diagnosticMessage}
     );
   }
 
-  function placeForegroundAtCoordinates(latitude: number, longitude: number): boolean {
+  function placeForegroundAtCoordinates(
+    latitude: number,
+    longitude: number,
+    preferredGroundHeightMeters?: number,
+    allowSubjectEndpoint = false
+  ): boolean {
     if (!tripodPoint || !subjectPoint) {
       setSearchMessage("三脚ピンと被写体ピンを先に配置してください");
       return false;
     }
-    const constrained = foregroundCoordinatesWithinSegment(
-      latitude,
-      longitude,
-      tripodPoint,
-      subjectPoint
-    );
+
+    const constrained = allowSubjectEndpoint
+      ? { latitude, longitude }
+      : foregroundCoordinatesWithinSegment(
+          latitude,
+          longitude,
+          tripodPoint,
+          subjectPoint
+        );
     if (!constrained) {
       setSearchMessage("人物は三脚地点と被写体地点の間へ配置してください");
       return false;
     }
+
+    const fullDistance = calculateKarneyLineMetrics(tripodPoint, subjectPoint).distanceMeters;
+    const placementPoint = {
+      latitude: constrained.latitude,
+      longitude: constrained.longitude,
+      height: tripodPoint.height,
+      label: "人物配置地点",
+    };
+    const distanceFromTripod = calculateKarneyLineMetrics(tripodPoint, placementPoint).distanceMeters;
+    const ratio = fullDistance > 0
+      ? Math.max(0, Math.min(1, distanceFromTripod / fullDistance))
+      : 0;
+    const interpolatedHeight = tripodPoint.height +
+      (subjectPoint.height - tripodPoint.height) * ratio;
+    const immediateGroundHeight = Number.isFinite(preferredGroundHeightMeters)
+      ? preferredGroundHeightMeters as number
+      : interpolatedHeight;
+
     setForegroundObjects((current) => [{
       id: current[0]?.id ?? (crypto.randomUUID?.() ?? `foreground-${Date.now()}`),
       type: "person",
       latitude: constrained.latitude,
       longitude: constrained.longitude,
-      // 移動先の標高が確定するまで古い地点の標高を流用しない。
-      groundHeightMeters: undefined,
+      // 配置直後から暫定高度で表示し、DEM取得後に正確な地表高度へ補正する。
+      groundHeightMeters: immediateGroundHeight,
       heightCm: current[0]?.heightCm ?? plannedForegroundHeightCmRef.current,
       enabled: true,
     }]);
@@ -2279,10 +2321,27 @@ ${diagnosticMessage}
       }).catch((error: unknown) => {
         if (requestId !== foregroundTerrainRequestRef.current) return;
         console.warn("前景・中景オブジェクト地点の標高を取得できませんでした", error);
-        setSearchMessage("前景オブジェクト地点の標高を取得できませんでした。位置を再指定してください");
+        // DEM取得失敗時も人物を消さず、配置時の暫定高度を維持する。
+        setSearchMessage("人物を配置しました。地表高度の精密補正のみ取得できませんでした");
       });
     }, 180);
     return true;
+  }
+
+  function placePersonAtSubjectPoint(): void {
+    if (!subjectPoint) {
+      setSearchMessage("被写体ピンを先に配置してください");
+      return;
+    }
+    stopAllEditModes();
+    if (placeForegroundAtCoordinates(
+      subjectPoint.latitude,
+      subjectPoint.longitude,
+      subjectPoint.height,
+      true
+    )) {
+      setSearchMessage("被写体ピン位置に人物を配置しました");
+    }
   }
 
   function toggleForegroundPlacement(): void {
@@ -2311,7 +2370,11 @@ ${diagnosticMessage}
     disablePlacementRef.current = enableMapPlacement(viewer, (position) => {
       if (placementModeRef.current !== "foreground") return;
       const coordinates = cartesianToForegroundCoordinates(position);
-      if (placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude)) {
+      if (placeForegroundAtCoordinates(
+        coordinates.latitude,
+        coordinates.longitude,
+        coordinates.groundHeightMeters
+      )) {
         stopPlacementMode();
       }
     });
@@ -2752,6 +2815,17 @@ ${diagnosticMessage}
     setSearchMessage("三脚ピンを地図の中心へ移動しました");
   }
 
+  function openSubjectInGoogleMaps() {
+    if (!subjectPoint) {
+      setSearchMessage("被写体ピンを先に配置してください");
+      return;
+    }
+    const query = `${subjectPoint.latitude.toFixed(8)},${subjectPoint.longitude.toFixed(8)}`;
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    setSearchMessage("被写体ピンの場所をGoogleマップへ送りました");
+  }
+
   function openTripodInGoogleMaps() {
     if (!tripodPoint) {
       setSearchMessage("三脚ピンを先に配置してください");
@@ -2827,6 +2901,7 @@ ${diagnosticMessage}
 
   function selectTripodCandidate(candidate: TripodCandidate) {
     const viewer = mapViewerRef.current;
+    setTripodCandidateSelectionOpen(false);
     stopAllEditModes();
     const point = viewer && !viewer.isDestroyed()
       ? setTripodPin(
@@ -2849,6 +2924,16 @@ ${diagnosticMessage}
       ? `${candidate.label}の方位上にある三脚確認地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。プレビューと現地の見通しを確認してください`
       : `${candidate.label}と被写体が画角内で重なる三脚候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）`
     );
+  }
+
+  function placeTripodPinAtDisplayedCandidate() {
+    if (selectableDisplayedTripodCandidates.length === 0) return;
+    if (selectableDisplayedTripodCandidates.length === 1) {
+      selectTripodCandidate(selectableDisplayedTripodCandidates[0]);
+      return;
+    }
+    stopAllEditModes();
+    setTripodCandidateSelectionOpen(true);
   }
 
   return (
@@ -3179,8 +3264,12 @@ ${diagnosticMessage}
                   subjectActive={subjectPlacementActive}
                   tripodActive={tripodPlacementActive}
                   onSubjectToggle={toggleSubjectPlacement}
-                  onSubjectEdit={startSubjectEdit}
+                  onOpenSubjectInGoogleMaps={openSubjectInGoogleMaps}
+                  subjectAvailable={Boolean(subjectPoint)}
+                  onPlacePersonAtSubject={placePersonAtSubjectPoint}
                   onTripodToggle={toggleTripodPlacement}
+                  onPlaceTripodAtCandidate={placeTripodPinAtDisplayedCandidate}
+                  tripodCandidateAvailable={selectableDisplayedTripodCandidates.length > 0}
                   onOpenTripodInGoogleMaps={openTripodInGoogleMaps}
                   tripodAvailable={Boolean(tripodPoint)}
                 />
@@ -3255,6 +3344,47 @@ ${diagnosticMessage}
               )}
             </small>
           )}
+        </div>
+      )}
+
+      {tripodCandidateSelectionOpen && (
+        <div
+          className="tripod-candidate-selection-backdrop"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setTripodCandidateSelectionOpen(false);
+            }
+          }}
+        >
+          <section
+            className="tripod-candidate-selection-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="三脚候補点の天体を選択"
+          >
+            <h2>三脚候補点を選択</h2>
+            <p>三脚ピンを置く天体の候補点を選択してください。</p>
+            <div className="tripod-candidate-selection-list">
+              {selectableDisplayedTripodCandidates.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  onClick={() => selectTripodCandidate(candidate)}
+                >
+                  <strong>{candidate.label}</strong>
+                  <small>被写体まで約{Math.round(candidate.distanceMeters)}m</small>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="tripod-candidate-selection-cancel"
+              onClick={() => setTripodCandidateSelectionOpen(false)}
+            >
+              キャンセル
+            </button>
+          </section>
         </div>
       )}
 
