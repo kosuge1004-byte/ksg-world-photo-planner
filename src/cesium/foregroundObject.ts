@@ -16,10 +16,11 @@ import type { ForegroundObject } from "../types/foreground";
 
 const ENTITY_ID = "ksg-foreground-object";
 
-const PERSON_SVG = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" width="80" height="200" viewBox="0 0 80 200">
-<circle cx="40" cy="18" r="18" fill="#111" stroke="#fff" stroke-width="3"/>
-<path d="M26 40 Q40 34 54 40 L62 112 53 112 58 200 43 200 40 126 37 200 22 200 27 112 18 112Z" fill="#111" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+const PERSON_PIN_SVG = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="88" viewBox="0 0 64 88">
+  <path d="M32 86C27 73 8 58 8 32C8 18.7 18.7 8 32 8s24 10.7 24 24C56 58 37 73 32 86Z" fill="#111" stroke="#fff" stroke-width="4"/>
+  <circle cx="32" cy="27" r="7" fill="#fff"/>
+  <path d="M25 38Q32 34 39 38L42 55H37L39 69H34L32 53L30 69H25L27 55H22Z" fill="#fff"/>
 </svg>`)}`;
 
 export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundObject | null): void {
@@ -28,37 +29,43 @@ export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundO
     if (existing) viewer.entities.remove(existing);
     return;
   }
+
   const position = Cartesian3.fromDegrees(
     object.longitude,
     object.latitude,
     (object.groundHeightMeters as number) + 0.08
   );
-  const heightMeters = Math.max(0.5, Math.min(3, object.heightCm / 100));
-  const widthMeters = heightMeters * 0.4;
+
+  // The map is for locating/editing the person, not for judging physical scale.
+  // Therefore both near and far map views use a fixed pixel-size pin.
   if (existing) {
     existing.position = new ConstantPositionProperty(position);
     if (existing.billboard) {
-      existing.billboard.height = new ConstantProperty(heightMeters);
-      existing.billboard.width = new ConstantProperty(widthMeters);
-      existing.billboard.sizeInMeters = new ConstantProperty(true);
+      existing.billboard.image = new ConstantProperty(PERSON_PIN_SVG);
+      existing.billboard.width = new ConstantProperty(32);
+      existing.billboard.height = new ConstantProperty(44);
+      existing.billboard.sizeInMeters = new ConstantProperty(false);
       existing.billboard.heightReference = new ConstantProperty(HeightReference.NONE);
-      existing.billboard.disableDepthTestDistance = new ConstantProperty(1000);
+      existing.billboard.disableDepthTestDistance = new ConstantProperty(Number.POSITIVE_INFINITY);
+      existing.billboard.scale = new ConstantProperty(1);
+      existing.billboard.scaleByDistance = undefined;
     }
     return;
   }
+
   viewer.entities.add({
     id: ENTITY_ID,
     name: "前景・中景オブジェクト",
     position,
     billboard: {
-      image: PERSON_SVG,
-      width: widthMeters,
-      height: heightMeters,
-      sizeInMeters: true,
+      image: PERSON_PIN_SVG,
+      width: 32,
+      height: 44,
+      sizeInMeters: false,
       verticalOrigin: VerticalOrigin.BOTTOM,
       heightReference: HeightReference.NONE,
       color: Color.WHITE,
-      disableDepthTestDistance: 1000,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
   });
 }

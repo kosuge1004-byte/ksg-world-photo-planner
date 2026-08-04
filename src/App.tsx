@@ -31,7 +31,6 @@ import { CelestialTransitSearchDialog } from "./components/CelestialTransitSearc
 import { PreviewGestureLayer } from "./components/PreviewGestureLayer";
 import { ForegroundPreviewOverlay } from "./components/ForegroundPreviewOverlay";
 import { ForegroundObjectControls } from "./components/ForegroundObjectControls";
-import { foregroundCoordinatesWithinSegment } from "./foreground/placement";
 import { SpotSearchScreen } from "./components/SpotSearchScreen";
 import { ProjectsScreen } from "./components/ProjectsScreen";
 import { CalendarScreen } from "./components/CalendarScreen";
@@ -122,7 +121,11 @@ import {
   isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
-import type { ForegroundObject } from "./types/foreground";
+import {
+  DEFAULT_FOREGROUND_HEIGHT_CM,
+  normalizeForegroundHeightCm,
+  type ForegroundObject,
+} from "./types/foreground";
 import type {
   SpotPresetResult,
   SpotSearchCriteria,
@@ -473,8 +476,8 @@ function App() {
   const [foregroundObjects, setForegroundObjects] = useState<ForegroundObject[]>([]);
   const foregroundObject = foregroundObjects[0] ?? null;
   // 人物を配置する前に指定した身長を保持し、配置時の初期サイズへ使用する。
-  const [plannedForegroundHeightCm, setPlannedForegroundHeightCm] = useState(170);
-  const plannedForegroundHeightCmRef = useRef(170);
+  const [plannedForegroundHeightCm, setPlannedForegroundHeightCm] = useState(DEFAULT_FOREGROUND_HEIGHT_CM);
+  const plannedForegroundHeightCmRef = useRef(DEFAULT_FOREGROUND_HEIGHT_CM);
   const foregroundTerrainTimerRef = useRef<number | null>(null);
   const foregroundTerrainRequestRef = useRef(0);
   const subjectPlacementRequestRef = useRef(0);
@@ -2159,6 +2162,7 @@ ${diagnosticMessage}
     const loadedForegroundObjects = (project.foregroundObjects ?? []).map((object) => ({
       ...object,
       type: "person" as const,
+      heightCm: normalizeForegroundHeightCm(object.heightCm),
     }));
     setForegroundObjects(loadedForegroundObjects);
     const loadedForeground = loadedForegroundObjects[0];
@@ -2259,18 +2263,11 @@ ${diagnosticMessage}
       return false;
     }
 
-    const constrained = allowSubjectEndpoint
-      ? { latitude, longitude }
-      : foregroundCoordinatesWithinSegment(
-          latitude,
-          longitude,
-          tripodPoint,
-          subjectPoint
-        );
-    if (!constrained) {
-      setSearchMessage("人物は三脚地点と被写体地点の間へ配置してください");
-      return false;
-    }
+    // 人物位置はユーザーが選択した座標をそのまま保持する。
+    // 旧実装の「三脚－被写体間の回廊」制限は、2D地図の投影誤差や
+    // スマートフォンのタップ誤差で正しい地点を拒否するため廃止する。
+    const constrained = { latitude, longitude };
+    void allowSubjectEndpoint;
 
     const fullDistance = calculateKarneyLineMetrics(tripodPoint, subjectPoint).distanceMeters;
     const placementPoint = {
@@ -2296,7 +2293,9 @@ ${diagnosticMessage}
       longitude: constrained.longitude,
       // 配置直後から暫定高度で表示し、DEM取得後に正確な地表高度へ補正する。
       groundHeightMeters: immediateGroundHeight,
-      heightCm: preferredHeightCm ?? plannedForegroundHeightCmRef.current,
+      heightCm: normalizeForegroundHeightCm(
+        preferredHeightCm ?? plannedForegroundHeightCmRef.current
+      ),
       enabled: true,
     }]);
 
@@ -2385,11 +2384,12 @@ ${diagnosticMessage}
   }
 
   function updateForegroundHeight(heightCm: number): void {
-    plannedForegroundHeightCmRef.current = heightCm;
-    setPlannedForegroundHeightCm(heightCm);
+    const normalizedHeightCm = normalizeForegroundHeightCm(heightCm);
+    plannedForegroundHeightCmRef.current = normalizedHeightCm;
+    setPlannedForegroundHeightCm(normalizedHeightCm);
     // 配置済みの場合はCesium Entityとプレビューが同じrender cycleで即時更新される。
     setForegroundObjects((current) => current.map((object, index) =>
-      index === 0 ? { ...object, heightCm } : object
+      index === 0 ? { ...object, heightCm: normalizedHeightCm } : object
     ));
   }
 
@@ -2458,7 +2458,7 @@ ${diagnosticMessage}
     const placementMode = placementModeRef.current;
     if (placementMode === "none") return;
     const viewer = mapViewerRef.current;
-    const mapElement = mapSectionRef.current;
+    const mapElement = map2dStageRef.current;
     if (!mapElement) return;
     const rect = mapElement.getBoundingClientRect();
     const coordinates = coordinatesAtMapPixel(
@@ -2907,15 +2907,6 @@ ${diagnosticMessage}
     );
   }
 
-  function placeTripodPinAtDisplayedCandidate() {
-    if (selectableDisplayedTripodCandidates.length === 0) return;
-    if (selectableDisplayedTripodCandidates.length === 1) {
-      selectTripodCandidate(selectableDisplayedTripodCandidates[0]);
-      return;
-    }
-    stopAllEditModes();
-    setTripodCandidateSelectionOpen(true);
-  }
 
   return (
     <main className="app">
@@ -3247,10 +3238,7 @@ ${diagnosticMessage}
                   onSubjectToggle={toggleSubjectPlacement}
                   onOpenSubjectInGoogleMaps={openSubjectInGoogleMaps}
                   subjectAvailable={Boolean(subjectPoint)}
-                  onPlacePersonAtSubject={placePersonAtSubjectPoint}
                   onTripodToggle={toggleTripodPlacement}
-                  onPlaceTripodAtCandidate={placeTripodPinAtDisplayedCandidate}
-                  tripodCandidateAvailable={selectableDisplayedTripodCandidates.length > 0}
                   onOpenTripodInGoogleMaps={openTripodInGoogleMaps}
                   tripodAvailable={Boolean(tripodPoint)}
                 />
@@ -3260,6 +3248,8 @@ ${diagnosticMessage}
                   active={foregroundPlacementActive}
                   disabled={!subjectPoint || !tripodPoint}
                   onToggle={toggleForegroundPlacement}
+                  onPlaceAtSubject={placePersonAtSubjectPoint}
+                  subjectAvailable={Boolean(subjectPoint)}
                   onHeight={updateForegroundHeight}
                   onDelete={deleteForegroundObject}
                 />

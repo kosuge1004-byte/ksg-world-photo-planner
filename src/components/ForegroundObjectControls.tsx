@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-import type { ForegroundObject } from "../types/foreground";
+import {
+  FOREGROUND_HEIGHT_MAX_CM,
+  FOREGROUND_HEIGHT_MIN_CM,
+  normalizeForegroundHeightCm,
+  type ForegroundObject,
+} from "../types/foreground";
 
 type Props = {
   object: ForegroundObject | null;
@@ -9,15 +14,12 @@ type Props = {
   active: boolean;
   disabled: boolean;
   onToggle: () => void;
+  onPlaceAtSubject: () => void;
+  subjectAvailable: boolean;
   onHeight: (height: number) => void;
   onDelete: () => void;
 };
 
-const HEIGHT_MIN_CM = 50;
-const HEIGHT_MAX_CM = 300;
-
-const clampHeight = (value: number): number =>
-  Math.max(HEIGHT_MIN_CM, Math.min(HEIGHT_MAX_CM, Math.round(value)));
 
 export function ForegroundObjectControls({
   object,
@@ -25,6 +27,8 @@ export function ForegroundObjectControls({
   active,
   disabled,
   onToggle,
+  onPlaceAtSubject,
+  subjectAvailable,
   onHeight,
   onDelete,
 }: Props) {
@@ -37,7 +41,7 @@ export function ForegroundObjectControls({
 
   const changeHeight = (value: number): void => {
     if (!Number.isFinite(value)) return;
-    const nextHeight = clampHeight(value);
+    const nextHeight = normalizeForegroundHeightCm(value);
     setHeightText(String(nextHeight));
     onHeight(nextHeight);
   };
@@ -59,19 +63,27 @@ export function ForegroundObjectControls({
       </div>
       <button
         type="button"
+        className="subject-person-placement-button"
+        disabled={disabled || !subjectAvailable}
+        onClick={onPlaceAtSubject}
+      >
+        被写体ピン位置に人物を置く
+      </button>
+      <button
+        type="button"
         className={active ? "active" : ""}
         disabled={disabled}
         onClick={onToggle}
       >
-        {active ? "配置場所の選択を終了" : object ? "人物を移動する場所を選択" : "人物を配置する場所を選択"}
+        {active ? "配置場所の選択を終了" : "人物を置く場所をマップで選択"}
       </button>
       <div className="foreground-height-control">
         <label htmlFor="foreground-height-range">高さ</label>
         <input
           id="foreground-height-range"
           type="range"
-          min={HEIGHT_MIN_CM}
-          max={HEIGHT_MAX_CM}
+          min={FOREGROUND_HEIGHT_MIN_CM}
+          max={FOREGROUND_HEIGHT_MAX_CM}
           step={1}
           value={height}
           disabled={disabled}
@@ -79,8 +91,8 @@ export function ForegroundObjectControls({
         />
         <input
           type="number"
-          min={HEIGHT_MIN_CM}
-          max={HEIGHT_MAX_CM}
+          min={FOREGROUND_HEIGHT_MIN_CM}
+          max={FOREGROUND_HEIGHT_MAX_CM}
           step={1}
           value={heightText}
           disabled={disabled}
@@ -91,7 +103,7 @@ export function ForegroundObjectControls({
             setHeightText(value);
             if (value === "") return;
             const parsed = Number(value);
-            if (Number.isFinite(parsed) && parsed >= HEIGHT_MIN_CM && parsed <= HEIGHT_MAX_CM) {
+            if (Number.isFinite(parsed) && parsed >= FOREGROUND_HEIGHT_MIN_CM && parsed <= FOREGROUND_HEIGHT_MAX_CM) {
               onHeight(Math.round(parsed));
             }
           }}
@@ -112,7 +124,7 @@ export function ForegroundObjectControls({
         disabled={!object}
         onClick={onDelete}
       >
-        削除
+        人物を削除
       </button>
     </div>
   );

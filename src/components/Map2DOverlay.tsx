@@ -544,7 +544,7 @@ export function Map2DOverlay({
             }
           }}
         >
-          <svg viewBox="0 0 40 100"><circle cx="20" cy="11" r="9"/><path d="M13 24Q20 20 27 24L31 58H26L29 98H22L20 64L18 98H11L14 58H9Z"/></svg>
+          <svg viewBox="0 0 64 88" aria-hidden="true"><path className="person-pin-body" d="M32 86C27 73 8 58 8 32C8 18.7 18.7 8 32 8s24 10.7 24 24C56 58 37 73 32 86Z"/><circle className="person-pin-head" cx="32" cy="27" r="7"/><path className="person-pin-figure" d="M25 38Q32 34 39 38L42 55H37L39 69H34L32 53L30 69H25L27 55H22Z"/></svg>
         </button>
       )}
 </div>

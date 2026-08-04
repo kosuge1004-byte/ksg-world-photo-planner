@@ -2,7 +2,7 @@ import { Cartesian3, Ellipsoid } from "cesium";
 
 import { sensorDimensionsMm } from "../cesium/camera";
 import type { CameraSettings } from "../types/camera";
-import type { ForegroundObject } from "../types/foreground";
+import { foregroundHeightCmToMeters, type ForegroundObject } from "../types/foreground";
 import type { GroundPoint } from "../types/points";
 
 export type ForegroundScreenBox = {
@@ -45,7 +45,7 @@ export function projectForegroundObjectToPreview(
   const topPosition = Cartesian3.fromDegrees(
     object.longitude,
     object.latitude,
-    groundHeightMeters + object.heightCm / 100
+    groundHeightMeters + foregroundHeightCmToMeters(object.heightCm)
   );
 
   const forward = Cartesian3.normalize(
@@ -95,7 +95,7 @@ export function projectForegroundObjectToPreview(
     !Number.isFinite(topPercent) ||
     !Number.isFinite(heightPercent) ||
     !Number.isFinite(widthPercent) ||
-    heightPercent <= 0.02 ||
+    heightPercent <= 0 ||
     widthPercent <= 0
   ) {
     return null;
