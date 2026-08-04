@@ -78,6 +78,7 @@ import { createMapViewer } from "./cesium/createMapViewer";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
+  calculateKarneySurfaceDistanceMeters,
 } from "./geodesy/karneyGeodesic";
 import { enableMapPlacement } from "./cesium/mapPlacement";
 import { captureTripodPreview } from "./cesium/previewSnapshot";
@@ -647,6 +648,21 @@ function App() {
   const previewReady = Boolean(
     mapReady && subjectPoint && tripodPoint
   );
+
+  const foregroundOverlapsSubjectPin = useMemo(() => {
+    if (!foregroundObject?.enabled || !subjectPoint) return false;
+    try {
+      return calculateKarneySurfaceDistanceMeters(
+        {
+          latitude: foregroundObject.latitude,
+          longitude: foregroundObject.longitude,
+        },
+        subjectPoint
+      ) <= 0.5;
+    } catch {
+      return false;
+    }
+  }, [foregroundObject, subjectPoint]);
 
   const celestialPoints = useMemo(() => {
     if (!tripodPoint || !subjectPoint) {
@@ -1463,7 +1479,10 @@ function App() {
       placeForegroundAtCoordinates(
         coordinates.latitude,
         coordinates.longitude,
-        coordinates.groundHeightMeters
+        coordinates.groundHeightMeters,
+        false,
+        undefined,
+        "drag-3d"
       );
     });
     // 他のピン配置中は人物ドラッグを無効化し、複数ハンドラが同じタップを処理しない。
@@ -2251,12 +2270,15 @@ ${diagnosticMessage}
     );
   }
 
+  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-3d" | "drag-3d";
+
   function placeForegroundAtCoordinates(
     latitude: number,
     longitude: number,
     preferredGroundHeightMeters?: number,
     allowSubjectEndpoint = false,
-    preferredHeightCm?: number
+    preferredHeightCm?: number,
+    source: ForegroundPlacementSource = "map-3d"
   ): boolean {
     if (!tripodPoint || !subjectPoint) {
       setSearchMessage("三脚ピンと被写体ピンを先に配置してください");
@@ -2291,7 +2313,7 @@ ${diagnosticMessage}
       type: "person",
       latitude: constrained.latitude,
       longitude: constrained.longitude,
-      // 配置直後から暫定高度で表示し、DEM取得後に正確な地表高度へ補正する。
+      // 配置直後から表示する。2D配置時だけ後からDEM/地形高度で補正する。
       groundHeightMeters: immediateGroundHeight,
       heightCm: normalizeForegroundHeightCm(
         preferredHeightCm ?? plannedForegroundHeightCmRef.current
@@ -2299,32 +2321,42 @@ ${diagnosticMessage}
       enabled: true,
     }]);
 
-    if (foregroundTerrainTimerRef.current !== null) {
-      window.clearTimeout(foregroundTerrainTimerRef.current);
+    // 2D地図には表面高度がないため、この経路だけDEM/地形高度で補正する。
+    // 被写体ピン・3Dクリック・3Dドラッグで取得した高さは、建物屋上や橋面を含む
+    // 実際の3D表面高度なので、後からDEM地表高で上書きしてはいけない。
+    if (source === "map-2d") {
+      if (foregroundTerrainTimerRef.current !== null) {
+        window.clearTimeout(foregroundTerrainTimerRef.current);
+      }
+      const requestId = ++foregroundTerrainRequestRef.current;
+      foregroundTerrainTimerRef.current = window.setTimeout(() => {
+        foregroundTerrainTimerRef.current = null;
+        void groundPointFromCoordinates(
+          constrained.latitude,
+          constrained.longitude,
+          "前景・中景オブジェクト"
+        ).then((point) => {
+          if (requestId !== foregroundTerrainRequestRef.current) return;
+          setForegroundObjects((current) => current.map((object, index) =>
+            index === 0 &&
+            Math.abs(object.latitude - constrained.latitude) < 1e-9 &&
+            Math.abs(object.longitude - constrained.longitude) < 1e-9
+              ? { ...object, groundHeightMeters: point.height }
+              : object
+          ));
+        }).catch((error: unknown) => {
+          if (requestId !== foregroundTerrainRequestRef.current) return;
+          console.warn("前景・中景オブジェクト地点の標高を取得できませんでした", error);
+          setSearchMessage("人物を配置しました。地表高度の精密補正のみ取得できませんでした");
+        });
+      }, 180);
+    } else {
+      if (foregroundTerrainTimerRef.current !== null) {
+        window.clearTimeout(foregroundTerrainTimerRef.current);
+        foregroundTerrainTimerRef.current = null;
+      }
+      foregroundTerrainRequestRef.current += 1;
     }
-    const requestId = ++foregroundTerrainRequestRef.current;
-    foregroundTerrainTimerRef.current = window.setTimeout(() => {
-      foregroundTerrainTimerRef.current = null;
-      void groundPointFromCoordinates(
-        constrained.latitude,
-        constrained.longitude,
-        "前景・中景オブジェクト"
-      ).then((point) => {
-        if (requestId !== foregroundTerrainRequestRef.current) return;
-        setForegroundObjects((current) => current.map((object, index) =>
-          index === 0 &&
-          Math.abs(object.latitude - constrained.latitude) < 1e-9 &&
-          Math.abs(object.longitude - constrained.longitude) < 1e-9
-            ? { ...object, groundHeightMeters: point.height }
-            : object
-        ));
-      }).catch((error: unknown) => {
-        if (requestId !== foregroundTerrainRequestRef.current) return;
-        console.warn("前景・中景オブジェクト地点の標高を取得できませんでした", error);
-        // DEM取得失敗時も人物を消さず、配置時の暫定高度を維持する。
-        setSearchMessage("人物を配置しました。地表高度の精密補正のみ取得できませんでした");
-      });
-    }, 180);
     return true;
   }
 
@@ -2339,7 +2371,8 @@ ${diagnosticMessage}
       subjectPoint.longitude,
       subjectPoint.height,
       true,
-      plannedForegroundHeightCmRef.current
+      plannedForegroundHeightCmRef.current,
+      "subject-pin"
     )) {
       setSearchMessage(`被写体ピン位置に人物を配置しました（高さ ${plannedForegroundHeightCmRef.current}cm）`);
     }
@@ -2374,7 +2407,10 @@ ${diagnosticMessage}
       if (placeForegroundAtCoordinates(
         coordinates.latitude,
         coordinates.longitude,
-        coordinates.groundHeightMeters
+        coordinates.groundHeightMeters,
+        false,
+        undefined,
+        "map-3d"
       )) {
         stopPlacementMode();
       }
@@ -2470,7 +2506,14 @@ ${diagnosticMessage}
     );
 
     if (placementMode === "foreground") {
-      if (placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude)) {
+      if (placeForegroundAtCoordinates(
+        coordinates.latitude,
+        coordinates.longitude,
+        undefined,
+        false,
+        undefined,
+        "map-2d"
+      )) {
         stopPlacementMode();
         setSearchMessage("人物を配置しました。ドラッグして移動できます");
       }
@@ -2880,6 +2923,15 @@ ${diagnosticMessage}
     setCameraSettings((current) => ({ ...current, focalLengthMm }));
   }
 
+  function placeTripodAtDisplayedCandidate() {
+    if (selectableDisplayedTripodCandidates.length === 0) return;
+    if (selectableDisplayedTripodCandidates.length === 1) {
+      selectTripodCandidate(selectableDisplayedTripodCandidates[0]);
+      return;
+    }
+    setTripodCandidateSelectionOpen(true);
+  }
+
   function selectTripodCandidate(candidate: TripodCandidate) {
     const viewer = mapViewerRef.current;
     setTripodCandidateSelectionOpen(false);
@@ -2965,7 +3017,7 @@ ${diagnosticMessage}
             aspectRatio={previewAspectRatio}
           />
 
-          {previewReady && (
+          {previewReady && !foregroundOverlapsSubjectPin && (
             <div className="preview-subject-center" aria-hidden="true">
               <svg viewBox="0 0 28 40">
                 <path d="M14 39C11 32 2 24 2 14A12 12 0 0 1 26 14c0 10-9 18-12 25Z" />
@@ -3057,7 +3109,14 @@ ${diagnosticMessage}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
               foregroundEditing={foregroundPlacementActive}
-              onMoveForeground={(coordinates) => placeForegroundAtCoordinates(coordinates.latitude, coordinates.longitude)}
+              onMoveForeground={(coordinates) => placeForegroundAtCoordinates(
+                coordinates.latitude,
+                coordinates.longitude,
+                undefined,
+                false,
+                undefined,
+                "map-2d"
+              )}
               onSelectCandidate={selectTripodCandidate}
             />
           )}
@@ -3241,6 +3300,8 @@ ${diagnosticMessage}
                   onTripodToggle={toggleTripodPlacement}
                   onOpenTripodInGoogleMaps={openTripodInGoogleMaps}
                   tripodAvailable={Boolean(tripodPoint)}
+                  onPlaceTripodCandidate={placeTripodAtDisplayedCandidate}
+                  tripodCandidateAvailable={selectableDisplayedTripodCandidates.length > 0}
                 />
                 <ForegroundObjectControls
                   object={foregroundObject}

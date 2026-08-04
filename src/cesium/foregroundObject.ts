@@ -5,6 +5,7 @@ import {
   Color,
   ConstantPositionProperty,
   ConstantProperty,
+  DistanceDisplayCondition,
   HeightReference,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -12,9 +13,17 @@ import {
   type Entity,
   type Viewer,
 } from "cesium";
-import type { ForegroundObject } from "../types/foreground";
+import { foregroundHeightCmToMeters, type ForegroundObject } from "../types/foreground";
 
-const ENTITY_ID = "ksg-foreground-object";
+const NEAR_ENTITY_ID = "ksg-foreground-object-near";
+const FAR_ENTITY_ID = "ksg-foreground-object-far";
+const PERSON_SWITCH_DISTANCE_METERS = 100;
+
+const PERSON_SILHOUETTE_SVG = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="260" viewBox="0 0 100 260">
+  <circle cx="50" cy="28" r="22" fill="#111" stroke="#fff" stroke-width="5"/>
+  <path d="M29 57Q50 47 71 57L78 132L69 134L74 236H58L50 145L42 236H26L31 134L22 132Z" fill="#111" stroke="#fff" stroke-width="5" stroke-linejoin="round"/>
+</svg>`)}`;
 
 const PERSON_PIN_SVG = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="88" viewBox="0 0 64 88">
@@ -23,51 +32,97 @@ const PERSON_PIN_SVG = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
   <path d="M25 38Q32 34 39 38L42 55H37L39 69H34L32 53L30 69H25L27 55H22Z" fill="#fff"/>
 </svg>`)}`;
 
+function removeForegroundEntities(viewer: Viewer): void {
+  const near = viewer.entities.getById(NEAR_ENTITY_ID);
+  const far = viewer.entities.getById(FAR_ENTITY_ID);
+  if (near) viewer.entities.remove(near);
+  if (far) viewer.entities.remove(far);
+}
+
 export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundObject | null): void {
-  const existing = viewer.entities.getById(ENTITY_ID);
   if (!object?.enabled || !Number.isFinite(object.groundHeightMeters)) {
-    if (existing) viewer.entities.remove(existing);
+    removeForegroundEntities(viewer);
     return;
   }
 
+  const heightMeters = foregroundHeightCmToMeters(object.heightCm);
+  const silhouetteWidthMeters = heightMeters * (100 / 260);
   const position = Cartesian3.fromDegrees(
     object.longitude,
     object.latitude,
-    (object.groundHeightMeters as number) + 0.08
+    (object.groundHeightMeters as number) + 0.03
   );
 
-  // The map is for locating/editing the person, not for judging physical scale.
-  // Therefore both near and far map views use a fixed pixel-size pin.
-  if (existing) {
-    existing.position = new ConstantPositionProperty(position);
-    if (existing.billboard) {
-      existing.billboard.image = new ConstantProperty(PERSON_PIN_SVG);
-      existing.billboard.width = new ConstantProperty(32);
-      existing.billboard.height = new ConstantProperty(44);
-      existing.billboard.sizeInMeters = new ConstantProperty(false);
-      existing.billboard.heightReference = new ConstantProperty(HeightReference.NONE);
-      existing.billboard.disableDepthTestDistance = new ConstantProperty(Number.POSITIVE_INFINITY);
-      existing.billboard.scale = new ConstantProperty(1);
-      existing.billboard.scaleByDistance = undefined;
+  const near = viewer.entities.getById(NEAR_ENTITY_ID);
+  if (near) {
+    near.position = new ConstantPositionProperty(position);
+    if (near.billboard) {
+      near.billboard.image = new ConstantProperty(PERSON_SILHOUETTE_SVG);
+      near.billboard.width = new ConstantProperty(silhouetteWidthMeters);
+      near.billboard.height = new ConstantProperty(heightMeters);
+      near.billboard.sizeInMeters = new ConstantProperty(true);
+      near.billboard.heightReference = new ConstantProperty(HeightReference.NONE);
+      near.billboard.disableDepthTestDistance = new ConstantProperty(0);
+      near.billboard.distanceDisplayCondition = new ConstantProperty(
+        new DistanceDisplayCondition(0, PERSON_SWITCH_DISTANCE_METERS)
+      );
     }
-    return;
+  } else {
+    viewer.entities.add({
+      id: NEAR_ENTITY_ID,
+      name: "前景・中景オブジェクト（近距離）",
+      position,
+      billboard: {
+        image: PERSON_SILHOUETTE_SVG,
+        width: silhouetteWidthMeters,
+        height: heightMeters,
+        sizeInMeters: true,
+        verticalOrigin: VerticalOrigin.BOTTOM,
+        heightReference: HeightReference.NONE,
+        color: Color.WHITE,
+        disableDepthTestDistance: 0,
+        distanceDisplayCondition: new DistanceDisplayCondition(0, PERSON_SWITCH_DISTANCE_METERS),
+      },
+    });
   }
 
-  viewer.entities.add({
-    id: ENTITY_ID,
-    name: "前景・中景オブジェクト",
-    position,
-    billboard: {
-      image: PERSON_PIN_SVG,
-      width: 32,
-      height: 44,
-      sizeInMeters: false,
-      verticalOrigin: VerticalOrigin.BOTTOM,
-      heightReference: HeightReference.NONE,
-      color: Color.WHITE,
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-    },
-  });
+  const far = viewer.entities.getById(FAR_ENTITY_ID);
+  if (far) {
+    far.position = new ConstantPositionProperty(position);
+    if (far.billboard) {
+      far.billboard.image = new ConstantProperty(PERSON_PIN_SVG);
+      far.billboard.width = new ConstantProperty(32);
+      far.billboard.height = new ConstantProperty(44);
+      far.billboard.sizeInMeters = new ConstantProperty(false);
+      far.billboard.heightReference = new ConstantProperty(HeightReference.NONE);
+      far.billboard.disableDepthTestDistance = new ConstantProperty(Number.POSITIVE_INFINITY);
+      far.billboard.scale = new ConstantProperty(1);
+      far.billboard.scaleByDistance = undefined;
+      far.billboard.distanceDisplayCondition = new ConstantProperty(
+        new DistanceDisplayCondition(PERSON_SWITCH_DISTANCE_METERS, Number.POSITIVE_INFINITY)
+      );
+    }
+  } else {
+    viewer.entities.add({
+      id: FAR_ENTITY_ID,
+      name: "前景・中景オブジェクト（遠距離）",
+      position,
+      billboard: {
+        image: PERSON_PIN_SVG,
+        width: 32,
+        height: 44,
+        sizeInMeters: false,
+        verticalOrigin: VerticalOrigin.BOTTOM,
+        heightReference: HeightReference.NONE,
+        color: Color.WHITE,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: new DistanceDisplayCondition(
+          PERSON_SWITCH_DISTANCE_METERS,
+          Number.POSITIVE_INFINITY
+        ),
+      },
+    });
+  }
 }
 
 export function enableForegroundObjectDrag(
@@ -92,7 +147,8 @@ export function enableForegroundObjectDrag(
   };
   handler.setInputAction((movement: { position: Cartesian2 }) => {
     const picked = viewer.scene.pick(movement.position) as { id?: Entity } | undefined;
-    if (picked?.id?.id !== ENTITY_ID) return;
+    const pickedId = picked?.id?.id;
+    if (pickedId !== NEAR_ENTITY_ID && pickedId !== FAR_ENTITY_ID) return;
     dragging = true;
     viewer.scene.screenSpaceCameraController.enableInputs = false;
   }, ScreenSpaceEventType.LEFT_DOWN);
@@ -103,8 +159,6 @@ export function enableForegroundObjectDrag(
   }, ScreenSpaceEventType.MOUSE_MOVE);
   handler.setInputAction(stopDragging, ScreenSpaceEventType.LEFT_UP);
 
-  // ポインターがキャンバス外で離された場合、CesiumのLEFT_UPは発火しない。
-  // window側でも終了を監視し、カメラ操作が無効のまま固まる状態を防ぐ。
   window.addEventListener("pointerup", stopDragging, true);
   window.addEventListener("pointercancel", stopDragging, true);
   window.addEventListener("mouseup", stopDragging, true);

@@ -515,6 +515,7 @@ export function Map2DOverlay({
         </div>
       )}
     
+      {/* 2D map always uses the fixed-size person pin, regardless of zoom or distance. */}
       {foregroundPixel && isInside(foregroundPixel, size) && (
         <button
           type="button"
