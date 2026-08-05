@@ -36,7 +36,7 @@ export function PinControls({
       >
         {subjectActive
           ? "地図をクリックして被写体変更"
-          : "被写体ピンを変更"}
+          : "被写体をマップで選択"}
       </button>
 
       <button
@@ -60,7 +60,7 @@ export function PinControls({
       >
         {tripodActive
           ? "地図をクリックして三脚設置"
-          : "三脚ピンを設置"}
+          : "三脚位置をマップで選択"}
       </button>
 
       <button
@@ -69,7 +69,7 @@ export function PinControls({
         onClick={onPlaceTripodCandidate}
         disabled={!tripodCandidateAvailable}
       >
-        三脚候補点に三脚ピンを置く
+        三脚候補点に三脚設置
       </button>
 
       <button
@@ -78,7 +78,7 @@ export function PinControls({
         onClick={onOpenTripodInGoogleMaps}
         disabled={!tripodAvailable}
       >
-        Googleマップへ三脚ピンを送る
+        Googleマップへ三脚位置を送る
       </button>
     </section>
   );

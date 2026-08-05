@@ -56,7 +56,8 @@ type Props = {
     signal: AbortSignal,
     onProgress: (message: string, percent: number) => void
   ) => Promise<SpotPresetResult[] | null>;
-  onLocateSubject: (
+  onLocatePin: (
+    target: "subject" | "tripod",
     query: string,
     signal: AbortSignal,
     onProgress: (message: string, percent: number) => void
@@ -261,7 +262,7 @@ export function SpotSearchScreen({
   onBack,
   onSearch,
   onResumeSearch,
-  onLocateSubject,
+  onLocatePin,
   currentSubject,
   history,
   favorites,
@@ -273,6 +274,7 @@ export function SpotSearchScreen({
 }: Props) {
   const [query, setQuery] = useState("");
   const [subjectListOpen, setSubjectListOpen] = useState<"history" | "favorites" | null>(null);
+  const [pinTarget, setPinTarget] = useState<"subject" | "tripod">("subject");
   const [searchDateTime, setSearchDateTime] = useState(false);
   const [useCurrentSubjectPin, setUseCurrentSubjectPin] = useState(false);
   const [celestialId, setCelestialId] = useState<SearchCelestialId>("moon");
@@ -373,6 +375,13 @@ export function SpotSearchScreen({
     setSubjectListOpen(null);
     if (!hasCurrentSubject) setUseCurrentSubjectPin(false);
   }, [hasCurrentSubject, initialDate, initialFocalLengthMm, initialTimeZone, open]);
+
+  useEffect(() => {
+    if (pinTarget === "subject") return;
+    setSearchDateTime(false);
+    setUseCurrentSubjectPin(false);
+    setSubjectListOpen(null);
+  }, [pinTarget]);
 
   useEffect(() => {
     // バックグラウンド構図検索の再開確認は、
@@ -482,7 +491,7 @@ export function SpotSearchScreen({
     setMessage("スポットを検索しています…");
     try {
       if (!searchDateTime) {
-        await onLocateSubject(query.trim(), controller.signal, (nextMessage) => {
+        await onLocatePin(pinTarget, query.trim(), controller.signal, (nextMessage) => {
           if (
             searchGenerationRef.current === searchGeneration &&
             !controller.signal.aborted
@@ -623,6 +632,32 @@ ${diagnostic}` : ""}`
       </header>
 
       <form className="spot-search-content" onSubmit={submit}>
+        <fieldset className="spot-pin-target-group">
+          <legend>検索結果を置くピン</legend>
+          <div className="spot-pin-target-options">
+            <label className={pinTarget === "subject" ? "selected" : ""}>
+              <input
+                type="radio"
+                name="spot-pin-target"
+                value="subject"
+                checked={pinTarget === "subject"}
+                onChange={() => setPinTarget("subject")}
+              />
+              <span>被写体</span>
+            </label>
+            <label className={pinTarget === "tripod" ? "selected" : ""}>
+              <input
+                type="radio"
+                name="spot-pin-target"
+                value="tripod"
+                checked={pinTarget === "tripod"}
+                onChange={() => setPinTarget("tripod")}
+              />
+              <span>三脚位置</span>
+            </label>
+          </div>
+        </fieldset>
+
         <div className="spot-subject-search-block">
           <label className="spot-search-field">
             <span>スポット名</span>
@@ -635,9 +670,9 @@ ${diagnostic}` : ""}`
                 autoComplete="off"
                 disabled={searchDateTime && useCurrentSubjectPin}
               />
-              <button type="button" className={currentSubjectIsFavorite ? "spot-subject-icon active" : "spot-subject-icon"} aria-label="現在の被写体をお気に入り登録" disabled={!currentSubject} onClick={onToggleCurrentFavorite}>★</button>
-              <button type="button" className="spot-subject-icon" aria-label="お気に入りを表示" onClick={() => setSubjectListOpen((value) => value === "favorites" ? null : "favorites")}>☆</button>
-              <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>◷</button>
+              <button type="button" className={currentSubjectIsFavorite ? "spot-subject-icon active" : "spot-subject-icon"} aria-label="現在の被写体をお気に入り登録" disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentFavorite}>★</button>
+              <button type="button" className="spot-subject-icon" aria-label="お気に入りを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "favorites" ? null : "favorites")}>☆</button>
+              <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>◷</button>
             </div>
           </label>
           {subjectListOpen && (
@@ -669,11 +704,14 @@ ${diagnostic}` : ""}`
           <input
             type="checkbox"
             checked={searchDateTime}
+            disabled={pinTarget !== "subject"}
             onChange={(event) => setSearchDateTime(event.target.checked)}
           />
           <span>
             <strong>日時・構図候補も検索</strong>
-            <small>チェック時のみ天体条件と三脚候補を計算</small>
+            <small>{pinTarget === "subject"
+              ? "チェック時のみ天体条件と三脚候補を計算"
+              : "被写体を選択した場合のみ利用できます"}</small>
           </span>
         </label>
 

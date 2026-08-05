@@ -1986,22 +1986,51 @@ ${diagnosticMessage}
   }
 
 
-  async function locateSubjectFromSpotScreen(
+  async function locatePinFromSpotScreen(
+    target: "subject" | "tripod",
     query: string,
     signal: AbortSignal,
     onProgress: (message: string, percent: number) => void
   ): Promise<void> {
     const viewer = mapViewerRef.current;
-    onProgress("被写体の位置を検索しています…", 0);
+    onProgress(target === "subject" ? "被写体の位置を検索しています…" : "三脚位置を検索しています…", 0);
     const location = await resolveSpotLocation(query, signal);
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
+    stopAllEditModes();
+    if (target === "tripod") {
+      onProgress("三脚位置の標高を取得しています…", 45);
+      const pinned = viewer && !viewer.isDestroyed()
+        ? await setTripodPinFromCoordinates(
+            viewer,
+            location.latitude,
+            location.longitude,
+            true
+          )
+        : await groundPointFromCoordinates(
+            location.latitude,
+            location.longitude,
+            "三脚ピン"
+          );
+      if (signal.aborted) throw new DOMException("検索中止", "AbortError");
+      const tripod = { ...pinned, label: location.label || "三脚ピン" };
+      const center = { latitude: tripod.latitude, longitude: tripod.longitude };
+      setTripodPoint(tripod);
+      mapCenterRef.current = center;
+      setMapCenter(center);
+      if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
+        flyMapToTarget(viewer, center.latitude, center.longitude, tripod.height);
+      }
+      setSpotSearchOpen(false);
+      setSearchMessage(`${tripod.label}に三脚ピンを設置しました`);
+      return;
+    }
+
     const subject = await resolveSearchSubject(
       location.latitude,
       location.longitude,
       location.label
     );
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
-    stopAllEditModes();
     const pinned = viewer && !viewer.isDestroyed()
       ? setSubjectPinFromPosition(
           viewer,
@@ -3460,7 +3489,7 @@ ${diagnosticMessage}
         onBack={() => setSpotSearchOpen(false)}
         onSearch={searchFromSpotScreen}
         onResumeSearch={resumeSpotSearch}
-        onLocateSubject={locateSubjectFromSpotScreen}
+        onLocatePin={locatePinFromSpotScreen}
         currentSubject={currentSubjectPoint()}
         history={subjectHistory}
         favorites={favoriteSubjects}

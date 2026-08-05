@@ -906,12 +906,12 @@ button { cursor: pointer; }
 .spot-result-3d-status.status-unverified { color: #b7c4d5; background: rgba(60, 72, 88, .3); }
 .spot-search-credit { color: #7f8b99; font-size: 7px; }
 .pin-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 7px; }
-.pin-button, .subject-google-maps-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 8px; }
+.pin-button, .subject-google-maps-button, .tripod-candidate-pin-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 8px; }
 .pin-button.subject.active { background: #6d2925; }
 .pin-button.tripod.active { background: #124675; }
 .subject-google-maps-button { width: 100%; margin-top: 5px; border-color: #3f86cf; }
 .tripod-google-maps-button { width: 100%; margin-top: 5px; border-color: #3f86cf; }
-.subject-google-maps-button:disabled, .tripod-google-maps-button:disabled { opacity: .45; }
+.subject-google-maps-button:disabled, .tripod-candidate-pin-button:disabled, .tripod-google-maps-button:disabled { opacity: .45; }
 .metrics-panel { position: absolute; right: 12px; bottom: 13px; display: grid; grid-template-columns: repeat(3, minmax(58px, 1fr)); gap: 4px; width: min(250px, calc(100% - 78px)); padding: 6px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: rgba(2,6,10,.92); }
 .metrics-panel > div { padding: 5px; border-radius: 5px; background: rgba(255,255,255,.055); }
 .metrics-panel span, .metrics-panel strong { display: block; }
@@ -1236,6 +1236,7 @@ button { cursor: pointer; }
 }
 .pin-button,
 .subject-google-maps-button,
+.tripod-candidate-pin-button,
 .tripod-google-maps-button {
   width: 100%;
   min-height: 38px;
@@ -1361,6 +1362,7 @@ button { cursor: pointer; }
   .foreground-controls span,
   .pin-button,
   .subject-google-maps-button,
+  .tripod-candidate-pin-button,
   .tripod-google-maps-button {
     font-size: 10px;
   }
@@ -2002,4 +2004,62 @@ body.pseudo-fullscreen-active {
 .map-2d-foreground-pin {
   width: 20px;
   height: 42px;
+}
+
+.spot-pin-target-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.spot-pin-target-group legend {
+  margin-bottom: 6px;
+  color: #cbd3dd;
+  font-size: 10px;
+  font-weight: 700;
+}
+.spot-pin-target-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.spot-pin-target-options label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 8px 10px;
+  color: #cbd3dd;
+  border: 1px solid #394554;
+  border-radius: 10px;
+  background: #0a0f15;
+}
+.spot-pin-target-options label.selected {
+  color: #fff6ad;
+  border-color: #d5b829;
+  background: #292608;
+}
+.spot-pin-target-options input {
+  margin: 0;
+  accent-color: #efd02b;
+}
+
+/* 2026-08-05: improve readability of explanatory text in hamburger-menu detail settings. */
+.calculation-mode-menu.precision-open .precision-choice-copy > small,
+.calculation-mode-menu.precision-open .precision-settings-panel > small,
+.calculation-mode-menu.precision-open .precision-settings-panel .precision-setting-intro,
+.calculation-mode-menu.precision-open .precision-settings-panel .precision-control-help,
+.calculation-mode-menu.precision-open .precision-data-guide small,
+.calculation-mode-menu.precision-open .precision-number-setting > small {
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.calculation-mode-menu.precision-open .precision-choice-title small {
+  font-size: 9px;
+}
+
+.calculation-mode-menu.precision-open .precision-data-guide strong,
+.calculation-mode-menu.precision-open .precision-number-setting > strong {
+  font-size: 12px;
 }
