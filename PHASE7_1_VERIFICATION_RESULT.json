@@ -1,0 +1,15 @@
+{
+  "phase": "7-1",
+  "generatedAt": "2026-08-05T13:27:19.749Z",
+  "node": "v22.16.0",
+  "prerequisite": "fail",
+  "missing": [
+    "node_modules/typescript/package.json",
+    "node_modules/vite/package.json",
+    "node_modules/oxlint/package.json",
+    "node_modules/@types/node/package.json",
+    "node_modules/@cloudflare/workers-types/package.json",
+    "node_modules/geo-tz/package.json"
+  ],
+  "results": []
+}

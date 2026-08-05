@@ -11,6 +11,15 @@ const cases = [
     ],
   },
   {
+    name: "surface obstruction (building + vegetation) line-of-sight geometry (Phase2-3)",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/surface-obstruction-line-of-sight.test.mjs",
+    ],
+  },
+  {
     name: "viewCorrection integration wiring",
     arguments: ["./scripts/verify-view-correction.mjs"],
   },
@@ -94,6 +103,10 @@ const cases = [
   {
     name: "celestial occlusion recalculation and boundary stability",
     arguments: ["./scripts/verify-celestial-occlusion-stability.mjs"],
+  },
+  {
+    name: "person placement and display contracts",
+    arguments: ["./scripts/verify-person-display.mjs"],
   },
   {
     name: "Cloudflare Pages Functions migration contracts",

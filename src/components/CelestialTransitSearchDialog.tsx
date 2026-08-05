@@ -170,11 +170,12 @@ export function CelestialTransitSearchDialog({
       };
       const range = celestialTransitDateRange({ currentDate, timeZone, criteria });
       const refractionWeather = await prepareRefractionWeatherContext({
+        accuracyMode: precisionSettings.accuracyMode,
         mode: precisionSettings.refractionCorrectionMode,
         point: tripod,
         searchStart: range.start,
         searchEnd: range.end,
-        now: currentDate,
+        now: new Date(),
         signal: controller.signal,
       });
       if (

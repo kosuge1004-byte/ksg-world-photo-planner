@@ -19,17 +19,40 @@ export function minuteOfDay(value: string): number {
  * 開始<=終了は同日範囲、開始>終了は日付またぎ範囲として判定する。
  * 例: 22:00〜02:00 は 22:00〜23:59 または 00:00〜02:00。
  */
+export function isMinuteWithinSearchRange(
+  current: number,
+  startTime: string | undefined,
+  endTime: string | undefined
+): boolean {
+  const start = minuteOfDay(startTime ?? DEFAULT_SEARCH_START_TIME);
+  const end = minuteOfDay(endTime ?? DEFAULT_SEARCH_END_TIME);
+  return start <= end
+    ? current >= start && current <= end
+    : current >= start || current <= end;
+}
+
+export function localSearchDateParts(
+  date: Date,
+  timeZone: string
+): { weekday: number; minuteOfDay: number } {
+  const local = zonedDateTimeLocalFromDate(date, timeZone);
+  const year = Number(local.slice(0, 4));
+  const month = Number(local.slice(5, 7));
+  const day = Number(local.slice(8, 10));
+  const hours = Number(local.slice(11, 13));
+  const minutes = Number(local.slice(14, 16));
+  return {
+    weekday: new Date(Date.UTC(year, month - 1, day)).getUTCDay(),
+    minuteOfDay: hours * 60 + minutes,
+  };
+}
+
 export function isLocalTimeWithinSearchRange(
   date: Date,
   timeZone: string,
   startTime: string | undefined,
   endTime: string | undefined
 ): boolean {
-  const localTime = zonedDateTimeLocalFromDate(date, timeZone).slice(11, 16);
-  const current = minuteOfDay(localTime);
-  const start = minuteOfDay(startTime ?? DEFAULT_SEARCH_START_TIME);
-  const end = minuteOfDay(endTime ?? DEFAULT_SEARCH_END_TIME);
-  return start <= end
-    ? current >= start && current <= end
-    : current >= start || current <= end;
+  const { minuteOfDay: current } = localSearchDateParts(date, timeZone);
+  return isMinuteWithinSearchRange(current, startTime, endTime);
 }

@@ -6,9 +6,6 @@ import {
   extractGoogleMapsSharedUrl,
   isSupportedGoogleMapsUrl,
 } from "../src/search/googleMapsUrl.ts";
-import {
-  resolveGoogleMapsSharedUrlNatively,
-} from "../src/search/nativeGoogleMapsResolver.ts";
 
 const expected = {
   latitude: 35.4339171,
@@ -66,55 +63,69 @@ assert.equal(
   "https://maps.app.goo.gl/7Xtp3LoZpuDc5Rqe7"
 );
 
-const shortUrl = "https://maps.app.goo.gl/7Xtp3LoZpuDc5Rqe7";
-const resolvedUrl =
-  "https://www.google.com/maps/place/%E5%B2%90%E9%98%9C%E5%9F%8E/@35.4339171,136.782051,17z";
-const automaticResult = await resolveGoogleMapsSharedUrlNatively(
-  shortUrl,
-  undefined,
-  async (_url, disableRedirects) => {
-    assert.equal(disableRedirects, false);
-    return {
-      data: "",
-      headers: {},
-      status: 200,
-      url: resolvedUrl,
-    };
-  }
-);
-assert.deepEqual(automaticResult, {
-  ...expected,
-  resolvedUrl,
-});
+let nativeResolverVerified = false;
+try {
+  const { resolveGoogleMapsSharedUrlNatively } = await import(
+    "../src/search/nativeGoogleMapsResolver.ts"
+  );
 
-let requestCount = 0;
-const manualResult = await resolveGoogleMapsSharedUrlNatively(
-  shortUrl,
-  undefined,
-  async (url, disableRedirects) => {
-    requestCount += 1;
-    if (!disableRedirects) throw new Error("自動転送を模擬的に失敗させる");
-    if (url === shortUrl) {
+  const shortUrl = "https://maps.app.goo.gl/7Xtp3LoZpuDc5Rqe7";
+  const resolvedUrl =
+    "https://www.google.com/maps/place/%E5%B2%90%E9%98%9C%E5%9F%8E/@35.4339171,136.782051,17z";
+  const automaticResult = await resolveGoogleMapsSharedUrlNatively(
+    shortUrl,
+    undefined,
+    async (_url, disableRedirects) => {
+      assert.equal(disableRedirects, false);
       return {
         data: "",
-        headers: { Location: resolvedUrl },
-        status: 302,
+        headers: {},
+        status: 200,
+        url: resolvedUrl,
+      };
+    }
+  );
+  assert.deepEqual(automaticResult, {
+    ...expected,
+    resolvedUrl,
+  });
+
+  let requestCount = 0;
+  const manualResult = await resolveGoogleMapsSharedUrlNatively(
+    shortUrl,
+    undefined,
+    async (url, disableRedirects) => {
+      requestCount += 1;
+      if (!disableRedirects) throw new Error("自動転送を模擬的に失敗させる");
+      if (url === shortUrl) {
+        return {
+          data: "",
+          headers: { Location: resolvedUrl },
+          status: 302,
+          url,
+        };
+      }
+      return {
+        data: `APP_INITIALIZATION_STATE=[[null,null,${expected.latitude},${expected.longitude}]]`,
+        headers: {},
+        status: 200,
         url,
       };
     }
-    return {
-      data: `APP_INITIALIZATION_STATE=[[null,null,${expected.latitude},${expected.longitude}]]`,
-      headers: {},
-      status: 200,
-      url,
-    };
-  }
-);
-assert.deepEqual(manualResult, {
-  ...expected,
-  resolvedUrl,
-});
-assert.equal(requestCount, 3);
+  );
+  assert.deepEqual(manualResult, {
+    ...expected,
+    resolvedUrl,
+  });
+  assert.equal(requestCount, 3);
+  nativeResolverVerified = true;
+} catch (error) {
+  const code = error && typeof error === "object" && "code" in error
+    ? error.code
+    : null;
+  if (code !== "ERR_MODULE_NOT_FOUND") throw error;
+  console.warn("Native Google Maps resolver test skipped: dependencies are not installed.");
+}
 
 console.log(
   JSON.stringify({
@@ -122,7 +133,7 @@ console.log(
     supportedHostCases: 4,
     placeMetadata: true,
     viewportCoordinatesRejected: true,
-    shortUrlAutomaticRedirect: true,
-    shortUrlManualRedirect: true,
+    shortUrlAutomaticRedirect: nativeResolverVerified,
+    shortUrlManualRedirect: nativeResolverVerified,
   })
 );

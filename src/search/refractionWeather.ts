@@ -1,5 +1,8 @@
 import type { GroundPoint } from "../types/points";
-import type { RefractionCorrectionMode } from "../types/precision";
+import type { AccuracyMode, RefractionCorrectionMode } from "../types/precision";
+import { diagnosticFetch, recordCacheDiagnostic } from "../network/networkDiagnostics";
+import { DEVICE_CACHE_POLICIES } from "../cache/cachePolicies";
+import { migrateLegacyLocalStorage, setDeviceCache } from "../cache/deviceCache";
 
 export type WeatherSample = {
   time: number;
@@ -30,9 +33,8 @@ type CachedWeather = { expiresAt: number; context: RefractionWeatherContext };
 const inFlightRequests = new Map<string, Promise<RefractionWeatherContext>>();
 
 const CACHE_PREFIX = "ksg-refraction-weather-v1:";
-const FORECAST_CACHE_MS = 3 * 60 * 60_000;
-const CLIMATOLOGY_CACHE_MS = 30 * 24 * 60 * 60_000;
-const WEATHER_CACHE_MAX_ENTRIES = 24;
+const FORECAST_CACHE_MS = DEVICE_CACHE_POLICIES.weatherForecast.ttlMs;
+const CLIMATOLOGY_CACHE_MS = DEVICE_CACHE_POLICIES.weatherClimatology.ttlMs;
 
 function roundedCoordinate(value: number): string {
   return (Math.round(value * 20) / 20).toFixed(2);
@@ -42,50 +44,40 @@ function cacheKey(point: GroundPoint, source: "forecast" | "climatology"): strin
   return `${CACHE_PREFIX}${source}:${roundedCoordinate(point.latitude)}:${roundedCoordinate(point.longitude)}`;
 }
 
-function readCache(key: string): RefractionWeatherContext | null {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const cached = JSON.parse(raw) as CachedWeather;
-    if (!cached || cached.expiresAt <= Date.now()) {
-      localStorage.removeItem(key);
-      return null;
-    }
-    return cached.context;
-  } catch {
-    return null;
-  }
+async function readCache(
+  key: string,
+  source: "forecast" | "climatology"
+): Promise<RefractionWeatherContext | null> {
+  const policy = source === "forecast"
+    ? DEVICE_CACHE_POLICIES.weatherForecast
+    : DEVICE_CACHE_POLICIES.weatherClimatology;
+  const persistentKey = key.slice(CACHE_PREFIX.length);
+  return migrateLegacyLocalStorage<RefractionWeatherContext>({
+    policy,
+    key: persistentKey,
+    legacyKey: key,
+    parse: (raw) => {
+      try {
+        const cached = JSON.parse(raw) as CachedWeather;
+        if (!cached || !Number.isFinite(cached.expiresAt) || !cached.context) return null;
+        return { value: cached.context, expiresAt: cached.expiresAt };
+      } catch {
+        return null;
+      }
+    },
+  });
 }
 
-function writeCache(key: string, context: RefractionWeatherContext, ttlMs: number): void {
-  try {
-    const cached: CachedWeather = { expiresAt: Date.now() + ttlMs, context };
-    localStorage.setItem(key, JSON.stringify(cached));
-    const entries: Array<{ key: string; expiresAt: number }> = [];
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const storedKey = localStorage.key(index);
-      if (!storedKey?.startsWith(CACHE_PREFIX)) continue;
-      try {
-        const raw = localStorage.getItem(storedKey);
-        const stored = raw ? JSON.parse(raw) as CachedWeather : null;
-        if (!stored || !Number.isFinite(stored.expiresAt) || stored.expiresAt <= Date.now()) {
-          localStorage.removeItem(storedKey);
-          index -= 1;
-          continue;
-        }
-        entries.push({ key: storedKey, expiresAt: stored.expiresAt });
-      } catch {
-        localStorage.removeItem(storedKey);
-        index -= 1;
-      }
-    }
-    entries
-      .sort((left, right) => right.expiresAt - left.expiresAt)
-      .slice(WEATHER_CACHE_MAX_ENTRIES)
-      .forEach((entry) => localStorage.removeItem(entry.key));
-  } catch {
-    // Storage quota/private mode failures must never stop a search.
-  }
+async function writeCache(
+  key: string,
+  source: "forecast" | "climatology",
+  context: RefractionWeatherContext,
+  ttlMs: number
+): Promise<void> {
+  const policy = source === "forecast"
+    ? DEVICE_CACHE_POLICIES.weatherForecast
+    : DEVICE_CACHE_POLICIES.weatherClimatology;
+  await setDeviceCache(policy, key.slice(CACHE_PREFIX.length), context, ttlMs);
 }
 
 function finite(value: number | null | undefined): value is number {
@@ -118,17 +110,24 @@ function parseSamples(hourly: OpenMeteoHourly | undefined): WeatherSample[] {
 }
 
 async function fetchJson(url: URL, signal: AbortSignal): Promise<OpenMeteoResponse> {
-  const response = await fetch(url, { signal, headers: { Accept: "application/json" } });
+  const response = await diagnosticFetch("weather", url, { signal, headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`気象API HTTP ${response.status}`);
   return response.json() as Promise<OpenMeteoResponse>;
 }
 
 async function loadForecast(point: GroundPoint, signal: AbortSignal): Promise<RefractionWeatherContext> {
   const key = cacheKey(point, "forecast");
-  const cached = readCache(key);
-  if (cached) return cached;
+  const cached = await readCache(key, "forecast");
+  if (cached) {
+    recordCacheDiagnostic("weather", key, "cache-hit");
+    return cached;
+  }
+  recordCacheDiagnostic("weather", key, "cache-miss");
   const existing = inFlightRequests.get(key);
-  if (existing) return existing;
+  if (existing) {
+    recordCacheDiagnostic("weather", key, "deduplicated");
+    return existing;
+  }
 
   const request = (async () => {
     const url = new URL("https://api.open-meteo.com/v1/forecast");
@@ -147,7 +146,7 @@ async function loadForecast(point: GroundPoint, signal: AbortSignal): Promise<Re
       source: "forecast",
       samples,
     };
-    writeCache(key, context, FORECAST_CACHE_MS);
+    await writeCache(key, "forecast", context, FORECAST_CACHE_MS);
     return context;
   })();
   inFlightRequests.set(key, request);
@@ -183,10 +182,17 @@ function climatology(samples: WeatherSample[]): Record<string, Omit<WeatherSampl
 
 async function loadClimatology(point: GroundPoint, now: Date, signal: AbortSignal): Promise<RefractionWeatherContext> {
   const key = cacheKey(point, "climatology");
-  const cached = readCache(key);
-  if (cached) return cached;
+  const cached = await readCache(key, "climatology");
+  if (cached) {
+    recordCacheDiagnostic("weather", key, "cache-hit");
+    return cached;
+  }
+  recordCacheDiagnostic("weather", key, "cache-miss");
   const existing = inFlightRequests.get(key);
-  if (existing) return existing;
+  if (existing) {
+    recordCacheDiagnostic("weather", key, "deduplicated");
+    return existing;
+  }
 
   const request = (async () => {
     const lastCompleteYear = now.getUTCFullYear() - 1;
@@ -209,7 +215,7 @@ async function loadClimatology(point: GroundPoint, now: Date, signal: AbortSigna
       samples: [],
       climatologyByMonthHour: climatology(samples),
     };
-    writeCache(key, context, CLIMATOLOGY_CACHE_MS);
+    await writeCache(key, "climatology", context, CLIMATOLOGY_CACHE_MS);
     return context;
   })();
   inFlightRequests.set(key, request);
@@ -221,6 +227,7 @@ async function loadClimatology(point: GroundPoint, now: Date, signal: AbortSigna
 }
 
 export async function prepareRefractionWeatherContext(options: {
+  accuracyMode: AccuracyMode;
   mode: RefractionCorrectionMode;
   point: GroundPoint;
   searchStart: Date;
@@ -228,6 +235,13 @@ export async function prepareRefractionWeatherContext(options: {
   now: Date;
   signal: AbortSignal;
 }): Promise<RefractionWeatherContext> {
+  // Phase4: 標準精度では追加の気象通信を行わない。
+  // 「補正なし」はそのまま維持し、それ以外は標準大気モデルへ固定する。
+  if (options.accuracyMode === "standard") {
+    return options.mode === "none"
+      ? { requestedMode: "none", effectiveMode: "none", source: "none", samples: [] }
+      : { requestedMode: options.mode, effectiveMode: "standard", source: "standard", samples: [] };
+  }
   if (options.mode === "none") {
     return { requestedMode: "none", effectiveMode: "none", source: "none", samples: [] };
   }

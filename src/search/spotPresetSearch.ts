@@ -3,6 +3,8 @@ import {
   Illumination,
   MoonPhase,
 } from "astronomy-engine";
+import { diagnosticFetch } from "../network/networkDiagnostics";
+import { requestTimeZone } from "../network/timeZoneRequest";
 
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type {
@@ -39,7 +41,7 @@ import {
   canResolveGoogleMapsNatively,
   resolveGoogleMapsSharedUrlNatively,
 } from "./nativeGoogleMapsResolver";
-import { isLocalTimeWithinSearchRange } from "./searchTimeRange";
+import { isMinuteWithinSearchRange, localSearchDateParts } from "./searchTimeRange";
 import {
   phaseMessage,
   phaseProgress,
@@ -155,7 +157,7 @@ export async function resolveSpotLocation(
         label: "Googleマップ共有地点",
       };
     }
-    const response = await fetch("/api/resolve-google-maps", {
+    const response = await diagnosticFetch("google-maps-resolver", "/api/resolve-google-maps", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -184,7 +186,7 @@ export async function resolveSpotLocation(
   }
 
   let result: SearchResult | undefined;
-  const apiResponse = await fetch("/api/geocode", {
+  const apiResponse = await diagnosticFetch("geocode", "/api/geocode", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -255,15 +257,7 @@ export async function resolveSpotTimeZone(
   signal?: AbortSignal
 ): Promise<string> {
   try {
-    const parameters = new URLSearchParams({
-      latitude: String(location.latitude),
-      longitude: String(location.longitude),
-    });
-    const response = await fetch(`/api/timezone?${parameters}`, { signal });
-    const data = (await response.json()) as { timeZone?: unknown };
-    return response.ok && typeof data.timeZone === "string"
-      ? data.timeZone
-      : fallback;
+    return (await requestTimeZone(location.latitude, location.longitude, signal)) ?? fallback;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw error;
@@ -349,11 +343,6 @@ function resolvedInterval(interval: SpotSearchInterval): number {
   return INTERVAL_MILLISECONDS[interval];
 }
 
-function weekdayAtLocation(date: Date, timeZone: string): number {
-  const localDateText = zonedDateTimeLocalFromDate(date, timeZone).slice(0, 10);
-  // 1970-01-01は木曜(4)。UTCの通日へ変換して端末タイムゾーンに依存させない。
-  return ((daySerialFromDateText(localDateText) + 4) % 7 + 7) % 7;
-}
 
 function evaluateSample(
   id: SearchCelestialId,
@@ -589,6 +578,9 @@ export async function searchSpotPresets({
     ? { sampleCount: 32, refinementPasses: 3, refinementSegments: 8 }
     : { sampleCount: 16, refinementPasses: 2, refinementSegments: 6 };
   const previousDistanceByBearing = new Map<number, number>();
+  const allowedWeekdays = criteria.weekdays.length > 0
+    ? new Set(criteria.weekdays)
+    : null;
 
   type RefinedCandidate = {
     sample: SearchSample;
@@ -843,11 +835,11 @@ export async function searchSpotPresets({
     checkedCount += 1;
     performanceTracker.increment("checkedSamples");
     const date = sampleDate;
-    const weekdayAllowed = criteria.weekdays.length === 0 ||
-      criteria.weekdays.includes(weekdayAtLocation(date, timeZone));
-    const timeAllowed = weekdayAllowed && isLocalTimeWithinSearchRange(
-      date,
-      timeZone,
+    const localParts = localSearchDateParts(date, timeZone);
+    const weekdayAllowed = allowedWeekdays === null ||
+      allowedWeekdays.has(localParts.weekday);
+    const timeAllowed = weekdayAllowed && isMinuteWithinSearchRange(
+      localParts.minuteOfDay,
       criteria.startTime,
       criteria.endTime
     );

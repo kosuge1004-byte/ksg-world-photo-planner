@@ -155,47 +155,61 @@ export async function sampleServerWorldTerrain(
   abortIfRequested(signal);
 
   const output = new Array<Cartographic>(points.length);
-  const missing = new Map<string, {
+  const requests = new Map<string, {
     point: Cartographic;
     maximumDetail: GsiMaximumDetail | undefined;
     indexes: number[];
+    cached?: Promise<Cartographic>;
   }>();
-  const waits: Array<Promise<void>> = [];
 
-  points.forEach((point, index) => {
+  // Phase6-2: サンプル1点ごとの Promise<void> と thenクロージャ生成を廃止する。
+  // 同一キーを1要求へまとめ、ユニーク地点数分だけ待機してから出力へ展開する。
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
     const maximumDetail = maximumDetails?.[index];
     const key = terrainSampleKey(point, maximumDetail);
-    const cached = terrainSampleCache.get(key);
-    if (cached) {
-      waits.push(awaitTerrainSample(cached, signal).then((sample) => { output[index] = sample; }));
-      return;
+    const existing = requests.get(key);
+    if (existing) {
+      existing.indexes.push(index);
+      continue;
     }
-    const entry = missing.get(key);
-    if (entry) entry.indexes.push(index);
-    else missing.set(key, { point: Cartographic.clone(point), maximumDetail, indexes: [index] });
-  });
+    requests.set(key, {
+      point: Cartographic.clone(point),
+      maximumDetail,
+      indexes: [index],
+      cached: terrainSampleCache.get(key),
+    });
+  }
 
-  if (missing.size > 0) {
-    const entries = [...missing.entries()];
+  const uncachedEntries = [...requests.entries()].filter(([, entry]) => !entry.cached);
+  if (uncachedEntries.length > 0) {
     const sharedBatch = sampleServerWorldTerrainUncached(
-      entries.map(([, entry]) => entry.point),
-      entries.map(([, entry]) => entry.maximumDetail)
+      uncachedEntries.map(([, entry]) => entry.point),
+      uncachedEntries.map(([, entry]) => entry.maximumDetail)
     );
-    entries.forEach(([key, entry], batchIndex) => {
-      const promise = rememberTerrainSample(
+    uncachedEntries.forEach(([key, entry], batchIndex) => {
+      entry.cached = rememberTerrainSample(
         key,
         sharedBatch.then((samples) => Cartographic.clone(samples[batchIndex])).catch((error) => {
           terrainSampleCache.delete(key);
           throw error;
         })
       );
-      for (const index of entry.indexes) {
-        waits.push(awaitTerrainSample(promise, signal).then((sample) => { output[index] = sample; }));
-      }
     });
   }
 
-  await Promise.all(waits);
+  const requestEntries = [...requests.values()];
+  const samples = await Promise.all(
+    requestEntries.map((entry) => awaitTerrainSample(entry.cached!, signal))
+  );
+  for (let requestIndex = 0; requestIndex < requestEntries.length; requestIndex += 1) {
+    const entry = requestEntries[requestIndex];
+    const sample = samples[requestIndex];
+    for (const outputIndex of entry.indexes) {
+      output[outputIndex] = Cartographic.clone(sample);
+    }
+  }
+
   abortIfRequested(signal);
   return output;
 }

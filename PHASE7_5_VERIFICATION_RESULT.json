@@ -1,0 +1,77 @@
+{
+  "generatedAt": "2026-08-05T13:27:20.607Z",
+  "staticChecks": [
+    {
+      "name": "Capacitor app identity",
+      "status": "PASS"
+    },
+    {
+      "name": "Android project structure",
+      "status": "PASS"
+    },
+    {
+      "name": "Android permissions and orientation",
+      "status": "PASS"
+    },
+    {
+      "name": "Android resources",
+      "status": "PASS"
+    },
+    {
+      "name": "Browser/PWA compatibility files",
+      "status": "PASS"
+    },
+    {
+      "name": "iOS preparation status",
+      "status": "PASS"
+    }
+  ],
+  "suites": [
+    {
+      "suite": "verify:phase6-5",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:phase6-5\n> node scripts/verify-phase6-5-final.mjs\n\nPhase6-5 final integration verification: PASS"
+    },
+    {
+      "suite": "verify:phase7-1",
+      "status": "BLOCKED_DEPENDENCY",
+      "output": "> astrosight@0.0.0 verify:phase7-1\n> node scripts/verify-phase7-1-foundation.mjs\n\n[Phase7-1] Dependency installation is incomplete.\n  missing: node_modules/typescript/package.json\n  missing: node_modules/vite/package.json\n  missing: node_modules/oxlint/package.json\n  missing: node_modules/@types/node/package.json\n  missing: node_modules/@cloudflare/workers-types/package.json\n  missing: node_modules/geo-tz/package.json\nRun `npm ci` with access to the npm packages referenced by package-lock.json, then retry."
+    },
+    {
+      "suite": "verify:phase7-2",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:phase7-2\n> node scripts/verify-phase7-2-search.mjs\n\nPhase7-2 search integration verification: PASS"
+    },
+    {
+      "suite": "verify:phase7-3",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:phase7-3\n> node scripts/verify-phase7-3-celestial-3d.mjs\n\nPhase7-3 celestial/3D integration verification: PASS"
+    },
+    {
+      "suite": "verify:phase7-4",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:phase7-4\n> node scripts/verify-phase7-4-cloudflare-deployment.mjs\n\n{\n  \"pagesFunctions\": 9,\n  \"pagesProject\": \"astrosight\",\n  \"outputDirectory\": \"./dist\",\n  \"kvBinding\": \"SPOT_SEARCH_JOBS\",\n  \"queue\": \"astrosight-spot-search\",\n  \"queueConsumer\": true,\n  \"r2CacheBinding\": \"optional (NETWORK_CACHE)\",\n  \"pwa\": true,\n  \"serviceWorkerApiBypass\": true,\n  \"spaFallback\": \"Cloudflare Pages automatic\",\n  \"securityHeaders\": true,\n  \"deploymentScripts\": true\n}"
+    },
+    {
+      "suite": "verify:platform-compatibility",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:platform-compatibility\n> node scripts/verify-platform-compatibility.mjs\n\n{\"androidPortraitLocked\":true,\"androidHardwareAccelerated\":true,\"browserSafeAreas\":true,\"legacyViewportFallback\":true,\"touchAndPinchWiring\":true,\"iosConfigurationPrepared\":true,\"iosProjectPresent\":false}"
+    },
+    {
+      "suite": "verify:pwa-installability",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:pwa-installability\n> node scripts/verify-pwa-installability.mjs\n\nPWA installability contracts: PASS"
+    },
+    {
+      "suite": "verify:search-engine-exclusion",
+      "status": "PASS",
+      "output": "> astrosight@0.0.0 verify:search-engine-exclusion\n> node scripts/verify-search-engine-exclusion.mjs\n\n{\"htmlRobotsMeta\":true,\"cloudflareStaticHeader\":true,\"cloudflareApiHeader\":true,\"cloudflareSpaRouting\":true,\"crawlerCanReadNoindex\":true}"
+    }
+  ],
+  "build": {
+    "status": "BLOCKED_DEPENDENCY",
+    "detail": "> astrosight@0.0.0 prebuild\n> node scripts/prepare-cloudflare-geo-tz-assets.mjs\n\nnode:internal/modules/esm/resolve:204\n  const resolvedOption = FSLegacyMainResolve(pkgPath, packageConfig.main, baseStringified);\n                         ^\n\nError: Cannot find package '/mnt/data/astrosight_p7_5/phase6_5_work/node_modules/geo-tz/index.js' imported from /mnt/data/astrosight_p7_5/phase6_5_work/scripts/prepare-cloudflare-geo-tz-assets.mjs\n    at legacyMainResolve (node:internal/modules/esm/resolve:204:26)\n    at packageResolve (node:internal/modules/esm/resolve:778:12)\n    at moduleResolve (node:internal/modules/esm/resolve:854:18)\n    at defaultResolve (node:internal/modules/esm/resolve:984:11)\n    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:739:38)\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:762:52)\n    at Object.resolve (node:internal/modules/esm/initialize_import_meta:35:25)\n    at file:///mnt/data/astrosight_p7_5/phase6_5_work/scripts/prepare-cloudflare-geo-tz-assets.mjs:7:46 {\n  code: 'ERR_MODULE_NOT_FOUND'\n}\n\nNode.js v22.16.0"
+  },
+  "androidWebAssetsPresent": false,
+  "iosProjectPresent": false
+}

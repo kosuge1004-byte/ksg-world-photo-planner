@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
 import { serverPersistentCache } from "./cloudflareRuntime.ts";
+import { bilinearInterpolate } from "./bilinearInterpolation.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -215,7 +216,7 @@ function decodeElevationTile(bytes: Uint8Array): DecodedElevationTile {
 function tileCoordinates(
   point: GsiElevationRequestPoint,
   zoom: number
-): { x: number; y: number; pixelX: number; pixelY: number } {
+): { x: number; y: number; pixelX: number; pixelY: number; fracX: number; fracY: number } {
   const scale = 2 ** zoom;
   const normalizedX = (point.longitude + 180) / 360 * scale;
   const latitudeRadians = point.latitude * Math.PI / 180;
@@ -224,11 +225,15 @@ function tileCoordinates(
   ) / 2 * scale;
   const x = Math.floor(normalizedX);
   const y = Math.floor(normalizedY);
+  const pixelPositionX = Math.max(0, Math.min(255.999, (normalizedX - x) * 256));
+  const pixelPositionY = Math.max(0, Math.min(255.999, (normalizedY - y) * 256));
   return {
     x,
     y,
-    pixelX: Math.max(0, Math.min(255, Math.floor((normalizedX - x) * 256))),
-    pixelY: Math.max(0, Math.min(255, Math.floor((normalizedY - y) * 256))),
+    pixelX: Math.floor(pixelPositionX),
+    pixelY: Math.floor(pixelPositionY),
+    fracX: pixelPositionX - Math.floor(pixelPositionX),
+    fracY: pixelPositionY - Math.floor(pixelPositionY),
   };
 }
 
@@ -366,15 +371,50 @@ async function fetchDecodedTile(
   return awaitWithAbort(promise, signal);
 }
 
-function heightFromTile(
+function rawHeightAt(
   tile: DecodedElevationTile,
   pixelX: number,
   pixelY: number
 ): number | null {
-  if (pixelX >= tile.width || pixelY >= tile.height) return null;
-  const heightCentimeters = tile.heightsCentimeters[pixelY * tile.width + pixelX];
+  const clampedX = Math.max(0, Math.min(tile.width - 1, pixelX));
+  const clampedY = Math.max(0, Math.min(tile.height - 1, pixelY));
+  const heightCentimeters = tile.heightsCentimeters[clampedY * tile.width + clampedX];
   if (heightCentimeters === NO_DATA_HEIGHT_CENTIMETERS) return null;
   return heightCentimeters * 0.01;
+}
+
+/**
+ * タイル内4点（左上・右上・左下・右下）をBilinear補間して標高を求める。
+ * 4隅のいずれかがNO_DATA（データ欠測）の場合は補間すると誤った値になるため、
+ * 問い合わせ座標に最も近い1点（最近傍）へ安全にフォールバックする。
+ * pixelX/pixelYが隣接タイルにまたがる境界付近では、タイル端のピクセルを
+ * 再利用して補間する（追加のタイル取得を避けるための簡略化）。
+ */
+function heightFromTile(
+  tile: DecodedElevationTile,
+  pixelX: number,
+  pixelY: number,
+  fracX: number,
+  fracY: number
+): number | null {
+  if (pixelX >= tile.width || pixelY >= tile.height) return null;
+
+  const topLeft = rawHeightAt(tile, pixelX, pixelY);
+  const topRight = rawHeightAt(tile, pixelX + 1, pixelY);
+  const bottomLeft = rawHeightAt(tile, pixelX, pixelY + 1);
+  const bottomRight = rawHeightAt(tile, pixelX + 1, pixelY + 1);
+
+  if (topLeft === null && topRight === null && bottomLeft === null && bottomRight === null) {
+    return null;
+  }
+  if (topLeft === null || topRight === null || bottomLeft === null || bottomRight === null) {
+    // 周辺にNO_DATAがある場合は補間せず、最近傍点を採用する。
+    return fracX < 0.5
+      ? fracY < 0.5 ? topLeft : bottomLeft
+      : fracY < 0.5 ? topRight : bottomRight;
+  }
+
+  return bilinearInterpolate({ topLeft, topRight, bottomLeft, bottomRight }, fracX, fracY);
 }
 
 function sourceIsAllowedForPoint(
@@ -462,7 +502,9 @@ export async function lookupGsiElevations(
       const heightMeters = heightFromTile(
         tile,
         request.coordinate.pixelX,
-        request.coordinate.pixelY
+        request.coordinate.pixelY,
+        request.coordinate.fracX,
+        request.coordinate.fracY
       );
       if (heightMeters === null) continue;
       results[request.index] = { heightMeters, source: source.label };

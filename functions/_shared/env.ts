@@ -11,6 +11,7 @@ export interface CloudflareEnv {
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
   GOOGLE_MAPS_API_KEY?: string;
+  NETWORK_CACHE?: R2Bucket;
 }
 
 export function spotSearchJobKv(env: CloudflareEnv): SpotSearchJobKv {

@@ -3,6 +3,7 @@ import type {
   SpotSearchJob,
   SpotSearchJobInput,
 } from "../types/backgroundSearch";
+import { diagnosticFetch } from "../network/networkDiagnostics";
 import type { SpotPresetResult } from "../types/search";
 import {
   markPreparedSearchCache,
@@ -115,7 +116,7 @@ export async function startBackgroundSpotSearch(
 ): Promise<ActiveSpotSearchJob> {
   const active = { clientId: clientId(), jobId: newId() };
   saveActiveJob(active);
-  const response = await fetch("/api/spot-search-start", {
+  const response = await diagnosticFetch("spot-search", "/api/spot-search-start", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ ...active, input }),
@@ -175,7 +176,7 @@ export async function waitForBackgroundSpotSearch(
       throw new DOMException("検索結果の待機を中止しました", "AbortError");
     }
     const query = new URLSearchParams(active);
-    const response = await fetch(`/api/spot-search-status?${query}`, {
+    const response = await diagnosticFetch("spot-search", `/api/spot-search-status?${query}`, {
       headers: { Accept: "application/json" },
       cache: "no-store",
       signal,
@@ -292,7 +293,7 @@ export async function finalizeBackgroundSpotSearch(
     ...result,
     date: result.date.toISOString(),
   }));
-  const response = await fetch("/api/spot-search-finalize", {
+  const response = await diagnosticFetch("spot-search", "/api/spot-search-finalize", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ ...active, results: serialized }),

@@ -7,6 +7,7 @@ import {
   type CloudflareEnv,
 } from "../_shared/env.ts";
 import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
 function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body)) return null;
@@ -36,11 +37,15 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     if (!points) {
       return jsonResponse({ error: "座標の配列がありません" }, 400, "public, max-age=3600");
     }
-    return jsonResponse(
-      { samples: await lookupGsiElevations(points, context.request.signal) },
-      200,
-      "public, max-age=3600"
-    );
+    const normalized = points.map((point) => ({
+      latitude: Number(point.latitude.toFixed(5)),
+      longitude: Number(point.longitude.toFixed(5)),
+      maximumDetail: point.maximumDetail ?? "10m",
+    }));
+    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, normalized, {
+      namespace: "gsi-elevation", version: "v1", ttlSeconds: 30 * 86400,
+    }, async () => ({ samples: await lookupGsiElevations(points, context.request.signal) }), context.waitUntil);
+    return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=3600");
   } catch (error) {
     return jsonResponse({ error: errorMessage(error) }, 422, "public, max-age=3600");
   }

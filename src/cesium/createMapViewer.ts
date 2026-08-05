@@ -1,11 +1,15 @@
 import {
   Cartesian3,
   createGooglePhotorealistic3DTileset,
+  ImageryLayer,
   Ion,
   IonGeocodeProviderType,
   Math as CesiumMath,
+  UrlTemplateImageryProvider,
   Viewer,
 } from "cesium";
+
+import type { AccuracyMode } from "../types/precision";
 
 type GooglePhotorealisticTileset = Awaited<
   ReturnType<typeof createGooglePhotorealistic3DTileset>
@@ -13,6 +17,7 @@ type GooglePhotorealisticTileset = Awaited<
 
 const TILESET_INITIALIZATION_TIMEOUT_MS = 35_000;
 const TILESET_INITIALIZATION_ATTEMPTS = 2;
+const GSI_STANDARD_TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png";
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {
   let timedOut = false;
@@ -32,7 +37,6 @@ async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotoreal
     ]);
   } catch (error) {
     if (timedOut) {
-      // タイムアウト後に古い要求が完了しても、未使用のタイルセットを残さない。
       void request.then((tileset) => tileset.destroy()).catch(() => undefined);
     }
     throw error;
@@ -41,11 +45,39 @@ async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotoreal
   }
 }
 
-export async function createMapViewer(
+function createStandardViewer(container: HTMLDivElement): Viewer {
+  const baseLayer = new ImageryLayer(new UrlTemplateImageryProvider({
+    url: GSI_STANDARD_TILE_URL,
+    credit: "地理院タイル（国土地理院）",
+    maximumLevel: 18,
+  }));
+
+  return new Viewer(container, {
+    baseLayer,
+    baseLayerPicker: false,
+    geocoder: false,
+    animation: false,
+    fullscreenButton: false,
+    homeButton: false,
+    infoBox: false,
+    navigationHelpButton: false,
+    sceneModePicker: false,
+    selectionIndicator: false,
+    timeline: false,
+    requestRenderMode: true,
+    maximumRenderTimeChange: Number.POSITIVE_INFINITY,
+  });
+}
+
+async function createHighestPrecisionViewer(
   container: HTMLDivElement,
   token: string,
   setStatus: (message: string) => void
 ): Promise<Viewer> {
+  if (!token) {
+    throw new Error("高精度3D地図を開始するためのCesium ion設定が不足しています");
+  }
+
   Ion.defaultAccessToken = token;
 
   const viewer = new Viewer(container, {
@@ -72,7 +104,6 @@ export async function createMapViewer(
         break;
       } catch (error) {
         if (attempt === TILESET_INITIALIZATION_ATTEMPTS) throw error;
-        // モバイル回線の一時的な接続失敗では、Viewerを作り直さず一度だけ再試行する。
         setStatus("Google 3Dデータへ再接続中…");
         await new Promise<void>((resolve) => setTimeout(resolve, 900));
       }
@@ -90,6 +121,18 @@ export async function createMapViewer(
   tileset.maximumScreenSpaceError = 24;
   tileset.dynamicScreenSpaceError = true;
   viewer.scene.primitives.add(tileset);
+  return viewer;
+}
+
+export async function createMapViewer(
+  container: HTMLDivElement,
+  token: string | undefined,
+  accuracyMode: AccuracyMode,
+  setStatus: (message: string) => void
+): Promise<Viewer> {
+  const viewer = accuracyMode === "highest"
+    ? await createHighestPrecisionViewer(container, token ?? "", setStatus)
+    : createStandardViewer(container);
 
   viewer.camera.setView({
     destination: Cartesian3.fromDegrees(139.745433, 35.658581, 1200),
@@ -100,6 +143,10 @@ export async function createMapViewer(
     },
   });
 
-  setStatus("Google Photorealistic 3D Tiles 表示中");
+  setStatus(
+    accuracyMode === "highest"
+      ? "高精度：Google Photorealistic 3D Tiles 表示中"
+      : "標準：国土地理院地図（Google 3D通信なし）"
+  );
   return viewer;
 }

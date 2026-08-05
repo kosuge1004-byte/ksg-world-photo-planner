@@ -23,11 +23,12 @@ export class LruPromiseCache<T> {
   get(key: string): Promise<T> | undefined {
     const entry = this.entries.get(key);
     if (!entry) return undefined;
-    if (this.options.ttlMs && Date.now() - entry.touchedAt > this.options.ttlMs) {
+    const now = Date.now();
+    if (this.options.ttlMs && now - entry.touchedAt > this.options.ttlMs) {
       this.entries.delete(key);
       return undefined;
     }
-    entry.touchedAt = Date.now();
+    entry.touchedAt = now;
     this.entries.delete(key);
     this.entries.set(key, entry);
     return entry.value;
@@ -61,6 +62,12 @@ export class LruPromiseCache<T> {
   }
 
   private trim(): void {
+    if (this.options.ttlMs) {
+      const now = Date.now();
+      for (const [key, entry] of this.entries) {
+        if (now - entry.touchedAt > this.options.ttlMs) this.entries.delete(key);
+      }
+    }
     while (this.entries.size > this.options.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (typeof oldest !== "string") break;

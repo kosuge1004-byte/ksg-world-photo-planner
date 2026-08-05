@@ -7,6 +7,7 @@ import {
   type CloudflareEnv,
 } from "../_shared/env.ts";
 import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
 function requestPoints(body: unknown): OsmContextRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body) || !Array.isArray(body.points)) {
@@ -36,15 +37,20 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }
     const includeDetails = !(typeof body === "object" && body !== null &&
       "includeDetails" in body && body.includeDetails === false);
-    const contexts = await lookupOsmSiteContexts(
-      points,
-      context.request.signal,
-      includeDetails
-    );
-    return jsonResponse({
-      contexts,
+    const input = {
+      includeDetails,
+      points: points.map((point) => ({
+        latitude: Number(point.latitude.toFixed(5)),
+        longitude: Number(point.longitude.toFixed(5)),
+      })),
+    };
+    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, input, {
+      namespace: "osm-site-context", version: "v1", ttlSeconds: 7 * 86400,
+    }, async () => ({
+      contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails),
       attribution: "© OpenStreetMap contributors / 国土地理院 標高タイル",
-    }, 200, "public, max-age=300");
+    }), context.waitUntil);
+    return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=300");
   } catch (error) {
     return jsonResponse({ error: errorMessage(error) }, 422, "public, max-age=300");
   }

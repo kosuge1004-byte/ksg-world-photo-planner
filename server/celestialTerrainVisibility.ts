@@ -1,7 +1,6 @@
 import {
   Cartesian3,
   Cartographic,
-  Ellipsoid,
 } from "cesium";
 
 import type {
@@ -9,10 +8,11 @@ import type {
   HorizontalCoordinates,
 } from "../src/types/celestial.ts";
 import { calculateKarneyDestinationPoint } from "../src/geodesy/karneyGeodesic.ts";
-import { terrestrialRefractionCorrectionDegrees } from "../src/geodesy/terrestrialRefraction.ts";
 import { classifyTerrainOcclusion } from "../src/celestial/terrainOcclusionPolicy.ts";
+import { scanAdaptiveTerrainProfile } from "../src/geodesy/adaptiveTerrainProfile.ts";
 import type { GroundPoint } from "../src/types/points.ts";
 import { sampleServerLineOfSightTerrain } from "./worldTerrain.ts";
+import { lookupSurfaceObstructionHorizon } from "./surfaceObstructionLineOfSight.ts";
 import { LruPromiseCache } from "./lruPromiseCache.ts";
 
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
@@ -65,61 +65,10 @@ function destinationCartographic(
   );
 }
 
-function coarseDistances(maximumDistanceMeters: number): number[] {
-  const minimum = 8;
-  const maximum = Math.max(minimum, Math.min(TERRAIN_DISTANCE_LIMIT_METERS, maximumDistanceMeters));
-  const samples = 112;
-  return Array.from({ length: samples }, (_, index) =>
-    minimum * (maximum / minimum) **
-      (index / (samples - 1))
-  );
-}
-
 function subjectExclusionMarginMeters(subjectDistanceMeters: number): number {
   // 被写体地点そのものを遮蔽物と誤判定しないため、終端直前を除外する。
   // DEMの解像度・位置誤差を考慮し、距離の1%を基準に25〜100mへ制限する。
   return Math.min(100, Math.max(25, subjectDistanceMeters * 0.01));
-}
-
-function elevationAngleDegrees(
-  origin: Cartesian3,
-  localUp: Cartesian3,
-  target: Cartesian3
-): number {
-  const direction = Cartesian3.subtract(target, origin, new Cartesian3());
-  if (Cartesian3.magnitudeSquared(direction) < 1e-6) return -90;
-  Cartesian3.normalize(direction, direction);
-  return Math.asin(Math.max(-1, Math.min(1, Cartesian3.dot(direction, localUp)))) *
-    180 / Math.PI;
-}
-
-function profileMaximum(
-  origin: Cartesian3,
-  distances: number[],
-  samples: Cartographic[]
-): TerrainHorizon & { index: number } {
-  const localUp = Ellipsoid.WGS84.geodeticSurfaceNormal(origin, new Cartesian3());
-  let maximumElevationDegrees = -90;
-  let maximumIndex = 0;
-  samples.forEach((sample, index) => {
-    // クライアント側 (celestialOcclusion.ts) と同一の地表屈折補正を適用し、
-    // 検索結果とプレビューの遮蔽判定を一致させる。
-    const elevation =
-      elevationAngleDegrees(
-        origin,
-        localUp,
-        Cartesian3.fromRadians(sample.longitude, sample.latitude, sample.height)
-      ) + terrestrialRefractionCorrectionDegrees(distances[index]);
-    if (elevation > maximumElevationDegrees) {
-      maximumElevationDegrees = elevation;
-      maximumIndex = index;
-    }
-  });
-  return {
-    maximumElevationDegrees,
-    distanceMeters: distances[maximumIndex],
-    index: maximumIndex,
-  };
 }
 
 async function calculateHorizon(
@@ -138,30 +87,31 @@ async function calculateHorizon(
   if (maximumDistanceMeters <= 8) {
     return { maximumElevationDegrees: -90, distanceMeters: 0 };
   }
-  const distances = coarseDistances(maximumDistanceMeters);
-  const coarse = await sampleServerLineOfSightTerrain(
-    distances.map((distance) => destinationCartographic(tripod, azimuthDegrees, distance)),
-    distances,
-    signal
+  const clampedMaximumDistanceMeters = Math.min(
+    TERRAIN_DISTANCE_LIMIT_METERS,
+    maximumDistanceMeters
   );
-  const coarseMaximum = profileMaximum(origin, distances, coarse);
-  const start = distances[Math.max(0, coarseMaximum.index - 2)];
-  const end = distances[Math.min(distances.length - 1, coarseMaximum.index + 2)];
-  const refinedDistances = Array.from({ length: 48 }, (_, index) =>
-    start + (end - start) * index / 47
+  // クライアント側 (src/cesium/celestialOcclusion.ts) と共通の
+  // Adaptive Step地形プロファイル走査を使用し、検索結果とプレビューの
+  // 遮蔽判定を一致させる。
+  const result = await scanAdaptiveTerrainProfile(
+    origin,
+    clampedMaximumDistanceMeters,
+    async (distances) => {
+      abortIfRequested(signal);
+      const sampled = await sampleServerLineOfSightTerrain(
+        distances.map((distance) => destinationCartographic(tripod, azimuthDegrees, distance)),
+        distances,
+        signal
+      );
+      abortIfRequested(signal);
+      return sampled;
+    }
   );
-  const refined = await sampleServerLineOfSightTerrain(
-    refinedDistances.map((distance) =>
-      destinationCartographic(tripod, azimuthDegrees, distance)
-    ),
-    refinedDistances,
-    signal
-  );
-  abortIfRequested(signal);
-  const refinedMaximum = profileMaximum(origin, refinedDistances, refined);
-  return refinedMaximum.maximumElevationDegrees > coarseMaximum.maximumElevationDegrees
-    ? refinedMaximum
-    : coarseMaximum;
+  return {
+    maximumElevationDegrees: result.maximumElevationDegrees,
+    distanceMeters: result.distanceMeters,
+  };
 }
 
 function cacheKey(
@@ -209,7 +159,7 @@ export function createServerLineOfSightEvaluator(
       horizontal.azimuthDegrees,
       maximumDistanceMeters
     );
-    const pending = horizonCache.getOrCreate(key, () =>
+    const pendingTerrainHorizon = horizonCache.getOrCreate(key, () =>
       calculateHorizon(
         tripod,
         lensCenterHeightMeters,
@@ -217,12 +167,41 @@ export function createServerLineOfSightEvaluator(
         maximumDistanceMeters
       )
     );
-    const horizon = await awaitWithAbort(pending, signal);
+
+    // Phase6-1: DEM LOSとOSM建物・植生LOSは相互依存しないため並列取得する。
+    // 従来はDEM完了後にOSMを開始しており、ネットワーク待ち時間が加算されていた。
+    const pendingSurfaceHorizon = lookupSurfaceObstructionHorizon(
+      {
+        latitude: tripod.latitude,
+        longitude: tripod.longitude,
+        groundElevationMeters: tripod.height,
+        lensCenterHeightMeters,
+      },
+      horizontal.azimuthDegrees,
+      maximumDistanceMeters,
+      signal
+    );
+    const [horizon, surfaceHorizon] = await Promise.all([
+      awaitWithAbort(pendingTerrainHorizon, signal),
+      pendingSurfaceHorizon,
+    ]);
+
+    // Phase2〜3: OSM由来の建物・樹木高さ（DEM+DSM統合）による遮蔽も
+    // DEM地形と同じ土俵で評価し、どちらか高い方（より遮蔽的な方）を採用する。
+    const surfaceIsHigher =
+      surfaceHorizon.maximumElevationDegrees > horizon.maximumElevationDegrees;
+    const combinedElevationDegrees = surfaceIsHigher
+      ? surfaceHorizon.maximumElevationDegrees
+      : horizon.maximumElevationDegrees;
+    const combinedDistanceMeters = surfaceIsHigher
+      ? surfaceHorizon.distanceMeters ?? horizon.distanceMeters
+      : horizon.distanceMeters;
+
     const terrainDecision = classifyTerrainOcclusion(
       horizontal.altitudeDegrees,
-      horizon.maximumElevationDegrees,
+      combinedElevationDegrees,
       undefined,
-      horizon.distanceMeters
+      combinedDistanceMeters
     );
     const terrainObstructed = terrainDecision.status === "obstructed";
     return {
@@ -231,10 +210,12 @@ export function createServerLineOfSightEvaluator(
       verified: true,
       terrainObstructed,
       photorealisticMeshObstructed: false,
-      reason: terrainObstructed ? "terrain" : "visible",
-      obstructionElevationDegrees: horizon.maximumElevationDegrees,
+      reason: terrainObstructed
+        ? (surfaceIsHigher ? "building-or-surface" : "terrain")
+        : "visible",
+      obstructionElevationDegrees: combinedElevationDegrees,
       obstructionDistanceMeters: terrainObstructed
-        ? horizon.distanceMeters
+        ? combinedDistanceMeters
         : undefined,
     };
   };

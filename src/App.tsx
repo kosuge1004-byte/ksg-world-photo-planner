@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { requestTimeZone } from "./network/timeZoneRequest";
 import {
   BoundingSphere,
   Cartesian3,
@@ -46,9 +47,14 @@ import {
   refineSpotPresetHighestPrecision,
   type HighestPrecisionProgress,
 } from "./precision/highestPrecision";
-import type { RefractionWeatherContext } from "./search/refractionWeather";
+import {
+  prepareRefractionWeatherContext,
+  type RefractionWeatherContext,
+} from "./search/refractionWeather";
+import { loadPrecisionSettingsFromStorage, savePrecisionSettingsToStorage } from "./precision/precisionSettingsStorage";
 import { formatEstimatedRemainingTime } from "./search/searchProgress";
 import {
+  publishUserNotice,
   subscribeUserNotices,
   toUserFacingErrorMessage,
   type UserNoticeEvent,
@@ -103,7 +109,7 @@ import {
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
 import type { PrecisionSettings } from "./types/precision";
-import { DEFAULT_PRECISION_SETTINGS, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS, DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS, selectSubjectObstructionExclusionMeters } from "./types/precision";
+import { DEFAULT_PRECISION_SETTINGS, selectSubjectObstructionExclusionMeters } from "./types/precision";
 import type {
   CalculationMode,
   CameraSettings,
@@ -308,67 +314,7 @@ function loadCameraViewCorrection(): CameraViewCorrection {
 }
 
 function loadPrecisionSettings(): PrecisionSettings {
-  try {
-    const saved = localStorage.getItem("ksg-precision-settings");
-    if (!saved) return DEFAULT_PRECISION_SETTINGS;
-
-    const parsed = JSON.parse(saved) as Partial<PrecisionSettings>;
-    const mode = parsed.refractionCorrectionMode;
-    if (mode !== "auto" && mode !== "standard" && mode !== "none") {
-      return DEFAULT_PRECISION_SETTINGS;
-    }
-    const storedExclusion = parsed.subjectObstructionExclusionMeters;
-    const clamp = (value: unknown, fallback: number) => {
-      const parsedValue = Number(value);
-      return Number.isFinite(parsedValue)
-        ? Math.min(500, Math.max(0, parsedValue))
-        : fallback;
-    };
-    // 旧版の単一数値設定は、全距離帯へ同じ値を適用して移行する。
-    const legacyValue = typeof storedExclusion === "number" ? storedExclusion : undefined;
-    const storedObject =
-      storedExclusion && typeof storedExclusion === "object"
-        ? storedExclusion as Partial<typeof DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS>
-        : {};
-    const subjectObstructionExclusionMeters = {
-      under100m: clamp(storedObject.under100m ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.under100m),
-      from100mTo500m: clamp(storedObject.from100mTo500m ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.from100mTo500m),
-      from500mTo2km: clamp(storedObject.from500mTo2km ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.from500mTo2km),
-      over2km: clamp(storedObject.over2km ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.over2km),
-    };
-
-    const storedBuildingDetail = parsed.buildingOcclusionDetailSettings;
-    const storedBuildingDetailObject =
-      storedBuildingDetail && typeof storedBuildingDetail === "object"
-        ? storedBuildingDetail as Partial<typeof DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS>
-        : {};
-    const edgeSampleCount = storedBuildingDetailObject.edgeSampleCount;
-    const clampPercent = (value: unknown, fallback: number) => {
-      const parsedValue = Number(value);
-      return Number.isFinite(parsedValue)
-        ? Math.min(100, Math.max(0, parsedValue))
-        : fallback;
-    };
-    const buildingOcclusionDetailSettings = {
-      detailedEdgeCheckEnabled: storedBuildingDetailObject.detailedEdgeCheckEnabled === true,
-      edgeSampleCount: edgeSampleCount === 4 || edgeSampleCount === 8 || edgeSampleCount === 12
-        ? edgeSampleCount
-        : DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.edgeSampleCount,
-      obstructedThresholdPercent: clampPercent(
-        storedBuildingDetailObject.obstructedThresholdPercent,
-        DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.obstructedThresholdPercent
-      ),
-    };
-
-    return {
-      accuracyMode: parsed.accuracyMode === "highest" ? "highest" : "standard",
-      refractionCorrectionMode: mode,
-      subjectObstructionExclusionMeters,
-      buildingOcclusionDetailSettings,
-    };
-  } catch {
-    return DEFAULT_PRECISION_SETTINGS;
-  }
+  return loadPrecisionSettingsFromStorage();
 }
 
 function loadCelestialVisibility(): CelestialVisibility {
@@ -868,10 +814,60 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (precisionSettings.accuracyMode !== "highest") {
+    const controller = new AbortController();
+
+    if (
+      precisionSettings.accuracyMode !== "highest"
+      || precisionSettings.refractionCorrectionMode !== "auto"
+      || !tripodPoint
+      || Number.isNaN(selectedDayStart.getTime())
+      || Number.isNaN(selectedDayEnd.getTime())
+    ) {
       setPreviewRefractionWeather(undefined);
+      return () => controller.abort();
     }
-  }, [precisionSettings.accuracyMode]);
+
+    // Phase4-4: プレビュー、軌跡、遮蔽計算は同じ気象コンテキストを共有する。
+    // 選択日時そのものを「現在時刻」と誤認せず、実時刻を基準に予報/平年値を選ぶ。
+    void prepareRefractionWeatherContext({
+      accuracyMode: precisionSettings.accuracyMode,
+      mode: precisionSettings.refractionCorrectionMode,
+      point: tripodPoint,
+      searchStart: selectedDayStart,
+      searchEnd: selectedDayEnd,
+      now: new Date(),
+      signal: controller.signal,
+    }).then((context) => {
+      if (controller.signal.aborted) return;
+      if (context.effectiveMode !== "weather") {
+        setPreviewRefractionWeather(undefined);
+        publishUserNotice({
+          key: "preview-weather-unavailable",
+          tone: "warning",
+          message: "最高精度用の気象データを取得できませんでした。気象補正を適用せず表示します。",
+        });
+        return;
+      }
+      setPreviewRefractionWeather(context);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setPreviewRefractionWeather(undefined);
+      publishUserNotice({
+        key: "preview-weather-error",
+        tone: "warning",
+        message: "最高精度用の気象データ取得に失敗しました。",
+      });
+    });
+
+    return () => controller.abort();
+  }, [
+    precisionSettings.accuracyMode,
+    precisionSettings.refractionCorrectionMode,
+    tripodPoint,
+    selectedDayStart,
+    selectedDayEnd,
+  ]);
 
   const tripodSearchLines = useMemo(
     () => buildTripodSearchBaseLines(
@@ -1004,6 +1000,7 @@ function App() {
     calculationMode,
     previewAspectRatio,
     timelineInteracting,
+    precisionSettings.accuracyMode,
     tripodCandidateRetrySequence,
     showUserNotice,
   ]);
@@ -1014,10 +1011,11 @@ function App() {
     }
 
     const token = import.meta.env.VITE_CESIUM_ION_TOKEN;
+    const accuracyMode = precisionSettings.accuracyMode;
 
-    if (!token) {
-      const message = "3D地図を開始するためのアプリ設定が不足しています。2D地図は利用できます。";
-      console.warn("Cesium Ion token is not configured; keeping the 2D map available");
+    if (accuracyMode === "highest" && !token) {
+      const message = "高精度3D地図を開始するためのアプリ設定が不足しています。標準モードは利用できます。";
+      console.warn("Cesium Ion token is not configured; highest precision map is unavailable");
       setStatus(message);
       showUserNotice({
         key: "map-initialization",
@@ -1031,7 +1029,49 @@ function App() {
     let localViewer: Viewer | null = null;
     let removeCameraSync: (() => void) | null = null;
 
-    void createMapViewer(mapRef.current, token, setStatus)
+    const authorizeHighPrecision = async (): Promise<void> => {
+      if (accuracyMode !== "highest") return;
+      const storageKey = "astrosight-high-precision-session-v1";
+      const now = Date.now();
+      let sessionId = "";
+      try {
+        const cached = JSON.parse(localStorage.getItem(storageKey) ?? "null") as
+          | { sessionId?: string; expiresAt?: number }
+          | null;
+        if (cached?.sessionId && typeof cached.expiresAt === "number" && cached.expiresAt > now) {
+          sessionId = cached.sessionId;
+        }
+      } catch {
+        localStorage.removeItem(storageKey);
+      }
+      if (!sessionId) {
+        sessionId = crypto.randomUUID().replaceAll("-", "");
+      }
+      const response = await fetch("/api/high-precision-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const result = await response.json() as {
+        allowed?: boolean;
+        sessionId?: string;
+        sessionTtlSeconds?: number;
+        count?: number;
+        stopLimit?: number;
+      };
+      if (!response.ok || !result.allowed) {
+        throw new Error(
+          `今月の高精度モード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードをご利用ください。`
+        );
+      }
+      localStorage.setItem(storageKey, JSON.stringify({
+        sessionId: result.sessionId ?? sessionId,
+        expiresAt: now + (result.sessionTtlSeconds ?? 10800) * 1000,
+      }));
+    };
+
+    void authorizeHighPrecision()
+      .then(() => createMapViewer(mapRef.current!, token, accuracyMode, setStatus))
       .then((viewer) => {
         if (disposed) {
           viewer.destroy();
@@ -1082,7 +1122,7 @@ function App() {
         localViewer.destroy();
       }
     };
-  }, [mapInitializationAttempt, setSearchMessage, showUserNotice]);
+  }, [mapInitializationAttempt, precisionSettings.accuracyMode, setSearchMessage, showUserNotice]);
 
   useEffect(() => {
     const element = previewSectionRef.current;
@@ -1140,10 +1180,7 @@ function App() {
   }, [previewViewCorrection]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "ksg-precision-settings",
-      JSON.stringify(precisionSettings)
-    );
+    savePrecisionSettingsToStorage(precisionSettings);
   }, [precisionSettings]);
 
 
@@ -1168,30 +1205,24 @@ function App() {
       dateTimeLocalRef.current,
       previousTimeZone
     );
-    const parameters = new URLSearchParams({
-      latitude: String(latitude),
-      longitude: String(longitude),
-    });
-
-    void fetch(`/api/timezone?${parameters}`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = (await response.json()) as { timeZone?: unknown };
-        if (!response.ok || typeof data.timeZone !== "string") return;
+    void requestTimeZone(latitude, longitude, controller.signal)
+      .then((resolvedTimeZone) => {
+        if (resolvedTimeZone === null) return;
         if (
-          !isValidTimeZone(data.timeZone) ||
-          data.timeZone === previousTimeZone
+          !isValidTimeZone(resolvedTimeZone) ||
+          resolvedTimeZone === previousTimeZone
         ) return;
         // 地点変更で時刻そのものがずれないよう、絶対時刻を保って現地表示へ変換する。
         if (!Number.isNaN(absoluteTime.getTime())) {
           const localized = zonedDateTimeLocalFromDate(
             absoluteTime,
-            data.timeZone
+            resolvedTimeZone
           );
           dateTimeLocalRef.current = localized;
           setDateTimeLocal(localized);
         }
-        timeZoneRef.current = data.timeZone;
-        setTimeZone(data.timeZone);
+        timeZoneRef.current = resolvedTimeZone;
+        setTimeZone(resolvedTimeZone);
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1277,7 +1308,8 @@ function App() {
             observer,
             point,
             controller.signal,
-            (demResult) => updatePointOcclusion(point.id, demResult)
+            (demResult) => updatePointOcclusion(point.id, demResult),
+            precisionSettings.accuracyMode === "highest"
           );
           updatePointOcclusion(point.id, result);
         }));
@@ -1317,6 +1349,7 @@ function App() {
     cameraSettings.lensCenterHeightMeters,
     timelineInteracting,
     occlusionRetrySequence,
+    precisionSettings.accuracyMode,
     showUserNotice,
   ]);
 
@@ -1373,7 +1406,9 @@ function App() {
                 viewer,
                 observer,
                 direction,
-                controller.signal
+                controller.signal,
+                undefined,
+                precisionSettings.accuracyMode === "highest"
               )
             ));
             const confirmedHidden = checks.some(
@@ -1409,6 +1444,7 @@ function App() {
     celestialVisibility.milkyWay,
     milkyWayPath,
     cameraSettings.lensCenterHeightMeters,
+    precisionSettings.accuracyMode,
     timelineInteracting,
     occlusionRetrySequence,
   ]);
@@ -1848,6 +1884,17 @@ function App() {
       return job.input.criteria.verifiedVisibilityOnly
         ? results.filter((result) => result.candidate3dStatus === "visible")
         : results;
+    }
+    if (job.input.precisionSettings?.accuracyMode !== "highest") {
+      const demOnlyResults = results.map((result) => ({
+        ...result,
+        candidate3dStatus: "unverified" as const,
+      }));
+      const returnedResults = job.input.criteria.verifiedVisibilityOnly ? [] : demOnlyResults;
+      await finalizeBackgroundSpotSearch(active, returnedResults);
+      if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+      onProgress(`${demOnlyResults.length}件を取得しました（標準モード：Google 3D確認なし）`, 100);
+      return returnedResults;
     }
     let viewer = mapViewerRef.current;
     for (

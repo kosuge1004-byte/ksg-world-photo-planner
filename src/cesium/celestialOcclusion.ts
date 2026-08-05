@@ -25,7 +25,11 @@ import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
 import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
-import { terrestrialRefractionCorrectionDegrees } from "../geodesy/terrestrialRefraction";
+import {
+  adaptiveCoarseDistances,
+  adaptiveRefinementDistances,
+  terrainProfileMaximum,
+} from "../geodesy/adaptiveTerrainProfile";
 import {
   groundPointFromCoordinates,
   sampleTerrainLineOfSightProfile,
@@ -104,75 +108,16 @@ function destinationCartographic(
   );
 }
 
-function coarseProfileDistances(): number[] {
-  const minimum = 8;
-  const maximum = TERRAIN_DISTANCE_LIMIT_METERS;
-  const samples = 112;
-  return Array.from({ length: samples }, (_, index) => {
-    const ratio = index / (samples - 1);
-    return minimum * (maximum / minimum) ** ratio;
-  });
-}
-
-function elevationAngleDegrees(
-  origin: Cartesian3,
-  localUp: Cartesian3,
-  target: Cartesian3
-): number {
-  const direction = Cartesian3.subtract(target, origin, new Cartesian3());
-  if (Cartesian3.magnitudeSquared(direction) < 1e-6) return -90;
-  Cartesian3.normalize(direction, direction);
-  return Math.asin(
-    Math.max(-1, Math.min(1, Cartesian3.dot(direction, localUp)))
-  ) * 180 / Math.PI;
-}
-
-function profileMaximum(
+function profileMaximumWithDataSource(
   observer: CelestialLineOfSightObserver,
   distances: number[],
   samples: Cartographic[]
 ): TerrainHorizon & { index: number } {
-  const localUp = Ellipsoid.WGS84.geodeticSurfaceNormal(
-    observer.terrainOrigin,
-    new Cartesian3()
-  );
-  let maximumElevationDegrees = -90;
-  let maximumIndex = 0;
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = samples[index];
-    const target = Cartesian3.fromRadians(
-      sample.longitude,
-      sample.latitude,
-      Number.isFinite(sample.height) ? sample.height : 0
-    );
-    // 天体側の大気差補正との非対称性を避けるため、稜線までの距離に
-    // 応じた地表屈折補正を加えた上で稜線最高点を探す。
-    const elevation =
-      elevationAngleDegrees(observer.terrainOrigin, localUp, target) +
-      terrestrialRefractionCorrectionDegrees(distances[index]);
-    if (elevation > maximumElevationDegrees) {
-      maximumElevationDegrees = elevation;
-      maximumIndex = index;
-    }
-  }
+  const shared = terrainProfileMaximum(observer.terrainOrigin, distances, samples);
   return {
-    maximumElevationDegrees,
-    distanceMeters: distances[maximumIndex],
-    dataSource: terrainDataSource(samples[maximumIndex]),
-    index: maximumIndex,
+    ...shared,
+    dataSource: terrainDataSource(samples[shared.index]),
   };
-}
-
-function refinementDistances(
-  distances: number[],
-  maximumIndex: number
-): number[] {
-  const start = distances[Math.max(0, maximumIndex - 2)];
-  const end = distances[Math.min(distances.length - 1, maximumIndex + 2)];
-  const stepCount = 48;
-  return Array.from({ length: stepCount }, (_, index) =>
-    start + (end - start) * index / (stepCount - 1)
-  );
 }
 
 async function calculateTerrainHorizon(
@@ -181,7 +126,7 @@ async function calculateTerrainHorizon(
   signal?: AbortSignal
 ): Promise<TerrainHorizon> {
   abortIfRequested(signal);
-  const coarseDistances = coarseProfileDistances();
+  const coarseDistances = adaptiveCoarseDistances(TERRAIN_DISTANCE_LIMIT_METERS);
   const coarseCoordinates = coarseDistances.map((distance) =>
     destinationCartographic(observer.tripod, azimuthDegrees, distance)
   );
@@ -190,8 +135,8 @@ async function calculateTerrainHorizon(
     coarseDistances
   );
   abortIfRequested(signal);
-  const coarseMaximum = profileMaximum(observer, coarseDistances, coarseSamples);
-  const refinedDistances = refinementDistances(coarseDistances, coarseMaximum.index);
+  const coarseMaximum = profileMaximumWithDataSource(observer, coarseDistances, coarseSamples);
+  const refinedDistances = adaptiveRefinementDistances(coarseDistances, coarseMaximum.index);
   const refinedCoordinates = refinedDistances.map((distance) =>
     destinationCartographic(observer.tripod, azimuthDegrees, distance)
   );
@@ -200,7 +145,7 @@ async function calculateTerrainHorizon(
     refinedDistances
   );
   abortIfRequested(signal);
-  const refinedMaximum = profileMaximum(observer, refinedDistances, refinedSamples);
+  const refinedMaximum = profileMaximumWithDataSource(observer, refinedDistances, refinedSamples);
   return refinedMaximum.maximumElevationDegrees > coarseMaximum.maximumElevationDegrees
     ? refinedMaximum
     : coarseMaximum;
@@ -228,18 +173,19 @@ function cachedTerrainHorizon(
   signal?: AbortSignal
 ): Promise<TerrainHorizon> {
   const key = terrainCacheKey(observer, azimuthDegrees);
-  const cached = terrainHorizonCache.get(key);
+  const cached = boundedPromiseCacheGet(terrainHorizonCache, key);
   if (cached) return cached;
   const calculation = calculateTerrainHorizon(observer, azimuthDegrees, signal)
     .catch((error) => {
       terrainHorizonCache.delete(key);
       throw error;
     });
-  terrainHorizonCache.set(key, calculation);
-  if (terrainHorizonCache.size > MAX_TERRAIN_CACHE_ENTRIES) {
-    const oldestKey = terrainHorizonCache.keys().next().value;
-    if (typeof oldestKey === "string") terrainHorizonCache.delete(oldestKey);
-  }
+  boundedPromiseCacheSet(
+    terrainHorizonCache,
+    key,
+    calculation,
+    MAX_TERRAIN_CACHE_ENTRIES,
+  );
   return calculation;
 }
 
@@ -264,12 +210,24 @@ export function celestialWorldDirection(
   return Cartesian3.normalize(worldDirection, worldDirection);
 }
 
+function boundedPromiseCacheGet<T>(
+  cache: Map<string, Promise<T>>,
+  key: string,
+): Promise<T> | undefined {
+  const value = cache.get(key);
+  if (!value) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
 function boundedPromiseCacheSet<T>(
   cache: Map<string, Promise<T>>,
   key: string,
   value: Promise<T>,
   maximumEntries: number,
 ): void {
+  cache.delete(key);
   cache.set(key, value);
   if (cache.size > maximumEntries) {
     const oldestKey = cache.keys().next().value;
@@ -358,7 +316,7 @@ async function photorealisticMeshIntersection(
     meshLineOfSightCache.set(viewer, viewerCache);
   }
   const key = meshLineOfSightKey(observer, horizontal, maximumDistanceMeters);
-  let calculation = viewerCache.get(key);
+  let calculation = boundedPromiseCacheGet(viewerCache, key);
   if (!calculation) {
     calculation = calculatePhotorealisticMeshIntersection(
       viewer,
@@ -446,7 +404,7 @@ export async function prepareCelestialLineOfSightObserver(
     observerPreparationCache.set(viewer, viewerCache);
   }
   const key = observerPreparationKey(tripod, lensCenterHeightMeters);
-  let preparation = viewerCache.get(key);
+  let preparation = boundedPromiseCacheGet(viewerCache, key);
   if (!preparation) {
     preparation = calculateCelestialLineOfSightObserver(
       viewer,
@@ -469,6 +427,7 @@ export async function evaluateCelestialLineOfSight(
   horizontal: HorizontalCoordinates,
   signal?: AbortSignal,
   onDemVerified?: (result: CelestialOcclusion) => void,
+  usePhotorealisticMesh = true,
 ): Promise<CelestialOcclusion> {
   if (horizontal.altitudeDegrees <= 0) {
     return {
@@ -485,10 +444,11 @@ export async function evaluateCelestialLineOfSight(
         horizontal.geometricAltitudeDegrees ?? horizontal.altitudeDegrees,
     };
   }
-  const meshPromise: Promise<MeshIntersectionOutcome> =
-    photorealisticMeshIntersection(viewer, observer, horizontal, signal)
+  const meshPromise: Promise<MeshIntersectionOutcome> | null = usePhotorealisticMesh
+    ? photorealisticMeshIntersection(viewer, observer, horizontal, signal)
       .then((result) => ({ ok: true as const, result }))
-      .catch((error: unknown) => ({ ok: false as const, error }));
+      .catch((error: unknown) => ({ ok: false as const, error }))
+    : null;
   let terrain: TerrainHorizon;
   try {
     terrain = await cachedTerrainHorizon(
@@ -535,6 +495,7 @@ export async function evaluateCelestialLineOfSight(
   };
   abortIfRequested(signal);
   onDemVerified?.(demOnlyResult);
+  if (!meshPromise) return demOnlyResult;
 
   const meshOutcome = await meshPromise;
   abortIfRequested(signal);

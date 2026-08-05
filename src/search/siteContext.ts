@@ -3,6 +3,8 @@ import type {
   SiteConstraintFlags,
 } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
+import { diagnosticFetch } from "../network/networkDiagnostics";
+import { shareInFlightRequest } from "../network/sharedRequests";
 
 type SiteContextResponse = {
   contexts?: unknown;
@@ -53,22 +55,36 @@ async function fetchSiteContextBatch(
   signal?: AbortSignal,
   includeDetails = true
 ): Promise<SiteContext[]> {
-  const response = await fetch("/api/osm-site-context", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      points: points.map((point) => ({
-        latitude: point.latitude,
-        longitude: point.longitude,
-      })),
-      includeDetails,
-    }),
+  const requestBody = {
+    points: points.map((point) => ({
+      latitude: Number(point.latitude.toFixed(5)),
+      longitude: Number(point.longitude.toFixed(5)),
+    })),
+    includeDetails,
+  };
+  const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${JSON.stringify(requestBody.points)}`;
+  const result = await shareInFlightRequest({
+    key: requestKey,
+    category: "osm-site-context",
     signal,
+    factory: async () => {
+      const response = await diagnosticFetch("osm-site-context", "/api/osm-site-context", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      return {
+        ok: response.ok,
+        status: response.status,
+        data: (await response.json()) as SiteContextResponse,
+      };
+    },
   });
-  const data = (await response.json()) as SiteContextResponse;
+  const { data } = result;
+  const response = { ok: result.ok, status: result.status };
   if (!response.ok || !Array.isArray(data.contexts)) {
     throw new Error(
       typeof data.error === "string"

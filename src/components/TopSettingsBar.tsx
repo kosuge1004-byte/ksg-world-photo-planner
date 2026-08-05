@@ -210,10 +210,10 @@ export function TopSettingsBar({
                 />
                 <span className="precision-choice-copy">
                   <span className="precision-choice-title">
-                    <b>標準</b><small>初期値</small>
+                    <b>標準（無料）</b><small>初期値</small>
                   </span>
                   <small>
-                    現在の検索・三脚位置・プレビュー・遮蔽物判定をそのまま使います。処理が速く、通信量も通常どおりです。
+                    Google Photorealistic 3D Tilesを使用しません。国土地理院の地図と無料データを中心に、処理速度と通信量を優先します。
                   </small>
                 </span>
               </label>
@@ -228,9 +228,9 @@ export function TopSettingsBar({
                   })}
                 />
                 <span className="precision-choice-copy">
-                  <span className="precision-choice-title"><b>最高精度</b></span>
+                  <span className="precision-choice-title"><b>高精度（従量制）</b></span>
                   <small>
-                    検索結果を選んだ後だけ、地形や建物を詳しく確認して三脚位置を再計算します。検索速度は変わりませんが、確定処理の時間と通信量が増える場合があります。
+                    Google Photorealistic 3D Tilesと追加の高精度データを使用します。外部サービス側で利用量に応じた費用が発生し、処理時間と通信量も増える場合があります。
                   </small>
                 </span>
               </label>

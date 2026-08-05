@@ -11,7 +11,7 @@ import {
 } from "../cesium/celestial";
 import { calculateElevationAngleDegrees } from "../cesium/geometry";
 import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
-import { isLocalTimeWithinSearchRange } from "./searchTimeRange";
+import { isMinuteWithinSearchRange, localSearchDateParts } from "./searchTimeRange";
 import {
   weatherForDate,
   weatherRefractionCorrectionDegrees,
@@ -93,11 +93,6 @@ export function celestialTransitDateRange(input: Pick<SearchInput, "currentDate"
   };
 }
 
-function localWeekday(date: Date, timeZone: string): number {
-  const dateText = zonedDateTimeLocalFromDate(date, timeZone).slice(0, 10);
-  const [year, month, day] = dateText.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-}
 
 function signedAngularDifference(value: number, target: number): number {
   return ((value - target + 540) % 360) - 180;
@@ -313,6 +308,9 @@ export async function searchCelestialTransitDates(
   }
 
   const results: CelestialTransitResult[] = [];
+  const allowedWeekdays = input.criteria.weekdays.length > 0
+    ? new Set(input.criteria.weekdays)
+    : null;
   const resultIds = new Set<string>();
   const observer = observerAtLens(input);
   const subjectAltitudeDegrees = calculateElevationAngleDegrees(observer, input.subject);
@@ -369,13 +367,12 @@ export async function searchCelestialTransitDates(
   const isDateEligible = (date: Date): boolean => {
     const time = date.getTime();
     if (time < start.getTime() || time >= end.getTime()) return false;
-    const weekday = localWeekday(date, input.timeZone);
-    if (input.criteria.weekdays.length > 0 && !input.criteria.weekdays.includes(weekday)) {
+    const localParts = localSearchDateParts(date, input.timeZone);
+    if (allowedWeekdays !== null && !allowedWeekdays.has(localParts.weekday)) {
       return false;
     }
-    return isLocalTimeWithinSearchRange(
-      date,
-      input.timeZone,
+    return isMinuteWithinSearchRange(
+      localParts.minuteOfDay,
       input.criteria.startTime,
       input.criteria.endTime
     );

@@ -15,6 +15,7 @@ const osm = read("server/osmSiteContext.ts");
 const terrain = read("src/cesium/worldTerrain.ts");
 const zonedTime = read("src/time/zonedTime.ts");
 const weather = read("src/search/refractionWeather.ts");
+const cachePolicies = read("src/cache/cachePolicies.ts");
 const occlusion = read("src/cesium/celestialOcclusion.ts");
 const preparedSearch = read("src/search/preparedSearchCache.ts");
 const overlay = read("src/components/CelestialOverlay.tsx");
@@ -67,7 +68,10 @@ for (const [source, expected, label] of [
   [terrain, "TERRAIN_MEMORY_CACHE_MAX_ENTRIES", "terrain memory cache"],
   [terrain, "GEOID_MEMORY_CACHE_MAX_ENTRIES", "geoid memory cache"],
   [zonedTime, "FORMATTER_CACHE_MAX_ENTRIES", "timezone formatter cache"],
-  [weather, "WEATHER_CACHE_MAX_ENTRIES", "weather storage cache"],
+  [weather, "DEVICE_CACHE_POLICIES.weatherForecast", "weather forecast cache policy wiring"],
+  [weather, "DEVICE_CACHE_POLICIES.weatherClimatology", "weather climatology cache policy wiring"],
+  [cachePolicies, "weatherForecast:", "weather forecast cache"],
+  [cachePolicies, "weatherClimatology:", "weather climatology cache"],
   [occlusion, "MAX_TERRAIN_CACHE_ENTRIES", "occlusion terrain cache"],
   [occlusion, "MAX_MESH_LINE_OF_SIGHT_CACHE_ENTRIES", "3D line-of-sight cache"],
   [preparedSearch, "MAX_ENTRIES", "prepared-search cache"],

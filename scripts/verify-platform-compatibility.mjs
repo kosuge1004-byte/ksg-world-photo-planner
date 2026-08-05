@@ -15,6 +15,7 @@ const mapGesture = read("src/components/Map2DInteractionLayer.tsx");
 const location = read("src/device/locationSettings.ts");
 const backgroundSearch = read("src/search/backgroundSpotSearch.ts");
 const app = read("src/App.tsx");
+const userFeedback = read("src/errors/userFeedback.ts");
 
 const required = [
   [index, "viewport-fit=cover", "viewport-fit cover"],
@@ -47,7 +48,7 @@ const required = [
   [location, "if (!navigator.geolocation)", "geolocation API guard"],
   [backgroundSearch, "runtimeCrypto?.randomUUID", "randomUUID compatibility guard"],
   [backgroundSearch, "runtimeCrypto?.getRandomValues", "secure UUID fallback"],
-  [app, "2D地図は利用できます", "3D initialization fallback"],
+  [userFeedback, "2D地図は利用できます", "3D initialization fallback"],
   [app, 'mode === "3d" && (!mapReady || !viewer || viewer.isDestroyed())', "3D activation guard"],
   [app, "2D地図を表示しています", "3D unavailable keeps 2D visible"],
   [app, "<canvas", "Canvas preview"],

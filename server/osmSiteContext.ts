@@ -59,8 +59,8 @@ export type OsmSiteContext = {
   nearbyStructures: OsmNearbyStructure[];
 };
 
-type OsmCoordinate = { lat: number; lon: number };
-type OsmElement = {
+export type OsmCoordinate = { lat: number; lon: number };
+export type OsmElement = {
   type: "node" | "way" | "relation";
   id: number;
   lat?: number;
@@ -118,7 +118,7 @@ function isOsmElement(value: unknown): value is OsmElement {
   );
 }
 
-function geometryOf(element: OsmElement): OsmCoordinate[] {
+export function geometryOf(element: OsmElement): OsmCoordinate[] {
   if (Array.isArray(element.geometry)) {
     return element.geometry.filter((point) =>
       Number.isFinite(point.lat) && Number.isFinite(point.lon)
@@ -130,7 +130,7 @@ function geometryOf(element: OsmElement): OsmCoordinate[] {
   return element.center ? [element.center] : [];
 }
 
-function localMeters(
+export function localMeters(
   coordinate: OsmCoordinate,
   origin: OsmContextRequestPoint
 ): { x: number; y: number } {
@@ -202,7 +202,7 @@ function polygonContainsPoint(
   return inside;
 }
 
-function numericMeters(value: string | undefined): number | null {
+export function numericMeters(value: string | undefined): number | null {
   if (!value) return null;
   const normalized = value.trim().toLowerCase();
   if (normalized.includes("ft") || normalized.includes("'")) return null;
@@ -210,6 +210,31 @@ function numericMeters(value: string | undefined): number | null {
   if (!match) return null;
   const parsed = Number(match[0]);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+const METERS_PER_BUILDING_LEVEL = 3;
+
+export type EstimatedHeight = {
+  heightMeters: number | null;
+  heightSource: "surveyed" | "levels-estimate" | null;
+};
+
+/**
+ * OSMの height / building:levels タグから建物高さを推定する共通ロジック。
+ * height（実測値）があればそれを優先し、なければ building:levels ×3mで概算する。
+ */
+export function estimateHeightFromTags(tags: Record<string, string>): EstimatedHeight {
+  const mappedHeight = numericMeters(tags.height);
+  const levels = numericMeters(tags["building:levels"]);
+  const heightMeters = mappedHeight ?? (levels === null ? null : levels * METERS_PER_BUILDING_LEVEL);
+  return {
+    heightMeters,
+    heightSource: mappedHeight !== null
+      ? "surveyed"
+      : levels !== null
+        ? "levels-estimate"
+        : null,
+  };
 }
 
 function isRestricted(element: OsmElement, point: OsmContextRequestPoint): boolean {
@@ -344,18 +369,12 @@ function nearbyBuildings(
     }
     const distanceMeters = distanceToElementMeters(element, point);
     if (!Number.isFinite(distanceMeters) || distanceMeters > 600) return [];
-    const mappedHeight = numericMeters(tags.height);
-    const levels = numericMeters(tags["building:levels"]);
-    const heightMeters = mappedHeight ?? (levels === null ? null : levels * 3);
+    const { heightMeters, heightSource } = estimateHeightFromTags(tags);
     return [{
       name: tags["name:ja"] ?? tags.name ?? tags.wikidata ?? "名称未登録の建物",
       distanceMeters: Math.round(distanceMeters),
       heightMeters,
-      heightSource: mappedHeight !== null
-        ? "surveyed" as const
-        : levels !== null
-          ? "levels-estimate" as const
-          : null,
+      heightSource,
       wikidata: tags.wikidata ?? null,
     }];
   }).sort((a, b) => a.distanceMeters - b.distanceMeters).slice(0, 8);
@@ -401,11 +420,7 @@ function nearbyStructures(
     const distanceMeters = distanceToElementMeters(element, point);
     if (!Number.isFinite(distanceMeters) || distanceMeters > 1_800) continue;
     const tags = element.tags ?? {};
-    const mappedHeight = numericMeters(tags.height);
-    const levels = numericMeters(tags["building:levels"]);
-    const structureHeightMeters = mappedHeight ?? (
-      levels === null ? null : levels * 3
-    );
+    const { heightMeters: structureHeightMeters, heightSource } = estimateHeightFromTags(tags);
     structures.set(`${element.type}/${element.id}`, {
       name: displayName(element, type),
       type,
@@ -415,11 +430,7 @@ function nearbyStructures(
       groundElevationMeters: null,
       groundElevationSource: null,
       structureHeightMeters,
-      heightSource: mappedHeight !== null
-        ? "surveyed"
-        : levels !== null
-          ? "levels-estimate"
-          : null,
+      heightSource,
       osmType: element.type,
       osmId: element.id,
       sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
@@ -528,7 +539,7 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<voi
   });
 }
 
-async function fetchOverpass(
+export async function fetchOverpass(
   query: string,
   signal?: AbortSignal
 ): Promise<OsmElement[]> {

@@ -13,8 +13,8 @@ const styles = read("src/App.css");
 const precisionTypes = read("src/types/precision.ts");
 
 for (const [expected, label] of [
-  ["現在の検索・三脚位置・プレビュー・遮蔽物判定をそのまま使います", "standard mode"],
-  ["検索速度は変わりませんが、確定処理の時間と通信量が増える場合があります", "highest mode"],
+  ["Google Photorealistic 3D Tilesを使用しません", "standard mode"],
+  ["Google Photorealistic 3D Tilesと追加の高精度データを使用します", "highest mode"],
   ["DEM（地形の高さデータ）", "DEM"],
   ["Google 3D（建物を含む立体データ）", "Google 3D"],
   ["利用できる天気データで空気による光の曲がりを補正します", "automatic refraction"],

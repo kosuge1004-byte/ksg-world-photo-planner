@@ -109,7 +109,10 @@ test("timezone Pages Function preserves the public response contract", async () 
   );
   const response = await resolveTimezone(eventContext(request, { ASSETS: assets }));
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { timeZone: "Asia/Tokyo" });
+  // レスポンスにはR2キャッシュの状態(hit/bypass等)を示す診断用フィールド`cache`が
+  // 他のPages Functions(osm-site-context, geocode, gsi-geoid, gsi-elevation)と
+  // 同様に含まれる。timeZoneフィールドの内容自体は変わっていない。
+  assert.deepEqual(await response.json(), { timeZone: "Asia/Tokyo", cache: "bypass" });
 });
 
 test("place geocoder uses the best GSI candidate when Nominatim returns no results", async () => {
