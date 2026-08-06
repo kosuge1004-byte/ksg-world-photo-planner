@@ -20,7 +20,7 @@ const TILESET_INITIALIZATION_TIMEOUT_MS = 35_000;
 const TILESET_INITIALIZATION_ATTEMPTS = 2;
 const GSI_STANDARD_TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png";
 const PLATEAU_BUILDINGS_TILESET_URL =
-  "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-latest/tileset.json";
+  "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-2025/tileset.json";
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {
   let timedOut = false;
@@ -79,9 +79,10 @@ async function createStandardViewer(
   try {
     setStatus("標準3D：PLATEAU建物を読み込み中…");
     const plateauBuildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
-    plateauBuildings.maximumScreenSpaceError = 32;
+    plateauBuildings.maximumScreenSpaceError = 16;
     plateauBuildings.dynamicScreenSpaceError = true;
     viewer.scene.primitives.add(plateauBuildings);
+    plateauBuildings.show = true;
     viewer.scene.requestRender();
   } catch (error) {
     console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);

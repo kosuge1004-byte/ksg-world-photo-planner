@@ -2,7 +2,7 @@
 
 ## 実装内容
 - 標準モードの国土地理院地図上に、PLATEAU全国建築物LOD1最新データをCesium 3D Tilesとして重ねて表示。
-- 配信URL: `https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-latest/tileset.json`
+- 配信URL: `https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-2025/tileset.json`
 - PLATEAUの読込失敗時は、国土地理院地図のみで継続するフォールバックを実装。
 - 標準モードの表示文言を「国土地理院地図＋PLATEAU建物（表示専用）」へ変更。
 
@@ -22,3 +22,10 @@ PLATEAU tilesetは `viewer.scene.primitives` に表示レイヤーとして追�
 
 ## 検証上の制限
 この作業環境のZIPには `node_modules` が含まれず、外部依存取得もできないため、実ビルドは未実行。TypeScript構造と既存Cesium APIに基づく静的確認を実施。
+
+
+## 2026-08-06 correction
+- Corrected the composite PLATEAU 3D Tiles endpoint to the official nationwide LOD1 2025 URL.
+- Reduced maximumScreenSpaceError from 32 to 16 for more reliable visible building geometry.
+- Explicitly keeps the PLATEAU tileset visible after adding it to the scene.
+- Display-only separation from calculation/search logic remains unchanged.
