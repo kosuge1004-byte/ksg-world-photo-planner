@@ -105,7 +105,7 @@ export function recordCacheDiagnostic(
 
 export async function diagnosticFetch(
   category: string,
-  input: RequestInfo | URL,
+  input: string | URL | Request,
   init?: RequestInit
 ): Promise<Response> {
   const endpoint = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
