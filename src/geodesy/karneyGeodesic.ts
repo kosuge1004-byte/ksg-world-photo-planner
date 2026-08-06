@@ -13,11 +13,62 @@ export type GeodeticCoordinate = {
 export type KarneySurfaceMetrics = {
   distanceMeters: number;
   bearingDegrees: number;
+  /** false when origin and target are coincident and the bearing is undefined. */
+  bearingDefined: boolean;
+  coincident: boolean;
 };
+
+export const COINCIDENT_DISTANCE_EPSILON_METERS = 1e-6;
+export const ANTIPODAL_POSTCONDITION_DISTANCE_METERS = 19_000_000;
+export const GEODESIC_POSTCONDITION_TOLERANCE_DEGREES = 1e-8;
 
 function assertFiniteNumber(value: unknown, valueName: string): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${valueName} must be a finite number.`);
+  }
+}
+
+
+function normalizeSignedLongitudeDifferenceDegrees(value: number): number {
+  assertFiniteNumber(value, "longitude difference");
+  return ((value + 540) % 360) - 180;
+}
+
+function assertInverseDirectPostcondition(
+  origin: GeodeticCoordinate,
+  target: GeodeticCoordinate,
+  bearingDegrees: number,
+  distanceMeters: number
+): void {
+  if (distanceMeters < ANTIPODAL_POSTCONDITION_DISTANCE_METERS) {
+    return;
+  }
+
+  const direct = Geodesic.WGS84.Direct(
+    origin.latitude,
+    origin.longitude,
+    bearingDegrees,
+    distanceMeters,
+    Geodesic.STANDARD
+  );
+  const latitude = direct.lat2;
+  const longitude = direct.lon2;
+  assertFiniteNumber(latitude, "Karney inverse/direct postcondition latitude");
+  assertFiniteNumber(longitude, "Karney inverse/direct postcondition longitude");
+
+  const latitudeErrorDegrees = Math.abs(latitude - target.latitude);
+  const longitudeErrorDegrees = Math.abs(
+    normalizeSignedLongitudeDifferenceDegrees(longitude - target.longitude)
+  );
+
+  if (
+    latitudeErrorDegrees > GEODESIC_POSTCONDITION_TOLERANCE_DEGREES ||
+    longitudeErrorDegrees > GEODESIC_POSTCONDITION_TOLERANCE_DEGREES
+  ) {
+    throw new Error(
+      `Karney inverse/direct postcondition failed: latitude error ${latitudeErrorDegrees}°, ` +
+        `longitude error ${longitudeErrorDegrees}°.`
+    );
   }
 }
 
@@ -59,12 +110,28 @@ export function calculateKarneySurfaceMetrics(
     throw new Error("Karney inverse distance result must be non-negative.");
   }
 
+  if (distanceMeters < COINCIDENT_DISTANCE_EPSILON_METERS) {
+    // 同一点では方位角が数学的に不定。既存のnumber型APIを維持しつつ、
+    // 距離ゼロのセンチネルとして0度を返す。呼び出し側は必ず距離を先に判定する。
+    return {
+      distanceMeters: 0,
+      bearingDegrees: 0,
+      bearingDefined: false,
+      coincident: true,
+    };
+  }
+
+  const bearingDegrees = normalizeBearingDegrees(
+    initialBearingDegrees,
+    "Karney inverse initial bearing result"
+  );
+  assertInverseDirectPostcondition(origin, target, bearingDegrees, distanceMeters);
+
   return {
     distanceMeters,
-    bearingDegrees: normalizeBearingDegrees(
-      initialBearingDegrees,
-      "Karney inverse initial bearing result"
-    ),
+    bearingDegrees,
+    bearingDefined: true,
+    coincident: false,
   };
 }
 

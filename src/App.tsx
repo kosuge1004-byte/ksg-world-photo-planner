@@ -1054,15 +1054,21 @@ function App() {
       });
       const result = await response.json() as {
         allowed?: boolean;
+        reason?: "monthly_limit_reached" | "service_disabled";
         sessionId?: string;
         sessionTtlSeconds?: number;
         count?: number;
         stopLimit?: number;
       };
       if (!response.ok || !result.allowed) {
-        throw new Error(
-          `今月の高精度モード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードをご利用ください。`
-        );
+        const message = result.reason === "service_disabled"
+          ? "高精度モードは現在一時停止中です。標準モードへ切り替えました。"
+          : `今月の高精度モード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードへ切り替えました。`;
+        setPrecisionSettings((current) => ({
+          ...current,
+          accuracyMode: "standard",
+        }));
+        throw new Error(message);
       }
       localStorage.setItem(storageKey, JSON.stringify({
         sessionId: result.sessionId ?? sessionId,

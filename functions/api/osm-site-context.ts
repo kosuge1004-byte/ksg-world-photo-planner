@@ -37,14 +37,14 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }
     const includeDetails = !(typeof body === "object" && body !== null &&
       "includeDetails" in body && body.includeDetails === false);
-    const input = {
+    const cacheKeyInput = {
       includeDetails,
       points: points.map((point) => ({
         latitude: Number(point.latitude.toFixed(5)),
         longitude: Number(point.longitude.toFixed(5)),
       })),
     };
-    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, input, {
+    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, cacheKeyInput, {
       namespace: "osm-site-context", version: "v1", ttlSeconds: 7 * 86400,
     }, async () => ({
       contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails),

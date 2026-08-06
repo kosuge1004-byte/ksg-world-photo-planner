@@ -1,18 +1,26 @@
 export type AdaptiveConcurrencyKind = "candidate" | "mesh-los";
 
-type NavigatorWithDeviceMemory = Navigator & {
+type RuntimeNavigator = {
+  hardwareConcurrency?: number;
   deviceMemory?: number;
 };
 
+function runtimeNavigator(): RuntimeNavigator | null {
+  const candidate = globalThis as unknown as { navigator?: RuntimeNavigator };
+  return candidate.navigator ?? null;
+}
+
 function hardwareConcurrency(): number {
-  if (typeof navigator === "undefined") return 4;
-  const value = Number(navigator.hardwareConcurrency);
+  const navigatorValue = runtimeNavigator();
+  if (!navigatorValue) return 4;
+  const value = Number(navigatorValue.hardwareConcurrency);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 4;
 }
 
 function deviceMemoryGb(): number | null {
-  if (typeof navigator === "undefined") return null;
-  const value = Number((navigator as NavigatorWithDeviceMemory).deviceMemory);
+  const navigatorValue = runtimeNavigator();
+  if (!navigatorValue) return null;
+  const value = Number(navigatorValue.deviceMemory);
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 

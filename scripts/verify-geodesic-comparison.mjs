@@ -35,6 +35,14 @@ const cases = [
     expectedDistanceMeters: 19936288.578965314,
     expectedInitialBearingDegrees: 25.67187286829187,
   },
+  {
+    name: "exact_antipodal",
+    from: [0.0, 0.0],
+    to: [0.0, 180.0],
+    expectedDistanceMeters: 20003931.458625447,
+    expectedInitialBearingDegrees: 0,
+    bearingIsNonUnique: true,
+  },
 ];
 
 function normalizeBearingDegrees(value) {
@@ -88,7 +96,8 @@ for (const testCase of cases) {
 
   const passed =
     Math.abs(distanceError) <= DISTANCE_TOLERANCE_METERS &&
-    Math.abs(bearingError) <= BEARING_TOLERANCE_DEGREES;
+    (testCase.bearingIsNonUnique ||
+      Math.abs(bearingError) <= BEARING_TOLERANCE_DEGREES);
   failed ||= !passed;
 
   console.log(

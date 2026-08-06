@@ -2,6 +2,14 @@ import { spawnSync } from "node:child_process";
 
 const cases = [
   {
+    name: "high-precision usage warning and stop policy",
+    arguments: [
+      "--experimental-strip-types",
+      "--test",
+      "./tests/regression/high-precision-usage-policy.test.mjs",
+    ],
+  },
+  {
     name: "production calculation regression",
     arguments: [
       "--import",

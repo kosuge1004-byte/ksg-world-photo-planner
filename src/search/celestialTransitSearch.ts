@@ -16,7 +16,7 @@ import {
   weatherForDate,
   weatherRefractionCorrectionDegrees,
   type RefractionWeatherContext,
-} from "./refractionWeather";
+} from "./refractionWeatherModel";
 import {
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,

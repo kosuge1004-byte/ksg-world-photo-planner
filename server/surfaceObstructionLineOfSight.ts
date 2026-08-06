@@ -1,3 +1,4 @@
+import { createAbortError, isAbortError } from "./runtimeErrors.ts";
 import {
   estimateHeightFromTags,
   fetchOverpass,
@@ -55,7 +56,7 @@ const surfaceHorizonCache = new LruPromiseCache<SurfaceObstructionHorizon>({
 });
 
 function abortIfRequested(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("可視判定を中止しました", "AbortError");
+  if (signal?.aborted) throw createAbortError("可視判定を中止しました");
 }
 
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -64,7 +65,7 @@ function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
       cleanup();
-      reject(new DOMException("可視判定を中止しました", "AbortError"));
+      reject(createAbortError("可視判定を中止しました"));
     };
     const cleanup = () => signal.removeEventListener("abort", onAbort);
     signal.addEventListener("abort", onAbort, { once: true });
@@ -406,7 +407,7 @@ export async function lookupSurfaceObstructionHorizon(
     );
     return await awaitWithAbort(pending, signal);
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
     // Overpassが失敗しても検索全体は継続する（フォールバック処理：
     // 建物・樹木遮蔽は追加情報として扱い、DEM地形の判定のみで続行する）。
     return { maximumElevationDegrees: -90, distanceMeters: null, featureName: null, source: null };

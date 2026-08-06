@@ -1,3 +1,4 @@
+import { createAbortError, isAbortError } from "../utils/runtimeErrors";
 import {
   Body,
   Illumination,
@@ -129,7 +130,7 @@ export type SpotPresetSearchOptions = {
 
 function abortIfRequested(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    throw new DOMException("スポット検索を中止しました", "AbortError");
+    throw createAbortError("スポット検索を中止しました");
   }
 }
 
@@ -259,7 +260,7 @@ export async function resolveSpotTimeZone(
   try {
     return (await requestTimeZone(location.latitude, location.longitude, signal)) ?? fallback;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw error;
     }
     return fallback;
@@ -651,7 +652,7 @@ export async function searchSpotPresets({
         ));
       } catch (error) {
         if (signal?.aborted ||
-          (error instanceof DOMException && error.name === "AbortError")) {
+          (isAbortError(error))) {
           throw error;
         }
         // 先行取得失敗時も通常のオンデマンドDEM取得で検索を継続する。
@@ -738,7 +739,7 @@ export async function searchSpotPresets({
           return { sample, candidate, siteContext, cameraHorizontal };
         } catch (error) {
           if (signal?.aborted ||
-            (error instanceof DOMException && error.name === "AbortError")) {
+            (isAbortError(error))) {
             throw error;
           }
           performanceTracker.increment("candidateFailures");
@@ -782,7 +783,7 @@ export async function searchSpotPresets({
           return entry;
         } catch (error) {
           if (signal?.aborted ||
-            (error instanceof DOMException && error.name === "AbortError")) {
+            (isAbortError(error))) {
             throw error;
           }
           performanceTracker.increment("lineOfSightFailures");
@@ -917,7 +918,7 @@ export async function searchSpotPresets({
       });
     } catch (error) {
       if (signal?.aborted ||
-        (error instanceof DOMException && error.name === "AbortError")) {
+        (isAbortError(error))) {
         throw error;
       }
       console.warn("建物・ランドマーク情報を取得できませんでした", error);

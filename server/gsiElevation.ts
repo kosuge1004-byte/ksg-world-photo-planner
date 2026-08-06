@@ -1,6 +1,8 @@
+import { createAbortError, createTimeoutError, isAbortError } from "./runtimeErrors.ts";
 import { inflateSync } from "node:zlib";
 import { serverPersistentCache } from "./cloudflareRuntime.ts";
 import { bilinearInterpolate } from "./bilinearInterpolation.ts";
+import { constrainedBicubicInterpolate, isUsableBicubicGrid } from "./constrainedBicubicInterpolation.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -240,10 +242,10 @@ function tileCoordinates(
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
   if (signal.aborted) {
-    return Promise.reject(new DOMException("Aborted", "AbortError"));
+    return Promise.reject(createAbortError());
   }
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    const onAbort = () => reject(createAbortError());
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(
       (value) => {
@@ -314,7 +316,7 @@ async function fetchGsiTileWithTimeout(url: string): Promise<Response> {
   // 無期限に停止してしまうため、タイル取得だけ独自タイムアウトを持たせる。
   const controller = new AbortController();
   const timeout = setTimeout(
-    () => controller.abort(new DOMException("国土地理院標高タイル取得タイムアウト", "TimeoutError")),
+    () => controller.abort(createTimeoutError("国土地理院標高タイル取得タイムアウト")),
     GSI_TILE_REQUEST_TIMEOUT_MS
   );
   try {
@@ -356,7 +358,7 @@ async function fetchDecodedTile(
   }).catch((error: unknown) => {
     // 中断や一時的な通信失敗をキャッシュせず、次の判定で再取得できるようにする。
     tileCache.delete(key);
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw error;
     }
     console.warn(`国土地理院標高タイル ${key} を利用できません`, error);
@@ -376,45 +378,137 @@ function rawHeightAt(
   pixelX: number,
   pixelY: number
 ): number | null {
-  const clampedX = Math.max(0, Math.min(tile.width - 1, pixelX));
-  const clampedY = Math.max(0, Math.min(tile.height - 1, pixelY));
-  const heightCentimeters = tile.heightsCentimeters[clampedY * tile.width + clampedX];
+  if (pixelX < 0 || pixelY < 0 || pixelX >= tile.width || pixelY >= tile.height) {
+    return null;
+  }
+  const heightCentimeters = tile.heightsCentimeters[pixelY * tile.width + pixelX];
   if (heightCentimeters === NO_DATA_HEIGHT_CENTIMETERS) return null;
   return heightCentimeters * 0.01;
 }
 
+function normalizeTileX(x: number, zoom: number): number {
+  const tileCount = 2 ** zoom;
+  return ((x % tileCount) + tileCount) % tileCount;
+}
+
+function tileKeyFor(x: number, y: number, zoom: number): string | null {
+  const tileCount = 2 ** zoom;
+  if (y < 0 || y >= tileCount) return null;
+  return `${normalizeTileX(x, zoom)}/${y}`;
+}
+
 /**
- * タイル内4点（左上・右上・左下・右下）をBilinear補間して標高を求める。
- * 4隅のいずれかがNO_DATA（データ欠測）の場合は補間すると誤った値になるため、
- * 問い合わせ座標に最も近い1点（最近傍）へ安全にフォールバックする。
- * pixelX/pixelYが隣接タイルにまたがる境界付近では、タイル端のピクセルを
- * 再利用して補間する（追加のタイル取得を避けるための簡略化）。
+ * 基準タイルからはみ出すピクセルを隣接タイルへ正規化して読み出す。
+ * 経度方向はWeb Mercatorの世界周回に合わせてwrapし、緯度方向は範囲外を
+ * NO_DATAとして扱う。
  */
-function heightFromTile(
-  tile: DecodedElevationTile,
+function rawHeightAcrossTiles(
+  tiles: ReadonlyMap<string, DecodedElevationTile | null>,
+  tileX: number,
+  tileY: number,
+  zoom: number,
   pixelX: number,
   pixelY: number,
+  tileWidth: number,
+  tileHeight: number
+): number | null {
+  const offsetTileX = Math.floor(pixelX / tileWidth);
+  const offsetTileY = Math.floor(pixelY / tileHeight);
+  const localPixelX = ((pixelX % tileWidth) + tileWidth) % tileWidth;
+  const localPixelY = ((pixelY % tileHeight) + tileHeight) % tileHeight;
+  const key = tileKeyFor(tileX + offsetTileX, tileY + offsetTileY, zoom);
+  if (!key) return null;
+  const tile = tiles.get(key) ?? null;
+  if (!tile) return null;
+  return rawHeightAt(tile, localPixelX, localPixelY);
+}
+
+function bilinearOrNearest(
+  topLeft: number | null,
+  topRight: number | null,
+  bottomLeft: number | null,
+  bottomRight: number | null,
   fracX: number,
   fracY: number
 ): number | null {
-  if (pixelX >= tile.width || pixelY >= tile.height) return null;
-
-  const topLeft = rawHeightAt(tile, pixelX, pixelY);
-  const topRight = rawHeightAt(tile, pixelX + 1, pixelY);
-  const bottomLeft = rawHeightAt(tile, pixelX, pixelY + 1);
-  const bottomRight = rawHeightAt(tile, pixelX + 1, pixelY + 1);
-
   if (topLeft === null && topRight === null && bottomLeft === null && bottomRight === null) {
     return null;
   }
   if (topLeft === null || topRight === null || bottomLeft === null || bottomRight === null) {
-    // 周辺にNO_DATAがある場合は補間せず、最近傍点を採用する。
-    return fracX < 0.5
-      ? fracY < 0.5 ? topLeft : bottomLeft
-      : fracY < 0.5 ? topRight : bottomRight;
+    // Bilinearが成立しない場合だけ、最寄りの有効点へフォールバックする。
+    const candidates = [
+      { value: topLeft, distance: fracX * fracX + fracY * fracY },
+      { value: topRight, distance: (1 - fracX) ** 2 + fracY * fracY },
+      { value: bottomLeft, distance: fracX * fracX + (1 - fracY) ** 2 },
+      { value: bottomRight, distance: (1 - fracX) ** 2 + (1 - fracY) ** 2 },
+    ].filter((candidate): candidate is { value: number; distance: number } => candidate.value !== null);
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates[0]?.value ?? null;
+  }
+  return bilinearInterpolate({ topLeft, topRight, bottomLeft, bottomRight }, fracX, fracY);
+}
+
+/**
+ * タイル境界を跨いで標高を補間する。
+ * 高精度モードでは4x4近傍を隣接タイルから取得し、欠損が1点でもあれば
+ * Bilinearへフォールバックする。Bilinear自身も隣接タイルを使用するため、
+ * 境界で同一端ピクセルを重複利用しない。
+ */
+function heightFromTiles(
+  tiles: ReadonlyMap<string, DecodedElevationTile | null>,
+  tileX: number,
+  tileY: number,
+  zoom: number,
+  pixelX: number,
+  pixelY: number,
+  fracX: number,
+  fracY: number,
+  interpolation: "bilinear" | "constrained-bicubic" = "bilinear"
+): number | null {
+  const key = tileKeyFor(tileX, tileY, zoom);
+  const baseTile = key ? tiles.get(key) ?? null : null;
+  if (!baseTile) return null;
+
+  const sample = (x: number, y: number) => rawHeightAcrossTiles(
+    tiles,
+    tileX,
+    tileY,
+    zoom,
+    x,
+    y,
+    baseTile.width,
+    baseTile.height
+  );
+
+  const topLeft = sample(pixelX, pixelY);
+  const topRight = sample(pixelX + 1, pixelY);
+  const bottomLeft = sample(pixelX, pixelY + 1);
+  const bottomRight = sample(pixelX + 1, pixelY + 1);
+  const bilinear = bilinearOrNearest(
+    topLeft,
+    topRight,
+    bottomLeft,
+    bottomRight,
+    fracX,
+    fracY
+  );
+
+  if (interpolation !== "constrained-bicubic" || bilinear === null) {
+    return bilinear;
   }
 
-  return bilinearInterpolate({ topLeft, topRight, bottomLeft, bottomRight }, fracX, fracY);
+  const rows: Array<Array<number | null>> = [];
+  for (let offsetY = -1; offsetY <= 2; offsetY += 1) {
+    const row: Array<number | null> = [];
+    for (let offsetX = -1; offsetX <= 2; offsetX += 1) {
+      row.push(sample(pixelX + offsetX, pixelY + offsetY));
+    }
+    rows.push(row);
+  }
+  if (!isUsableBicubicGrid(rows)) {
+    return bilinear;
+  }
+  return constrainedBicubicInterpolate(rows, fracX, fracY);
 }
 
 function sourceIsAllowedForPoint(
@@ -447,7 +541,7 @@ export async function lookupGsiElevations(
   }
 
   if (signal?.aborted) {
-    throw new DOMException("Aborted", "AbortError");
+    throw createAbortError();
   }
 
   const results: GsiElevationSample[] = points.map(() => ({
@@ -465,13 +559,14 @@ export async function lookupGsiElevations(
   for (const source of GSI_TILE_SOURCES) {
     if (unresolved.size === 0) break;
     if (signal?.aborted) {
-      throw new DOMException("Aborted", "AbortError");
+      throw createAbortError();
     }
 
     const requests: Array<{
       index: number;
       coordinate: ReturnType<typeof tileCoordinates>;
       tileKey: string;
+      interpolation: "bilinear" | "constrained-bicubic";
     }> = [];
     const uniqueTiles = new Map<string, { x: number; y: number }>();
 
@@ -480,9 +575,38 @@ export async function lookupGsiElevations(
       if (!sourceIsAllowedForPoint(source, point)) continue;
       const coordinate = tileCoordinates(point, source.zoom);
       const tileKey = `${coordinate.x}/${coordinate.y}`;
-      requests.push({ index, coordinate, tileKey });
+      requests.push({
+        index,
+        coordinate,
+        tileKey,
+        interpolation: point.maximumDetail === "1m" ? "constrained-bicubic" : "bilinear",
+      });
       if (!uniqueTiles.has(tileKey)) {
         uniqueTiles.set(tileKey, { x: coordinate.x, y: coordinate.y });
+      }
+      if (point.maximumDetail === "1m") {
+        // 4x4近傍は[-1,+2]ピクセルを参照するため、端から2px以内では
+        // 必要な隣接タイルも同じ共有キャッシュ経路で先行取得する。
+        const tileOffsetsX = new Set([0]);
+        const tileOffsetsY = new Set([0]);
+        if (coordinate.pixelX <= 0) tileOffsetsX.add(-1);
+        if (coordinate.pixelX >= 254) tileOffsetsX.add(1);
+        if (coordinate.pixelY <= 0) tileOffsetsY.add(-1);
+        if (coordinate.pixelY >= 254) tileOffsetsY.add(1);
+        for (const offsetX of tileOffsetsX) {
+          for (const offsetY of tileOffsetsY) {
+            const neighborKey = tileKeyFor(
+              coordinate.x + offsetX,
+              coordinate.y + offsetY,
+              source.zoom
+            );
+            if (!neighborKey || uniqueTiles.has(neighborKey)) continue;
+            uniqueTiles.set(neighborKey, {
+              x: normalizeTileX(coordinate.x + offsetX, source.zoom),
+              y: coordinate.y + offsetY,
+            });
+          }
+        }
       }
     }
 
@@ -499,12 +623,16 @@ export async function lookupGsiElevations(
     for (const request of requests) {
       const tile = tiles.get(request.tileKey) ?? null;
       if (!tile) continue;
-      const heightMeters = heightFromTile(
-        tile,
+      const heightMeters = heightFromTiles(
+        tiles,
+        request.coordinate.x,
+        request.coordinate.y,
+        source.zoom,
         request.coordinate.pixelX,
         request.coordinate.pixelY,
         request.coordinate.fracX,
-        request.coordinate.fracY
+        request.coordinate.fracY,
+        request.interpolation
       );
       if (heightMeters === null) continue;
       results[request.index] = { heightMeters, source: source.label };

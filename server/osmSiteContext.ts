@@ -1,3 +1,4 @@
+import { createAbortError, createTimeoutError } from "./runtimeErrors.ts";
 import {
   precisionStructuresNear,
 } from "./precisionStructures.ts";
@@ -138,6 +139,9 @@ export function localMeters(
     latitude: coordinate.lat,
     longitude: coordinate.lon,
   });
+  if (!metrics.bearingDefined || metrics.coincident) {
+    return { x: 0, y: 0 };
+  }
   const bearingRadians = metrics.bearingDegrees * Math.PI / 180;
   return {
     x: Math.sin(bearingRadians) * metrics.distanceMeters,
@@ -522,14 +526,14 @@ function queryForPoints(
 
 function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
-    return Promise.reject(new DOMException("Aborted", "AbortError"));
+    return Promise.reject(createAbortError());
   }
   if (milliseconds <= 0) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     const onAbort = () => {
       clearTimeout(timeout);
       signal?.removeEventListener("abort", onAbort);
-      reject(new DOMException("Aborted", "AbortError"));
+      reject(createAbortError());
     };
     const timeout = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
@@ -555,7 +559,7 @@ export async function fetchOverpass(
       const forwardAbort = () => requestController.abort(signal?.reason);
       signal?.addEventListener("abort", forwardAbort, { once: true });
       const requestTimeout = setTimeout(
-        () => requestController.abort(new DOMException("Overpass API timeout", "TimeoutError")),
+        () => requestController.abort(createTimeoutError("Overpass API timeout")),
         Math.min(OVERPASS_REQUEST_TIMEOUT_MS, remainingMilliseconds)
       );
       try {
@@ -579,7 +583,7 @@ export async function fetchOverpass(
         return data.elements.filter(isOsmElement);
       } catch (error) {
         if (signal?.aborted) {
-          throw new DOMException("Aborted", "AbortError");
+          throw createAbortError();
         }
         lastError = error instanceof Error ? error : new Error(String(error));
       } finally {

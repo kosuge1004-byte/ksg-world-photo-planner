@@ -1,3 +1,4 @@
+import { createAbortError, isAbortError } from "../utils/runtimeErrors";
 import {
   Cartesian3,
   Cartographic,
@@ -38,7 +39,7 @@ export type TerrainSampler = (
 ) => Promise<Cartographic[]>;
 
 function abortIfRequested(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("計算を中止しました", "AbortError");
+  if (signal?.aborted) throw createAbortError("計算を中止しました");
 }
 
 function destinationCartographic(
@@ -544,7 +545,7 @@ export async function calculateTripodCandidates(
         return fallback;
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error)) throw error;
       console.warn("地形高度を取得できないため暫定高度で三脚候補計算を継続します", error);
       return requested.map((point) => {
         const fallback = Cartographic.clone(point);
@@ -635,7 +636,7 @@ export async function sampleDirectionalTripodCandidates(
         : 0,
     }));
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw error;
     }
     console.warn(

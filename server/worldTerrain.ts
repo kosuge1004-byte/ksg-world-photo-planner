@@ -1,3 +1,4 @@
+import { createAbortError } from "./runtimeErrors.ts";
 import {
   Cartographic,
   createWorldTerrainAsync,
@@ -49,10 +50,10 @@ function awaitTerrainSample(
 ): Promise<Cartographic> {
   if (!signal) return promise.then((sample) => Cartographic.clone(sample));
   if (signal.aborted) {
-    return Promise.reject(new DOMException("地形取得を中止しました", "AbortError"));
+    return Promise.reject(createAbortError("地形取得を中止しました"));
   }
   return new Promise<Cartographic>((resolve, reject) => {
-    const onAbort = () => reject(new DOMException("地形取得を中止しました", "AbortError"));
+    const onAbort = () => reject(createAbortError("地形取得を中止しました"));
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(
       (sample) => {
@@ -68,7 +69,7 @@ function awaitTerrainSample(
 }
 
 function abortIfRequested(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("地形取得を中止しました", "AbortError");
+  if (signal?.aborted) throw createAbortError("地形取得を中止しました");
 }
 
 async function fallbackToWorldTerrain(

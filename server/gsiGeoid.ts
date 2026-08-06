@@ -31,10 +31,13 @@ export async function lookupGsiGeoidHeight(
   pointSpecific = false
 ): Promise<number> {
   validatedCoordinate(latitude, longitude);
-  // ジオイドは滑らかなため0.01度単位で共有し、公式APIの回数制限内で利用する。
-  const queryLatitude = Number(latitude.toFixed(pointSpecific ? 8 : 2));
-  const queryLongitude = Number(longitude.toFixed(pointSpecific ? 8 : 2));
-  const key = `${queryLatitude},${queryLongitude}`;
+  // 地域近似モードは0.01度代表点を仕様として使う。地点別モードは原座標を送信し、
+  // キャッシュキーだけ約1mm相当の8桁へ量子化する。
+  const cacheLatitude = Number(latitude.toFixed(pointSpecific ? 8 : 2));
+  const cacheLongitude = Number(longitude.toFixed(pointSpecific ? 8 : 2));
+  const queryLatitude = pointSpecific ? latitude : cacheLatitude;
+  const queryLongitude = pointSpecific ? longitude : cacheLongitude;
+  const key = `${cacheLatitude},${cacheLongitude},${pointSpecific ? "point" : "regional"}`;
   const cached = cache.get(key);
   if (cached) return cached;
 

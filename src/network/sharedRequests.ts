@@ -1,3 +1,4 @@
+import { createAbortError } from "../utils/runtimeErrors";
 import { recordCacheDiagnostic } from "./networkDiagnostics";
 
 const inFlight = new Map<string, Promise<unknown>>();
@@ -18,8 +19,8 @@ export function coordinateRequestKey(
   return suffix ? `${base}:${suffix}` : base;
 }
 
-function abortError(): DOMException {
-  return new DOMException("通信を中止しました", "AbortError");
+function abortError(): Error {
+  return createAbortError("通信を中止しました");
 }
 
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

@@ -37,12 +37,12 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     if (!points) {
       return jsonResponse({ error: "座標の配列がありません" }, 400, "public, max-age=3600");
     }
-    const normalized = points.map((point) => ({
+    const cacheKeyInput = points.map((point) => ({
       latitude: Number(point.latitude.toFixed(5)),
       longitude: Number(point.longitude.toFixed(5)),
       maximumDetail: point.maximumDetail ?? "10m",
     }));
-    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, normalized, {
+    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, cacheKeyInput, {
       namespace: "gsi-elevation", version: "v1", ttlSeconds: 30 * 86400,
     }, async () => ({ samples: await lookupGsiElevations(points, context.request.signal) }), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=3600");

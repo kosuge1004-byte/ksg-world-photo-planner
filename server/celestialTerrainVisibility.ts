@@ -1,3 +1,4 @@
+import { createAbortError } from "./runtimeErrors.ts";
 import {
   Cartesian3,
   Cartographic,
@@ -27,7 +28,7 @@ type TerrainHorizon = {
 };
 
 function abortIfRequested(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("可視判定を中止しました", "AbortError");
+  if (signal?.aborted) throw createAbortError("可視判定を中止しました");
 }
 
 
@@ -37,7 +38,7 @@ function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
       cleanup();
-      reject(new DOMException("可視判定を中止しました", "AbortError"));
+      reject(createAbortError("可視判定を中止しました"));
     };
     const cleanup = () => signal.removeEventListener("abort", onAbort);
     signal.addEventListener("abort", onAbort, { once: true });

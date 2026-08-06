@@ -57,12 +57,16 @@ async function fetchSiteContextBatch(
 ): Promise<SiteContext[]> {
   const requestBody = {
     points: points.map((point) => ({
-      latitude: Number(point.latitude.toFixed(5)),
-      longitude: Number(point.longitude.toFixed(5)),
+      latitude: point.latitude,
+      longitude: point.longitude,
     })),
     includeDetails,
   };
-  const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${JSON.stringify(requestBody.points)}`;
+  const cacheKeyPoints = points.map((point) => ({
+    latitude: Number(point.latitude.toFixed(5)),
+    longitude: Number(point.longitude.toFixed(5)),
+  }));
+  const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${JSON.stringify(cacheKeyPoints)}`;
   const result = await shareInFlightRequest({
     key: requestKey,
     category: "osm-site-context",

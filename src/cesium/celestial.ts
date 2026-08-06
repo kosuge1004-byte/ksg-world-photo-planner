@@ -31,7 +31,7 @@ import {
   weatherForDate,
   weatherRefractionCorrectionDegrees,
   type RefractionWeatherContext,
-} from "../search/refractionWeather";
+} from "../search/refractionWeatherModel";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;

@@ -1,3 +1,4 @@
+import { createAbortError, createTimeoutError } from "../utils/runtimeErrors";
 import type { GsiElevationApiSample } from "../types/geospatial";
 
 export type GsiElevationClientPoint = {
@@ -23,8 +24,8 @@ function emptySamples(count: number): GsiElevationApiSample[] {
   return Array.from({ length: count }, () => ({ heightMeters: null, source: null }));
 }
 
-function abortError(): DOMException {
-  return new DOMException("標高取得を中止しました", "AbortError");
+function abortError(): Error {
+  return createAbortError("標高取得を中止しました");
 }
 
 async function requestBatch(
@@ -35,7 +36,7 @@ async function requestBatch(
   if (signal?.aborted) throw abortError();
   const controller = new AbortController();
   const timeout = setTimeout(
-    () => controller.abort(new DOMException("国土地理院標高APIがタイムアウトしました", "TimeoutError")),
+    () => controller.abort(createTimeoutError("国土地理院標高APIがタイムアウトしました")),
     REQUEST_TIMEOUT_MS
   );
   const onAbort = () => controller.abort(abortError());

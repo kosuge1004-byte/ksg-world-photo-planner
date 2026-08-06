@@ -36,14 +36,26 @@ function emptySummary(): NetworkDiagnosticSummary {
   };
 }
 
-function canUseStorage(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+type StorageLike = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+};
+
+type DiagnosticsGlobal = typeof globalThis & {
+  localStorage?: StorageLike;
+};
+
+function getLocalStorage(): StorageLike | null {
+  const candidate = globalThis as DiagnosticsGlobal;
+  return typeof candidate.localStorage === "undefined" ? null : candidate.localStorage;
 }
 
 export function readNetworkDiagnosticSummary(): NetworkDiagnosticSummary {
-  if (!canUseStorage()) return emptySummary();
+  const storage = getLocalStorage();
+  if (!storage) return emptySummary();
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<NetworkDiagnosticSummary> | null;
+    const parsed = JSON.parse(storage.getItem(STORAGE_KEY) ?? "null") as Partial<NetworkDiagnosticSummary> | null;
     if (!parsed) return emptySummary();
     return {
       requestCount: Number(parsed.requestCount) || 0,
@@ -60,9 +72,10 @@ export function readNetworkDiagnosticSummary(): NetworkDiagnosticSummary {
 }
 
 function persist(summary: NetworkDiagnosticSummary): void {
-  if (!canUseStorage()) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(summary));
+    storage.setItem(STORAGE_KEY, JSON.stringify(summary));
   } catch {
     // Diagnostics must never interfere with application behavior.
   }
@@ -123,9 +136,10 @@ export async function diagnosticFetch(
 }
 
 export function resetNetworkDiagnosticSummary(): void {
-  if (!canUseStorage()) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
+    storage.removeItem(STORAGE_KEY);
   } catch {
     // Ignore storage failures.
   }

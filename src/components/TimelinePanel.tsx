@@ -19,7 +19,7 @@ import {
   weatherForDate,
   weatherRefractionCorrectionDegrees,
   type RefractionWeatherContext,
-} from "../search/refractionWeather";
+} from "../search/refractionWeatherModel";
 import {
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,

@@ -1,3 +1,4 @@
+import { createAbortError, isAbortError } from "../utils/runtimeErrors";
 import {
   Cartographic,
   createWorldTerrainAsync,
@@ -250,7 +251,7 @@ const GSI_SOURCE_NAMES: Record<
 };
 
 function abortIfRequested(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("標高取得を中止しました", "AbortError");
+  if (signal?.aborted) throw createAbortError("標高取得を中止しました");
 }
 
 async function fetchGsiElevations(
@@ -287,7 +288,7 @@ async function fetchGsiElevations(
     }
     return result.samples;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
     // 予期しないクライアント障害時だけ短時間の連続要求を避ける。
     gsiUnavailableUntil = Date.now() + 15_000;
     console.warn("国土地理院DEMを取得できないためWorld Terrainを使用します", error);
@@ -489,7 +490,7 @@ async function fetchGsiGeoidHeight(
     return data.geoidHeightMeters;
   })().catch((error: unknown) => {
     geoidHeightCache.delete(key);
-    if (!(error instanceof DOMException && error.name === "AbortError")) {
+    if (!(isAbortError(error))) {
       geoidUnavailableUntil = Date.now() + 60_000;
     }
     throw error;
@@ -521,7 +522,7 @@ async function fetchRegionalGeoidHeights(
       const height = await fetchGsiGeoidHeight(point, signal);
       heights.set(key, height);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error)) throw error;
       if (Date.now() >= geoidWarningLoggedUntil) {
         geoidWarningLoggedUntil = Date.now() + 60_000;
         console.warn("一部地域のジオイド高を取得できないため該当地域はWorld Terrainを使用します", error);
@@ -563,10 +564,15 @@ export async function sampleWorldTerrainHighestPrecision(
     signal
   );
   const geoidPoints = requested.map((point) => ({
-    latitude: Number(CesiumMath.toDegrees(point.latitude).toFixed(8)),
-    longitude: Number(CesiumMath.toDegrees(point.longitude).toFixed(8)),
+    latitude: CesiumMath.toDegrees(point.latitude),
+    longitude: CesiumMath.toDegrees(point.longitude),
   }));
-  const geoidKey = `gsi-geoid-point-batch:${geoidPoints.map((point) => `${point.latitude},${point.longitude}`).join(";")}`;
+  // 通信・計算には倍精度の原座標を使い、同時要求共有キーだけ約1mm相当に量子化する。
+  const geoidKeyPoints = geoidPoints.map((point) => ({
+    latitude: Number(point.latitude.toFixed(8)),
+    longitude: Number(point.longitude.toFixed(8)),
+  }));
+  const geoidKey = `gsi-geoid-point-batch:${geoidKeyPoints.map((point) => `${point.latitude},${point.longitude}`).join(";")}`;
   const geoidHeights = await shareInFlightRequest({
     key: geoidKey,
     category: "gsi-geoid",

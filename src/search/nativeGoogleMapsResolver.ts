@@ -1,3 +1,4 @@
+import { createAbortError } from "../utils/runtimeErrors";
 import {
   Capacitor,
   CapacitorHttp,
@@ -41,7 +42,7 @@ const NOMINATIM_SEARCH_URL =
 
 function abortIfRequested(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    throw new DOMException("Googleマップ共有URLの解析を中止しました", "AbortError");
+    throw createAbortError("Googleマップ共有URLの解析を中止しました");
   }
 }
 

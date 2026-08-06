@@ -114,3 +114,14 @@ npx.cmd wrangler deploy --dry-run --config wrangler.spot-search.jsonc --outdir .
 ## 保存形式
 
 KVレコードは既存API用の`job`に加え、`jobId`、`status`、`progress`、`createdAt`、`updatedAt`、`request`、`partialResult`、`finalResult`、`error`、`expiresAt`を保存します。内部状態は`queued`、`running`、`completed`、`failed`、`cancelled`です。公開APIは既存クライアントとの互換性のため`queued`、`running`、`awaiting-3d`、`complete`、`failed`を維持します。
+
+
+## 高精度モード利用制御
+
+Pagesの環境変数で以下を設定できます。
+
+- `HIGH_PRECISION_ENABLED=false`: 緊急停止。月間制限設定に関係なく高精度モードを停止します。
+- `HIGH_PRECISION_LIMITS_ENABLED=false`: 800通知・850停止の月間制限だけを無効化します。
+- `HIGH_PRECISION_ALERT_WEBHOOK_URL`: 800イベント到達時の管理者通知先です。
+
+既定値は、高精度モード有効・月間制限有効です。850件目は許可され、月間件数が850に達した後の新規セッションから停止します。標準モードは継続利用できます。
