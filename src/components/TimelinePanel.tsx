@@ -6,20 +6,15 @@ import type {
 import {
   Body,
   DefineStar,
-  Equator,
-  Horizon,
   Illumination,
-  Observer,
   SearchMoonPhase,
 } from "astronomy-engine";
 
 import type { CalculationMode } from "../types/camera";
+import type { CelestialBodyId } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import {
-  weatherForDate,
-  weatherRefractionCorrectionDegrees,
-  type RefractionWeatherContext,
-} from "../search/refractionWeatherModel";
+import { calculateCelestialHorizontalCoordinates } from "../cesium/celestial";
+import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import {
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,
@@ -71,32 +66,28 @@ function pad2(value: number): string {
 }
 
 function bodyAltitude(
-  body: Body,
+  id: CelestialBodyId,
   date: Date,
-  observer: Observer,
+  location: GroundPoint,
   calculationMode: CalculationMode,
   refractionWeather?: RefractionWeatherContext
 ): number {
-  const equatorial = Equator(body, date, observer, true, true);
-  const useWeather = refractionWeather?.effectiveMode === "weather";
-  const geometric = Horizon(
+  // 日の出没・月の出没・天の川の可視窓は、天体プレビュー・検索・最終判定と
+  // 同じcalculateCelestialHorizontalCoordinates()（気象欠測時の標準大気差
+  // フォールバックを含む）だけを経由する。ここに独自の屈折ロジックは持たない。
+  return calculateCelestialHorizontalCoordinates(
+    id,
     date,
-    observer,
-    equatorial.ra,
-    equatorial.dec,
-    calculationMode === "pro" && !useWeather ? "normal" : undefined
-  ).altitude;
-  const weather = useWeather ? weatherForDate(refractionWeather, date) : null;
-  const correction = weather
-    ? weatherRefractionCorrectionDegrees(geometric, weather)
-    : null;
-  return geometric + (correction ?? 0);
+    location,
+    calculationMode,
+    refractionWeather
+  ).altitudeDegrees;
 }
 
 function findHorizonCrossing(
-  body: Body,
+  id: CelestialBodyId,
   direction: 1 | -1,
-  observer: Observer,
+  location: GroundPoint,
   start: Date,
   end: Date,
   calculationMode: CalculationMode,
@@ -105,9 +96,9 @@ function findHorizonCrossing(
   const step = 2 * 60_000;
   let previousTime = start.getTime();
   let previousAltitude = bodyAltitude(
-    body,
+    id,
     start,
-    observer,
+    location,
     calculationMode,
     refractionWeather
   );
@@ -118,9 +109,9 @@ function findHorizonCrossing(
     currentTime = Math.min(currentTime + step, end.getTime())
   ) {
     const currentAltitude = bodyAltitude(
-      body,
+      id,
       new Date(currentTime),
-      observer,
+      location,
       calculationMode,
       refractionWeather
     );
@@ -135,9 +126,9 @@ function findHorizonCrossing(
       for (let index = 0; index < 18; index += 1) {
         const middle = (low + high) / 2;
         const altitude = bodyAltitude(
-          body,
+          id,
           new Date(middle),
-          observer,
+          location,
           calculationMode,
           refractionWeather
         );
@@ -198,7 +189,7 @@ function calculateMoonAgeDays(date: Date): number | null {
 }
 
 function milkyWayShootingWindow(
-  observer: Observer,
+  location: GroundPoint,
   scanStart: Date,
   scanEnd: Date,
   selectedDaySerial: number,
@@ -217,23 +208,23 @@ function milkyWayShootingWindow(
   ) {
     const date = new Date(time);
     const sunAltitude = bodyAltitude(
-      Body.Sun,
+      "sun",
       date,
-      observer,
+      location,
       calculationMode,
       refractionWeather
     );
     const moonAltitude = bodyAltitude(
-      Body.Moon,
+      "moon",
       date,
-      observer,
+      location,
       calculationMode,
       refractionWeather
     );
     const milkyWayAltitude = bodyAltitude(
-      Body.Star2,
+      "milkyWay",
       date,
-      observer,
+      location,
       calculationMode,
       refractionWeather
     );
@@ -310,6 +301,7 @@ function TimelinePanelComponent({
         milkyWay: "位置未設定",
       };
     }
+    const resolvedLocation: GroundPoint = location;
 
     const dayText = dateTextFromDaySerial(selectedDaySerial);
     const nextDayText = dateTextFromDaySerial(selectedDaySerial + 1);
@@ -319,17 +311,12 @@ function TimelinePanelComponent({
       timeZone
     );
     const end = dateFromZonedDateTimeLocal(`${nextDayText}T00:00`, timeZone);
-    const observer = new Observer(
-      location.latitude,
-      location.longitude,
-      location.height
-    );
 
-    function find(body: Body, direction: 1 | -1): Date | null {
+    function find(id: CelestialBodyId, direction: 1 | -1): Date | null {
       return findHorizonCrossing(
-        body,
+        id,
         direction,
-        observer,
+        resolvedLocation,
         start,
         end,
         calculationMode,
@@ -338,12 +325,12 @@ function TimelinePanelComponent({
     }
 
     return {
-      sunrise: find(Body.Sun, 1),
-      sunset: find(Body.Sun, -1),
-      moonrise: find(Body.Moon, 1),
-      moonset: find(Body.Moon, -1),
+      sunrise: find("sun", 1),
+      sunset: find("sun", -1),
+      moonrise: find("moon", 1),
+      moonset: find("moon", -1),
       milkyWay: milkyWayShootingWindow(
-        observer,
+        resolvedLocation,
         dateFromZonedDateTimeLocal(`${dayText}T12:00`, timeZone),
         dateFromZonedDateTimeLocal(`${followingDayText}T12:00`, timeZone),
         selectedDaySerial,

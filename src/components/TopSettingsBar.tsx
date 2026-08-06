@@ -22,6 +22,7 @@ type Props = {
   onChange: (settings: CameraSettings) => void;
   onOpenSavedPlans: () => void;
   onSaveCurrentPlan: () => void;
+  onShareCurrentPlan: () => void;
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
   precisionSettings: PrecisionSettings;
@@ -33,6 +34,7 @@ export function TopSettingsBar({
   onChange,
   onOpenSavedPlans,
   onSaveCurrentPlan,
+  onShareCurrentPlan,
   onOpenCalendar,
   onOpenMoonAgeCalendar,
   precisionSettings,
@@ -213,7 +215,7 @@ export function TopSettingsBar({
                     <b>標準（無料）</b><small>初期値</small>
                   </span>
                   <small>
-                    Google Photorealistic 3D Tilesを使用しません。国土地理院の地図と無料データを中心に、処理速度と通信量を優先します。
+                    Google Photorealistic 3D Tilesを使用しません。天体計算、Karney測地線、DEM、ジオイド、気象連動屈折補正など従量制でない計算は高精度モードと同じです。
                   </small>
                 </span>
               </label>
@@ -230,14 +232,14 @@ export function TopSettingsBar({
                 <span className="precision-choice-copy">
                   <span className="precision-choice-title"><b>高精度（従量制）</b></span>
                   <small>
-                    Google Photorealistic 3D Tilesと追加の高精度データを使用します。外部サービス側で利用量に応じた費用が発生し、処理時間と通信量も増える場合があります。
+                    標準モードと同じ計算に加え、Google Photorealistic 3D Tilesを使った建物表面・遮蔽・最終3D確認を行います。従量制サービスの利用量が増えます。
                   </small>
                 </span>
               </label>
               <div className="precision-data-guide">
                 <strong>使用する地形・3Dデータ</strong>
                 <small>
-                  <b>DEM（地形の高さデータ）</b>は地面の起伏を確認します。最高精度では利用可能な最も細かいデータを使います。
+                  <b>DEM（地形の高さデータ）</b>、ジオイド、気象補正、天体計算は標準・高精度で共通です。
                 </small>
                 <small>
                   <b>Google 3D（建物を含む立体データ）</b>は三脚・被写体の高さと建物の遮蔽確認に使います。詳しいデータほど読込時間と通信量が増える場合があります。
@@ -460,6 +462,7 @@ export function TopSettingsBar({
       <nav className="top-quick-actions" aria-label="クイック操作">
         <button type="button" className="top-preset-button" onClick={onOpenSavedPlans}><b aria-hidden="true">▣</b><span>プリセット</span></button>
         <button type="button" className="top-favorite-button" aria-label="現在の構図を保存" onClick={onSaveCurrentPlan}><b aria-hidden="true">☆</b></button>
+        <button type="button" className="top-favorite-button" aria-label="現在の構図を共有" onClick={onShareCurrentPlan}><b aria-hidden="true">⇪</b></button>
       </nav>
       {focalLengthErrorOpen && (
         <div

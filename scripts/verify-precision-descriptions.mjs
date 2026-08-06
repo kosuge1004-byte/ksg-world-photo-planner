@@ -14,7 +14,7 @@ const precisionTypes = read("src/types/precision.ts");
 
 for (const [expected, label] of [
   ["Google Photorealistic 3D Tilesを使用しません", "standard mode"],
-  ["Google Photorealistic 3D Tilesと追加の高精度データを使用します", "highest mode"],
+  ["標準モードと同じ計算に加え、Google Photorealistic 3D Tilesを使った建物表面・遮蔽・最終3D確認を行います", "highest mode"],
   ["DEM（地形の高さデータ）", "DEM"],
   ["Google 3D（建物を含む立体データ）", "Google 3D"],
   ["利用できる天気データで空気による光の曲がりを補正します", "automatic refraction"],

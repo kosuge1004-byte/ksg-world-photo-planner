@@ -6,9 +6,9 @@ import {
   Viewer,
 } from "cesium";
 
-import type { GroundPoint } from "../types/points";
+import type { GroundPoint, ResolvedGroundPoint } from "../types/points";
 import { publishUserNotice } from "../errors/userFeedback";
-import { groundPointFromCoordinates } from "./worldTerrain";
+import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "../height/heightResolver";
 
 const SUBJECT_PIN_ID = "ksg-subject-pin";
 const SUBJECT_CLAMP_TIMEOUT_MS = 2_500;
@@ -81,74 +81,70 @@ export async function setSubjectPinFromCoordinates(
   viewer: Viewer,
   latitude: number,
   longitude: number,
-  label: string
+  label: string,
+  preferExplicit3dSurface = false
 ): Promise<GroundPoint> {
-  const originalPosition = Cartesian3.fromDegrees(
-    longitude,
-    latitude,
-    0
-  );
-
-  try {
-    const positions = await withTimeout(
-      viewer.scene.clampToHeightMostDetailed([originalPosition]),
-      SUBJECT_CLAMP_TIMEOUT_MS
-    );
-
-    const clampedPosition = positions[0];
-
-    if (!clampedPosition) {
-      throw new Error("3D表面の高さを取得できませんでした");
-    }
-
-    return addVisibleSubjectPin(viewer, clampedPosition, label);
-  } catch (error) {
-    console.warn(
-      "3D表面への被写体ピン配置に失敗。地形標高へフォールバックします。",
-      error
-    );
-    publishUserNotice({
-      key: "subject-pin-3d-fallback",
-      tone: "warning",
-      message: "Google 3Dの高さを取得できないため、地形データの高さで被写体ピンを配置します。",
-    });
-
-    // clampToHeightMostDetailed() はPhotorealistic 3D Tilesが未読込・対象外の場合に
-    // undefinedを返すことがある。従来は高さ0mへ落としていたため、被写体が実際の
-    // 地表より数十～数百m下に入り、三脚候補計算が全件不成立になっていた。
-    // DEMで地表高を取得し、被写体ピンの基準高度を維持する。
+  if (preferExplicit3dSurface) {
+    const originalPosition = Cartesian3.fromDegrees(longitude, latitude, 0);
     try {
-      const groundPoint = await groundPointFromCoordinates(
-        latitude,
-        longitude,
-        label
+      const positions = await withTimeout(
+        viewer.scene.clampToHeightMostDetailed([originalPosition]),
+        SUBJECT_CLAMP_TIMEOUT_MS
       );
-      return addVisibleSubjectPin(
+      const clampedPosition = positions[0];
+      if (!clampedPosition) throw new Error("3D表面の高さを取得できませんでした");
+      const resolved = await resolveGroundPointFrom3dSurface(clampedPosition, label);
+      addVisibleSubjectPin(
         viewer,
-        Cartesian3.fromDegrees(
-          groundPoint.longitude,
-          groundPoint.latitude,
-          groundPoint.height
-        ),
+        Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters),
         label
       );
-    } catch (terrainError) {
-      console.warn(
-        "地形標高も取得できないため楕円体高0mを使用します。",
-        terrainError
-      );
+      return resolved;
+    } catch (error) {
+      console.warn("明示的に選択した3D表面高を取得できないためDEMへフォールバックします", error);
       publishUserNotice({
-        key: "subject-pin-terrain-fallback",
+        key: "subject-pin-3d-fallback",
         tone: "warning",
-        message: "地形の高さも取得できなかったため、被写体ピンを暫定高度で配置しました。位置を現地で確認してください。",
+        message: "選択した3D表面の高さを取得できないため、地形データの高さで被写体ピンを配置します。",
       });
-      return addVisibleSubjectPin(
-        viewer,
-        Cartesian3.fromDegrees(longitude, latitude, 0),
-        label
-      );
     }
   }
+
+  try {
+    const groundPoint = await resolveGroundPoint(latitude, longitude, label);
+    return addVisibleSubjectPin(
+      viewer,
+      Cartesian3.fromDegrees(groundPoint.longitude, groundPoint.latitude, groundPoint.height),
+      label
+    );
+  } catch (terrainError) {
+    console.warn("被写体ピンの高度を確定できないため配置を中止します", terrainError);
+    publishUserNotice({
+      key: "subject-pin-height-required",
+      tone: "error",
+      message: "地形高度を取得できないため被写体ピンを配置できません。通信状態を確認して再試行してください。",
+    });
+    throw terrainError;
+  }
+}
+
+/**
+ * 3D明示選択（scene.pickPosition等が返した実表面）専用。HeightResolverの
+ * resolveGroundPointFrom3dSurface()だけを経由し、DEMへのフォールバックは
+ * 行わない（失敗時は再クリックを要求する）。
+ */
+export async function setSubjectPinFromExplicit3dPick(
+  viewer: Viewer,
+  position: Cartesian3,
+  label = "3D指定地点"
+): Promise<ResolvedGroundPoint> {
+  const resolved = await resolveGroundPointFrom3dSurface(position, label);
+  addVisibleSubjectPin(
+    viewer,
+    Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters),
+    label
+  );
+  return resolved;
 }
 
 export function setSubjectPinFromPosition(

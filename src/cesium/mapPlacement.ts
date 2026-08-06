@@ -1,37 +1,27 @@
 import {
   Cartesian2,
   Cartesian3,
-  Ellipsoid,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Viewer,
 } from "cesium";
+import { pickSceneSurfacePosition } from "./surfacePicking";
 
 export function enableMapPlacement(
   viewer: Viewer,
-  onPlaced: (position: Cartesian3) => void
+  onPlaced: (position: Cartesian3) => void,
+  onPickFailed?: () => void
 ): () => void {
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
 
   handler.setInputAction(
     (movement: { position: Cartesian2 }) => {
-      let position: Cartesian3 | undefined;
-
-      if (viewer.scene.pickPositionSupported) {
-        position = viewer.scene.pickPosition(movement.position);
-      }
-
+      const position = pickSceneSurfacePosition(viewer, movement.position);
       if (!position) {
-        position = viewer.camera.pickEllipsoid(
-          movement.position,
-          // Google 3D Tiles構成ではscene.globeを生成しないためWGS84を直接使う。
-          Ellipsoid.WGS84
-        );
+        onPickFailed?.();
+        return;
       }
-
-      if (position) {
-        onPlaced(position);
-      }
+      onPlaced(position);
     },
     ScreenSpaceEventType.LEFT_CLICK
   );

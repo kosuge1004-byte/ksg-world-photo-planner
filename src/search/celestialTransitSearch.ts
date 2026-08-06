@@ -9,12 +9,10 @@ import {
   isCelestialInCameraFrame,
   type CameraProjection,
 } from "../cesium/celestial";
-import { calculateElevationAngleDegrees } from "../cesium/geometry";
+import { computeApparentElevation } from "../apparent/apparentElevation";
 import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 import { isMinuteWithinSearchRange, localSearchDateParts } from "./searchTimeRange";
 import {
-  weatherForDate,
-  weatherRefractionCorrectionDegrees,
   type RefractionWeatherContext,
 } from "./refractionWeatherModel";
 import {
@@ -104,26 +102,16 @@ function horizontalCoordinatesForSearch(
   observer: GroundPoint,
   input: SearchInput
 ) {
-  const weatherContext = input.refractionWeather;
-  if (weatherContext?.effectiveMode === "weather") {
-    const geometric = calculateCelestialHorizontalCoordinates(body, date, observer, "standard");
-    const weather = weatherForDate(weatherContext, date);
-    if (weather) {
-      const correctionDegrees = weatherRefractionCorrectionDegrees(
-        geometric.altitudeDegrees,
-        weather
-      );
-      if (correctionDegrees !== null) {
-        return {
-          ...geometric,
-          altitudeDegrees: geometric.altitudeDegrees + correctionDegrees,
-        };
-      }
-    }
-    // Missing or invalid weather for this instant must not stop the search.
-    return calculateCelestialHorizontalCoordinates(body, date, observer, "pro");
-  }
-  return calculateCelestialHorizontalCoordinates(body, date, observer, input.calculationMode);
+  // 気象連動屈折の欠測フォールバック（標準大気差への切替）は
+  // calculateCelestialHorizontalCoordinates内に一本化されている。
+  // 検索専用の重複ロジックは持たない。
+  return calculateCelestialHorizontalCoordinates(
+    body,
+    date,
+    observer,
+    input.calculationMode,
+    input.refractionWeather
+  );
 }
 
 function observerAtLens(input: SearchInput): GroundPoint {
@@ -149,6 +137,7 @@ function createFrameProjection(input: SearchInput): FrameProjection {
     input.subject,
     input.cameraSettings,
     input.previewAspectRatio,
+    input.calculationMode,
     input.criteria.viewCorrection
   );
   const shortestFovDegrees = Math.min(shared.horizontalFov, shared.verticalFov);
@@ -313,7 +302,11 @@ export async function searchCelestialTransitDates(
     : null;
   const resultIds = new Set<string>();
   const observer = observerAtLens(input);
-  const subjectAltitudeDegrees = calculateElevationAngleDegrees(observer, input.subject);
+  const subjectAltitudeDegrees = computeApparentElevation(
+    observer,
+    input.subject,
+    input.calculationMode
+  ).apparentAltitudeDegrees;
   const isCountableAltitude = (altitudeDegrees: number): boolean =>
     input.criteria.includeBelowSubject || altitudeDegrees >= subjectAltitudeDegrees;
   const targetAzimuth = input.criteria.mode === "direction-crossing"

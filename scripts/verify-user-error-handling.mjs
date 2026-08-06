@@ -48,9 +48,9 @@ for (const [source, key, label] of [
   [occlusion, "google-3d-occlusion-fallback", "Google 3D occlusion fallback"],
   [occlusion, "terrain-occlusion-failed", "terrain occlusion failure"],
   [subjectPin, "subject-pin-3d-fallback", "subject pin 3D fallback"],
-  [subjectPin, "subject-pin-terrain-fallback", "subject pin terrain fallback"],
+  [subjectPin, "subject-pin-height-required", "subject pin terrain fallback"],
   [tripodPin, "tripod-pin-3d-fallback", "tripod pin 3D fallback"],
-  [tripodPin, "tripod-pin-terrain-fallback", "tripod pin terrain fallback"],
+  [tripodPin, "tripod-pin-height-required", "tripod pin terrain fallback"],
   [weather, "weather-refraction-fallback", "weather fallback"],
   [projects, "project-storage-failed", "project storage failure"],
 ]) {

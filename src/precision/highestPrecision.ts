@@ -5,13 +5,14 @@ import {
   type Viewer,
 } from "cesium";
 
-import type { GroundPoint } from "../types/points";
+import type { GroundPoint, ResolvedGroundPoint } from "../types/points";
+import { withLensCenterHeight } from "../types/points";
 import type { SpotPresetResult } from "../types/search";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type { HorizontalCoordinates } from "../types/celestial";
 import { calculateKarneyDestinationPoint, calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 import { fetchSiteContexts } from "../search/siteContext";
-import { sampleWorldTerrainHighestPrecision } from "../cesium/worldTerrain";
+import { sampleWorldTerrainHighestPrecision, geoidHeightMetersForHighestPrecisionSample } from "../cesium/worldTerrain";
 import {
   evaluatePhotorealisticMeshSegmentLineOfSight,
   evaluatePhotorealisticMeshLineOfSight,
@@ -20,10 +21,13 @@ import {
 import {
   calculateCelestialHorizontalCoordinates,
   celestialAngularDiameterDegrees,
+  createCameraProjection,
+  isCelestialInCameraFrame,
+  projectHorizontalToPreview,
 } from "../cesium/celestial";
-import { calculateElevationAngleDegrees } from "../cesium/geometry";
-import { sensorDimensionsMm } from "../cesium/camera";
+import { computeApparentElevation } from "../apparent/apparentElevation";
 import { createSearchProgressEstimator } from "../search/searchProgress";
+import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
 export type HighestPrecisionProgress = {
   percent: number;
@@ -44,73 +48,85 @@ type CompositionVerifiedCandidate = {
   celestialHorizontal: HorizontalCoordinates;
 };
 
-function angularDifferenceDegrees(a: number, b: number): number {
-  return Math.abs(((a - b + 540) % 360) - 180);
-}
-
 function verifyComposition(
   candidate: GroundPoint,
   subject: GroundPoint,
   result: SpotPresetResult,
   cameraSettings: CameraSettings,
   previewAspectRatio: number,
-  calculationMode: CalculationMode
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
 ): CompositionVerifiedCandidate | null {
-  const lens = {
-    ...candidate,
-    height: candidate.height + cameraSettings.lensCenterHeightMeters,
-    label: "高精度三脚レンズ中心",
-  };
+  // withLensCenterHeight()で楕円体高・標高の両方を一貫して更新する
+  // （.heightだけを更新するとellipsoidalHeightMeters/orthometricHeightMeters
+  // が古い値のまま残り、標高と楕円体高が混在する）。
+  const lens = withLensCenterHeight(candidate, cameraSettings.lensCenterHeightMeters, "高精度三脚レンズ中心");
   const celestial = calculateCelestialHorizontalCoordinates(
     result.celestialId,
     result.date,
     lens,
-    calculationMode
+    calculationMode,
+    refractionWeather
   );
   if (celestial.altitudeDegrees <= 0.25) return null;
   const subjectAzimuth = calculateKarneyLineMetrics(candidate, subject).bearingDegrees;
-  const subjectAltitude = calculateElevationAngleDegrees(lens, subject);
-  const azimuthError = angularDifferenceDegrees(
-    celestial.azimuthDegrees,
-    subjectAzimuth
+  // 最終構図判定はApparent同士（見かけ天体位置 vs 見かけ被写体位置）で比較する。
+  const subjectElevation = computeApparentElevation(lens, subject, calculationMode);
+  const subjectAltitude = subjectElevation.apparentAltitudeDegrees;
+
+  // 画角判定・最終構図判定はProjectionService経由の中心投影
+  // （projectToScreen()）で行う。人物・被写体・天体・軌跡と同一の投影経路。
+  const projection = createCameraProjection(
+    candidate,
+    subject,
+    cameraSettings,
+    previewAspectRatio,
+    calculationMode
   );
-  const altitudeError = Math.abs(
-    celestial.altitudeDegrees - subjectAltitude
-  );
-  const sensor = sensorDimensionsMm(Math.max(0.25, previewAspectRatio));
-  const horizontalHalfFov = CesiumMath.toDegrees(
-    Math.atan(sensor.width / (2 * Math.max(1, cameraSettings.focalLengthMm)))
-  );
-  const verticalHalfFov = CesiumMath.toDegrees(
-    Math.atan(sensor.height / (2 * Math.max(1, cameraSettings.focalLengthMm)))
-  );
-  const discRadius = result.celestialId === "moon"
-    ? 0.285
-    : result.celestialId === "sun"
-      ? 0.272
-      : 0;
-  // 最終座標で円盤全体（天の川は中心）が指定焦点距離の画角内に入る場合だけ採用する。
-  if (
-    azimuthError + discRadius > horizontalHalfFov ||
-    altitudeError + discRadius > verticalHalfFov
-  ) {
+  if (!isCelestialInCameraFrame(
+    result.celestialId,
+    result.date,
+    lens,
+    celestial,
+    projection,
+    calculationMode,
+    refractionWeather
+  )) {
     return null;
   }
+
+  const celestialScreen = projectHorizontalToPreview(celestial, projection);
+  const subjectScreen = projectHorizontalToPreview(
+    { azimuthDegrees: subjectAzimuth, altitudeDegrees: subjectAltitude, geometricAltitudeDegrees: subjectElevation.geometricAltitudeDegrees },
+    projection
+  );
+  // 順位付け用の構図誤差（画面パーセント距離を半画角=50%で正規化）。
+  // 採否そのものはisCelestialInCameraFrame()（画角・円盤サイズ込み）で決まる。
+  const compositionErrorDegrees = Math.hypot(
+    (celestialScreen.xPercent - subjectScreen.xPercent) / 50,
+    (celestialScreen.yPercent - subjectScreen.yPercent) / 50
+  );
   return {
     point: candidate,
-    compositionErrorDegrees: Math.hypot(
-      azimuthError / Math.max(0.001, horizontalHalfFov),
-      altitudeError / Math.max(0.001, verticalHalfFov)
-    ),
+    compositionErrorDegrees,
     celestialHorizontal: celestial,
   };
 }
 
-function groundPoint(sample: Cartographic, label: string): GroundPoint {
+function groundPoint(sample: Cartographic, label: string): ResolvedGroundPoint {
+  // sampleWorldTerrainHighestPrecision()で取得した地点固有ジオイド高を使い、
+  // 楕円体高（sample.height）と標高（orthometricHeightMeters）を両方明示する。
+  // 標高と楕円体高の混在を避けるため、ここで一度だけ変換する。
+  const ellipsoidalHeightMeters = sample.height;
+  const geoidHeightMeters = geoidHeightMetersForHighestPrecisionSample(sample);
   return {
     latitude: CesiumMath.toDegrees(sample.latitude),
     longitude: CesiumMath.toDegrees(sample.longitude),
-    height: sample.height,
+    height: ellipsoidalHeightMeters,
+    ellipsoidalHeightMeters,
+    orthometricHeightMeters: ellipsoidalHeightMeters - geoidHeightMeters,
+    geoidHeightMeters,
+    heightSource: "dem",
     label,
   };
 }
@@ -128,9 +144,9 @@ function localCandidates(origin: GroundPoint): GroundPoint[] {
 
 async function clampMostDetailed(
   viewer: Viewer,
-  points: GroundPoint[],
+  points: ResolvedGroundPoint[],
   signal?: AbortSignal
-): Promise<GroundPoint[]> {
+): Promise<ResolvedGroundPoint[]> {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   const positions = points.map((point) =>
     Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
@@ -146,10 +162,19 @@ async function clampMostDetailed(
   }
   return clamped.map((position, index) => {
     const cartographic = Cartographic.fromCartesian(position!);
+    // Google 3D Tilesのメッシュ表面高（屋上・橋面など）へクランプし直しても、
+    // ジオイド分離量は水平方向にごくゆるやかにしか変化しないため、DEM取得時に
+    // 得た同地点のジオイド高をそのまま再利用して標高を再計算する。
+    const ellipsoidalHeightMeters = cartographic.height;
+    const geoidHeightMeters = points[index].geoidHeightMeters;
     return {
       latitude: CesiumMath.toDegrees(cartographic.latitude),
       longitude: CesiumMath.toDegrees(cartographic.longitude),
-      height: cartographic.height,
+      height: ellipsoidalHeightMeters,
+      ellipsoidalHeightMeters,
+      orthometricHeightMeters: ellipsoidalHeightMeters - geoidHeightMeters,
+      geoidHeightMeters,
+      heightSource: "3d-picked",
       label: points[index].label,
     };
   });
@@ -162,6 +187,7 @@ export async function refineSpotPresetHighestPrecision(
   previewAspectRatio: number,
   calculationMode: CalculationMode,
   onProgress: (progress: HighestPrecisionProgress) => void,
+  refractionWeather?: RefractionWeatherContext,
   signal?: AbortSignal
 ): Promise<HighestPrecisionResult> {
   const progressEstimator = createSearchProgressEstimator(1);
@@ -237,7 +263,8 @@ export async function refineSpotPresetHighestPrecision(
       result,
       cameraSettings,
       previewAspectRatio,
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const celestialLineOfSight = composition
       ? await evaluatePhotorealisticMeshLineOfSight(

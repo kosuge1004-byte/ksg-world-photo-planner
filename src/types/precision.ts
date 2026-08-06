@@ -27,7 +27,7 @@ export const DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS: BuildingOcclusionDetail
 };
 
 export type PrecisionSettings = {
-  /** 標準は従来処理をそのまま使用し、最高精度は検索結果適用時だけ後処理する。 */
+  /** 精度モードは従量制のGoogle/Cesium 3Dデータ利用だけを切り替える。無料の計算・DEM・気象補正は両モード共通。 */
   accuracyMode: AccuracyMode;
   refractionCorrectionMode: RefractionCorrectionMode;
   /** 被写体までの距離帯ごとに、被写体ピン手前で遮蔽物判定から除外する距離（m）。 */

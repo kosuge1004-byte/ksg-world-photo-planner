@@ -1,7 +1,6 @@
 import {
   BoundingSphere,
   Cartesian3,
-  Ellipsoid,
   HeadingPitchRange,
   Math as CesiumMath,
   PerspectiveFrustum,
@@ -9,27 +8,15 @@ import {
 } from "cesium";
 
 import type {
+  CalculationMode,
   CameraSettings,
   CameraViewCorrection,
 } from "../types/camera";
-import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 import type { GroundPoint } from "../types/points";
+import { createCameraModel } from "./cameraModelFactory";
 
-const FULL_FRAME_SENSOR_WIDTH_MM = 36;
-const FULL_FRAME_SENSOR_HEIGHT_MM = 24;
-
-export function sensorDimensionsMm(
-  aspectRatio: number
-): { width: number; height: number } {
-  const safeAspect = Math.max(0.2, aspectRatio);
-  // 指定アスペクト比の撮像領域を36×24mmのフルサイズセンサー内へ内接させる。
-  // width / height = safeAspect を維持しつつ、幅36mm・高さ24mmを超えない最大寸法を返す。
-  const height = Math.min(
-    FULL_FRAME_SENSOR_HEIGHT_MM,
-    FULL_FRAME_SENSOR_WIDTH_MM / safeAspect
-  );
-  return { width: height * safeAspect, height };
-}
+export { sensorDimensionsMm } from "./optics";
+import { sensorDimensionsMm } from "./optics";
 
 export function flyMapToTarget(
   viewer: Viewer,
@@ -84,82 +71,22 @@ export function setPreviewFromTripodToSubject(
   subject: GroundPoint,
   settings: CameraSettings,
   aspectRatio: number,
+  calculationMode: CalculationMode,
   viewCorrection?: CameraViewCorrection
 ): void {
-  const cameraPosition = Cartesian3.fromDegrees(
-    tripod.longitude,
-    tripod.latitude,
-    tripod.height + settings.lensCenterHeightMeters
+  // 実カメラの指向はCameraModelFactoryのApparent（見かけ仰角込み）モデルに一致させる。
+  const { apparent } = createCameraModel(
+    tripod, subject, settings, aspectRatio, calculationMode, viewCorrection
   );
 
-  const targetPosition = Cartesian3.fromDegrees(
-    subject.longitude,
-    subject.latitude,
-    subject.height
-  );
-
-  const direction = Cartesian3.normalize(
-    Cartesian3.subtract(
-      targetPosition,
-      cameraPosition,
-      new Cartesian3()
-    ),
-    new Cartesian3()
-  );
-
-  const surfaceNormal = Ellipsoid.WGS84.geodeticSurfaceNormal(
-    cameraPosition,
-    new Cartesian3()
-  );
-
-  let right = Cartesian3.cross(
-    direction,
-    surfaceNormal,
-    new Cartesian3()
-  );
-
-  if (Cartesian3.magnitudeSquared(right) < 1e-12) {
-    right = Cartesian3.cross(
-      direction,
-      Cartesian3.UNIT_Z,
-      new Cartesian3()
-    );
-  }
-
-  Cartesian3.normalize(right, right);
-
-  const up = Cartesian3.normalize(
-    Cartesian3.cross(right, direction, new Cartesian3()),
-    new Cartesian3()
-  );
-
-  if (viewCorrection) {
-    const line = calculateKarneyLineMetrics(tripod, subject);
-    const cameraAltitude = Math.asin(Math.max(
-      -1,
-      Math.min(1, Cartesian3.dot(direction, surfaceNormal))
-    ));
-    viewer.camera.setView({
-      destination: cameraPosition,
-      orientation: {
-        heading: CesiumMath.toRadians(
-          line.bearingDegrees + viewCorrection.azimuthDegrees
-        ),
-        pitch: cameraAltitude + CesiumMath.toRadians(
-          viewCorrection.altitudeDegrees
-        ),
-        roll: 0,
-      },
-    });
-  } else {
-    viewer.camera.setView({
-      destination: cameraPosition,
-      orientation: {
-        direction,
-        up,
-      },
-    });
-  }
+  viewer.camera.setView({
+    destination: apparent.observerEcef,
+    orientation: {
+      heading: apparent.headingRadians,
+      pitch: apparent.pitchRadians,
+      roll: apparent.rollRadians,
+    },
+  });
 
   applyPreviewFocalLength(viewer, settings, aspectRatio);
 }

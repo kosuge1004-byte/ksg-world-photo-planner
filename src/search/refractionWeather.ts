@@ -230,13 +230,10 @@ export async function prepareRefractionWeatherContext(options: {
   now: Date;
   signal: AbortSignal;
 }): Promise<RefractionWeatherContext> {
-  // Phase4: 標準精度では追加の気象通信を行わない。
-  // 「補正なし」はそのまま維持し、それ以外は標準大気モデルへ固定する。
-  if (options.accuracyMode === "standard") {
-    return options.mode === "none"
-      ? { requestedMode: "none", effectiveMode: "none", source: "none", samples: [] }
-      : { requestedMode: options.mode, effectiveMode: "standard", source: "standard", samples: [] };
-  }
+  // 精度モードは従量制サービスの利用可否だけを切り替える。
+  // 予報・平年気象データによる屈折補正は従量制ではないため、
+  // 標準／高精度の両モードで同じ処理を使用する。
+  void options.accuracyMode;
   if (options.mode === "none") {
     return { requestedMode: "none", effectiveMode: "none", source: "none", samples: [] };
   }

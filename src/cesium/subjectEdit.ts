@@ -1,4 +1,5 @@
-import { Cartesian2, Cartesian3, Ellipsoid, Viewer } from "cesium";
+import { Cartesian2, Cartesian3, Viewer } from "cesium";
+import { pickSceneSurfacePosition } from "./surfacePicking";
 
 export function pickCenterPosition(
   viewer: Viewer
@@ -9,19 +10,5 @@ export function pickCenterPosition(
     canvas.clientHeight / 2
   );
 
-  let position: Cartesian3 | undefined;
-
-  if (viewer.scene.pickPositionSupported) {
-    position = viewer.scene.pickPosition(center);
-  }
-
-  if (!position) {
-    position = viewer.camera.pickEllipsoid(
-      center,
-      // Google 3D Tiles構成ではscene.globeを生成しないためWGS84を直接使う。
-      Ellipsoid.WGS84
-    );
-  }
-
-  return position ?? null;
+  return pickSceneSurfacePosition(viewer, center);
 }

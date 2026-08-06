@@ -11,9 +11,9 @@ import {
   Viewer,
 } from "cesium";
 
-import type { GroundPoint } from "../types/points";
+import type { GroundPoint, ResolvedGroundPoint } from "../types/points";
 import { publishUserNotice } from "../errors/userFeedback";
-import { groundPointFromCoordinates } from "./worldTerrain";
+import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "../height/heightResolver";
 
 const TRIPOD_PIN_ID = "ksg-tripod-pin";
 const TRIPOD_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
@@ -68,7 +68,7 @@ export async function setTripodPinFromCoordinates(
 ): Promise<GroundPoint> {
   try {
     // 自動候補はDEM地面高を使うが、2D手動指定では橋面などDEMにない実在表面を選べるようにする。
-    const point = await groundPointFromCoordinates(
+    const point = await resolveGroundPoint(
       latitude,
       longitude,
       "三脚ピン"
@@ -80,7 +80,13 @@ export async function setTripodPinFromCoordinates(
             Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
           ], [...viewer.entities.values], 0.15)
         )[0];
-        if (clamped) return setTripodPin(viewer, clamped);
+        if (clamped) {
+          const resolved = await resolveGroundPointFrom3dSurface(clamped, "三脚ピン");
+          return setTripodPin(
+            viewer,
+            Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters)
+          );
+        }
       } catch (error) {
         console.warn("橋面を含む3D表面高を取得できないためDEM高を使用します", error);
         publishUserNotice({
@@ -95,14 +101,32 @@ export async function setTripodPinFromCoordinates(
       Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
     );
   } catch (error) {
-    console.warn("三脚ピンの地形標高を取得できなかったため楕円体表面を使用します", error);
+    console.warn("三脚ピンの高度を確定できないため配置を中止します", error);
     publishUserNotice({
-      key: "tripod-pin-terrain-fallback",
-      tone: "warning",
-      message: "地形の高さを取得できなかったため、三脚ピンを暫定高度で配置しました。位置を現地で確認してください。",
+      key: "tripod-pin-height-required",
+      tone: "error",
+      message: "地形高度を取得できないため三脚ピンを配置できません。通信状態を確認して再試行してください。",
     });
-    return setTripodPin(viewer, Cartesian3.fromDegrees(longitude, latitude, 0));
+    throw error;
   }
+}
+
+/**
+ * 3D明示選択（scene.pickPosition等が返した実表面）専用。HeightResolverの
+ * resolveGroundPointFrom3dSurface()だけを経由し、DEMへのフォールバックは
+ * 行わない（失敗時は再クリックを要求する）。橋面など DEMに存在しない
+ * 歩行可能面もこの経路でそのまま採用できる。
+ */
+export async function setTripodPinFromExplicit3dPick(
+  viewer: Viewer,
+  position: Cartesian3
+): Promise<ResolvedGroundPoint> {
+  const resolved = await resolveGroundPointFrom3dSurface(position, "三脚ピン");
+  setTripodPin(
+    viewer,
+    Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters)
+  );
+  return resolved;
 }
 
 function distanceLabel(distanceMeters: number): string {

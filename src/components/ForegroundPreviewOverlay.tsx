@@ -1,5 +1,5 @@
 import { projectForegroundObjectToPreview } from "../preview/foregroundProjection";
-import type { CameraSettings } from "../types/camera";
+import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import type { ForegroundObject } from "../types/foreground";
 import type { GroundPoint } from "../types/points";
 
@@ -9,16 +9,20 @@ type Props = {
   subject: GroundPoint | null;
   camera: CameraSettings;
   aspectRatio: number;
+  calculationMode: CalculationMode;
+  viewCorrection?: CameraViewCorrection;
 };
 
-export function ForegroundPreviewOverlay({ object, tripod, subject, camera, aspectRatio }: Props) {
+export function ForegroundPreviewOverlay({ object, tripod, subject, camera, aspectRatio, calculationMode, viewCorrection }: Props) {
   if (!object?.enabled || !tripod || !subject) return null;
   const box = projectForegroundObjectToPreview(
     object,
     tripod,
     subject,
     camera,
-    aspectRatio
+    aspectRatio,
+    calculationMode,
+    viewCorrection
   );
   if (
     !box ||

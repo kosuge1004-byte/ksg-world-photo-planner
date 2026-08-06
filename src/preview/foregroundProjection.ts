@@ -1,9 +1,12 @@
-import { Cartesian3, Ellipsoid } from "cesium";
+import { Cartesian3 } from "cesium";
 
-import { sensorDimensionsMm } from "../cesium/camera";
-import type { CameraSettings } from "../types/camera";
+import { createCameraModel } from "../cesium/cameraModelFactory";
+import { projectDirectionToPlane, type ProjectionBasis } from "../projection/projectionService";
+import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import { foregroundHeightCmToMeters, type ForegroundObject } from "../types/foreground";
 import type { GroundPoint } from "../types/points";
+
+const DEG = Math.PI / 180;
 
 export type ForegroundScreenBox = {
   centerXPercent: number;
@@ -23,20 +26,18 @@ export function projectForegroundObjectToPreview(
   tripod: GroundPoint,
   subject: GroundPoint,
   camera: CameraSettings,
-  aspectRatio: number
+  aspectRatio: number,
+  calculationMode: CalculationMode,
+  viewCorrection?: CameraViewCorrection
 ): ForegroundScreenBox | null {
   if (!object.enabled || !Number.isFinite(object.groundHeightMeters)) return null;
   const groundHeightMeters = object.groundHeightMeters as number;
-  const observer = Cartesian3.fromDegrees(
-    tripod.longitude,
-    tripod.latitude,
-    tripod.height + camera.lensCenterHeightMeters
+  // 人物投影はCameraModelFactoryのApparent（見かけ仰角込み）モデルを使う。
+  const { apparent: model } = createCameraModel(
+    tripod, subject, camera, aspectRatio, calculationMode, viewCorrection
   );
-  const subjectPosition = Cartesian3.fromDegrees(
-    subject.longitude,
-    subject.latitude,
-    subject.height
-  );
+  const observer = model.observerEcef;
+
   const basePosition = Cartesian3.fromDegrees(
     object.longitude,
     object.latitude,
@@ -48,44 +49,33 @@ export function projectForegroundObjectToPreview(
     groundHeightMeters + foregroundHeightCmToMeters(object.heightCm)
   );
 
-  const forward = Cartesian3.normalize(
-    Cartesian3.subtract(subjectPosition, observer, new Cartesian3()),
-    new Cartesian3()
-  );
-  const surfaceNormal = Ellipsoid.WGS84.geodeticSurfaceNormal(
-    observer,
-    new Cartesian3()
-  );
-  let right = Cartesian3.cross(forward, surfaceNormal, new Cartesian3());
-  if (Cartesian3.magnitudeSquared(right) < 1e-12) {
-    right = Cartesian3.cross(forward, Cartesian3.UNIT_Z, new Cartesian3());
-  }
-  Cartesian3.normalize(right, right);
-  const up = Cartesian3.normalize(
-    Cartesian3.cross(right, forward, new Cartesian3()),
-    new Cartesian3()
-  );
-
-  const sensor = sensorDimensionsMm(aspectRatio);
-  const horizontalScale = sensor.width / (2 * camera.focalLengthMm);
-  const verticalScale = sensor.height / (2 * camera.focalLengthMm);
+  const basis: ProjectionBasis = {
+    right: model.ecefRight,
+    up: model.ecefUp,
+    forward: model.ecefForward,
+    horizontalFovDegrees: model.horizontalFovDegrees,
+    verticalFovDegrees: model.verticalFovDegrees,
+  };
+  const horizontalScale = Math.tan(basis.horizontalFovDegrees * DEG / 2);
+  const verticalScale = Math.tan(basis.verticalFovDegrees * DEG / 2);
   if (horizontalScale <= 0 || verticalScale <= 0) return null;
 
+  // ProjectionServiceのprojectDirectionToPlane()と同じ中心投影を使う。
+  // 人物・被写体・天体・画角・軌跡・最終判定はすべて同じ投影経路を経由する。
   const project = (position: Cartesian3) => {
     const offset = Cartesian3.subtract(position, observer, new Cartesian3());
-    const depth = Cartesian3.dot(offset, forward);
+    const depth = Cartesian3.dot(offset, model.ecefForward);
     if (!Number.isFinite(depth) || depth <= 0.05) return null;
-    return {
-      x: Cartesian3.dot(offset, right) / (depth * horizontalScale),
-      y: Cartesian3.dot(offset, up) / (depth * verticalScale),
-    };
+    const plane = projectDirectionToPlane(offset, basis);
+    if (!plane.inFront) return null;
+    return { x: plane.x / horizontalScale, y: plane.y / verticalScale };
   };
   const base = project(basePosition);
   const top = project(topPosition);
   if (!base || !top) return null;
 
-  const topPercent = 50 - top.y * 50;
-  const basePercent = 50 - base.y * 50;
+  const topPercent = 50 + top.y * 50;
+  const basePercent = 50 + base.y * 50;
   const heightPercent = basePercent - topPercent;
   const centerXPercent = 50 + ((base.x + top.x) / 2) * 50;
   // CSSのwidth%は表示枠の横幅基準、height%は縦幅基準なのでaspect比で補正する。

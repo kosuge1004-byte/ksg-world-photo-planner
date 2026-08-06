@@ -18,6 +18,7 @@ import { shareInFlightRequest } from "../network/sharedRequests";
 
 let terrainPromise: ReturnType<typeof createWorldTerrainAsync> | null = null;
 const terrainSourceBySample = new WeakMap<Cartographic, TerrainDataSource>();
+const geoidHeightBySample = new WeakMap<Cartographic, number>();
 let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
@@ -451,7 +452,7 @@ async function writeGeoidPersistentCache(key: string, height: number): Promise<v
   database.close();
 }
 
-async function fetchGsiGeoidHeight(
+export async function fetchGsiGeoidHeight(
   point: Cartographic,
   signal?: AbortSignal
 ): Promise<number> {
@@ -605,10 +606,24 @@ export async function sampleWorldTerrainHighestPrecision(
     }
     point.height = elevation.heightMeters + geoidHeights[index];
     terrainSourceBySample.set(point, GSI_SOURCE_NAMES[elevation.source]);
+    geoidHeightBySample.set(point, geoidHeights[index]);
     return point;
   });
   abortIfRequested(signal);
   return results;
+}
+
+/**
+ * sampleWorldTerrainHighestPrecision()が取得した地点固有ジオイド高を返す。
+ * 標高（orthometricHeightMeters）を楕円体高から正しく逆算するために使う。
+ * 未取得の場合は例外にする（0m相当のフォールバックはしない）。
+ */
+export function geoidHeightMetersForHighestPrecisionSample(sample: Cartographic): number {
+  const value = geoidHeightBySample.get(sample);
+  if (value === undefined) {
+    throw new Error("この地点の高精度ジオイド高は取得されていません");
+  }
+  return value;
 }
 
 async function sampleTerrainWithGsiPriority(
@@ -701,10 +716,20 @@ export async function groundPointFromCoordinates(
 ): Promise<GroundPoint> {
   const requested = Cartographic.fromDegrees(longitude, latitude, 0);
   const sampled = (await sampleWorldTerrain([requested]))[0] ?? requested;
+  if (!Number.isFinite(sampled.height)) {
+    throw new Error("地形高度を取得できませんでした");
+  }
+  const geoidHeightMeters = await fetchGsiGeoidHeight(sampled);
+  const ellipsoidalHeight = sampled.height;
+  const orthometricHeight = ellipsoidalHeight - geoidHeightMeters;
   return {
     latitude: CesiumMath.toDegrees(sampled.latitude),
     longitude: CesiumMath.toDegrees(sampled.longitude),
-    height: Number.isFinite(sampled.height) ? sampled.height : 0,
+    height: ellipsoidalHeight,
+    ellipsoidalHeightMeters: ellipsoidalHeight,
+    orthometricHeightMeters: orthometricHeight,
+    geoidHeightMeters,
+    heightSource: terrainDataSource(sampled) === "CESIUM_WORLD_TERRAIN" ? "terrain" : "dem",
     label,
   };
 }

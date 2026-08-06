@@ -4,7 +4,7 @@ import {
   Viewer,
 } from "cesium";
 
-import type { CameraSettings, CameraViewCorrection } from "../types/camera";
+import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import type { GroundPoint } from "../types/points";
 import { setPreviewFromTripodToSubject } from "./camera";
 
@@ -65,6 +65,7 @@ export async function captureTripodPreview(
   tripod: GroundPoint,
   subject: GroundPoint,
   settings: CameraSettings,
+  calculationMode: CalculationMode,
   viewCorrection?: CameraViewCorrection
 ): Promise<void> {
   if (viewer.isDestroyed()) {
@@ -102,6 +103,7 @@ export async function captureTripodPreview(
       subject,
       settings,
       aspectRatio,
+      calculationMode,
       viewCorrection
     );
 

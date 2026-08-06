@@ -13,6 +13,7 @@ import {
   type Entity,
   type Viewer,
 } from "cesium";
+import { pickSceneSurfacePosition } from "./surfacePicking";
 import { foregroundHeightCmToMeters, type ForegroundObject } from "../types/foreground";
 
 const NEAR_ENTITY_ID = "ksg-foreground-object-near";
@@ -127,7 +128,8 @@ export function updateForegroundObjectEntity(viewer: Viewer, object: ForegroundO
 
 export function enableForegroundObjectDrag(
   viewer: Viewer,
-  onMoved: (position: Cartesian3) => void
+  onMoved: (position: Cartesian3) => void,
+  onPickFailed?: () => void
 ): () => void {
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
   let dragging = false;
@@ -138,13 +140,8 @@ export function enableForegroundObjectDrag(
       viewer.scene.screenSpaceCameraController.enableInputs = true;
     }
   };
-  const pickGround = (screen: Cartesian2): Cartesian3 | undefined => {
-    if (viewer.scene.pickPositionSupported) {
-      const picked = viewer.scene.pickPosition(screen);
-      if (picked) return picked;
-    }
-    return viewer.camera.pickEllipsoid(screen);
-  };
+  const pickGround = (screen: Cartesian2): Cartesian3 | null =>
+    pickSceneSurfacePosition(viewer, screen);
   handler.setInputAction((movement: { position: Cartesian2 }) => {
     const picked = viewer.scene.pick(movement.position) as { id?: Entity } | undefined;
     const pickedId = picked?.id?.id;
@@ -155,7 +152,11 @@ export function enableForegroundObjectDrag(
   handler.setInputAction((movement: { endPosition: Cartesian2 }) => {
     if (!dragging) return;
     const position = pickGround(movement.endPosition);
-    if (position) onMoved(position);
+    if (!position) {
+      onPickFailed?.();
+      return;
+    }
+    onMoved(position);
   }, ScreenSpaceEventType.MOUSE_MOVE);
   handler.setInputAction(stopDragging, ScreenSpaceEventType.LEFT_UP);
 

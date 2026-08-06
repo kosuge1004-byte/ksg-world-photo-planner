@@ -122,12 +122,13 @@ test("full-frame sensor dimensions and horizontal/vertical field of view", () =>
 
 test("viewCorrection changes the shared camera projection exactly once", () => {
   const subject = calculateKarneyDestinationPoint(TOKYO, 180, 1000);
-  const base = createCameraProjection(TOKYO, subject, CAMERA, 1.5);
+  const base = createCameraProjection(TOKYO, subject, CAMERA, 1.5, "standard");
   const corrected = createCameraProjection(
     TOKYO,
     subject,
     CAMERA,
     1.5,
+    "standard",
     { azimuthDegrees: 7.5, altitudeDegrees: -2.25 },
   );
   closeTo(
@@ -175,10 +176,10 @@ test("Sun and Moon screen coordinates use the shared pinhole projection", () => 
   assert.ok(sun, "Sun screen point is missing");
   assert.ok(moon, "Moon screen point is missing");
   // 被写体方向の仰角に地表屈折補正（k=0.13、距離1000m）を追加したことに伴う参照値。
-  closeTo(sun.xPercent, 55.36366837728845, TOLERANCE.screenPercent, "Sun x");
-  closeTo(sun.yPercent, -15.598238569553587, TOLERANCE.screenPercent, "Sun y");
-  closeTo(moon.xPercent, 32.074794233380516, TOLERANCE.screenPercent, "Moon x");
-  closeTo(moon.yPercent, -41.55255901627045, TOLERANCE.screenPercent, "Moon y");
+  closeTo(sun.xPercent, 55.36369299290154, TOLERANCE.screenPercent, "Sun x");
+  closeTo(sun.yPercent, -15.600027488591977, TOLERANCE.screenPercent, "Sun y");
+  closeTo(moon.xPercent, 32.07467942050593, TOLERANCE.screenPercent, "Moon x");
+  closeTo(moon.yPercent, -41.55463328908209, TOLERANCE.screenPercent, "Moon y");
 });
 
 test("frame rule includes the center and excludes a point outside the pinhole frame", () => {

@@ -25,6 +25,7 @@ import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
 import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
+import { directionToHorizontalDegrees, horizontalDirectionToVec3 } from "../projection/projectionService";
 import {
   adaptiveCoarseDistances,
   adaptiveRefinementDistances,
@@ -193,14 +194,10 @@ export function celestialWorldDirection(
   origin: Cartesian3,
   horizontal: HorizontalCoordinates
 ): Cartesian3 {
-  const azimuth = horizontal.azimuthDegrees * Math.PI / 180;
-  const altitude = horizontal.altitudeDegrees * Math.PI / 180;
-  const cosAltitude = Math.cos(altitude);
-  const localDirection = new Cartesian3(
-    cosAltitude * Math.sin(azimuth),
-    cosAltitude * Math.cos(azimuth),
-    Math.sin(altitude)
-  );
+  // ProjectionServiceの唯一の方位/仰角→方向ベクトル変換を経由する
+  // （天体・カメラ・LOS方向ベクトルの生成経路を分岐させない）。
+  const vec = horizontalDirectionToVec3(horizontal.azimuthDegrees, horizontal.altitudeDegrees);
+  const localDirection = new Cartesian3(vec.x, vec.y, vec.z);
   const localFrame = Transforms.eastNorthUpToFixedFrame(origin);
   const worldDirection = Matrix4.multiplyByPointAsVector(
     localFrame,
@@ -626,11 +623,10 @@ export async function evaluatePhotorealisticMeshSegmentLineOfSight(
     new Cartesian3()
   );
   Cartesian3.normalize(localDirection, localDirection);
+  // ProjectionServiceの唯一の方向→方位/仰角変換を経由する（LOSと天体投影で
+  // 同じ変換を共有し、計算経路の分岐を防ぐ）。
   const horizontal: HorizontalCoordinates = {
-    azimuthDegrees:
-      ((Math.atan2(localDirection.x, localDirection.y) * 180) / Math.PI + 360) % 360,
-    altitudeDegrees:
-      (Math.asin(Math.max(-1, Math.min(1, localDirection.z))) * 180) / Math.PI,
+    ...directionToHorizontalDegrees(localDirection),
   };
 
   const sample = await photorealisticMeshIntersection(

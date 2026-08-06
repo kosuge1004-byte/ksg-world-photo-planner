@@ -16,8 +16,8 @@ export const DEFAULT_CAMERA_VIEW_CORRECTION: CameraViewCorrection = {
 };
 
 /**
- * standard は幾何学的な天体位置、pro は標準大気モデルによる大気差補正を使う。
- * 実測の気温・気圧が未入力のため、Proでも現地気象に固有の補正ではない。
+ * 天体・被写体の屈折計算方式。現行UIでは常にproを使用し、
+ * 標準／高精度の差は従量制3Dデータの利用有無だけに限定する。
  */
 export type CalculationMode = "standard" | "pro";
 

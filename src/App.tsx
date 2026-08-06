@@ -37,6 +37,13 @@ import { ProjectsScreen } from "./components/ProjectsScreen";
 import { CalendarScreen } from "./components/CalendarScreen";
 import { MoonAgeCalendarScreen } from "./components/MoonAgeCalendarScreen";
 import { ProjectSaveDialog } from "./components/ProjectSaveDialog";
+import { SharedProjectImportDialog } from "./components/SharedProjectImportDialog";
+import {
+  decodeProjectShareCode,
+  encodeProjectShareCode,
+  ProjectShareCodeError,
+  type SharedProjectPayloadV1,
+} from "./sharing/projectShareCode";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { TopSettingsBar } from "./components/TopSettingsBar";
@@ -74,10 +81,7 @@ import {
   invalidateCelestialOcclusionCaches,
   prepareCelestialLineOfSightObserver,
 } from "./cesium/celestialOcclusion";
-import {
-  buildDirectionalTripodCandidates,
-  calculateTripodCandidates,
-} from "./cesium/tripodCandidates";
+import { calculateTripodCandidates } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer } from "./cesium/createMapViewer";
@@ -93,13 +97,15 @@ import {
   setSubjectPinFromCoordinates,
   getSubjectPinPoint,
   setSubjectPinFromPosition,
+  setSubjectPinFromExplicit3dPick,
 } from "./cesium/subjectPin";
 import {
   setTripodPin,
   setTripodPinFromCoordinates,
+  setTripodPinFromExplicit3dPick,
   updateTripodDistanceLabel,
 } from "./cesium/tripodPin";
-import { groundPointFromCoordinates } from "./cesium/worldTerrain";
+import { resolveGroundPoint } from "./height/heightResolver";
 import { cartesianToForegroundCoordinates, enableForegroundObjectDrag, updateForegroundObjectEntity } from "./cesium/foregroundObject";
 
 import {
@@ -415,6 +421,10 @@ function App() {
   const [projects, setProjects] = useState<PlannerProject[]>(loadProjects);
   const [subjectHistory, setSubjectHistory] = useState<SubjectRecord[]>(loadSubjectHistory);
   const [favoriteSubjects, setFavoriteSubjects] = useState<SubjectRecord[]>(loadFavoriteSubjects);
+  const [sharedImportPayload, setSharedImportPayload] =
+    useState<SharedProjectPayloadV1 | null>(null);
+  const [sharedImportBusy, setSharedImportBusy] = useState(false);
+  const [sharedImportError, setSharedImportError] = useState<string | null>(null);
 
   const [subjectPoint, setSubjectPoint] =
     useState<GroundPoint | null>(null);
@@ -720,6 +730,7 @@ function App() {
     previewAspectRatio,
     calculationMode,
     previewViewCorrection,
+    calculationMode,
     timelineInteracting,
     previewRefractionWeather,
   ]);
@@ -817,8 +828,7 @@ function App() {
     const controller = new AbortController();
 
     if (
-      precisionSettings.accuracyMode !== "highest"
-      || precisionSettings.refractionCorrectionMode !== "auto"
+      precisionSettings.refractionCorrectionMode !== "auto"
       || !tripodPoint
       || Number.isNaN(selectedDayStart.getTime())
       || Number.isNaN(selectedDayEnd.getTime())
@@ -844,7 +854,7 @@ function App() {
         publishUserNotice({
           key: "preview-weather-unavailable",
           tone: "warning",
-          message: "最高精度用の気象データを取得できませんでした。気象補正を適用せず表示します。",
+          message: "気象データを取得できませんでした。標準大気モデルで表示します。",
         });
         return;
       }
@@ -856,7 +866,7 @@ function App() {
       publishUserNotice({
         key: "preview-weather-error",
         tone: "warning",
-        message: "最高精度用の気象データ取得に失敗しました。",
+        message: "気象データの取得に失敗しました。",
       });
     });
 
@@ -935,14 +945,10 @@ function App() {
       return;
     }
 
-    // DEM精密解を待つ間も天体方位をすぐ確認できるよう、明確に「要確認」と
-    // 表示される方位候補を先に描画する。精密解が完了した時だけ確定候補へ置換する。
-    const directionalCandidates = buildDirectionalTripodCandidates(
-      subjectPoint,
-      enabledPoints
-    );
-    tripodCandidatesRef.current = directionalCandidates;
-    setTripodCandidates(directionalCandidates);
+    // 精密計算が完了するまでは候補点を地図へ表示しない。
+    // 粗探索の方位候補（既定距離500m）を一時表示すると、確定候補と誤認されるため。
+    tripodCandidatesRef.current = [];
+    setTripodCandidates([]);
     setTripodCandidateCalculationStatus("calculating");
 
     let cancelled = false;
@@ -957,7 +963,9 @@ function App() {
         undefined,
         controller.signal,
         previewAspectRatio,
-        undefined
+        undefined,
+        undefined,
+        previewRefractionWeather
       )
         .then((candidates) => {
           if (!cancelled) {
@@ -999,6 +1007,7 @@ function App() {
     selectedDate,
     calculationMode,
     previewAspectRatio,
+    previewRefractionWeather,
     timelineInteracting,
     precisionSettings.accuracyMode,
     tripodCandidateRetrySequence,
@@ -1510,17 +1519,25 @@ function App() {
     ) {
       return;
     }
-    return enableForegroundObjectDrag(viewer, (position) => {
-      const coordinates = cartesianToForegroundCoordinates(position);
-      placeForegroundAtCoordinates(
-        coordinates.latitude,
-        coordinates.longitude,
-        coordinates.groundHeightMeters,
-        false,
-        undefined,
-        "drag-3d"
-      );
-    });
+    return enableForegroundObjectDrag(
+      viewer,
+      (position) => {
+        const coordinates = cartesianToForegroundCoordinates(position);
+        placeForegroundAtCoordinates(
+          coordinates.latitude,
+          coordinates.longitude,
+          coordinates.groundHeightMeters,
+          false,
+          undefined,
+          "drag-3d"
+        );
+      },
+      () => {
+        setSearchMessage(
+          "人物の移動先となる3D表面を取得できませんでした。床・地面・屋上などが見える位置で再操作してください"
+        );
+      }
+    );
     // 他のピン配置中は人物ドラッグを無効化し、複数ハンドラが同じタップを処理しない。
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -1622,6 +1639,7 @@ function App() {
             tripodPoint,
             subjectPoint,
             cameraSettings,
+            calculationMode,
             previewViewCorrection
           );
 
@@ -1678,6 +1696,7 @@ function App() {
     cameraSettings,
     previewFrameMode,
     previewViewCorrection,
+    calculationMode,
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
@@ -1702,32 +1721,9 @@ function App() {
     longitude: number,
     label: string
   ): Promise<GroundPoint> {
-    const viewer = mapViewerRef.current;
-    if (viewer && !viewer.isDestroyed()) {
-      try {
-        const position = Cartesian3.fromDegrees(longitude, latitude, 0);
-        const clamped = (
-          await viewer.scene.clampToHeightMostDetailed([position])
-        )[0];
-        if (clamped) {
-          const cartographic = Cartographic.fromCartesian(clamped);
-          return {
-            latitude: CesiumMath.toDegrees(cartographic.latitude),
-            longitude: CesiumMath.toDegrees(cartographic.longitude),
-            height: cartographic.height,
-            label,
-          };
-        }
-      } catch (error) {
-        console.warn("検索地点の3D表面高を取得できませんでした", error);
-        showUserNotice({
-          key: "search-subject-3d-fallback",
-          tone: "warning",
-          message: "Google 3Dの高さを取得できないため、地形データの高さで被写体地点を計算します。",
-        });
-      }
-    }
-    return groundPointFromCoordinates(latitude, longitude, label);
+    // 検索・URL・座標入力では表示中3Dレイヤーを正式高度へ混入させない。
+    // 3D表面高は、ユーザーが3D画面上でその表面を明示選択した場合だけ保持する。
+    return resolveGroundPoint(latitude, longitude, label);
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -1770,7 +1766,7 @@ function App() {
           location.longitude,
           location.label
         );
-    const subjectGround = await groundPointFromCoordinates(
+    const subjectGround = await resolveGroundPoint(
       location.latitude,
       location.longitude,
       `${location.label} 地表`
@@ -2053,7 +2049,7 @@ ${diagnosticMessage}
             location.longitude,
             true
           )
-        : await groundPointFromCoordinates(
+        : await resolveGroundPoint(
             location.latitude,
             location.longitude,
             "三脚ピン"
@@ -2151,7 +2147,8 @@ ${diagnosticMessage}
           },
           previewAspectRatio,
           calculationMode,
-          setHighestPrecisionProgress
+          setHighestPrecisionProgress,
+          previewRefractionWeather
         );
         appliedResult = {
           ...result,
@@ -2267,14 +2264,14 @@ ${diagnosticMessage}
     }
     if (loadedForeground?.enabled && !Number.isFinite(loadedForeground.groundHeightMeters)) {
       const requestId = ++foregroundTerrainRequestRef.current;
-      void groundPointFromCoordinates(
+      void resolveGroundPoint(
         loadedForeground.latitude,
         loadedForeground.longitude,
         "前景・中景オブジェクト"
       ).then((point) => {
         if (requestId !== foregroundTerrainRequestRef.current) return;
         setForegroundObjects((current) => current.map((object, index) =>
-          index === 0 ? { ...object, groundHeightMeters: point.height } : object
+          index === 0 ? { ...object, groundHeightMeters: point.ellipsoidalHeightMeters } : object
         ));
       }).catch((error: unknown) => {
         console.warn("保存済み前景オブジェクト地点の標高を取得できませんでした", error);
@@ -2293,6 +2290,161 @@ ${diagnosticMessage}
 
   function updatePlannerProject(project: PlannerProject): void { setProjects(upsertProject(project)); }
   function removePlannerProject(id: string): void { setProjects(deleteProject(id)); }
+
+  async function shareUrlViaSystemOrClipboard(url: string): Promise<void> {
+    const nav = navigator as Navigator & { share?: (data: { title?: string; url?: string }) => Promise<void> };
+    if (nav.share) {
+      try {
+        await nav.share({ title: "AstroSight 撮影計画", url });
+        return;
+      } catch (error) {
+        if ((error as { name?: string } | null)?.name === "AbortError") return;
+        // 共有シートが使えない場合はクリップボードへフォールバックする。
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setSearchMessage("共有リンクをコピーしました。相手に送ってください");
+    } catch (error) {
+      console.warn("共有リンクのクリップボードコピーに失敗しました", error);
+      setSearchMessage(`共有リンクを作成しました（コピーは失敗）：${url}`);
+    }
+  }
+
+  function shareCurrentComposition(): void {
+    if (!subjectPoint || !tripodPoint) {
+      setSearchMessage("共有するには三脚ピンと被写体ピンを設定してください");
+      return;
+    }
+    // 緯度経度・カメラ設定・表示設定だけを載せる。高度は受信側で必ず取り直すため含めない。
+    const code = encodeProjectShareCode({
+      name: "",
+      shootingDateTimeLocal: dateTimeLocal,
+      timeZone,
+      subject: {
+        latitude: subjectPoint.latitude,
+        longitude: subjectPoint.longitude,
+        label: subjectPoint.label,
+      },
+      tripod: {
+        latitude: tripodPoint.latitude,
+        longitude: tripodPoint.longitude,
+        label: tripodPoint.label,
+      },
+      foregroundObjects: foregroundObjects.map((object) => ({
+        type: object.type,
+        latitude: object.latitude,
+        longitude: object.longitude,
+        heightCm: object.heightCm,
+        enabled: object.enabled,
+      })),
+      cameraSettings,
+      celestialVisibility,
+      previewFrameMode,
+    });
+    const url = `${window.location.origin}${window.location.pathname}#share=${code}`;
+    void shareUrlViaSystemOrClipboard(url);
+  }
+
+  function cancelSharedImport(): void {
+    setSharedImportPayload(null);
+    setSharedImportError(null);
+    setSharedImportBusy(false);
+    if (window.location.hash.startsWith("#share=")) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }
+
+  async function confirmSharedImport(): Promise<void> {
+    if (!sharedImportPayload) return;
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) {
+      setSharedImportError("マップの読込完了後に取り込んでください");
+      return;
+    }
+    setSharedImportBusy(true);
+    setSharedImportError(null);
+    try {
+      // 高度はこの端末のHeightResolverで必ず取り直す。送信側の値は使わない。
+      // どれか1つでも失敗したら全体を中止する（部分的な取り込みはしない）。
+      const [subject, tripod, resolvedForegroundHeights] = await Promise.all([
+        resolveGroundPoint(
+          sharedImportPayload.subject.latitude,
+          sharedImportPayload.subject.longitude,
+          sharedImportPayload.subject.label
+        ),
+        resolveGroundPoint(
+          sharedImportPayload.tripod.latitude,
+          sharedImportPayload.tripod.longitude,
+          sharedImportPayload.tripod.label
+        ),
+        Promise.all(
+          sharedImportPayload.foregroundObjects.map((object) =>
+            resolveGroundPoint(object.latitude, object.longitude, "人物・前景オブジェクト")
+          )
+        ),
+      ]);
+
+      stopAllEditModes();
+      const subjectPin = setSubjectPinFromPosition(
+        viewer,
+        Cartesian3.fromDegrees(subject.longitude, subject.latitude, subject.height),
+        subject.label
+      );
+      const tripodPin = setTripodPin(
+        viewer,
+        Cartesian3.fromDegrees(tripod.longitude, tripod.latitude, tripod.height)
+      );
+      setSubjectPoint(subjectPin);
+      setTripodPoint(tripodPin);
+      setForegroundObjects(
+        sharedImportPayload.foregroundObjects.map((object, index) => ({
+          id: crypto.randomUUID?.() ?? `foreground-${Date.now()}-${index}`,
+          type: object.type,
+          latitude: object.latitude,
+          longitude: object.longitude,
+          heightCm: normalizeForegroundHeightCm(object.heightCm),
+          enabled: object.enabled,
+          groundHeightMeters: resolvedForegroundHeights[index]?.ellipsoidalHeightMeters,
+        }))
+      );
+      setCameraSettings(sharedImportPayload.cameraSettings);
+      setCelestialVisibility(sharedImportPayload.celestialVisibility);
+      setPreviewFrameMode(sharedImportPayload.previewFrameMode);
+      timeZoneRef.current = sharedImportPayload.timeZone;
+      setTimeZone(sharedImportPayload.timeZone);
+      dateTimeLocalRef.current = sharedImportPayload.shootingDateTimeLocal;
+      setDateTimeLocal(sharedImportPayload.shootingDateTimeLocal);
+      setMapCenter({ latitude: subject.latitude, longitude: subject.longitude });
+
+      setSharedImportPayload(null);
+      setSharedImportBusy(false);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setSearchMessage("共有された撮影計画を取り込みました（高度はこの端末で取得し直しました）");
+    } catch (error) {
+      console.warn("共有された撮影計画の高度を取得できませんでした", error);
+      setSharedImportBusy(false);
+      setSharedImportError(
+        "高度（標高）を取得できなかったため取り込めませんでした。通信状態を確認して再試行してください"
+      );
+    }
+  }
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#share=")) return;
+    const code = hash.slice("#share=".length);
+    try {
+      setSharedImportPayload(decodeProjectShareCode(code));
+    } catch (error) {
+      const message = error instanceof ProjectShareCodeError
+        ? error.message
+        : "共有リンクを読み取れませんでした";
+      setSearchMessage(message);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function toggleSubjectPlacement() {
     if (placementModeRef.current === "subject") {
@@ -2323,20 +2475,36 @@ ${diagnosticMessage}
       viewer,
       (position) => {
         if (placementModeRef.current !== "subject") return;
-        const point = setSubjectPinFromPosition(
-          viewer,
-          position,
-          "手動指定地点"
-        );
+        void (async () => {
+          let point;
+          try {
+            point = await setSubjectPinFromExplicit3dPick(
+              viewer,
+              position,
+              "手動指定地点"
+            );
+          } catch (error) {
+            console.warn("被写体の3D表面高度を確定できませんでした", error);
+            setSearchMessage(
+              "被写体の3D表面高度を取得できませんでした。建物・地形など対象面が見える位置で再度クリックしてください"
+            );
+            return;
+          }
 
-        setSubjectPoint(point);
-        setMapCenter({ latitude: point.latitude, longitude: point.longitude });
+          setSubjectPoint(point);
+          setMapCenter({ latitude: point.latitude, longitude: point.longitude });
+          setSearchMessage(
+            `被写体ピンを変更しました：${point.latitude.toFixed(
+              6
+            )}, ${point.longitude.toFixed(6)}`
+          );
+          stopPlacementMode();
+        })();
+      },
+      () => {
         setSearchMessage(
-          `被写体ピンを変更しました：${point.latitude.toFixed(
-            6
-          )}, ${point.longitude.toFixed(6)}`
+          "被写体の3D表面高度を取得できませんでした。建物・地形など対象面が見える位置で再度クリックしてください"
         );
-        stopPlacementMode();
       }
     );
 
@@ -2346,7 +2514,7 @@ ${diagnosticMessage}
     );
   }
 
-  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-3d" | "drag-3d";
+  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved" | "map-3d" | "drag-3d";
 
   function placeForegroundAtCoordinates(
     latitude: number,
@@ -2397,42 +2565,24 @@ ${diagnosticMessage}
       enabled: true,
     }]);
 
-    // 2D地図には表面高度がないため、この経路だけDEM/地形高度で補正する。
-    // 被写体ピン・3Dクリック・3Dドラッグで取得した高さは、建物屋上や橋面を含む
-    // 実際の3D表面高度なので、後からDEM地表高で上書きしてはいけない。
+    // 2D地図には表面高度がないため、この経路（source === "map-2d"、または
+    // 既にDEM解決済みの"map-2d-resolved"）だけDEM/地形高度で補正する。
+    // 被写体ピン・3Dクリック・3Dドラッグで取得した高さは、建物屋上や橋面を
+    // 含む実際の3D表面高度なので、後からDEM地表高で上書きしてはいけない。
     if (source === "map-2d") {
       if (foregroundTerrainTimerRef.current !== null) {
         window.clearTimeout(foregroundTerrainTimerRef.current);
-      }
-      const requestId = ++foregroundTerrainRequestRef.current;
-      foregroundTerrainTimerRef.current = window.setTimeout(() => {
         foregroundTerrainTimerRef.current = null;
-        void groundPointFromCoordinates(
-          constrained.latitude,
-          constrained.longitude,
-          "前景・中景オブジェクト"
-        ).then((point) => {
-          if (requestId !== foregroundTerrainRequestRef.current) return;
-          setForegroundObjects((current) => current.map((object, index) =>
-            index === 0 &&
-            Math.abs(object.latitude - constrained.latitude) < 1e-9 &&
-            Math.abs(object.longitude - constrained.longitude) < 1e-9
-              ? { ...object, groundHeightMeters: point.height }
-              : object
-          ));
-        }).catch((error: unknown) => {
-          if (requestId !== foregroundTerrainRequestRef.current) return;
-          console.warn("前景・中景オブジェクト地点の標高を取得できませんでした", error);
-          setSearchMessage("人物を配置しました。地表高度の精密補正のみ取得できませんでした");
-        });
-      }, 180);
-    } else {
+      }
+      foregroundTerrainRequestRef.current += 1;
+    } else if (source === "map-2d-resolved") {
       if (foregroundTerrainTimerRef.current !== null) {
         window.clearTimeout(foregroundTerrainTimerRef.current);
         foregroundTerrainTimerRef.current = null;
       }
       foregroundTerrainRequestRef.current += 1;
     }
+
     return true;
   }
 
@@ -2490,6 +2640,10 @@ ${diagnosticMessage}
       )) {
         stopPlacementMode();
       }
+    }, () => {
+      setSearchMessage(
+        "人物を置く3D表面高度を取得できませんでした。床・地面・屋上などが見える位置で再度クリックしてください"
+      );
     });
     setForegroundPlacementActive(true);
     setSearchMessage("3D地図で人物を配置する場所をクリックしてください");
@@ -2545,16 +2699,33 @@ ${diagnosticMessage}
       viewer,
       (position) => {
         if (placementModeRef.current !== "tripod") return;
-        // 橋面などDEMに存在しない歩行可能な3D表面を選べるよう、クリックした実座標を保持する。
-        const point = setTripodPin(viewer, position);
-        setTripodPoint(point);
-        setMapCenter({ latitude: point.latitude, longitude: point.longitude });
+        // 橋面などDEMに存在しない歩行可能な3D表面も、HeightResolver
+        // （resolveGroundPointFrom3dSurface）を経由してそのまま採用する。
+        void (async () => {
+          let point;
+          try {
+            point = await setTripodPinFromExplicit3dPick(viewer, position);
+          } catch (error) {
+            console.warn("三脚の3D表面高度を確定できませんでした", error);
+            setSearchMessage(
+              "三脚を置く3D表面高度を取得できませんでした。地面・床・屋上・橋面などが見える位置で再度クリックしてください"
+            );
+            return;
+          }
+          setTripodPoint(point);
+          setMapCenter({ latitude: point.latitude, longitude: point.longitude });
+          setSearchMessage(
+            `三脚ピンを配置しました：${point.latitude.toFixed(
+              6
+            )}, ${point.longitude.toFixed(6)}`
+          );
+          stopPlacementMode();
+        })();
+      },
+      () => {
         setSearchMessage(
-          `三脚ピンを配置しました：${point.latitude.toFixed(
-            6
-          )}, ${point.longitude.toFixed(6)}`
+          "三脚を置く3D表面高度を取得できませんでした。地面・床・屋上・橋面などが見える位置で再度クリックしてください"
         );
-        stopPlacementMode();
       }
     );
 
@@ -2582,37 +2753,41 @@ ${diagnosticMessage}
     );
 
     if (placementMode === "foreground") {
-      if (placeForegroundAtCoordinates(
-        coordinates.latitude,
-        coordinates.longitude,
-        undefined,
-        false,
-        undefined,
-        "map-2d"
-      )) {
-        stopPlacementMode();
-        setSearchMessage("人物を配置しました。ドラッグして移動できます");
+      setSearchMessage("人物配置地点の地形高度を取得しています…");
+      try {
+        const ground = await resolveGroundPoint(
+          coordinates.latitude,
+          coordinates.longitude,
+          "人物配置地点"
+        );
+        if (placeForegroundAtCoordinates(
+          coordinates.latitude,
+          coordinates.longitude,
+          ground.ellipsoidalHeightMeters,
+          false,
+          undefined,
+          "map-2d-resolved"
+        )) {
+          stopPlacementMode();
+          setSearchMessage("人物を配置しました。ドラッグして移動できます");
+        }
+      } catch (error) {
+        console.warn("人物配置地点の高度を取得できませんでした", error);
+        setSearchMessage("地形高度を取得できないため人物を配置できません。再試行してください");
       }
     } else if (placementMode === "subject") {
       const requestId = ++subjectPlacementRequestRef.current;
-      const provisionalPoint: GroundPoint = {
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        // 3D表面取得を待たず候補基礎ラインを描画する。精密高度取得後に置き換える。
-        height: subjectPoint?.height ?? 0,
-        label: "手動指定地点（高度確認中）",
-      };
-      setSubjectPoint(provisionalPoint);
       stopPlacementMode();
-      setSearchMessage("被写体位置を確定しました。三脚候補を計算しながら3D表面高度を確認しています…");
+      setSearchMessage("被写体地点の地形高度を取得しています…");
       const point = viewer && !viewer.isDestroyed()
         ? await setSubjectPinFromCoordinates(
             viewer,
             coordinates.latitude,
             coordinates.longitude,
-            "手動指定地点"
+            "手動指定地点",
+            false
           )
-        : await groundPointFromCoordinates(
+        : await resolveGroundPoint(
             coordinates.latitude,
             coordinates.longitude,
             "手動指定地点"
@@ -2629,9 +2804,9 @@ ${diagnosticMessage}
             viewer,
             coordinates.latitude,
             coordinates.longitude,
-            true
+            false
           )
-        : await groundPointFromCoordinates(
+        : await resolveGroundPoint(
             coordinates.latitude,
             coordinates.longitude,
             "三脚位置"
@@ -2666,20 +2841,31 @@ ${diagnosticMessage}
       return;
     }
 
-    const point = setSubjectPinFromPosition(
-      viewer,
-      position,
-      "3D指定地点"
-    );
+    void (async () => {
+      let point;
+      try {
+        point = await setSubjectPinFromExplicit3dPick(
+          viewer,
+          position,
+          "3D指定地点"
+        );
+      } catch (error) {
+        console.warn("被写体の3D表面高度を確定できませんでした", error);
+        setSearchMessage(
+          "十字位置の3D表面高度を取得できませんでした。建物または地形へ十字を合わせてください"
+        );
+        return;
+      }
 
-    setSubjectPoint(point);
-    setMapCenter({ latitude: point.latitude, longitude: point.longitude });
-    setSubjectEditActive(false);
-    setSearchMessage(
-      `正式な被写体点を登録しました：${point.latitude.toFixed(
-        6
-      )}, ${point.longitude.toFixed(6)}`
-    );
+      setSubjectPoint(point);
+      setMapCenter({ latitude: point.latitude, longitude: point.longitude });
+      setSubjectEditActive(false);
+      setSearchMessage(
+        `正式な被写体点を登録しました：${point.latitude.toFixed(
+          6
+        )}, ${point.longitude.toFixed(6)}`
+      );
+    })();
   }
 
   function savePreview() {
@@ -3046,6 +3232,7 @@ ${diagnosticMessage}
           setSavedPlansOpen(true);
         }}
         onSaveCurrentPlan={saveCurrentComposition}
+        onShareCurrentPlan={shareCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
         onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
         precisionSettings={precisionSettings}
@@ -3091,6 +3278,8 @@ ${diagnosticMessage}
             subject={subjectPoint}
             camera={cameraSettings}
             aspectRatio={previewAspectRatio}
+            calculationMode={calculationMode}
+            viewCorrection={previewViewCorrection}
           />
 
           {previewReady && !foregroundOverlapsSubjectPin && (
@@ -3185,14 +3374,30 @@ ${diagnosticMessage}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
               foregroundEditing={foregroundPlacementActive}
-              onMoveForeground={(coordinates) => placeForegroundAtCoordinates(
-                coordinates.latitude,
-                coordinates.longitude,
-                undefined,
-                false,
-                undefined,
-                "map-2d"
-              )}
+              onMoveForeground={(coordinates) => {
+                const requestId = ++foregroundTerrainRequestRef.current;
+                setSearchMessage("人物移動先の地形高度を取得しています…");
+                void resolveGroundPoint(
+                  coordinates.latitude,
+                  coordinates.longitude,
+                  "人物移動先"
+                ).then((ground) => {
+                  if (requestId !== foregroundTerrainRequestRef.current) return;
+                  placeForegroundAtCoordinates(
+                    coordinates.latitude,
+                    coordinates.longitude,
+                    ground.ellipsoidalHeightMeters,
+                    false,
+                    undefined,
+                    "map-2d-resolved"
+                  );
+                  setSearchMessage("人物位置を更新しました");
+                }).catch((error: unknown) => {
+                  if (requestId !== foregroundTerrainRequestRef.current) return;
+                  console.warn("人物移動先の高度を取得できませんでした", error);
+                  setSearchMessage("地形高度を取得できないため人物位置を変更できません");
+                });
+              }}
               onSelectCandidate={selectTripodCandidate}
             />
           )}
@@ -3319,7 +3524,7 @@ ${diagnosticMessage}
                 aria-live="polite"
               >
                 {tripodCandidateCalculationStatus === "calculating"
-                  ? "三脚方位候補を表示中・精密計算中…"
+                  ? "三脚候補を精密計算中…"
                   : tripodCandidateCalculationStatus === "complete"
                     ? `確定した三脚候補：${tripodCandidates.length}件`
                     : tripodCandidateCalculationStatus === "no-solution"
@@ -3570,6 +3775,14 @@ ${diagnosticMessage}
         open={projectSaveOpen}
         onCancel={() => setProjectSaveOpen(false)}
         onSave={commitProjectSave}
+      />
+      <SharedProjectImportDialog
+        open={sharedImportPayload !== null}
+        payload={sharedImportPayload}
+        importing={sharedImportBusy}
+        errorMessage={sharedImportError}
+        onCancel={cancelSharedImport}
+        onImport={() => void confirmSharedImport()}
       />
     </main>
   );

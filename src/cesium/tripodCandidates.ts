@@ -2,7 +2,6 @@ import { createAbortError, isAbortError } from "../utils/runtimeErrors";
 import {
   Cartesian3,
   Cartographic,
-  Ellipsoid,
   Math as CesiumMath,
 } from "cesium";
 
@@ -19,6 +18,8 @@ import {
   calculateKarneyLineMetrics,
 } from "../geodesy/karneyGeodesic";
 import { sampleWorldTerrain } from "./worldTerrain";
+import { computeApparentElevation } from "../apparent/apparentElevation";
+import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
 const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
@@ -62,29 +63,19 @@ function destinationCartographic(
 function elevationAngleDegrees(
   candidate: Cartographic,
   subject: GroundPoint,
-  lensCenterHeightMeters: number
+  lensCenterHeightMeters: number,
+  calculationMode: CalculationMode
 ): number {
-  const cameraPosition = Cartesian3.fromRadians(
-    candidate.longitude,
-    candidate.latitude,
-    candidate.height + lensCenterHeightMeters
-  );
-  const subjectPosition = Cartesian3.fromDegrees(
-    subject.longitude,
-    subject.latitude,
-    subject.height
-  );
-  const direction = Cartesian3.normalize(
-    Cartesian3.subtract(subjectPosition, cameraPosition, new Cartesian3()),
-    new Cartesian3()
-  );
-  const localUp = Ellipsoid.WGS84.geodeticSurfaceNormal(
-    cameraPosition,
-    new Cartesian3()
-  );
-  return CesiumMath.toDegrees(
-    Math.asin(Math.max(-1, Math.min(1, Cartesian3.dot(direction, localUp))))
-  );
+  const observer: GroundPoint = {
+    latitude: CesiumMath.toDegrees(candidate.latitude),
+    longitude: CesiumMath.toDegrees(candidate.longitude),
+    height: candidate.height + lensCenterHeightMeters,
+    label: "三脚候補レンズ中心",
+  };
+
+  // 三脚候補探索と撮影プレビューで、同一のECEF仰角・地表屈折補正（Apparent層）を使用する。
+  // これにより、探索時は一致しているのにプレビューで上下にずれる不整合を防ぐ。
+  return computeApparentElevation(observer, subject, calculationMode).apparentAltitudeDegrees;
 }
 
 export type TripodDistanceRange = {
@@ -158,6 +149,7 @@ async function scanTerrainDistanceRange(
   bearingDegrees: number,
   targetAltitudeDegrees: number,
   lensCenterHeightMeters: number,
+  calculationMode: CalculationMode,
   terrainSampler: TerrainSampler,
   signal: AbortSignal | undefined,
   distanceRange: TripodDistanceRange | undefined,
@@ -179,8 +171,12 @@ async function scanTerrainDistanceRange(
   );
   abortIfRequested(signal);
   const errors = sampled.map((candidate) =>
-    elevationAngleDegrees(candidate, subject, lensCenterHeightMeters) -
-      targetAltitudeDegrees
+    elevationAngleDegrees(
+      candidate,
+      subject,
+      lensCenterHeightMeters,
+      calculationMode
+    ) - targetAltitudeDegrees
   );
   const firstFiniteIndex = errors.findIndex(Number.isFinite);
   if (firstFiniteIndex < 0) return null;
@@ -237,8 +233,12 @@ async function scanTerrainDistanceRange(
     abortIfRequested(signal);
     const refinementErrors = refinementSamples.map((candidate) =>
       candidate && Number.isFinite(candidate.height)
-        ? elevationAngleDegrees(candidate, subject, lensCenterHeightMeters) -
-          targetAltitudeDegrees
+        ? elevationAngleDegrees(
+          candidate,
+          subject,
+          lensCenterHeightMeters,
+          calculationMode
+        ) - targetAltitudeDegrees
         : Number.NaN
     );
     for (let index = 0; index < refinementErrors.length; index += 1) {
@@ -286,6 +286,7 @@ async function solveTerrainDistance(
   bearingDegrees: number,
   targetAltitudeDegrees: number,
   lensCenterHeightMeters: number,
+  calculationMode: CalculationMode,
   terrainSampler: TerrainSampler,
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
@@ -306,8 +307,12 @@ async function solveTerrainDistance(
     abortIfRequested(signal);
     if (preferredSample && Number.isFinite(preferredSample.height)) {
       const preferredError =
-        elevationAngleDegrees(preferredSample, subject, lensCenterHeightMeters) -
-        targetAltitudeDegrees;
+        elevationAngleDegrees(
+          preferredSample,
+          subject,
+          lensCenterHeightMeters,
+          calculationMode
+        ) - targetAltitudeDegrees;
       // 従来の精密化終了条件と同じ角度誤差を満たす場合だけ前回解を採用する。
       if (Math.abs(preferredError) <= 0.002) {
         return {
@@ -330,6 +335,7 @@ async function solveTerrainDistance(
         bearingDegrees,
         targetAltitudeDegrees,
         lensCenterHeightMeters,
+        calculationMode,
         terrainSampler,
         signal,
         localRange,
@@ -349,6 +355,7 @@ async function solveTerrainDistance(
     bearingDegrees,
     targetAltitudeDegrees,
     lensCenterHeightMeters,
+    calculationMode,
     terrainSampler,
     signal,
     distanceRange,
@@ -366,7 +373,8 @@ async function calculateOneCandidate(
   terrainSampler: TerrainSampler,
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
-  searchProfile?: TripodSearchProfile
+  searchProfile?: TripodSearchProfile,
+  refractionWeather?: RefractionWeatherContext
 ): Promise<TripodCandidate | null> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
   let horizontal = {
@@ -387,6 +395,7 @@ async function calculateOneCandidate(
       bearing,
       horizontal.altitudeDegrees,
       lensCenterHeightMeters,
+      calculationMode,
       terrainSampler,
       signal,
       distanceRange,
@@ -419,7 +428,8 @@ async function calculateOneCandidate(
         height: solved.height + lensCenterHeightMeters,
         label: `${point.label}三脚候補レンズ中心`,
       },
-      calculationMode
+      calculationMode,
+      refractionWeather
     );
     const positionChangeMeters = previousSolved
       ? Cartesian3.distance(
@@ -463,7 +473,8 @@ async function calculateOneCandidate(
       ...candidatePoint,
       height: candidatePoint.height + lensCenterHeightMeters,
     },
-    calculationMode
+    calculationMode,
+    refractionWeather
   );
   const subjectBearing = calculateKarneyLineMetrics(
     candidatePoint,
@@ -475,8 +486,12 @@ async function calculateOneCandidate(
     solved.height
   );
   const altitudeError = Math.abs(
-    elevationAngleDegrees(candidateCartographic, subject, lensCenterHeightMeters) -
-    finalHorizontal.altitudeDegrees
+    elevationAngleDegrees(
+      candidateCartographic,
+      subject,
+      lensCenterHeightMeters,
+      calculationMode
+    ) - finalHorizontal.altitudeDegrees
   );
   const azimuthError = angularDifferenceDegrees(
     subjectBearing,
@@ -508,7 +523,8 @@ export async function calculateTripodCandidates(
   signal?: AbortSignal,
   previewAspectRatio = 3 / 2,
   distanceRange?: TripodDistanceRange,
-  searchProfile?: TripodSearchProfile
+  searchProfile?: TripodSearchProfile,
+  refractionWeather?: RefractionWeatherContext
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -523,37 +539,9 @@ export async function calculateTripodCandidates(
     (point) => Number.isFinite(point.altitudeDegrees) && point.altitudeDegrees > 0.25
   );
 
-  // GSI/Cesium Terrain の一時障害で候補計算全体が0件になることを防ぐ。
-  // 高度取得に失敗した場合は被写体地点の楕円体高を暫定地表高として使い、
-  // 候補位置の幾何計算を継続する。通信復旧後の次回計算では通常DEMへ戻る。
-  const resilientTerrainSampler: TerrainSampler = async (
-    requested,
-    requestedSignal,
-    maximumDetail
-  ) => {
-    try {
-      const sampled = await terrainSampler(
-        requested,
-        requestedSignal,
-        maximumDetail
-      );
-      return requested.map((point, index) => {
-        const value = sampled[index];
-        if (value && Number.isFinite(value.height)) return value;
-        const fallback = Cartographic.clone(point);
-        fallback.height = Number.isFinite(subject.height) ? subject.height : 0;
-        return fallback;
-      });
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      console.warn("地形高度を取得できないため暫定高度で三脚候補計算を継続します", error);
-      return requested.map((point) => {
-        const fallback = Cartographic.clone(point);
-        fallback.height = Number.isFinite(subject.height) ? subject.height : 0;
-        return fallback;
-      });
-    }
-  };
+  // 精度優先: DEM取得失敗時に被写体高度で代用しない。
+  // 高度基準が不明な候補は確定結果へ含めず、取得エラーを呼び出し側へ返す。
+
 
   const results = await Promise.all(
     visiblePoints.map((point) =>
@@ -564,10 +552,11 @@ export async function calculateTripodCandidates(
         previewAspectRatio,
         date,
         calculationMode,
-        resilientTerrainSampler,
+        terrainSampler,
         signal,
         distanceRange,
-        searchProfile
+        searchProfile,
+        refractionWeather
       )
     )
   );

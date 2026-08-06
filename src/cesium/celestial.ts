@@ -6,7 +6,6 @@ import {
   Illumination,
   Libration,
   MoonPhase,
-  Observer,
   Refraction,
 } from "astronomy-engine";
 
@@ -23,10 +22,20 @@ import type {
   MilkyWayPathPoint,
 } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
+import { withLensCenterHeight } from "../types/points";
 import { zonedDateParts } from "../time/zonedTime";
-import { sensorDimensionsMm } from "./camera";
-import { calculateElevationAngleDegrees } from "./geometry";
-import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
+import { createCameraModel } from "./cameraModelFactory";
+import {
+  createAstronomyObserver,
+  createAstronomyObserverAtLens,
+} from "../observer/observerFactory";
+import {
+  localVectorToVec3,
+  horizontalDirectionToVec3,
+  projectDirectionToPlane,
+  projectToScreen,
+  type ProjectionBasis,
+} from "../projection/projectionService";
 import {
   weatherForDate,
   weatherRefractionCorrectionDegrees,
@@ -52,11 +61,7 @@ export function celestialAngularDiameterDegrees(
 ): number {
   if (celestialId !== "sun" && celestialId !== "moon") return 0;
   const body = celestialId === "sun" ? Body.Sun : Body.Moon;
-  const observer = new Observer(
-    observerPoint.latitude,
-    observerPoint.longitude,
-    observerPoint.height
-  );
+  const observer = createAstronomyObserver(observerPoint);
   const equatorial = Equator(body, date, observer, true, true);
   const distanceKilometers = equatorial.dist * AU_KILOMETERS;
   const radius = BODY_RADIUS_KILOMETERS[body === Body.Moon ? "moon" : "sun"];
@@ -91,11 +96,7 @@ export function calculateCelestialHorizontalCoordinates(
   calculationMode: CalculationMode,
   refractionWeather?: RefractionWeatherContext
 ): HorizontalCoordinates {
-  const observer = new Observer(
-    observerPoint.latitude,
-    observerPoint.longitude,
-    observerPoint.height
-  );
+  const observer = createAstronomyObserver(observerPoint);
 
   const body =
     id === "sun"
@@ -119,8 +120,22 @@ export function calculateCelestialHorizontalCoordinates(
   const geometricAltitudeDegrees = geometricHorizon.altitude;
   let azimuthDegrees = geometricHorizon.azimuth;
   let altitudeDegrees = geometricAltitudeDegrees;
-  if (calculationMode === "pro" && !useWeather) {
-    // 標準大気差を使う場合も、診断と幾何比較用に補正前高度を保持する。
+  let weatherCorrectionApplied = false;
+  if (useWeather) {
+    const weather = weatherForDate(refractionWeather, date);
+    const correction = weather
+      ? weatherRefractionCorrectionDegrees(altitudeDegrees, weather)
+      : null;
+    if (correction !== null) {
+      altitudeDegrees += correction;
+      weatherCorrectionApplied = true;
+    }
+  }
+  if (calculationMode === "pro" && !weatherCorrectionApplied) {
+    // 気象連動屈折が選択されていても、その瞬間の気象データが欠測している
+    // 場合は標準大気差（Bennett式）へフォールバックする。検索・プレビュー・
+    // 最終判定のいずれもこの1関数を通るため、フォールバックの有無で
+    // 経路が分岐しない。
     const apparentHorizon = Horizon(
       date,
       observer,
@@ -130,13 +145,6 @@ export function calculateCelestialHorizontalCoordinates(
     );
     azimuthDegrees = apparentHorizon.azimuth;
     altitudeDegrees = apparentHorizon.altitude;
-  }
-  if (useWeather) {
-    const weather = weatherForDate(refractionWeather, date);
-    const correction = weather
-      ? weatherRefractionCorrectionDegrees(altitudeDegrees, weather)
-      : null;
-    if (correction !== null) altitudeDegrees += correction;
   }
 
   return {
@@ -150,10 +158,7 @@ function observerAtLens(
   tripod: GroundPoint,
   settings: CameraSettings
 ): GroundPoint {
-  return {
-    ...tripod,
-    height: tripod.height + settings.lensCenterHeightMeters,
-  };
+  return withLensCenterHeight(tripod, settings.lensCenterHeightMeters);
 }
 
 function dot(a: LocalVector, b: LocalVector): number {
@@ -173,14 +178,8 @@ function normalize(vector: LocalVector): LocalVector {
 function horizontalDirection(
   horizontal: HorizontalCoordinates
 ): LocalVector {
-  const azimuth = horizontal.azimuthDegrees * DEG;
-  const altitude = horizontal.altitudeDegrees * DEG;
-  const horizontalLength = Math.cos(altitude);
-  return {
-    east: horizontalLength * Math.sin(azimuth),
-    north: horizontalLength * Math.cos(azimuth),
-    up: Math.sin(altitude),
-  };
+  const vec = horizontalDirectionToVec3(horizontal.azimuthDegrees, horizontal.altitudeDegrees);
+  return { east: vec.x, north: vec.y, up: vec.z };
 }
 
 export function createCameraProjection(
@@ -188,42 +187,29 @@ export function createCameraProjection(
   subject: GroundPoint,
   settings: CameraSettings,
   previewAspectRatio: number,
+  calculationMode: CalculationMode,
   viewCorrection?: CameraViewCorrection
 ): CameraProjection {
-  const line = calculateKarneyLineMetrics(tripod, subject);
-  const cameraAltitude = calculateElevationAngleDegrees(
-    observerAtLens(tripod, settings),
-    subject
+  // 天体・人物投影はCameraModelFactoryのApparent（見かけ仰角込み）モデルを使う。
+  const { apparent } = createCameraModel(
+    tripod, subject, settings, previewAspectRatio, calculationMode, viewCorrection
   );
-  const sensor = sensorDimensionsMm(previewAspectRatio);
-  const horizontalFov =
-    2 * Math.atan(sensor.width / (2 * settings.focalLengthMm)) * RAD;
-  const verticalFov =
-    2 * Math.atan(sensor.height / (2 * settings.focalLengthMm)) * RAD;
-  const cameraAzimuth = line.bearingDegrees + (viewCorrection?.azimuthDegrees ?? 0);
-  const correctedCameraAltitude = cameraAltitude + (viewCorrection?.altitudeDegrees ?? 0);
-  const cameraAzimuthRadians = cameraAzimuth * DEG;
-  const cameraAltitudeRadians = correctedCameraAltitude * DEG;
-  const forward = horizontalDirection({
-    azimuthDegrees: cameraAzimuth,
-    altitudeDegrees: correctedCameraAltitude,
-  });
-  const right = {
-    east: Math.cos(cameraAzimuthRadians),
-    north: -Math.sin(cameraAzimuthRadians),
-    up: 0,
-  };
-  const cameraUp = {
-    east: -Math.sin(cameraAzimuthRadians) * Math.sin(cameraAltitudeRadians),
-    north: -Math.cos(cameraAzimuthRadians) * Math.sin(cameraAltitudeRadians),
-    up: Math.cos(cameraAltitudeRadians),
-  };
   return {
-    horizontalFov,
-    verticalFov,
-    right,
-    up: cameraUp,
-    forward,
+    horizontalFov: apparent.horizontalFovDegrees,
+    verticalFov: apparent.verticalFovDegrees,
+    right: apparent.localRight,
+    up: apparent.localUp,
+    forward: apparent.localForward,
+  };
+}
+
+function projectionBasisFromCameraProjection(projection: CameraProjection): ProjectionBasis {
+  return {
+    right: localVectorToVec3(projection.right),
+    up: localVectorToVec3(projection.up),
+    forward: localVectorToVec3(projection.forward),
+    horizontalFovDegrees: projection.horizontalFov,
+    verticalFovDegrees: projection.verticalFov,
   };
 }
 
@@ -231,16 +217,10 @@ function projectDirectionToImagePlane(
   direction: LocalVector,
   projection: CameraProjection
 ): { x: number; y: number; inFront: boolean } {
-  const forwardDistance = dot(direction, projection.forward);
-  if (forwardDistance <= 1e-8) {
-    return { x: 0, y: 0, inFront: false };
-  }
-  return {
-    x: dot(direction, projection.right) / forwardDistance,
-    // 画像座標は下向きを正にする。
-    y: -dot(direction, projection.up) / forwardDistance,
-    inFront: true,
-  };
+  return projectDirectionToPlane(
+    localVectorToVec3(direction),
+    projectionBasisFromCameraProjection(projection)
+  );
 }
 
 export function projectHorizontalToPreview(
@@ -252,27 +232,19 @@ export function projectHorizontalToPreview(
   visibleInFrame: boolean;
   inFront: boolean;
 } {
-  // 方位差の線形換算ではなく、実カメラと同じ中心投影で画面座標へ変換する。
-  const plane = projectDirectionToImagePlane(
-    horizontalDirection(horizontal),
-    projection
+  // 方位差の線形換算ではなく、実カメラと同じ中心投影（ProjectionServiceの
+  // projectToScreen()）で画面座標へ変換する。人物・被写体・軌跡・最終判定も
+  // 同じ関数を経由するため、投影経路は一本化されている。
+  const screen = projectToScreen(
+    localVectorToVec3(horizontalDirection(horizontal)),
+    projectionBasisFromCameraProjection(projection)
   );
-  const xPercent =
-    50 + 50 * plane.x / Math.tan(projection.horizontalFov * DEG / 2);
-  const yPercent =
-    50 + 50 * plane.y / Math.tan(projection.verticalFov * DEG / 2);
 
   return {
-    xPercent,
-    yPercent,
-    visibleInFrame:
-      plane.inFront &&
-      horizontal.altitudeDegrees > -1 &&
-      xPercent >= 0 &&
-      xPercent <= 100 &&
-      yPercent >= 0 &&
-      yPercent <= 100,
-    inFront: plane.inFront,
+    xPercent: screen.xPercent,
+    yPercent: screen.yPercent,
+    visibleInFrame: screen.visibleInFrame && horizontal.altitudeDegrees > -1,
+    inFront: screen.inFront,
   };
 }
 
@@ -299,11 +271,7 @@ function apparentDisc(
   diameterHeightPercent: number;
   distanceKilometers: number;
 } {
-  const observer = new Observer(
-    observerPoint.latitude,
-    observerPoint.longitude,
-    observerPoint.height
-  );
+  const observer = createAstronomyObserver(observerPoint);
   const equatorial = Equator(body, date, observer, true, true);
   const distanceKilometers = equatorial.dist * AU_KILOMETERS;
   const radius = body === Body.Moon
@@ -427,11 +395,7 @@ function moonNorthAngleDegrees(
   moonHorizontal: HorizontalCoordinates,
   projection: CameraProjection
 ): number {
-  const observer = new Observer(
-    observerPoint.latitude,
-    observerPoint.longitude,
-    observerPoint.height
-  );
+  const observer = createAstronomyObserver(observerPoint);
   const equatorial = Equator(Body.Moon, date, observer, true, true);
   const north = Horizon(
     date,
@@ -489,6 +453,7 @@ export function calculateCelestialScreenPoints(
     subject,
     settings,
     previewAspectRatio,
+    calculationMode,
     viewCorrection
   );
 
@@ -606,6 +571,7 @@ export function calculateCelestialScreenTracks(
     subject,
     settings,
     previewAspectRatio,
+    calculationMode,
     viewCorrection
   );
   const lensObserver = observerAtLens(tripod, settings);
@@ -717,13 +683,10 @@ export function calculateMilkyWayScreenPath(
     subject,
     settings,
     previewAspectRatio,
+    calculationMode,
     viewCorrection
   );
-  const observer = new Observer(
-    tripod.latitude,
-    tripod.longitude,
-    tripod.height + settings.lensCenterHeightMeters
-  );
+  const observer = createAstronomyObserverAtLens(tripod, settings);
 
   const path: MilkyWayPathPoint[] = [];
   const safeStep = Math.max(5, Math.min(90, sampleStepDegrees));
