@@ -1,7 +1,7 @@
 import {
   Cartesian3,
-  Cesium3DTileStyle,
   Cesium3DTileset,
+  CesiumTerrainProvider,
   createGooglePhotorealistic3DTileset,
   ImageryLayer,
   Ion,
@@ -21,7 +21,8 @@ const TILESET_INITIALIZATION_TIMEOUT_MS = 35_000;
 const TILESET_INITIALIZATION_ATTEMPTS = 2;
 const GSI_STANDARD_TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png";
 const PLATEAU_BUILDINGS_TILESET_URL =
-  "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-2025/tileset.json";
+  "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-maxlod2-latest/tileset.json";
+const PLATEAU_TERRAIN_URL = "https://tile.plateauview.mlit.go.jp/terrain/";
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {
   let timedOut = false;
@@ -59,8 +60,20 @@ async function createStandardViewer(
     maximumLevel: 18,
   }));
 
+  let terrainProvider: CesiumTerrainProvider | undefined;
+  try {
+    setStatus("標準3D：PLATEAU地形を読み込み中…");
+    terrainProvider = await CesiumTerrainProvider.fromUrl(PLATEAU_TERRAIN_URL, {
+      requestVertexNormals: true,
+    });
+  } catch (error) {
+    console.warn("PLATEAU terrain could not be loaded; PLATEAU buildings will be disabled.", error);
+    setStatus("標準：PLATEAU地形未取得のため国土地理院地図で表示中");
+  }
+
   const viewer = new Viewer(container, {
     baseLayer,
+    terrainProvider,
     baseLayerPicker: false,
     geocoder: false,
     animation: false,
@@ -79,8 +92,14 @@ async function createStandardViewer(
   viewer.scene.globe.depthTestAgainstTerrain = true;
   viewer.scene.globe.enableLighting = true;
 
-  // Display-only layer for standard mode. Do not use this tileset for terrain,
-  // height, obstruction, line-of-sight, or search calculations.
+  // Display-only layer for standard mode. Do not use this tileset for height,
+  // obstruction, line-of-sight, or search calculations. The building layer is
+  // enabled only when PLATEAU-Terrain loaded successfully, because both use
+  // ellipsoidal heights and are designed to align vertically.
+  if (!terrainProvider) {
+    return viewer;
+  }
+
   try {
     setStatus("標準3D：PLATEAU建物を読み込み中…");
     const plateauBuildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
@@ -90,14 +109,9 @@ async function createStandardViewer(
     plateauBuildings.skipLevelOfDetail = true;
     plateauBuildings.preferLeaves = true;
 
-    plateauBuildings.style = new Cesium3DTileStyle({
-      color: "color('#E0E0E0', 0.94)",
-      show: "true",
-    });
-
     viewer.scene.primitives.add(plateauBuildings);
     plateauBuildings.show = true;
-    setStatus("標準3D：PLATEAU建物表示中（配信座標をそのまま使用）");
+    setStatus("標準3D：PLATEAU建物表示中（利用可能な最高LOD・テクスチャ優先）");
     viewer.scene.requestRender();
   } catch (error) {
     console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);
