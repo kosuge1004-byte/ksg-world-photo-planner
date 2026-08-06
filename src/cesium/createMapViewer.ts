@@ -1,5 +1,6 @@
 import {
   Cartesian3,
+  Cesium3DTileset,
   createGooglePhotorealistic3DTileset,
   ImageryLayer,
   Ion,
@@ -18,6 +19,8 @@ type GooglePhotorealisticTileset = Awaited<
 const TILESET_INITIALIZATION_TIMEOUT_MS = 35_000;
 const TILESET_INITIALIZATION_ATTEMPTS = 2;
 const GSI_STANDARD_TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png";
+const PLATEAU_BUILDINGS_TILESET_URL =
+  "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-lod1-latest/tileset.json";
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {
   let timedOut = false;
@@ -45,14 +48,17 @@ async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotoreal
   }
 }
 
-function createStandardViewer(container: HTMLDivElement): Viewer {
+async function createStandardViewer(
+  container: HTMLDivElement,
+  setStatus: (message: string) => void
+): Promise<Viewer> {
   const baseLayer = new ImageryLayer(new UrlTemplateImageryProvider({
     url: GSI_STANDARD_TILE_URL,
     credit: "地理院タイル（国土地理院）",
     maximumLevel: 18,
   }));
 
-  return new Viewer(container, {
+  const viewer = new Viewer(container, {
     baseLayer,
     baseLayerPicker: false,
     geocoder: false,
@@ -67,6 +73,22 @@ function createStandardViewer(container: HTMLDivElement): Viewer {
     requestRenderMode: true,
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
+
+  // PLATEAU is intentionally display-only in standard mode. It is not wired into
+  // terrain sampling, line-of-sight, obstruction, height, or search calculations.
+  try {
+    setStatus("標準3D：PLATEAU建物を読み込み中…");
+    const plateauBuildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
+    plateauBuildings.maximumScreenSpaceError = 32;
+    plateauBuildings.dynamicScreenSpaceError = true;
+    viewer.scene.primitives.add(plateauBuildings);
+    viewer.scene.requestRender();
+  } catch (error) {
+    console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);
+    setStatus("標準：PLATEAU未取得のため国土地理院地図で表示中");
+  }
+
+  return viewer;
 }
 
 async function createHighestPrecisionViewer(
@@ -132,7 +154,7 @@ export async function createMapViewer(
 ): Promise<Viewer> {
   const viewer = accuracyMode === "highest"
     ? await createHighestPrecisionViewer(container, token ?? "", setStatus)
-    : createStandardViewer(container);
+    : await createStandardViewer(container, setStatus);
 
   viewer.camera.setView({
     destination: Cartesian3.fromDegrees(139.745433, 35.658581, 1200),
@@ -146,7 +168,7 @@ export async function createMapViewer(
   setStatus(
     accuracyMode === "highest"
       ? "高精度：Google Photorealistic 3D Tiles 表示中"
-      : "標準：国土地理院地図（Google 3D通信なし）"
+      : "標準3D：国土地理院地図＋PLATEAU建物（表示専用）"
   );
   return viewer;
 }
