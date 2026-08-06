@@ -4,10 +4,7 @@ const source = fs.readFileSync(new URL("../src/geodesy/karneyGeodesic.ts", impor
 const required = [
   "COINCIDENT_DISTANCE_EPSILON_METERS = 1e-6",
   "distanceMeters < COINCIDENT_DISTANCE_EPSILON_METERS",
-  "distanceMeters: 0",
-  "bearingDegrees: 0",
-  "bearingDefined: false",
-  "coincident: true",
+  "return { distanceMeters: 0, bearingDegrees: 0 }",
 ];
 for (const token of required) {
   if (!source.includes(token)) {

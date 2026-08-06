@@ -2,14 +2,6 @@ import { spawnSync } from "node:child_process";
 
 const cases = [
   {
-    name: "high-precision usage warning and stop policy",
-    arguments: [
-      "--experimental-strip-types",
-      "--test",
-      "./tests/regression/high-precision-usage-policy.test.mjs",
-    ],
-  },
-  {
     name: "production calculation regression",
     arguments: [
       "--import",
@@ -106,6 +98,22 @@ const cases = [
       "./scripts/register-typescript-source-loader.mjs",
       "--test",
       "./tests/regression/gsi-elevation-client.test.mjs",
+    ],
+  },
+  {
+    name: "constrained bicubic interpolation (overshoot clamping)",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "./tests/regression/constrained-bicubic-interpolation.test.mjs",
+    ],
+  },
+  {
+    name: "DEM 4x4 neighborhood: tile boundary, NoData, sea gaps, cliffs, LOS safe-side (Phase F-1)",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "./tests/regression/gsi-elevation-neighborhood.test.mjs",
     ],
   },
   {

@@ -1,20 +1,27 @@
 import type { CloudflareEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
-import {
-  HIGH_PRECISION_SESSION_TTL_SECONDS,
-  HIGH_PRECISION_STOP_LIMIT,
-  HIGH_PRECISION_WARNING_LIMIT,
-  decideHighPrecisionAfterCount,
-  decideHighPrecisionBeforeCreate,
-  highPrecisionMonthKey,
-} from "../../server/highPrecisionUsagePolicy.ts";
+
+const WARNING_LIMIT = 800;
+const STOP_LIMIT = 850;
+const SESSION_TTL_SECONDS = 3 * 60 * 60;
 const USAGE_KEY_PREFIX = "high-precision-usage:";
 const WARNING_KEY_PREFIX = "high-precision-warning:";
 
 interface HighPrecisionEnv extends CloudflareEnv {
   HIGH_PRECISION_ALERT_WEBHOOK_URL?: string;
   HIGH_PRECISION_LIMITS_ENABLED?: string;
-  HIGH_PRECISION_ENABLED?: string;
+}
+
+function pacificMonthKey(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  if (!year || !month) throw new Error("月次キーを生成できませんでした");
+  return `${year}-${month}`;
 }
 
 async function countMonthlySessions(kv: KVNamespace, monthKey: string): Promise<number> {
@@ -43,7 +50,7 @@ async function sendWarningOnce(
 
   const webhookUrl = context.env.HIGH_PRECISION_ALERT_WEBHOOK_URL;
   if (!webhookUrl) {
-    console.warn(`[high-precision] ${monthKey}: ${count} sessions (warning threshold ${HIGH_PRECISION_WARNING_LIMIT})`);
+    console.warn(`[high-precision] ${monthKey}: ${count} sessions (warning threshold ${WARNING_LIMIT})`);
     return;
   }
 
@@ -51,11 +58,11 @@ async function sendWarningOnce(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      text: `AstroSight高精度モードが月間${count}イベントに到達しました。${HIGH_PRECISION_STOP_LIMIT}イベントで自動停止します。`,
+      text: `AstroSight高精度モードが月間${count}イベントに到達しました。${STOP_LIMIT}イベントで自動停止します。`,
       month: monthKey,
       count,
-      warningLimit: HIGH_PRECISION_WARNING_LIMIT,
-      stopLimit: HIGH_PRECISION_STOP_LIMIT,
+      warningLimit: WARNING_LIMIT,
+      stopLimit: STOP_LIMIT,
     }),
   }).then(() => undefined).catch((error) => {
     console.error("High precision warning webhook failed", error);
@@ -63,53 +70,41 @@ async function sendWarningOnce(
 }
 
 export const onRequestGet: PagesFunction<HighPrecisionEnv> = async (context) => {
-  const monthKey = highPrecisionMonthKey();
+  const monthKey = pacificMonthKey();
   const count = await countMonthlySessions(context.env.SPOT_SEARCH_JOBS, monthKey);
   const limitsEnabled = context.env.HIGH_PRECISION_LIMITS_ENABLED !== "false";
-  const serviceEnabled = context.env.HIGH_PRECISION_ENABLED !== "false";
-  const decision = decideHighPrecisionBeforeCreate({ count, serviceEnabled, limitsEnabled });
   return jsonResponse({
-    allowed: decision.allowed,
-    reason: decision.reason,
+    allowed: !limitsEnabled || count < STOP_LIMIT,
     count,
-    warningLimit: HIGH_PRECISION_WARNING_LIMIT,
-    stopLimit: HIGH_PRECISION_STOP_LIMIT,
+    warningLimit: WARNING_LIMIT,
+    stopLimit: STOP_LIMIT,
     month: monthKey,
     limitsEnabled,
-    serviceEnabled,
   });
 };
 
 export const onRequestPost: PagesFunction<HighPrecisionEnv> = async (context) => {
   const limitsEnabled = context.env.HIGH_PRECISION_LIMITS_ENABLED !== "false";
-  const serviceEnabled = context.env.HIGH_PRECISION_ENABLED !== "false";
   const body = await context.request.json().catch(() => ({})) as { sessionId?: unknown };
   const sessionId = typeof body.sessionId === "string" && /^[a-zA-Z0-9_-]{16,128}$/.test(body.sessionId)
     ? body.sessionId
     : crypto.randomUUID().replaceAll("-", "");
-  const monthKey = highPrecisionMonthKey();
+  const monthKey = pacificMonthKey();
   const sessionKey = `${USAGE_KEY_PREFIX}${monthKey}:${sessionId}`;
 
   const existing = await context.env.SPOT_SEARCH_JOBS.get(sessionKey);
   let count = await countMonthlySessions(context.env.SPOT_SEARCH_JOBS, monthKey);
 
   if (!existing) {
-    const beforeCreate = decideHighPrecisionBeforeCreate({
-      count,
-      serviceEnabled,
-      limitsEnabled,
-    });
-    if (!beforeCreate.allowed) {
+    if (limitsEnabled && count >= STOP_LIMIT) {
       return jsonResponse({
         allowed: false,
-        reason: beforeCreate.reason,
+        reason: "monthly_limit_reached",
         count,
-        warningLimit: HIGH_PRECISION_WARNING_LIMIT,
-        stopLimit: HIGH_PRECISION_STOP_LIMIT,
+        warningLimit: WARNING_LIMIT,
+        stopLimit: STOP_LIMIT,
         month: monthKey,
-        limitsEnabled,
-        serviceEnabled,
-      }, beforeCreate.reason === "service_disabled" ? 503 : 429);
+      }, 429);
     }
 
     await context.env.SPOT_SEARCH_JOBS.put(sessionKey, new Date().toISOString(), {
@@ -118,22 +113,19 @@ export const onRequestPost: PagesFunction<HighPrecisionEnv> = async (context) =>
     count += 1;
   }
 
-  const afterCount = decideHighPrecisionAfterCount({ count, serviceEnabled, limitsEnabled });
-  if (afterCount.shouldWarn) {
+  if (limitsEnabled && count >= WARNING_LIMIT) {
     await sendWarningOnce(context, monthKey, count);
   }
 
   return jsonResponse({
-    allowed: afterCount.allowed,
-    reason: afterCount.reason,
+    allowed: !limitsEnabled || count <= STOP_LIMIT,
     sessionId,
     reused: Boolean(existing),
     count,
-    warningLimit: HIGH_PRECISION_WARNING_LIMIT,
-    stopLimit: HIGH_PRECISION_STOP_LIMIT,
+    warningLimit: WARNING_LIMIT,
+    stopLimit: STOP_LIMIT,
     month: monthKey,
-    sessionTtlSeconds: HIGH_PRECISION_SESSION_TTL_SECONDS,
+    sessionTtlSeconds: SESSION_TTL_SECONDS,
     limitsEnabled,
-    serviceEnabled,
   });
 };

@@ -7,7 +7,7 @@ const checks = [
   [cache.includes('expiresAt') && cache.includes('pruneNamespace'), 'TTLと容量整理'],
   [cache.includes('migrateLegacyLocalStorage'), '旧localStorage移行'],
   [policies.includes('weatherForecast') && policies.includes('terrain') && policies.includes('geoid') && policies.includes('osm'), 'API別ポリシー'],
-  [weather.includes('migrateLegacyLocalStorage') && weather.includes('setDeviceCache') && weather.includes('DEVICE_CACHE_POLICIES.weatherForecast'), '気象キャッシュ移行'],
+  [weather.includes('getDeviceCache') && weather.includes('migrateLegacyLocalStorage') && weather.includes('setDeviceCache'), '気象キャッシュ移行'],
   [!weather.includes('WEATHER_CACHE_MAX_ENTRIES'), '旧個別整理処理の除去'],
 ];
 const failed = checks.filter(([ok]) => !ok);

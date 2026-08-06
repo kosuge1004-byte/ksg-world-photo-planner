@@ -9,7 +9,4 @@ export type LineMetrics = {
   distanceMeters: number;
   bearingDegrees: number;
   heightDifferenceMeters: number;
-  /** false when tripod and subject are coincident and the bearing is undefined. */
-  bearingDefined?: boolean;
-  coincident?: boolean;
 };

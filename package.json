@@ -16,9 +16,9 @@
     "android:open": "cap open android",
     "android:build:debug": "npm run android:sync && cd android && gradlew.bat assembleDebug",
     "verify:android": "node scripts/verify-android-native.mjs",
-    "verify:focal-length-input": "node --experimental-strip-types scripts/verify-focal-length-input.mjs",
+    "verify:focal-length-input": "node scripts/verify-focal-length-input.mjs",
     "verify:google-maps-url": "node --experimental-strip-types scripts/verify-google-maps-url.mjs",
-    "verify:google-maps-url:live": "node --experimental-strip-types scripts/verify-google-maps-url-live.mjs",
+    "verify:google-maps-url:live": "node scripts/verify-google-maps-url-live.mjs",
     "verify:geodesic": "node scripts/verify-geodesic-comparison.mjs",
     "verify:geodesic:reference": "python scripts/verify-geodesic-reference-python.py",
     "verify:geodesic:direct": "node scripts/verify-geodesic-direct.mjs",
@@ -67,10 +67,7 @@
     "verify:phase7-5": "node scripts/verify-phase7-5-final-release.mjs",
     "verify:karney-edge-cases": "node scripts/verify-karney-edge-cases.mjs",
     "verify:coordinate-serialization": "node scripts/verify-coordinate-serialization.mjs",
-    "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs",
-    "verify:phase2": "node scripts/verify-phase2-geodesy-precision.mjs",
-    "verify:phase3": "node scripts/verify-phase3-dem-bicubic.mjs",
-    "verify:phase4-high-precision": "node scripts/verify-phase4-high-precision-usage.mjs"
+    "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

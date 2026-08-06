@@ -139,9 +139,6 @@ export function localMeters(
     latitude: coordinate.lat,
     longitude: coordinate.lon,
   });
-  if (!metrics.bearingDefined || metrics.coincident) {
-    return { x: 0, y: 0 };
-  }
   const bearingRadians = metrics.bearingDegrees * Math.PI / 180;
   return {
     x: Math.sin(bearingRadians) * metrics.distanceMeters,

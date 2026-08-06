@@ -50,17 +50,3 @@ export function constrainedBicubicInterpolate(
   const maximum = Math.max(...center);
   return Math.max(minimum, Math.min(maximum, raw));
 }
-
-/**
- * 4x4格子の健全性を確認する。NO_DATA、NaN、Infinityを含む格子は
- * 高次補間に使用せず、呼び出し側でBilinearへ戻す。
- */
-export function isUsableBicubicGrid(
-  grid: readonly (readonly (number | null)[])[]
-): grid is BicubicGrid4x4 {
-  return grid.length === 4 && grid.every(
-    (row) => row.length === 4 && row.every(
-      (value) => value !== null && Number.isFinite(value)
-    )
-  );
-}

@@ -13,9 +13,6 @@ export type GeodeticCoordinate = {
 export type KarneySurfaceMetrics = {
   distanceMeters: number;
   bearingDegrees: number;
-  /** false when origin and target are coincident and the bearing is undefined. */
-  bearingDefined: boolean;
-  coincident: boolean;
 };
 
 export const COINCIDENT_DISTANCE_EPSILON_METERS = 1e-6;
@@ -113,12 +110,7 @@ export function calculateKarneySurfaceMetrics(
   if (distanceMeters < COINCIDENT_DISTANCE_EPSILON_METERS) {
     // 同一点では方位角が数学的に不定。既存のnumber型APIを維持しつつ、
     // 距離ゼロのセンチネルとして0度を返す。呼び出し側は必ず距離を先に判定する。
-    return {
-      distanceMeters: 0,
-      bearingDegrees: 0,
-      bearingDefined: false,
-      coincident: true,
-    };
+    return { distanceMeters: 0, bearingDegrees: 0 };
   }
 
   const bearingDegrees = normalizeBearingDegrees(
@@ -127,12 +119,7 @@ export function calculateKarneySurfaceMetrics(
   );
   assertInverseDirectPostcondition(origin, target, bearingDegrees, distanceMeters);
 
-  return {
-    distanceMeters,
-    bearingDegrees,
-    bearingDefined: true,
-    coincident: false,
-  };
+  return { distanceMeters, bearingDegrees };
 }
 
 /** WGS84楕円体上の地表距離だけが必要な処理向けの軽量ヘルパー。 */

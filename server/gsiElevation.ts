@@ -2,7 +2,7 @@ import { createAbortError, createTimeoutError, isAbortError } from "./runtimeErr
 import { inflateSync } from "node:zlib";
 import { serverPersistentCache } from "./cloudflareRuntime.ts";
 import { bilinearInterpolate } from "./bilinearInterpolation.ts";
-import { constrainedBicubicInterpolate, isUsableBicubicGrid } from "./constrainedBicubicInterpolation.ts";
+import { constrainedBicubicInterpolate, type BicubicGrid4x4 } from "./constrainedBicubicInterpolation.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -35,7 +35,7 @@ type DecodedPng = {
   pixels: Uint8Array;
 };
 
-type DecodedElevationTile = {
+export type DecodedElevationTile = {
   width: number;
   height: number;
   heightsCentimeters: Int32Array;
@@ -53,7 +53,7 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_TILE_CACHE_ENTRIES = 512;
 const PERSISTENT_TILE_FORMAT_VERSION = 1;
-const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
+export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 8;
 const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
 let activeTileRequests = 0;
@@ -378,137 +378,176 @@ function rawHeightAt(
   pixelX: number,
   pixelY: number
 ): number | null {
-  if (pixelX < 0 || pixelY < 0 || pixelX >= tile.width || pixelY >= tile.height) {
-    return null;
-  }
-  const heightCentimeters = tile.heightsCentimeters[pixelY * tile.width + pixelX];
+  const clampedX = Math.max(0, Math.min(tile.width - 1, pixelX));
+  const clampedY = Math.max(0, Math.min(tile.height - 1, pixelY));
+  const heightCentimeters = tile.heightsCentimeters[clampedY * tile.width + clampedX];
   if (heightCentimeters === NO_DATA_HEIGHT_CENTIMETERS) return null;
   return heightCentimeters * 0.01;
 }
 
-function normalizeTileX(x: number, zoom: number): number {
-  const tileCount = 2 ** zoom;
-  return ((x % tileCount) + tileCount) % tileCount;
-}
-
-function tileKeyFor(x: number, y: number, zoom: number): string | null {
-  const tileCount = 2 ** zoom;
-  if (y < 0 || y >= tileCount) return null;
-  return `${normalizeTileX(x, zoom)}/${y}`;
-}
-
 /**
- * 基準タイルからはみ出すピクセルを隣接タイルへ正規化して読み出す。
- * 経度方向はWeb Mercatorの世界周回に合わせてwrapし、緯度方向は範囲外を
- * NO_DATAとして扱う。
+ * タイル内4点（左上・右上・左下・右下）をBilinear補間して標高を求める。
+ * 4隅のいずれかがNO_DATA（データ欠測）の場合は補間すると誤った値になるため、
+ * 問い合わせ座標に最も近い1点（最近傍）へ安全にフォールバックする。
+ * pixelX/pixelYが隣接タイルにまたがる境界付近では、タイル端のピクセルを
+ * 再利用して補間する（標準モードのBilinearでは追加のタイル取得を避けるための
+ * 簡略化。高精度Constrained Bicubicでは下記の heightFromNeighborhood が
+ * 実際の隣接タイルを取得して使う）。
  */
-function rawHeightAcrossTiles(
-  tiles: ReadonlyMap<string, DecodedElevationTile | null>,
-  tileX: number,
-  tileY: number,
-  zoom: number,
+function heightFromTile(
+  tile: DecodedElevationTile,
   pixelX: number,
   pixelY: number,
-  tileWidth: number,
-  tileHeight: number
-): number | null {
-  const offsetTileX = Math.floor(pixelX / tileWidth);
-  const offsetTileY = Math.floor(pixelY / tileHeight);
-  const localPixelX = ((pixelX % tileWidth) + tileWidth) % tileWidth;
-  const localPixelY = ((pixelY % tileHeight) + tileHeight) % tileHeight;
-  const key = tileKeyFor(tileX + offsetTileX, tileY + offsetTileY, zoom);
-  if (!key) return null;
-  const tile = tiles.get(key) ?? null;
-  if (!tile) return null;
-  return rawHeightAt(tile, localPixelX, localPixelY);
-}
-
-function bilinearOrNearest(
-  topLeft: number | null,
-  topRight: number | null,
-  bottomLeft: number | null,
-  bottomRight: number | null,
   fracX: number,
   fracY: number
 ): number | null {
+  if (pixelX >= tile.width || pixelY >= tile.height) return null;
+
+  const topLeft = rawHeightAt(tile, pixelX, pixelY);
+  const topRight = rawHeightAt(tile, pixelX + 1, pixelY);
+  const bottomLeft = rawHeightAt(tile, pixelX, pixelY + 1);
+  const bottomRight = rawHeightAt(tile, pixelX + 1, pixelY + 1);
+
   if (topLeft === null && topRight === null && bottomLeft === null && bottomRight === null) {
     return null;
   }
   if (topLeft === null || topRight === null || bottomLeft === null || bottomRight === null) {
-    // Bilinearが成立しない場合だけ、最寄りの有効点へフォールバックする。
-    const candidates = [
-      { value: topLeft, distance: fracX * fracX + fracY * fracY },
-      { value: topRight, distance: (1 - fracX) ** 2 + fracY * fracY },
-      { value: bottomLeft, distance: fracX * fracX + (1 - fracY) ** 2 },
-      { value: bottomRight, distance: (1 - fracX) ** 2 + (1 - fracY) ** 2 },
-    ].filter((candidate): candidate is { value: number; distance: number } => candidate.value !== null);
-    candidates.sort((a, b) => a.distance - b.distance);
-    return candidates[0]?.value ?? null;
+    // 周辺にNO_DATAがある場合は補間せず、最近傍点を採用する。
+    return fracX < 0.5
+      ? fracY < 0.5 ? topLeft : bottomLeft
+      : fracY < 0.5 ? topRight : bottomRight;
   }
+
   return bilinearInterpolate({ topLeft, topRight, bottomLeft, bottomRight }, fracX, fracY);
 }
 
+/** GSI標高タイルは1枚256x256px固定（XYZタイル仕様）。 */
+const ELEVATION_TILE_SIZE = 256;
+
 /**
- * タイル境界を跨いで標高を補間する。
- * 高精度モードでは4x4近傍を隣接タイルから取得し、欠損が1点でもあれば
- * Bilinearへフォールバックする。Bilinear自身も隣接タイルを使用するため、
- * 境界で同一端ピクセルを重複利用しない。
+ * タイル内ローカル座標(-1〜256)を、必要なら隣接タイルのオフセット(-1/0/+1)と
+ * そのタイル内ローカル座標へ変換する。4x4近傍はオフセット-1〜+2までしか
+ * 参照しないため、タイル境界をまたいでも最大でもう1枚隣のタイルで足りる。
  */
-function heightFromTiles(
+export function resolveGridCoordinate(
+  pixel: number
+): { tileOffset: -1 | 0 | 1; localPixel: number } {
+  if (pixel < 0) return { tileOffset: -1, localPixel: pixel + ELEVATION_TILE_SIZE };
+  if (pixel >= ELEVATION_TILE_SIZE) return { tileOffset: 1, localPixel: pixel - ELEVATION_TILE_SIZE };
+  return { tileOffset: 0, localPixel: pixel };
+}
+
+/**
+ * Constrained Bicubicが必要とする4x4近傍（問い合わせ点を挟む中央セルの
+ * 1つ外側まで）を覆うために取得すべき隣接タイルのオフセット一覧を返す。
+ * pixelX/pixelYは基準タイル内のローカル座標(0〜255)。
+ */
+export function neighborTileOffsetsFor4x4Grid(
+  pixelX: number,
+  pixelY: number
+): Array<{ tileOffsetX: -1 | 0 | 1; tileOffsetY: -1 | 0 | 1 }> {
+  const seen = new Set<string>();
+  const offsets: Array<{ tileOffsetX: -1 | 0 | 1; tileOffsetY: -1 | 0 | 1 }> = [];
+  for (let offsetY = -1; offsetY <= 2; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 2; offsetX += 1) {
+      const gridX = resolveGridCoordinate(pixelX + offsetX);
+      const gridY = resolveGridCoordinate(pixelY + offsetY);
+      const key = `${gridX.tileOffset}/${gridY.tileOffset}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      offsets.push({ tileOffsetX: gridX.tileOffset, tileOffsetY: gridY.tileOffset });
+    }
+  }
+  return offsets;
+}
+
+/**
+ * 基準タイル座標(baseX, baseY)＋ローカル座標(pixelX, pixelY)からの相対オフセット
+ * (offsetX, offsetY ∈ [-1, 2]) を、実際の隣接タイルを跨いで解決するサンプラー。
+ * タイル境界で「端のピクセルを複製」せず、本物の隣接DEMタイルを参照する。
+ */
+function sampleNeighborhoodHeight(
   tiles: ReadonlyMap<string, DecodedElevationTile | null>,
-  tileX: number,
-  tileY: number,
-  zoom: number,
+  baseX: number,
+  baseY: number,
+  pixelX: number,
+  pixelY: number,
+  offsetX: number,
+  offsetY: number
+): number | null {
+  const gridX = resolveGridCoordinate(pixelX + offsetX);
+  const gridY = resolveGridCoordinate(pixelY + offsetY);
+  const tile = tiles.get(`${baseX + gridX.tileOffset}/${baseY + gridY.tileOffset}`) ?? null;
+  if (!tile) return null;
+  return rawHeightAt(tile, gridX.localPixel, gridY.localPixel);
+}
+
+/**
+ * Constrained Bicubic用の4x4近傍を、タイル境界をまたいで正しく取得したうえで
+ * 標高を求める。NoData（欠測）や隣接タイル未取得（海域・国外など）が
+ * 近傍のどこかにあればBilinearへフォールバックする（heightFromTileと同じ
+ * NO_DATA処理方針）。
+ *
+ * LOSでの安全側判定（Phase F-1）: Bilinear結果とConstrained Bicubic結果
+ * （既に中央2x2セルの範囲内へクランプ済み＝近傍実測値の範囲を超えない）を
+ * 比較し、より高い方（＝より遮蔽的で安全側）を採用する。これは
+ * celestialTerrainVisibility.ts が地形とOSM建物・樹木の遮蔽角のどちらか
+ * 高い方を採用している既存方針と同じ考え方であり、偽の谷（過小評価による
+ * 見せかけの視界良好）を作らないための安全側の判断である。
+ * Bicubicはクランプにより近傍実測値を上回ることがないため、この
+ * max()判定がBilinearを下回ることはあっても、近傍実測の最大標高を
+ * 超えて過大評価することもない。
+ */
+export function heightFromNeighborhood(
+  tiles: ReadonlyMap<string, DecodedElevationTile | null>,
+  baseX: number,
+  baseY: number,
   pixelX: number,
   pixelY: number,
   fracX: number,
-  fracY: number,
-  interpolation: "bilinear" | "constrained-bicubic" = "bilinear"
+  fracY: number
 ): number | null {
-  const key = tileKeyFor(tileX, tileY, zoom);
-  const baseTile = key ? tiles.get(key) ?? null : null;
-  if (!baseTile) return null;
+  const sample = (offsetX: number, offsetY: number): number | null =>
+    sampleNeighborhoodHeight(tiles, baseX, baseY, pixelX, pixelY, offsetX, offsetY);
 
-  const sample = (x: number, y: number) => rawHeightAcrossTiles(
-    tiles,
-    tileX,
-    tileY,
-    zoom,
-    x,
-    y,
-    baseTile.width,
-    baseTile.height
-  );
+  const topLeft = sample(0, 0);
+  const topRight = sample(1, 0);
+  const bottomLeft = sample(0, 1);
+  const bottomRight = sample(1, 1);
 
-  const topLeft = sample(pixelX, pixelY);
-  const topRight = sample(pixelX + 1, pixelY);
-  const bottomLeft = sample(pixelX, pixelY + 1);
-  const bottomRight = sample(pixelX + 1, pixelY + 1);
-  const bilinear = bilinearOrNearest(
-    topLeft,
-    topRight,
-    bottomLeft,
-    bottomRight,
+  if (topLeft === null && topRight === null && bottomLeft === null && bottomRight === null) {
+    return null;
+  }
+  if (topLeft === null || topRight === null || bottomLeft === null || bottomRight === null) {
+    // 周辺にNO_DATAがある場合は補間せず、最近傍点を採用する（heightFromTileと同一方針）。
+    return fracX < 0.5
+      ? fracY < 0.5 ? topLeft : bottomLeft
+      : fracY < 0.5 ? topRight : bottomRight;
+  }
+
+  const bilinearHeight = bilinearInterpolate(
+    { topLeft, topRight, bottomLeft, bottomRight },
     fracX,
     fracY
   );
 
-  if (interpolation !== "constrained-bicubic" || bilinear === null) {
-    return bilinear;
-  }
-
-  const rows: Array<Array<number | null>> = [];
+  const rows: number[][] = [];
   for (let offsetY = -1; offsetY <= 2; offsetY += 1) {
-    const row: Array<number | null> = [];
+    const row: number[] = [];
     for (let offsetX = -1; offsetX <= 2; offsetX += 1) {
-      row.push(sample(pixelX + offsetX, pixelY + offsetY));
+      const value = sample(offsetX, offsetY);
+      if (value === null) {
+        // 4x4のどこかがNoData・タイル未取得（海域・国外など）ならBilinearへ。
+        return bilinearHeight;
+      }
+      row.push(value);
     }
     rows.push(row);
   }
-  if (!isUsableBicubicGrid(rows)) {
-    return bilinear;
-  }
-  return constrainedBicubicInterpolate(rows, fracX, fracY);
+  const bicubicHeight = constrainedBicubicInterpolate(rows as unknown as BicubicGrid4x4, fracX, fracY);
+
+  // 安全側判定：より遮蔽的（高い）方を採用する。
+  return Math.max(bilinearHeight, bicubicHeight);
 }
 
 function sourceIsAllowedForPoint(
@@ -575,36 +614,31 @@ export async function lookupGsiElevations(
       if (!sourceIsAllowedForPoint(source, point)) continue;
       const coordinate = tileCoordinates(point, source.zoom);
       const tileKey = `${coordinate.x}/${coordinate.y}`;
+      const interpolation: "bilinear" | "constrained-bicubic" =
+        point.maximumDetail === "1m" ? "constrained-bicubic" : "bilinear";
       requests.push({
         index,
         coordinate,
         tileKey,
-        interpolation: point.maximumDetail === "1m" ? "constrained-bicubic" : "bilinear",
+        interpolation,
       });
       if (!uniqueTiles.has(tileKey)) {
         uniqueTiles.set(tileKey, { x: coordinate.x, y: coordinate.y });
       }
-      if (point.maximumDetail === "1m") {
-        // 4x4近傍は[-1,+2]ピクセルを参照するため、端から2px以内では
-        // 必要な隣接タイルも同じ共有キャッシュ経路で先行取得する。
-        const tileOffsetsX = new Set([0]);
-        const tileOffsetsY = new Set([0]);
-        if (coordinate.pixelX <= 0) tileOffsetsX.add(-1);
-        if (coordinate.pixelX >= 254) tileOffsetsX.add(1);
-        if (coordinate.pixelY <= 0) tileOffsetsY.add(-1);
-        if (coordinate.pixelY >= 254) tileOffsetsY.add(1);
-        for (const offsetX of tileOffsetsX) {
-          for (const offsetY of tileOffsetsY) {
-            const neighborKey = tileKeyFor(
-              coordinate.x + offsetX,
-              coordinate.y + offsetY,
-              source.zoom
-            );
-            if (!neighborKey || uniqueTiles.has(neighborKey)) continue;
-            uniqueTiles.set(neighborKey, {
-              x: normalizeTileX(coordinate.x + offsetX, source.zoom),
-              y: coordinate.y + offsetY,
-            });
+      if (interpolation === "constrained-bicubic") {
+        // タイル境界で4x4近傍が欠けないよう、必要な隣接タイルも同じ
+        // 一括取得（uniqueTiles → fetchDecodedTileの既存キャッシュ）へ
+        // 相乗りさせる。重複取得は fetchDecodedTile の tileCache が防ぐ。
+        for (const { tileOffsetX, tileOffsetY } of neighborTileOffsetsFor4x4Grid(
+          coordinate.pixelX,
+          coordinate.pixelY
+        )) {
+          if (tileOffsetX === 0 && tileOffsetY === 0) continue;
+          const neighborX = coordinate.x + tileOffsetX;
+          const neighborY = coordinate.y + tileOffsetY;
+          const neighborKey = `${neighborX}/${neighborY}`;
+          if (!uniqueTiles.has(neighborKey)) {
+            uniqueTiles.set(neighborKey, { x: neighborX, y: neighborY });
           }
         }
       }
@@ -623,17 +657,23 @@ export async function lookupGsiElevations(
     for (const request of requests) {
       const tile = tiles.get(request.tileKey) ?? null;
       if (!tile) continue;
-      const heightMeters = heightFromTiles(
-        tiles,
-        request.coordinate.x,
-        request.coordinate.y,
-        source.zoom,
-        request.coordinate.pixelX,
-        request.coordinate.pixelY,
-        request.coordinate.fracX,
-        request.coordinate.fracY,
-        request.interpolation
-      );
+      const heightMeters = request.interpolation === "constrained-bicubic"
+        ? heightFromNeighborhood(
+            tiles,
+            request.coordinate.x,
+            request.coordinate.y,
+            request.coordinate.pixelX,
+            request.coordinate.pixelY,
+            request.coordinate.fracX,
+            request.coordinate.fracY
+          )
+        : heightFromTile(
+            tile,
+            request.coordinate.pixelX,
+            request.coordinate.pixelY,
+            request.coordinate.fracX,
+            request.coordinate.fracY
+          );
       if (heightMeters === null) continue;
       results[request.index] = { heightMeters, source: source.label };
       unresolved.delete(request.index);

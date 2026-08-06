@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { constrainedBicubicInterpolate, isUsableBicubicGrid } from "../../server/constrainedBicubicInterpolation.ts";
+import { constrainedBicubicInterpolate } from "../../server/constrainedBicubicInterpolation.ts";
 
 const plane = [
   [0, 1, 2, 3],
@@ -28,18 +28,3 @@ const bounded = constrainedBicubicInterpolate(steep, 0.5, 0.5);
 assert.ok(bounded >= 0 && bounded <= 100, `must not overshoot, got ${bounded}`);
 
 console.log("constrained bicubic interpolation tests passed");
-
-
-assert.equal(isUsableBicubicGrid(plane), true);
-assert.equal(isUsableBicubicGrid([
-  [0, 1, 2, 3],
-  [1, 2, null, 4],
-  [2, 3, 4, 5],
-  [3, 4, 5, 6],
-]), false);
-assert.equal(isUsableBicubicGrid([
-  [0, 1, 2, 3],
-  [1, 2, Number.NaN, 4],
-  [2, 3, 4, 5],
-  [3, 4, 5, 6],
-]), false);

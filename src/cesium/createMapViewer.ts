@@ -74,15 +74,15 @@ async function createStandardViewer(
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
 
-  // PLATEAU is intentionally display-only in standard mode. It is not wired into
-  // terrain sampling, line-of-sight, obstruction, height, or search calculations.
+  // Display-only layer for standard mode. Do not use this tileset for terrain,
+  // height, obstruction, line-of-sight, or search calculations.
   try {
     setStatus("標準3D：PLATEAU建物を読み込み中…");
     const plateauBuildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
     plateauBuildings.maximumScreenSpaceError = 16;
     plateauBuildings.dynamicScreenSpaceError = true;
-    viewer.scene.primitives.add(plateauBuildings);
     plateauBuildings.show = true;
+    viewer.scene.primitives.add(plateauBuildings);
     viewer.scene.requestRender();
   } catch (error) {
     console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);

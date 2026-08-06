@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { fetchGsiElevationSamples } from "../../src/cesium/gsiElevationClient.ts";
+import { isAbortError } from "../../src/utils/runtimeErrors.ts";
 
 function points(count) {
   return Array.from({ length: count }, (_, index) => ({
@@ -81,6 +82,6 @@ test("DEM requests preserve user cancellation", async () => {
     fetchGsiElevationSamples(points(1), controller.signal, async () => {
       throw new Error("fetch should not run");
     }),
-    (error) => error instanceof DOMException && error.name === "AbortError"
+    (error) => isAbortError(error)
   );
 });
