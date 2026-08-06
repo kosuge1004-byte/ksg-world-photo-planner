@@ -1,11 +1,11 @@
 import {
   Cartesian3,
+  Cesium3DTileStyle,
   Cesium3DTileset,
   createGooglePhotorealistic3DTileset,
   ImageryLayer,
   Ion,
   IonGeocodeProviderType,
-  Math as CesiumMath,
   UrlTemplateImageryProvider,
   Viewer,
 } from "cesium";
@@ -74,15 +74,29 @@ async function createStandardViewer(
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
 
+  viewer.scene.globe.show = true;
+  viewer.scene.globe.depthTestAgainstTerrain = true;
+  viewer.scene.globe.enableLighting = true;
+
   // Display-only layer for standard mode. Do not use this tileset for terrain,
   // height, obstruction, line-of-sight, or search calculations.
   try {
     setStatus("標準3D：PLATEAU建物を読み込み中…");
     const plateauBuildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
-    plateauBuildings.maximumScreenSpaceError = 16;
+    plateauBuildings.show = false;
+    plateauBuildings.maximumScreenSpaceError = 8;
     plateauBuildings.dynamicScreenSpaceError = true;
-    plateauBuildings.show = true;
+    plateauBuildings.skipLevelOfDetail = true;
+    plateauBuildings.preferLeaves = true;
+
+    plateauBuildings.style = new Cesium3DTileStyle({
+      color: "color('#E0E0E0', 0.94)",
+      show: "true",
+    });
+
     viewer.scene.primitives.add(plateauBuildings);
+    plateauBuildings.show = true;
+    setStatus("標準3D：PLATEAU建物表示中（配信座標をそのまま使用）");
     viewer.scene.requestRender();
   } catch (error) {
     console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);
