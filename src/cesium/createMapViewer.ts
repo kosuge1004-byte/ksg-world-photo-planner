@@ -6,6 +6,7 @@ import {
   ImageryLayer,
   Ion,
   IonGeocodeProviderType,
+  Math as CesiumMath,
   UrlTemplateImageryProvider,
   Viewer,
 } from "cesium";
