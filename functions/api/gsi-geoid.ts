@@ -45,13 +45,15 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       }), context.waitUntil);
       return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
     } catch (error) {
-      return jsonResponse({ error: errorMessage(error) }, 422, "public, max-age=86400");
+      // エラー応答は公開キャッシュしない（失敗を24時間キャッシュして
+      // 再試行を妨げないようにする）。
+      return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
     }
   }
   if (request.method === "POST") {
     try {
       const parsed = parseBatch(await request.json());
-      if (!parsed) return jsonResponse({ error: "座標配列が不正です" }, 400, "public, max-age=3600");
+      if (!parsed) return jsonResponse({ error: "座標配列が不正です" }, 400, "no-store");
       const decimals = parsed.pointSpecific ? 8 : 2;
       const normalized = parsed.points.map((point) => ({
         latitude: Number(point.latitude.toFixed(decimals)),
@@ -69,8 +71,8 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       }), context.waitUntil);
       return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
     } catch (error) {
-      return jsonResponse({ error: errorMessage(error) }, 422, "public, max-age=3600");
+      return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
     }
   }
-  return jsonResponse({ error: "GETまたはPOSTリクエストのみ利用できます" }, 405, "public, max-age=3600");
+  return jsonResponse({ error: "GETまたはPOSTリクエストのみ利用できます" }, 405, "no-store");
 };

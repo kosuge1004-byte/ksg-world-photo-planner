@@ -469,7 +469,7 @@ function App() {
 
   const [cameraSettings, setCameraSettings] =
     useState<CameraSettings>(loadCameraSettings);
-  const [previewViewCorrection] =
+  const [previewViewCorrection, setPreviewViewCorrection] =
     useState<CameraViewCorrection>(loadCameraViewCorrection);
   const [precisionSettings, setPrecisionSettings] =
     useState<PrecisionSettings>(loadPrecisionSettings);
@@ -487,6 +487,8 @@ function App() {
     initialMapStateRef.current.center
   );
   const [mapTool, setMapTool] = useState<"none" | "pin" | "metrics">("none");
+  const pinToolButtonRef = useRef<HTMLButtonElement>(null);
+  const pinDrawerRef = useRef<HTMLDivElement>(null);
   const [celestialVisibility, setCelestialVisibility] =
     useState<CelestialVisibility>(loadCelestialVisibility);
   const [celestialOcclusion, setCelestialOcclusion] =
@@ -1613,6 +1615,19 @@ function App() {
     setSearchMessage,
     timelineInteracting,
   ]);
+
+  useEffect(() => {
+    if (mapTool !== "pin") return;
+    function handleOutsidePointer(event: PointerEvent) {
+      if (!(event.target instanceof Node)) return;
+      if (pinToolButtonRef.current?.contains(event.target)) return;
+      if (pinDrawerRef.current?.contains(event.target)) return;
+      stopAllEditModes();
+      setMapTool("none");
+    }
+    document.addEventListener("pointerdown", handleOutsidePointer);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointer);
+  }, [mapTool]);
 
   useEffect(() => {
     const viewer = mapViewerRef.current;
@@ -3386,7 +3401,17 @@ ${diagnosticMessage}
             focalLengthMm={cameraSettings.focalLengthMm}
             minFocalLengthMm={FOCAL_LENGTH_MIN}
             maxFocalLengthMm={FOCAL_LENGTH_MAX}
+            aspectRatio={previewAspectRatio}
             onChangeFocalLength={changePreviewFocalLength}
+            onPan={(azimuthDeltaDegrees, altitudeDeltaDegrees) => {
+              setPreviewViewCorrection((current) => ({
+                azimuthDegrees: current.azimuthDegrees + azimuthDeltaDegrees,
+                altitudeDegrees: Math.min(
+                  89,
+                  Math.max(-89, current.altitudeDegrees + altitudeDeltaDegrees)
+                ),
+              }));
+            }}
           />
 
           <CelestialOverlay
@@ -3440,6 +3465,7 @@ ${diagnosticMessage}
             changePreviewFocalLength(cameraSettings.focalLengthMm * 0.88)
           }
           onSavePreview={savePreview}
+          onResetToSubject={() => setPreviewViewCorrection(DEFAULT_CAMERA_VIEW_CORRECTION)}
         />
 
         <CelestialMenu
@@ -3577,6 +3603,7 @@ ${diagnosticMessage}
                 <button type="button" className={mapViewMode === "3d" ? "active" : ""} onClick={() => changeMapViewMode("3d")}><span>◇</span><small>3D</small></button>
                 <button
                   type="button"
+                  ref={pinToolButtonRef}
                   className={mapTool === "pin" ? "active" : ""}
                   onClick={() => {
                     setSpotSearchOpen(false);
@@ -3691,7 +3718,7 @@ ${diagnosticMessage}
             </button>
 
             {mapTool === "pin" && !foregroundPlacementActive && (
-              <div className="map-pin-drawer">
+              <div className="map-pin-drawer" ref={pinDrawerRef}>
                 <div className="map-drawer-heading">
                   <strong>ピン設定</strong>
                   <button

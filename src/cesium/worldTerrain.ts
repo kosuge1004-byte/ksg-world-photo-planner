@@ -452,6 +452,31 @@ async function writeGeoidPersistentCache(key: string, height: number): Promise<v
   database.close();
 }
 
+async function fetchGsiGeoidHeightOnce(
+  latitude: number,
+  longitude: number,
+  signal?: AbortSignal
+): Promise<number> {
+  const response = await fetch(
+    `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
+    { headers: { Accept: "application/json" }, signal }
+  );
+  const data = await response.json() as {
+    geoidHeightMeters?: unknown;
+    error?: unknown;
+  };
+  if (
+    !response.ok ||
+    typeof data.geoidHeightMeters !== "number" ||
+    !Number.isFinite(data.geoidHeightMeters)
+  ) {
+    throw new Error(
+      typeof data.error === "string" ? data.error : "ジオイド高を取得できません"
+    );
+  }
+  return data.geoidHeightMeters;
+}
+
 export async function fetchGsiGeoidHeight(
   point: Cartographic,
   signal?: AbortSignal
@@ -470,29 +495,27 @@ export async function fetchGsiGeoidHeight(
     abortIfRequested(signal);
     if (persistent !== null) return persistent;
 
-    const response = await fetch(
-      `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
-      { headers: { Accept: "application/json" }, signal }
-    );
-    const data = await response.json() as {
-      geoidHeightMeters?: unknown;
-      error?: unknown;
-    };
-    if (
-      !response.ok ||
-      typeof data.geoidHeightMeters !== "number" ||
-      !Number.isFinite(data.geoidHeightMeters)
-    ) {
-      throw new Error(
-        typeof data.error === "string" ? data.error : "ジオイド高を取得できません"
-      );
+    // サーバー側で既にGSI CGIへの再試行は行っているが、端末〜Cloudflare間の
+    // 一時的な通信の乱れはサーバー再試行では救えないため、ここでも1回だけ
+    // 短い間隔を空けて再試行する。
+    try {
+      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
+      void writeGeoidPersistentCache(key, height);
+      return height;
+    } catch (error) {
+      abortIfRequested(signal);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      abortIfRequested(signal);
+      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
+      void writeGeoidPersistentCache(key, height);
+      return height;
     }
-    void writeGeoidPersistentCache(key, data.geoidHeightMeters);
-    return data.geoidHeightMeters;
   })().catch((error: unknown) => {
     geoidHeightCache.delete(key);
     if (!(isAbortError(error))) {
-      geoidUnavailableUntil = Date.now() + 60_000;
+      // 1回の失敗で長時間ブロックすると、それだけで「頻繁にエラーが出る」体感を
+      // 生んでしまうため、短い間隔にとどめる（連続失敗時の最低限の配慮のみ）。
+      geoidUnavailableUntil = Date.now() + 8_000;
     }
     throw error;
   });

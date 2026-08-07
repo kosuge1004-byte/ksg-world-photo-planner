@@ -470,6 +470,10 @@ button { cursor: pointer; }
 .preview-zoom-control { display: grid; grid-template-rows: repeat(2, 62px); width: 48px; overflow: hidden; border: 1px solid rgba(255,255,255,.17); border-radius: 8px; background: rgba(1,4,8,.86); box-shadow: 0 4px 12px rgba(0,0,0,.28); }
 .preview-zoom-control button { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 0; padding: 0; overflow: hidden; color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,.11); background: transparent; font-size: 18px; line-height: 1; }
 .preview-zoom-control button:last-child { border-bottom: 0; }
+/* マップ画面右下の「被写体」等ボタンと同じデザイン・大きさを再利用する。 */
+.map-right-actions-style { display: grid; place-content: center; justify-items: center; gap: 1px; width: 44px; min-height: 40px; padding: 2px; color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(1,4,8,.87); }
+.map-right-actions-style span { font-size: 22px; line-height: .9; }
+.map-right-actions-style small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
 
 .preview-date-control {
   position: absolute;
@@ -572,6 +576,20 @@ button { cursor: pointer; }
   line-height: 1.4;
   pointer-events: none;
   transform: translateX(-50%);
+}
+.celestial-occlusion-status-dismiss {
+  position: absolute;
+  top: -6px;
+  right: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .32);
+  background: rgba(3, 8, 13, .9);
+  color: #eef5fb;
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: auto;
 }
 .celestial-occlusion-status > span {
   display: flex;

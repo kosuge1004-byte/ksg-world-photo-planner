@@ -1,11 +1,15 @@
 import { useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
+import { sensorDimensionsMm } from "../cesium/optics";
+
 type Props = {
   focalLengthMm: number;
   minFocalLengthMm: number;
   maxFocalLengthMm: number;
+  aspectRatio: number;
   onChangeFocalLength: (value: number) => void;
+  onPan: (azimuthDeltaDegrees: number, altitudeDeltaDegrees: number) => void;
 };
 
 type PointerPosition = { x: number; y: number };
@@ -22,11 +26,14 @@ export function PreviewGestureLayer({
   focalLengthMm,
   minFocalLengthMm,
   maxFocalLengthMm,
+  aspectRatio,
   onChangeFocalLength,
+  onPan,
 }: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, PointerPosition>());
   const pinchRef = useRef<{ distance: number; focalLength: number } | null>(null);
+  const panRef = useRef<PointerPosition | null>(null);
   const lastWheelAtRef = useRef(0);
 
   const clamp = (value: number) =>
@@ -59,7 +66,6 @@ export function PreviewGestureLayer({
   ]);
 
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.pointerType !== "touch") return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, {
@@ -72,6 +78,9 @@ export function PreviewGestureLayer({
         distance: Math.max(1, distance(points[0], points[1])),
         focalLength: focalLengthMm,
       };
+      panRef.current = null;
+    } else if (points.length === 1) {
+      panRef.current = points[0];
     }
   }
 
@@ -83,14 +92,36 @@ export function PreviewGestureLayer({
       y: event.clientY,
     });
     const points = [...pointersRef.current.values()];
-    if (points.length !== 2 || !pinchRef.current) return;
-    const ratio = distance(points[0], points[1]) / pinchRef.current.distance;
-    onChangeFocalLength(clamp(pinchRef.current.focalLength * ratio));
+    if (points.length === 2 && pinchRef.current) {
+      const ratio = distance(points[0], points[1]) / pinchRef.current.distance;
+      onChangeFocalLength(clamp(pinchRef.current.focalLength * ratio));
+      return;
+    }
+    if (points.length === 1 && panRef.current) {
+      const layer = layerRef.current;
+      if (!layer) return;
+      const rect = layer.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const sensor = sensorDimensionsMm(aspectRatio);
+      const horizontalFovDegrees =
+        2 * Math.atan(sensor.width / (2 * focalLengthMm)) * 180 / Math.PI;
+      const verticalFovDegrees =
+        2 * Math.atan(sensor.height / (2 * focalLengthMm)) * 180 / Math.PI;
+      const deltaX = points[0].x - panRef.current.x;
+      const deltaY = points[0].y - panRef.current.y;
+      // 指でつかんだ点が指に付いてくる向き（地図アプリのドラッグと同じ感覚）。
+      onPan(
+        -(deltaX / rect.width) * horizontalFovDegrees,
+        (deltaY / rect.height) * verticalFovDegrees
+      );
+      panRef.current = points[0];
+    }
   }
 
   function pointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
     pointersRef.current.delete(event.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) panRef.current = null;
   }
 
   return (
@@ -102,7 +133,7 @@ export function PreviewGestureLayer({
       onPointerUp={pointerEnd}
       onPointerCancel={pointerEnd}
       onDoubleClick={() => onChangeFocalLength(clamp(focalLengthMm * 1.25))}
-      aria-label="プレビューをホイールまたはピンチで拡大縮小"
+      aria-label="プレビューをドラッグで構図調整、ホイールまたはピンチで拡大縮小"
     />
   );
 }

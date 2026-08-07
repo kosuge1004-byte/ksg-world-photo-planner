@@ -39,6 +39,18 @@ export function TopSettingsBar({
   onPrecisionSettingsChange,
 }: Props) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const menuContainerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!modeMenuOpen) return;
+    function handleOutsidePointer(event: PointerEvent) {
+      if (!menuContainerRef.current) return;
+      if (event.target instanceof Node && menuContainerRef.current.contains(event.target)) return;
+      setModeMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", handleOutsidePointer);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointer);
+  }, [modeMenuOpen]);
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
   const [focalLengthInput, setFocalLengthInput] = useState(
@@ -98,7 +110,7 @@ export function TopSettingsBar({
   };
 
   return (
-    <header className="mobile-top-settings" aria-label="撮影設定">
+    <header className="mobile-top-settings" aria-label="撮影設定" ref={menuContainerRef}>
       <button
         type="button"
         className="hamburger-button"

@@ -11,6 +11,7 @@ type Props = {
   onChangeFrameMode: (mode: PreviewFrameMode) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onResetToSubject: () => void;
   onSavePreview: () => void;
 };
 
@@ -22,6 +23,7 @@ export function PreviewChrome({
   onChangeFrameMode,
   onZoomIn,
   onZoomOut,
+  onResetToSubject,
   onSavePreview,
 }: Props) {
   const [frameMenuOpen, setFrameMenuOpen] = useState(false);
@@ -76,6 +78,10 @@ export function PreviewChrome({
             −
           </button>
         </div>
+
+        <button type="button" className="map-right-actions-style" onClick={onResetToSubject}>
+          <span>⌖</span><small>被写体</small>
+        </button>
       </div>
 
       <div className="preview-date-control">

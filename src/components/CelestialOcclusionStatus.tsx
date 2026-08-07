@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { presentCelestialOcclusionReason } from "../celestial/occlusionReason";
 import type {
   CelestialBodyId,
@@ -34,6 +34,10 @@ export function CelestialOcclusionStatus({
   points,
   refractionWeather,
 }: Props) {
+  // プレビューの邪魔にならないよう、内容が同じ間は閉じたままにする。
+  // 内容が変わったら（新しい情報なので）また表示する。
+  const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
+
   const presentations = useMemo(() => BODY_ORDER.flatMap((id) => {
     const result = occlusion[id];
     if (!visibility[id] || !result) return [];
@@ -66,6 +70,12 @@ export function CelestialOcclusionStatus({
 
   if (presentations.length === 0 && refractionUncertain.length === 0) return null;
 
+  const signature = JSON.stringify([
+    presentations.map((item) => [item.id, item.state, item.message]),
+    refractionUncertain.map((item) => [item.ids.join(","), item.message]),
+  ]);
+  if (dismissedSignature === signature) return null;
+
   return (
     <section
       className="celestial-occlusion-status"
@@ -73,6 +83,14 @@ export function CelestialOcclusionStatus({
       aria-live="polite"
       aria-label="天体の遮蔽・屈折不確実性"
     >
+      <button
+        type="button"
+        className="celestial-occlusion-status-dismiss"
+        aria-label="このメッセージを閉じる"
+        onClick={() => setDismissedSignature(signature)}
+      >
+        ×
+      </button>
       {blocked.map((item) => (
         <span key={item.id} className="blocked">
           <b>{item.label}</b>{item.message}

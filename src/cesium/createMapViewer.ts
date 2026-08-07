@@ -1,4 +1,5 @@
 import {
+  Cartesian2,
   Cartesian3,
   Cesium3DTileset,
   CesiumTerrainProvider,
@@ -7,11 +8,14 @@ import {
   Ion,
   IonGeocodeProviderType,
   Math as CesiumMath,
+  ScreenSpaceEventHandler,
+  ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
 } from "cesium";
 
 import type { AccuracyMode } from "../types/precision";
+import { pickSceneSurfacePosition } from "./surfacePicking";
 
 type GooglePhotorealisticTileset = Awaited<
   ReturnType<typeof createGooglePhotorealistic3DTileset>
@@ -176,6 +180,36 @@ async function createHighestPrecisionViewer(
   return viewer;
 }
 
+/**
+ * 3Dマップをダブルタップ（ダブルクリック）した地点へ向けて寄る。
+ * 標準・高精度モードどちらの3Dビューアもここを通るため、両モードに共通で効く。
+ * Cesiumデフォルトのダブルクリック挙動（ピンの追尾）は、意図せず視点が
+ * 固定・追従してしまい紛らわしいため無効化した上で、この拡大操作に差し替える。
+ */
+function enableDoubleTapZoom(viewer: Viewer): void {
+  viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+  const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
+  handler.setInputAction((movement: { position: Cartesian2 }) => {
+    if (viewer.isDestroyed()) return;
+    const target =
+      pickSceneSurfacePosition(viewer, movement.position) ??
+      viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
+    if (!target) return;
+    const camera = viewer.camera;
+    // タップした地点へ向けて距離を半分に詰める（向きはそのまま）。
+    const destination = Cartesian3.lerp(camera.position, target, 0.5, new Cartesian3());
+    viewer.camera.flyTo({
+      destination,
+      orientation: {
+        heading: camera.heading,
+        pitch: camera.pitch,
+        roll: camera.roll,
+      },
+      duration: 0.35,
+    });
+  }, ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+}
+
 export async function createMapViewer(
   container: HTMLDivElement,
   token: string | undefined,
@@ -185,6 +219,8 @@ export async function createMapViewer(
   const viewer = accuracyMode === "highest"
     ? await createHighestPrecisionViewer(container, token ?? "", setStatus)
     : await createStandardViewer(container, setStatus);
+
+  enableDoubleTapZoom(viewer);
 
   viewer.camera.setView({
     destination: Cartesian3.fromDegrees(139.745433, 35.658581, 1200),

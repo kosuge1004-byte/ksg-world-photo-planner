@@ -24,6 +24,60 @@ function validatedCoordinate(latitude: number, longitude: number): void {
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchGeoidHeightOnce(
+  queryLatitude: number,
+  queryLongitude: number,
+  signal?: AbortSignal
+): Promise<number> {
+  const response = await fetch(
+    "https://vldb.gsi.go.jp/sokuchi/surveycalc/geoid/calcgh/cgi/geoidcalc.pl?" +
+      new URLSearchParams({
+        outputType: "json",
+        latitude: String(queryLatitude),
+        longitude: String(queryLongitude),
+      }),
+    { headers: { Accept: "application/json" }, signal }
+  );
+  if (!response.ok) {
+    throw new Error(`国土地理院ジオイドAPIエラー：${response.status}`);
+  }
+  const data = await response.json() as GsiGeoidResponse;
+  const height = Number(data.OutputData?.geoidHeight);
+  if (!Number.isFinite(height)) {
+    throw new Error("国土地理院ジオイドAPIの応答が不正です");
+  }
+  return height;
+}
+
+// 国土地理院の測量計算ツール（本番API向けではないレガシーCGI）は
+// 一時的な失敗が珍しくないため、あきらめる前に短い間隔で数回だけ再試行する。
+const GEOID_FETCH_MAX_ATTEMPTS = 3;
+const GEOID_FETCH_RETRY_DELAY_MS = 400;
+
+async function fetchGeoidHeightWithRetry(
+  queryLatitude: number,
+  queryLongitude: number,
+  signal?: AbortSignal
+): Promise<number> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= GEOID_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetchGeoidHeightOnce(queryLatitude, queryLongitude, signal);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted) throw error;
+      if (attempt < GEOID_FETCH_MAX_ATTEMPTS) {
+        await delay(GEOID_FETCH_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+  throw lastError;
+}
+
 export async function lookupGsiGeoidHeight(
   latitude: number,
   longitude: number,
@@ -41,25 +95,6 @@ export async function lookupGsiGeoidHeight(
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const request = fetch(
-    "https://vldb.gsi.go.jp/sokuchi/surveycalc/geoid/calcgh/cgi/geoidcalc.pl?" +
-      new URLSearchParams({
-        outputType: "json",
-        latitude: String(queryLatitude),
-        longitude: String(queryLongitude),
-      }),
-    { headers: { Accept: "application/json" }, signal }
-  ).then(async (response) => {
-    if (!response.ok) {
-      throw new Error(`国土地理院ジオイドAPIエラー：${response.status}`);
-    }
-    const data = await response.json() as GsiGeoidResponse;
-    const height = Number(data.OutputData?.geoidHeight);
-    if (!Number.isFinite(height)) {
-      throw new Error("国土地理院ジオイドAPIの応答が不正です");
-    }
-    return height;
-  });
-
+  const request = fetchGeoidHeightWithRetry(queryLatitude, queryLongitude, signal);
   return cache.set(key, request);
 }
