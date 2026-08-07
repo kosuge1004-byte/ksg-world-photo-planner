@@ -559,27 +559,32 @@ button { cursor: pointer; }
 .celestial-occlusion-status {
   position: absolute;
   z-index: 24;
-  bottom: 7px;
-  left: 7px;
-  display: grid;
-  gap: 3px;
-  max-width: min(235px, calc(100% - 104px));
+  bottom: 8px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: calc(100% - 16px);
+  max-width: 440px;
   color: #eef5fb;
-  font-size: clamp(7px, 1.3vw, 9px);
-  line-height: 1.35;
+  font-size: clamp(10px, 3vw, 12px);
+  line-height: 1.4;
   pointer-events: none;
+  transform: translateX(-50%);
 }
 .celestial-occlusion-status > span {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   width: fit-content;
   max-width: 100%;
-  padding: 3px 6px;
+  padding: 5px 10px;
   border: 1px solid rgba(255, 255, 255, .32);
-  border-radius: 5px;
-  background: rgba(3, 8, 13, .78);
-  box-shadow: 0 2px 7px rgba(0, 0, 0, .35);
+  border-radius: 7px;
+  background: rgba(3, 8, 13, .82);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+  text-align: center;
 }
 .celestial-occlusion-status b {
   flex: 0 0 auto;
@@ -588,7 +593,7 @@ button { cursor: pointer; }
 }
 .celestial-occlusion-status .blocked {
   border-color: rgba(255, 176, 91, .64);
-  background: rgba(33, 15, 4, .82);
+  background: rgba(33, 15, 4, .86);
 }
 .celestial-occlusion-status .checking {
   color: #c8d8e7;
@@ -597,6 +602,11 @@ button { cursor: pointer; }
 .celestial-occlusion-status .unavailable {
   color: #ffd9a1;
   border-color: rgba(255, 194, 100, .58);
+}
+.celestial-occlusion-status .refraction-uncertain {
+  color: #ffe6b3;
+  border-color: rgba(255, 200, 110, .5);
+  background: rgba(30, 20, 4, .82);
 }
 .milky-way-hidden-position { opacity: .34; }
 .milky-way-hidden-position .milky-way-outline { fill: rgba(174,129,255,.1); stroke: rgba(220,197,255,.8); stroke-width: .28; stroke-dasharray: 1.1 1; }

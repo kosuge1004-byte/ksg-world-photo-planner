@@ -2,6 +2,7 @@ import {
   Cartesian3,
   Cartographic,
   Ellipsoid,
+  Math as CesiumMath,
   Matrix4,
   Ray,
   SceneMode,
@@ -26,6 +27,7 @@ import type { GroundPoint } from "../types/points";
 import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { directionToHorizontalDegrees, horizontalDirectionToVec3 } from "../projection/projectionService";
+import { verifyPlateauBuildingBaseHeight } from "./plateauBuildingVerification";
 import {
   adaptiveCoarseDistances,
   adaptiveRefinementDistances,
@@ -50,6 +52,28 @@ type RayPickingScene = Scene & {
     width?: number
   ) => Promise<SceneRayIntersection[]>;
 };
+
+/**
+ * 3D遮蔽判定に使う情報源。
+ * - google-3d: 高精度モード。Google Photorealistic 3D Tiles。追加の高さ検証はしない
+ *   （実測写真測量ベースで既に高い信頼性があるため）。
+ * - plateau-verified: 標準モード。表示専用のPLATEAU建物を遮蔽判定にも使うが、
+ *   全国一律の高さ補正はできない経緯があるため、交差した建物ごとにGSI DEMと
+ *   個別に接地高さを突き合わせ、検証できた場合のみ採用する。
+ * - none: 3D遮蔽判定を行わない（DEM地形のみ）。
+ */
+export type ThirdDimensionSource = "google-3d" | "plateau-verified" | "none";
+
+/**
+ * 精度モードから3D遮蔽情報源への対応を一本化する。高精度モード＝Google 3D、
+ * 標準モード＝PLATEAU（地点ごとにDEMで検証）。この対応関係を各呼び出し元で
+ * 個別に判断させない。
+ */
+export function thirdDimensionSourceForAccuracyMode(
+  accuracyMode: "standard" | "highest"
+): ThirdDimensionSource {
+  return accuracyMode === "highest" ? "google-3d" : "plateau-verified";
+}
 
 type TerrainHorizon = {
   maximumElevationDegrees: number;
@@ -236,6 +260,7 @@ function meshLineOfSightKey(
   observer: CelestialLineOfSightObserver,
   horizontal: HorizontalCoordinates,
   maximumDistanceMeters?: number,
+  thirdDimensionSource?: ThirdDimensionSource,
 ): string {
   return [
     observer.meshOrigin.x,
@@ -244,6 +269,7 @@ function meshLineOfSightKey(
     horizontal.azimuthDegrees,
     horizontal.altitudeDegrees,
     maximumDistanceMeters ?? "unbounded",
+    thirdDimensionSource ?? "google-3d",
   ].join(":");
 }
 
@@ -264,9 +290,11 @@ async function calculatePhotorealisticMeshIntersection(
   observer: CelestialLineOfSightObserver,
   horizontal: HorizontalCoordinates,
   maximumDistanceMeters?: number,
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<MeshIntersectionResult> {
   const scene = viewer.scene as RayPickingScene;
   if (
+    thirdDimensionSource === "none" ||
     !observer.meshSurfaceVerified ||
     scene.mode !== SceneMode.SCENE3D ||
     typeof scene.drillPickFromRayMostDetailed !== "function"
@@ -291,11 +319,26 @@ async function calculatePhotorealisticMeshIntersection(
     const maximumDistance = maximumDistanceMeters ?? 500_000;
     return distance > minimumDistance && distance < maximumDistance;
   });
+  if (!obstruction?.position) {
+    return { verified: true, distanceMeters: null };
+  }
+  if (thirdDimensionSource === "plateau-verified") {
+    // 標準モード：交差したPLATEAU建物のその地点だけをGSI DEMと個別に検証する。
+    // 全国一律の高さ補正は行わない（過去に撤回した経緯があるため）。検証できない
+    // 建物は「遮蔽あり」と断定せず、未確認として扱う。
+    const cartographic = Cartographic.fromCartesian(obstruction.position);
+    const verification = await verifyPlateauBuildingBaseHeight(
+      viewer,
+      CesiumMath.toDegrees(cartographic.longitude),
+      CesiumMath.toDegrees(cartographic.latitude)
+    );
+    if (!verification.verified) {
+      return { verified: false, distanceMeters: null };
+    }
+  }
   return {
     verified: true,
-    distanceMeters: obstruction?.position
-      ? Cartesian3.distance(observer.meshOrigin, obstruction.position)
-      : null,
+    distanceMeters: Cartesian3.distance(observer.meshOrigin, obstruction.position),
   };
 }
 
@@ -305,6 +348,7 @@ async function photorealisticMeshIntersection(
   horizontal: HorizontalCoordinates,
   signal?: AbortSignal,
   maximumDistanceMeters?: number,
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<MeshIntersectionResult> {
   abortIfRequested(signal);
   let viewerCache = meshLineOfSightCache.get(viewer);
@@ -312,14 +356,15 @@ async function photorealisticMeshIntersection(
     viewerCache = new Map();
     meshLineOfSightCache.set(viewer, viewerCache);
   }
-  const key = meshLineOfSightKey(observer, horizontal, maximumDistanceMeters);
+  const key = meshLineOfSightKey(observer, horizontal, maximumDistanceMeters, thirdDimensionSource);
   let calculation = boundedPromiseCacheGet(viewerCache, key);
   if (!calculation) {
     calculation = calculatePhotorealisticMeshIntersection(
       viewer,
       observer,
       horizontal,
-      maximumDistanceMeters
+      maximumDistanceMeters,
+      thirdDimensionSource
     )
       .catch((error) => {
         viewerCache?.delete(key);
@@ -424,7 +469,7 @@ export async function evaluateCelestialLineOfSight(
   horizontal: HorizontalCoordinates,
   signal?: AbortSignal,
   onDemVerified?: (result: CelestialOcclusion) => void,
-  usePhotorealisticMesh = true,
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<CelestialOcclusion> {
   if (horizontal.altitudeDegrees <= 0) {
     return {
@@ -441,8 +486,8 @@ export async function evaluateCelestialLineOfSight(
         horizontal.geometricAltitudeDegrees ?? horizontal.altitudeDegrees,
     };
   }
-  const meshPromise: Promise<MeshIntersectionOutcome> | null = usePhotorealisticMesh
-    ? photorealisticMeshIntersection(viewer, observer, horizontal, signal)
+  const meshPromise: Promise<MeshIntersectionOutcome> | null = thirdDimensionSource !== "none"
+    ? photorealisticMeshIntersection(viewer, observer, horizontal, signal, undefined, thirdDimensionSource)
       .then((result) => ({ ok: true as const, result }))
       .catch((error: unknown) => ({ ok: false as const, error }))
     : null;
@@ -593,6 +638,7 @@ export async function evaluatePhotorealisticMeshSegmentLineOfSight(
   target: Cartesian3,
   signal?: AbortSignal,
   maximumDistanceMeters?: number,
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<CelestialOcclusion> {
   abortIfRequested(signal);
   const worldDirection = Cartesian3.subtract(
@@ -634,7 +680,8 @@ export async function evaluatePhotorealisticMeshSegmentLineOfSight(
     observer,
     horizontal,
     signal,
-    maximumDistanceMeters
+    maximumDistanceMeters,
+    thirdDimensionSource
   );
   const obstructed = sample.distanceMeters !== null;
   return {

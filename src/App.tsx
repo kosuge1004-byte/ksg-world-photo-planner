@@ -80,6 +80,7 @@ import {
   evaluatePhotorealisticMeshSegmentLineOfSight,
   invalidateCelestialOcclusionCaches,
   prepareCelestialLineOfSightObserver,
+  thirdDimensionSourceForAccuracyMode,
 } from "./cesium/celestialOcclusion";
 import { calculateTripodCandidates } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
@@ -1318,7 +1319,7 @@ function App() {
             point,
             controller.signal,
             (demResult) => updatePointOcclusion(point.id, demResult),
-            precisionSettings.accuracyMode === "highest"
+            thirdDimensionSourceForAccuracyMode(precisionSettings.accuracyMode)
           );
           updatePointOcclusion(point.id, result);
         }));
@@ -1417,7 +1418,7 @@ function App() {
                 direction,
                 controller.signal,
                 undefined,
-                precisionSettings.accuracyMode === "highest"
+                thirdDimensionSourceForAccuracyMode(precisionSettings.accuracyMode)
               )
             ));
             const confirmedHidden = checks.some(
@@ -1881,17 +1882,8 @@ function App() {
         ? results.filter((result) => result.candidate3dStatus === "visible")
         : results;
     }
-    if (job.input.precisionSettings?.accuracyMode !== "highest") {
-      const demOnlyResults = results.map((result) => ({
-        ...result,
-        candidate3dStatus: "unverified" as const,
-      }));
-      const returnedResults = job.input.criteria.verifiedVisibilityOnly ? [] : demOnlyResults;
-      await finalizeBackgroundSpotSearch(active, returnedResults);
-      if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
-      onProgress(`${demOnlyResults.length}件を取得しました（標準モード：Google 3D確認なし）`, 100);
-      return returnedResults;
-    }
+    const accuracyMode = job.input.precisionSettings?.accuracyMode ?? "standard";
+    const thirdDimensionSource = thirdDimensionSourceForAccuracyMode(accuracyMode);
     let viewer = mapViewerRef.current;
     for (
       let attempt = 0;
@@ -1930,7 +1922,7 @@ function App() {
         throw new DOMException("最終3D確認を中止しました", "AbortError");
       }
       onProgress(
-        `建物の最終3D遮蔽を確認しています… ${Math.min(
+        `${accuracyMode === "highest" ? "Google 3D" : "PLATEAU建物（DEM検証つき）"}で建物の遮蔽を確認しています… ${Math.min(
           results.length,
           offset + concurrency
         )}/${results.length}`,
@@ -1973,7 +1965,8 @@ function App() {
               observer,
               subjectPosition,
               signal,
-              maximumObstructionDistanceMeters
+              maximumObstructionDistanceMeters,
+              thirdDimensionSource
             );
             return {
               ...result,
@@ -3270,6 +3263,8 @@ ${diagnosticMessage}
           <CelestialOcclusionStatus
             visibility={celestialVisibility}
             occlusion={celestialOcclusion}
+            points={celestialPoints}
+            refractionWeather={previewRefractionWeather}
           />
 
           <ForegroundPreviewOverlay

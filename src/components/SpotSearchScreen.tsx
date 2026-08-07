@@ -180,17 +180,19 @@ function saveRetainedResults(results: SpotPresetResult[]): void {
 
 function candidate3dStatusLabel(
   status: SpotCandidate3dStatus,
-  obstructedFractionPercent?: number
+  obstructedFractionPercent?: number,
+  accuracyMode?: "standard" | "highest"
 ): string {
+  const sourceLabel = accuracyMode === "highest" ? "Google 3D" : "PLATEAU（DEM検証つき）";
   if (status === "visible") {
     return typeof obstructedFractionPercent === "number"
-      ? `被写体までの建物3D：見通し確認済み（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
-      : "被写体までの建物3D：見通し確認済み";
+      ? `被写体までの建物3D（${sourceLabel}）：見通し確認済み（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
+      : `被写体までの建物3D（${sourceLabel}）：見通し確認済み`;
   }
   if (status === "possibly-obstructed") {
     return typeof obstructedFractionPercent === "number"
-      ? `被写体までの3D：遮蔽物あり（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
-      : "被写体までの3D：遮蔽物あり";
+      ? `被写体までの3D（${sourceLabel}）：遮蔽物あり（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
+      : `被写体までの3D（${sourceLabel}）：遮蔽物あり`;
   }
   if (status === "disabled") return "被写体までの3D：確認OFF";
   return "被写体までの3D：未確認";
@@ -606,7 +608,7 @@ ${diagnostic}` : ""}`
               <div><dt>カメラ仰角</dt><dd>{selectedResult.cameraAltitudeDegrees.toFixed(2)}°</dd></div>
               <div>
                 <dt>3D確認状態</dt>
-                <dd>{candidate3dStatusLabel(selectedResult.candidate3dStatus, selectedResult.buildingObstructedFractionPercent)}</dd>
+                <dd>{candidate3dStatusLabel(selectedResult.candidate3dStatus, selectedResult.buildingObstructedFractionPercent, precisionSettings.accuracyMode)}</dd>
               </div>
               <div><dt>三脚位置</dt><dd>{selectedResult.tripod.latitude.toFixed(6)}, {selectedResult.tripod.longitude.toFixed(6)}</dd></div>
               <div><dt>被写体位置</dt><dd>{selectedResult.subject.latitude.toFixed(6)}, {selectedResult.subject.longitude.toFixed(6)}</dd></div>
@@ -961,7 +963,7 @@ ${diagnostic}` : ""}`
                   walkingOnly: event.target.checked,
                 }))}
               />
-              <span>歩行可能のみ</span>
+              <span>歩行できる場所だけ探す</span>
             </label>
             <label className={subjectObstructionCheckEnabled ? "selected" : ""}>
               <input
@@ -969,7 +971,7 @@ ${diagnostic}` : ""}`
                 checked={subjectObstructionCheckEnabled}
                 onChange={(event) => setSubjectObstructionCheckEnabled(event.target.checked)}
               />
-              <span>三脚－被写体間の遮蔽物確認</span>
+              <span>被写体までの建物3Dを確認する</span>
             </label>
             <label className={verifiedVisibilityOnly ? "selected" : ""}>
               <input
@@ -980,16 +982,23 @@ ${diagnostic}` : ""}`
                   if (event.target.checked) setSubjectObstructionCheckEnabled(true);
                 }}
               />
-              <span>見通し確認済みのみ</span>
+              <span>建物に遮られていない候補だけ表示</span>
             </label>
           </div>
           <small className="spot-condition-note">
-            「歩行可能のみ」をONにすると、OpenStreetMap登録情報を使って歩行可能と判定できる地点だけを採用します。未登録情報や現地の立入可否は保証対象外です。
+            「歩行できる場所だけ探す」：OpenStreetMapの登録情報から、歩いて行けると判定できる地点だけを候補にします（現地の実際の立入可否は保証しません。未登録の地点は除外されます）。
           </small>
           <small className="spot-condition-note warning">
-            「三脚－被写体間の遮蔽物確認」をONにすると、各候補を3Dデータで追加確認するため検索時間が長くなります。
-            「見通し確認済みのみ」をONにすると、Google 3D Tilesを読み込めない候補・未確認候補・建物遮蔽のある候補は結果に表示しません。
+            「被写体までの建物3Dを確認する」：候補ごとに三脚から被写体までの間を、建物が実際に遮っていないか3Dデータで検証します（高精度モード：Google Photorealistic 3D Tiles／標準モード：PLATEAU建物をGSI DEMで地点ごとに検証した上で使用）。候補が増えるほど検索に時間がかかります。
           </small>
+          <small className="spot-condition-note warning">
+            「建物に遮られていない候補だけ表示」：上の確認で「確実に見える」と判定できた候補だけを残します。3Dを読み込めなかった候補・未確認の候補・遮られている候補は表示されません。
+          </small>
+          {precisionSettings.accuracyMode !== "highest" && (
+            <small className="spot-condition-note">
+              標準モードでの建物確認は、表示専用のPLATEAU建物3Dを使いますが、全国一律の高さ補正はできないため、候補地点ごとにGSI DEMと個別に照合できた建物だけを判定に使います（過去に全国一律補正を試みて撤回した経緯があります）。照合できない建物は「未確認」のままになります。Google 3D Tilesによる確認をご希望の場合は、上部の設定から高精度モードに切り替えてください。
+            </small>
+          )}
         </fieldset>
 
         </>}
@@ -1142,7 +1151,7 @@ ${diagnostic}` : ""}`
                 {result.focalLengthMm}mm　方位{result.cameraAzimuthDegrees.toFixed(1)}°　仰角{result.cameraAltitudeDegrees.toFixed(1)}°
               </small>
               <small className={`spot-result-3d-status status-${result.candidate3dStatus}`}>
-                {candidate3dStatusLabel(result.candidate3dStatus, result.buildingObstructedFractionPercent)}
+                {candidate3dStatusLabel(result.candidate3dStatus, result.buildingObstructedFractionPercent, precisionSettings.accuracyMode)}
               </small>
               {result.nearbyLandmarks.length > 0 && (
                 <small className="spot-result-landmarks">

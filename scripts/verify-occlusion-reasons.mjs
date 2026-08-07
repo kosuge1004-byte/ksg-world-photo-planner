@@ -130,7 +130,7 @@ for (const testCase of cases) {
 
 for (const expected of [
   'if (!visibility[id] || !result) return []',
-  'if (presentations.length === 0) return null',
+  'if (presentations.length === 0 && refractionUncertain.length === 0) return null',
   'checking.map((item) => item.label).join("・")',
   'unavailable.map((item) => item.label).join("・")',
 ]) {
@@ -141,7 +141,7 @@ for (const expected of [
 for (const expected of [
   ".celestial-occlusion-status",
   "pointer-events: none",
-  "max-width: min(235px, calc(100% - 104px))",
+  "max-width: 440px",
 ]) {
   if (!styles.includes(expected)) {
     throw new Error(`non-obstructive occlusion status style is missing: ${expected}`);
