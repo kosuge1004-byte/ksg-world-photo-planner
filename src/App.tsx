@@ -108,6 +108,7 @@ import {
   updateTripodDistanceLabel,
 } from "./cesium/tripodPin";
 import { resolveGroundPoint } from "./height/heightResolver";
+import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
 import { cartesianToForegroundCoordinates, enableForegroundObjectDrag, updateForegroundObjectEntity } from "./cesium/foregroundObject";
 
 import {
@@ -149,7 +150,7 @@ import type {
 import type { SpotSearchJob } from "./types/backgroundSearch";
 import type { PlannerProject } from "./types/project";
 import { deleteProject, loadProjects, upsertProject } from "./projectStorage";
-import { addSubjectHistory, isFavoriteSubject, loadFavoriteSubjects, loadSubjectHistory, toggleFavoriteSubject } from "./subjectStorage";
+import { addSubjectHistory, isFavoriteSubject, loadFavoriteSubjects, loadSubjectHistory, renameFavoriteSubject, toggleFavoriteSubject } from "./subjectStorage";
 import type { SubjectRecord } from "./subjectStorage";
 import {
   dateFromZonedDateTimeLocal,
@@ -424,6 +425,9 @@ function App() {
   const [projects, setProjects] = useState<PlannerProject[]>(loadProjects);
   const [subjectHistory, setSubjectHistory] = useState<SubjectRecord[]>(loadSubjectHistory);
   const [favoriteSubjects, setFavoriteSubjects] = useState<SubjectRecord[]>(loadFavoriteSubjects);
+  const [justRegisteredFavorite, setJustRegisteredFavorite] =
+    useState<{ token: number; id: string } | null>(null);
+  const favoriteRegistrationTokenRef = useRef(0);
   const [sharedImportPayload, setSharedImportPayload] =
     useState<SharedProjectPayloadV1 | null>(null);
   const [sharedImportBusy, setSharedImportBusy] = useState(false);
@@ -1772,9 +1776,27 @@ function App() {
     longitude: number,
     label: string
   ): Promise<GroundPoint> {
-    // 検索・URL・座標入力では表示中3Dレイヤーを正式高度へ混入させない。
-    // 3D表面高は、ユーザーが3D画面上でその表面を明示選択した場合だけ保持する。
-    return resolveGroundPoint(latitude, longitude, label);
+    // 検索・URL・座標入力ではまずDEM（地面）で確定する。
+    const groundPoint = await resolveGroundPoint(latitude, longitude, label);
+    // その上で、その地点に建物があれば屋根面へ合わせる（高精度モードは
+    // Google 3D Tiles、標準モードはPLATEAU建物。同じ仕組みで、読み込まれて
+    // いるタイルセットに対して垂直レイを通す）。建物が無い・接地点をDEMと
+    // 突き合わせて検証できない場合は、DEM地面の値のまま変更しない
+    // （全国一律の補正はしない）。
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return groundPoint;
+    try {
+      const roofPoint = await resolvePlateauRoofGroundPoint(
+        viewer,
+        latitude,
+        longitude,
+        label
+      );
+      return roofPoint ?? groundPoint;
+    } catch (error) {
+      console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
+      return groundPoint;
+    }
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -2164,7 +2186,17 @@ ${diagnosticMessage}
 
   function toggleCurrentSubjectFavorite() {
     if (!subjectPoint) return;
-    setFavoriteSubjects(toggleFavoriteSubject(subjectPoint));
+    const wasFavorite = isFavoriteSubject(favoriteSubjects, subjectPoint);
+    const updated = toggleFavoriteSubject(subjectPoint);
+    setFavoriteSubjects(updated);
+    // 登録時にすぐ名称を変更できるよう、新規登録した項目のidを通知する。
+    // 同じ地点を再登録した場合もidだけでは変化がないため、毎回増えるトークンと組にする。
+    favoriteRegistrationTokenRef.current += 1;
+    setJustRegisteredFavorite(
+      !wasFavorite && updated[0]
+        ? { token: favoriteRegistrationTokenRef.current, id: updated[0].id }
+        : null
+    );
   }
 
   async function applySpotPreset(result: SpotPresetResult): Promise<void> {
@@ -3850,6 +3882,8 @@ ${diagnosticMessage}
         onSelectStoredSubject={applyStoredSubject}
         onToggleCurrentFavorite={toggleCurrentSubjectFavorite}
         onToggleFavorite={(record) => setFavoriteSubjects(toggleFavoriteSubject(record))}
+        onRenameFavorite={(id, label) => setFavoriteSubjects(renameFavoriteSubject(id, label))}
+        justRegisteredFavoriteId={justRegisteredFavorite}
         onSelect={applySpotPreset}
       />
       <ProjectsScreen

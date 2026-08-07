@@ -1,6 +1,8 @@
-import { Cartesian3, Cartographic, Ellipsoid, Ray, type Scene, type Viewer } from "cesium";
+import { Cartesian3, Cartographic, Ellipsoid, Math as CesiumMath, Ray, type Scene, type Viewer } from "cesium";
 
-import { groundPointFromCoordinates } from "./worldTerrain";
+import { fetchGsiGeoidHeight, groundPointFromCoordinates } from "./worldTerrain";
+import type { ResolvedGroundPoint } from "../types/points";
+import { isResolvedGroundPoint } from "../types/points";
 
 /**
  * PLATEAU建物3Dは標準モードの3Dマップに表示専用として読み込まれているが、
@@ -41,19 +43,20 @@ export type PlateauBuildingHeightVerification = {
 };
 
 /**
- * 指定した経緯度直下でPLATEAU建物タイルセットに垂直レイを通し、
- * 最も低い交点（＝建物の接地部分）を求め、その地点のGSI DEM高度と
- * 突き合わせて検証する。地形（globe）は誤検出を避けるため一時的に隠す。
+ * 指定した経緯度直下でPLATEAU建物タイルセットに垂直レイを通し、その地点の
+ * 全交点（Cartographic配列）を返す。地形（globe）は誤検出を避けるため
+ * 一時的に隠す。交点が無い場合はnull（直下に建物がない、または壁を
+ * 斜めから見ているだけ）。
  */
-export async function verifyPlateauBuildingBaseHeight(
+async function plateauVerticalRaycast(
   viewer: Viewer,
   longitude: number,
   latitude: number,
   signal?: AbortSignal
-): Promise<PlateauBuildingHeightVerification> {
+): Promise<Cartographic[] | null> {
   const scene = viewer.scene as RayPickingScene;
   if (typeof scene.drillPickFromRayMostDetailed !== "function") {
-    return { verified: false, discrepancyMeters: null };
+    return null;
   }
 
   const globeWasShown = scene.globe.show;
@@ -77,8 +80,8 @@ export async function verifyPlateauBuildingBaseHeight(
       0.12
     );
   } catch (error) {
-    console.warn("PLATEAU建物の接地点を取得できませんでした", error);
-    return { verified: false, discrepancyMeters: null };
+    console.warn("PLATEAU建物の交点を取得できませんでした", error);
+    return null;
   } finally {
     scene.globe.show = globeWasShown;
   }
@@ -88,8 +91,22 @@ export async function verifyPlateauBuildingBaseHeight(
     .filter((intersection): intersection is SceneRayIntersection & { position: Cartesian3 } =>
       intersection.position !== undefined)
     .map((intersection) => Cartographic.fromCartesian(intersection.position));
-  if (hits.length === 0) {
-    // 直下に建物がない（壁を斜めから見ているだけ等）。この地点では検証できない。
+  return hits.length > 0 ? hits : null;
+}
+
+/**
+ * 指定した経緯度直下でPLATEAU建物タイルセットに垂直レイを通し、
+ * 最も低い交点（＝建物の接地部分）を求め、その地点のGSI DEM高度と
+ * 突き合わせて検証する。
+ */
+export async function verifyPlateauBuildingBaseHeight(
+  viewer: Viewer,
+  longitude: number,
+  latitude: number,
+  signal?: AbortSignal
+): Promise<PlateauBuildingHeightVerification> {
+  const hits = await plateauVerticalRaycast(viewer, longitude, latitude, signal);
+  if (!hits) {
     return { verified: false, discrepancyMeters: null };
   }
   const lowestHit = hits.reduce((lowest, current) =>
@@ -114,6 +131,72 @@ export async function verifyPlateauBuildingBaseHeight(
     verified: Math.abs(discrepancyMeters) <= BASE_HEIGHT_TOLERANCE_METERS,
     discrepancyMeters,
   };
+}
+
+/**
+ * 標準モード用：被写体地点にPLATEAU建物があれば、その屋根面へ被写体高度を
+ * 合わせる（高精度モードでGoogle 3D Tilesへクランプするのと同じ考え方）。
+ * 全国一律の高さ補正はせず、その建物の接地点をGSI DEMと個別に検証できた
+ * 場合だけ屋根高度を採用する。建物が無い・検証できない場合はnullを返し、
+ * 呼び出し側は通常のDEM地面高度にフォールバックする。
+ */
+export async function resolvePlateauRoofGroundPoint(
+  viewer: Viewer,
+  latitude: number,
+  longitude: number,
+  label: string,
+  signal?: AbortSignal
+): Promise<ResolvedGroundPoint | null> {
+  const hits = await plateauVerticalRaycast(viewer, longitude, latitude, signal);
+  if (!hits) return null;
+  const lowestHit = hits.reduce((lowest, current) =>
+    current.height < lowest.height ? current : lowest
+  );
+  const highestHit = hits.reduce((highest, current) =>
+    current.height > highest.height ? current : highest
+  );
+
+  let demGroundPoint;
+  try {
+    demGroundPoint = await groundPointFromCoordinates(
+      latitude,
+      longitude,
+      `${label}の接地点検証用DEM`
+    );
+  } catch (error) {
+    console.warn("PLATEAU建物検証用のDEM高度を取得できませんでした", error);
+    return null;
+  }
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const discrepancyMeters = lowestHit.height - demGroundPoint.height;
+  if (Math.abs(discrepancyMeters) > BASE_HEIGHT_TOLERANCE_METERS) {
+    // 接地点がDEMと大きくズレている＝この建物の高さ基準は信頼できない。
+    // 屋根高度を採用せず、呼び出し側は通常のDEM地面高度へフォールバックする。
+    return null;
+  }
+
+  let geoidHeightMeters: number;
+  try {
+    geoidHeightMeters = await fetchGsiGeoidHeight(lowestHit);
+  } catch (error) {
+    console.warn(`${label}のジオイド高を取得できませんでした`, error);
+    return null;
+  }
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const ellipsoidalHeightMeters = highestHit.height;
+  const point: ResolvedGroundPoint = {
+    latitude: CesiumMath.toDegrees(highestHit.latitude),
+    longitude: CesiumMath.toDegrees(highestHit.longitude),
+    height: ellipsoidalHeightMeters,
+    ellipsoidalHeightMeters,
+    orthometricHeightMeters: ellipsoidalHeightMeters - geoidHeightMeters,
+    geoidHeightMeters,
+    heightSource: "3d-picked",
+    label,
+  };
+  return isResolvedGroundPoint(point) ? point : null;
 }
 
 export { BASE_HEIGHT_TOLERANCE_METERS };

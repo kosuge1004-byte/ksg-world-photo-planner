@@ -73,6 +73,16 @@ export function toggleFavoriteSubject(point: GroundPoint): SubjectRecord[] {
   return write(FAVORITES_KEY, [next, ...current]);
 }
 
+export function renameFavoriteSubject(id: string, label: string): SubjectRecord[] {
+  const current = loadFavoriteSubjects();
+  const trimmed = label.trim();
+  if (!trimmed) return current;
+  return write(
+    FAVORITES_KEY,
+    current.map((item) => (item.id === id ? { ...item, label: trimmed } : item))
+  );
+}
+
 export function isFavoriteSubject(records: SubjectRecord[], point: GroundPoint | null): boolean {
   return Boolean(point && records.some((item) => sameLocation(item, point)));
 }

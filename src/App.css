@@ -1011,6 +1011,10 @@ button { cursor: pointer; }
 .spot-subject-list-item > button:first-child { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; color: inherit; padding: 11px 12px; display: flex; flex-direction: column; gap: 3px; }
 .spot-subject-list-item small { color: #8f9aad; }
 .spot-list-favorite { width: 48px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #ffd45a; font-size: 20px; }
+.spot-list-rename { width: 40px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #9db3cc; font-size: 15px; }
+.spot-list-favorite-rename { display: flex; align-items: center; gap: 6px; flex: 1; padding: 8px 10px; }
+.spot-list-favorite-rename input { flex: 1; min-width: 0; padding: 8px; border-radius: 6px; border: 1px solid #526176; background: #07101b; color: #fff; }
+.spot-list-favorite-rename button { border: 0; background: transparent; color: #9db3cc; font-size: 16px; padding: 4px 6px; }
 
 .tripod-distance-range { display: grid; gap: 9px; }
 .tripod-distance-slider-row { display: grid; gap: 7px; }

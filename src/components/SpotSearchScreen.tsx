@@ -69,6 +69,9 @@ type Props = {
   onSelectStoredSubject: (record: SubjectRecord) => void;
   onToggleCurrentFavorite: () => void;
   onToggleFavorite: (record: SubjectRecord) => void;
+  onRenameFavorite: (id: string, label: string) => void;
+  /** お気に入りに新規登録された直後、その項目のid+トークンが渡される（名称編集を即座に開けるように）。 */
+  justRegisteredFavoriteId: { token: number; id: string } | null;
   onSelect: (result: SpotPresetResult) => void;
 };
 
@@ -272,10 +275,34 @@ export function SpotSearchScreen({
   onSelectStoredSubject,
   onToggleCurrentFavorite,
   onToggleFavorite,
+  onRenameFavorite,
+  justRegisteredFavoriteId,
   onSelect,
 }: Props) {
   const [query, setQuery] = useState("");
   const [subjectListOpen, setSubjectListOpen] = useState<"history" | "favorites" | null>(null);
+  const [editingFavoriteId, setEditingFavoriteId] = useState<string | null>(null);
+  const [editingFavoriteLabel, setEditingFavoriteLabel] = useState("");
+
+  useEffect(() => {
+    if (!justRegisteredFavoriteId) return;
+    setSubjectListOpen("favorites");
+    const registered = favorites.find((item) => item.id === justRegisteredFavoriteId.id);
+    setEditingFavoriteId(justRegisteredFavoriteId.id);
+    setEditingFavoriteLabel(registered?.label ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [justRegisteredFavoriteId?.token]);
+
+  function startEditingFavorite(record: SubjectRecord): void {
+    setEditingFavoriteId(record.id);
+    setEditingFavoriteLabel(record.label);
+  }
+
+  function commitFavoriteRename(): void {
+    if (editingFavoriteId) onRenameFavorite(editingFavoriteId, editingFavoriteLabel);
+    setEditingFavoriteId(null);
+    setEditingFavoriteLabel("");
+  }
   const [pinTarget, setPinTarget] = useState<"subject" | "tripod">("subject");
   const [searchDateTime, setSearchDateTime] = useState(false);
   const [useCurrentSubjectPin, setUseCurrentSubjectPin] = useState(false);
@@ -687,13 +714,49 @@ ${diagnostic}` : ""}`
                 <p>{subjectListOpen === "history" ? "検索履歴はありません" : "お気に入りはありません"}</p>
               ) : (subjectListOpen === "history" ? history : favorites).map((record) => (
                 <div className="spot-subject-list-item" key={record.id}>
-                  <button type="button" onClick={() => onSelectStoredSubject(record)}>
-                    <strong>{record.label}</strong>
-                    <small>{record.latitude.toFixed(6)}, {record.longitude.toFixed(6)}</small>
-                  </button>
-                  <button type="button" className="spot-list-favorite" aria-label="お気に入り切替" onClick={() => onToggleFavorite(record)}>
-                    {favorites.some((favorite) => favorite.id === record.id) ? "★" : "☆"}
-                  </button>
+                  {subjectListOpen === "favorites" && editingFavoriteId === record.id ? (
+                    <form
+                      className="spot-list-favorite-rename"
+                      onSubmit={(event) => { event.preventDefault(); commitFavoriteRename(); }}
+                    >
+                      <input
+                        autoFocus
+                        type="text"
+                        value={editingFavoriteLabel}
+                        onChange={(event) => setEditingFavoriteLabel(event.target.value)}
+                        placeholder="名称"
+                        aria-label="お気に入りの名称"
+                      />
+                      <button type="submit" aria-label="名称を保存">✓</button>
+                      <button
+                        type="button"
+                        aria-label="編集をキャンセル"
+                        onClick={() => { setEditingFavoriteId(null); setEditingFavoriteLabel(""); }}
+                      >
+                        ×
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => onSelectStoredSubject(record)}>
+                        <strong>{record.label}</strong>
+                        <small>{record.latitude.toFixed(6)}, {record.longitude.toFixed(6)}</small>
+                      </button>
+                      {subjectListOpen === "favorites" && (
+                        <button
+                          type="button"
+                          className="spot-list-rename"
+                          aria-label="名称を編集"
+                          onClick={() => startEditingFavorite(record)}
+                        >
+                          ✎
+                        </button>
+                      )}
+                      <button type="button" className="spot-list-favorite" aria-label="お気に入り切替" onClick={() => onToggleFavorite(record)}>
+                        {favorites.some((favorite) => favorite.id === record.id) ? "★" : "☆"}
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </section>
