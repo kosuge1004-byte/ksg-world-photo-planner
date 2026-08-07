@@ -38,6 +38,7 @@ import { CalendarScreen } from "./components/CalendarScreen";
 import { MoonAgeCalendarScreen } from "./components/MoonAgeCalendarScreen";
 import { ProjectSaveDialog } from "./components/ProjectSaveDialog";
 import { SharedProjectImportDialog } from "./components/SharedProjectImportDialog";
+import { PlacementConfirmDialog } from "./components/PlacementConfirmDialog";
 import {
   decodeProjectShareCode,
   encodeProjectShareCode,
@@ -135,6 +136,7 @@ import {
   isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
+import { withLensCenterHeight } from "./types/points";
 import {
   DEFAULT_FOREGROUND_HEIGHT_CM,
   normalizeForegroundHeightCm,
@@ -426,6 +428,12 @@ function App() {
     useState<SharedProjectPayloadV1 | null>(null);
   const [sharedImportBusy, setSharedImportBusy] = useState(false);
   const [sharedImportError, setSharedImportError] = useState<string | null>(null);
+  const [pendingPlacement, setPendingPlacement] = useState<
+    { kind: "subject" | "tripod" | "person"; commit: (offsetMeters: number) => Promise<void> } | null
+  >(null);
+  const [pendingPlacementOffsetMeters, setPendingPlacementOffsetMeters] = useState(0);
+  const [pendingPlacementBusy, setPendingPlacementBusy] = useState(false);
+  const [pendingPlacementError, setPendingPlacementError] = useState<string | null>(null);
 
   const [subjectPoint, setSubjectPoint] =
     useState<GroundPoint | null>(null);
@@ -438,7 +446,6 @@ function App() {
   const plannedForegroundHeightCmRef = useRef(DEFAULT_FOREGROUND_HEIGHT_CM);
   const foregroundTerrainTimerRef = useRef<number | null>(null);
   const foregroundTerrainRequestRef = useRef(0);
-  const subjectPlacementRequestRef = useRef(0);
   const currentLocationRequestRef = useRef(0);
   const currentLocationMessageTimerRef = useRef<number | null>(null);
   const [currentLocationPending, setCurrentLocationPending] = useState(false);
@@ -1717,6 +1724,49 @@ function App() {
     setSubjectEditActive(false);
   }
 
+  /**
+   * 地図クリックで即配置せず、確認ダイアログ（高度オフセット入力つき）を挟む。
+   * commitには「はい」が押された後の実際の高度解決・ピン確定処理を渡す。
+   */
+  function openPlacementConfirm(
+    kind: "subject" | "tripod" | "person",
+    commit: (offsetMeters: number) => Promise<void>
+  ): void {
+    setPendingPlacement({ kind, commit });
+    setPendingPlacementOffsetMeters(0);
+    setPendingPlacementError(null);
+    setPendingPlacementBusy(false);
+  }
+
+  function cancelPendingPlacement(): void {
+    setPendingPlacement(null);
+    setPendingPlacementError(null);
+    setPendingPlacementBusy(false);
+  }
+
+  async function confirmPendingPlacement(): Promise<void> {
+    if (!pendingPlacement) return;
+    const offsetMeters = Number.isFinite(pendingPlacementOffsetMeters)
+      ? pendingPlacementOffsetMeters
+      : 0;
+    setPendingPlacementBusy(true);
+    setPendingPlacementError(null);
+    try {
+      await pendingPlacement.commit(offsetMeters);
+      setPendingPlacement(null);
+      setPendingPlacementBusy(false);
+      stopPlacementMode();
+    } catch (error) {
+      console.warn("配置を確定できませんでした", error);
+      setPendingPlacementError(
+        error instanceof Error && error.message
+          ? error.message
+          : "高度を取得できませんでした。通信状態を確認して再試行するか、キャンセルしてください"
+      );
+      setPendingPlacementBusy(false);
+    }
+  }
+
   async function resolveSearchSubject(
     latitude: number,
     longitude: number,
@@ -2304,36 +2354,32 @@ ${diagnosticMessage}
     }
   }
 
-  function shareCurrentComposition(): void {
-    if (!subjectPoint || !tripodPoint) {
-      setSearchMessage("共有するには三脚ピンと被写体ピンを設定してください");
-      return;
-    }
+  function shareProject(project: PlannerProject): void {
     // 緯度経度・カメラ設定・表示設定だけを載せる。高度は受信側で必ず取り直すため含めない。
     const code = encodeProjectShareCode({
-      name: "",
-      shootingDateTimeLocal: dateTimeLocal,
-      timeZone,
+      name: project.name,
+      shootingDateTimeLocal: project.shootingDateTimeLocal,
+      timeZone: project.timeZone,
       subject: {
-        latitude: subjectPoint.latitude,
-        longitude: subjectPoint.longitude,
-        label: subjectPoint.label,
+        latitude: project.subject.latitude,
+        longitude: project.subject.longitude,
+        label: project.subject.label,
       },
       tripod: {
-        latitude: tripodPoint.latitude,
-        longitude: tripodPoint.longitude,
-        label: tripodPoint.label,
+        latitude: project.tripod.latitude,
+        longitude: project.tripod.longitude,
+        label: project.tripod.label,
       },
-      foregroundObjects: foregroundObjects.map((object) => ({
+      foregroundObjects: (project.foregroundObjects ?? []).map((object) => ({
         type: object.type,
         latitude: object.latitude,
         longitude: object.longitude,
         heightCm: object.heightCm,
         enabled: object.enabled,
       })),
-      cameraSettings,
-      celestialVisibility,
-      previewFrameMode,
+      cameraSettings: project.cameraSettings,
+      celestialVisibility: project.celestialVisibility,
+      previewFrameMode: project.previewFrameMode,
     });
     const url = `${window.location.origin}${window.location.pathname}#share=${code}`;
     void shareUrlViaSystemOrClipboard(url);
@@ -2410,10 +2456,39 @@ ${diagnosticMessage}
       setDateTimeLocal(sharedImportPayload.shootingDateTimeLocal);
       setMapCenter({ latitude: subject.latitude, longitude: subject.longitude });
 
+      // 取り込んだら自動的にプリセット（プロジェクト）としても保存する。
+      const now = new Date();
+      const importedProject: PlannerProject = {
+        id: crypto.randomUUID?.() ?? `project-${now.getTime()}`,
+        name: sharedImportPayload.name || formatProjectFallbackName(now),
+        createdAtIso: now.toISOString(),
+        updatedAtIso: now.toISOString(),
+        shootingDateTimeLocal: sharedImportPayload.shootingDateTimeLocal,
+        timeZone: sharedImportPayload.timeZone,
+        calendarRegistered: false,
+        subject: subjectPin,
+        tripod: tripodPin,
+        foregroundObjects: sharedImportPayload.foregroundObjects.map((object, index) => ({
+          id: crypto.randomUUID?.() ?? `foreground-${now.getTime()}-${index}`,
+          type: object.type,
+          latitude: object.latitude,
+          longitude: object.longitude,
+          heightCm: normalizeForegroundHeightCm(object.heightCm),
+          enabled: object.enabled,
+          groundHeightMeters: resolvedForegroundHeights[index]?.ellipsoidalHeightMeters,
+        })),
+        cameraSettings: sharedImportPayload.cameraSettings,
+        celestialVisibility: sharedImportPayload.celestialVisibility,
+        previewFrameMode: sharedImportPayload.previewFrameMode,
+        mapViewMode, mapZoom, mapCenter,
+        displaySettings: { celestialMenuOpen },
+      };
+      setProjects(upsertProject(importedProject));
+
       setSharedImportPayload(null);
       setSharedImportBusy(false);
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      setSearchMessage("共有された撮影計画を取り込みました（高度はこの端末で取得し直しました）");
+      setSearchMessage("共有された撮影計画を取り込み、プリセットに保存しました（高度はこの端末で取得し直しました）");
     } catch (error) {
       console.warn("共有された撮影計画の高度を取得できませんでした", error);
       setSharedImportBusy(false);
@@ -2423,19 +2498,33 @@ ${diagnosticMessage}
     }
   }
 
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash.startsWith("#share=")) return;
-    const code = hash.slice("#share=".length);
+  /** 共有コードを検証しながら開き、取り込み確認ダイアログを表示する。 */
+  function openSharedImportFromCode(code: string): void {
     try {
       setSharedImportPayload(decodeProjectShareCode(code));
+      setSharedImportError(null);
     } catch (error) {
       const message = error instanceof ProjectShareCodeError
         ? error.message
         : "共有リンクを読み取れませんでした";
       setSearchMessage(message);
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
+  }
+
+  /** プリセットメニューの「取り込む」欄向け。URL全体・コード単体どちらの貼り付けにも対応する。 */
+  function importShareLinkOrCode(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const hashIndex = trimmed.indexOf("#share=");
+    const code = hashIndex >= 0 ? trimmed.slice(hashIndex + "#share=".length) : trimmed;
+    openSharedImportFromCode(code);
+  }
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#share=")) return;
+    openSharedImportFromCode(hash.slice("#share=".length));
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2468,22 +2557,22 @@ ${diagnosticMessage}
       viewer,
       (position) => {
         if (placementModeRef.current !== "subject") return;
-        void (async () => {
-          let point;
-          try {
-            point = await setSubjectPinFromExplicit3dPick(
+        openPlacementConfirm("subject", async (offsetMeters) => {
+          const rawPoint = await setSubjectPinFromExplicit3dPick(
+            viewer,
+            position,
+            "手動指定地点"
+          );
+          const point = offsetMeters !== 0
+            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+            : rawPoint;
+          if (offsetMeters !== 0) {
+            setSubjectPinFromPosition(
               viewer,
-              position,
-              "手動指定地点"
+              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+              point.label
             );
-          } catch (error) {
-            console.warn("被写体の3D表面高度を確定できませんでした", error);
-            setSearchMessage(
-              "被写体の3D表面高度を取得できませんでした。建物・地形など対象面が見える位置で再度クリックしてください"
-            );
-            return;
           }
-
           setSubjectPoint(point);
           setMapCenter({ latitude: point.latitude, longitude: point.longitude });
           setSearchMessage(
@@ -2491,8 +2580,7 @@ ${diagnosticMessage}
               6
             )}, ${point.longitude.toFixed(6)}`
           );
-          stopPlacementMode();
-        })();
+        });
       },
       () => {
         setSearchMessage(
@@ -2623,16 +2711,22 @@ ${diagnosticMessage}
     disablePlacementRef.current = enableMapPlacement(viewer, (position) => {
       if (placementModeRef.current !== "foreground") return;
       const coordinates = cartesianToForegroundCoordinates(position);
-      if (placeForegroundAtCoordinates(
-        coordinates.latitude,
-        coordinates.longitude,
-        coordinates.groundHeightMeters,
-        false,
-        undefined,
-        "map-3d"
-      )) {
-        stopPlacementMode();
-      }
+      openPlacementConfirm("person", async (offsetMeters) => {
+        if (!Number.isFinite(coordinates.groundHeightMeters)) {
+          throw new Error("人物を置く3D表面高度を取得できませんでした");
+        }
+        const placed = placeForegroundAtCoordinates(
+          coordinates.latitude,
+          coordinates.longitude,
+          (coordinates.groundHeightMeters as number) + offsetMeters,
+          false,
+          undefined,
+          "map-3d"
+        );
+        if (!placed) {
+          throw new Error("人物を配置できませんでした");
+        }
+      });
     }, () => {
       setSearchMessage(
         "人物を置く3D表面高度を取得できませんでした。床・地面・屋上などが見える位置で再度クリックしてください"
@@ -2694,16 +2788,16 @@ ${diagnosticMessage}
         if (placementModeRef.current !== "tripod") return;
         // 橋面などDEMに存在しない歩行可能な3D表面も、HeightResolver
         // （resolveGroundPointFrom3dSurface）を経由してそのまま採用する。
-        void (async () => {
-          let point;
-          try {
-            point = await setTripodPinFromExplicit3dPick(viewer, position);
-          } catch (error) {
-            console.warn("三脚の3D表面高度を確定できませんでした", error);
-            setSearchMessage(
-              "三脚を置く3D表面高度を取得できませんでした。地面・床・屋上・橋面などが見える位置で再度クリックしてください"
+        openPlacementConfirm("tripod", async (offsetMeters) => {
+          const rawPoint = await setTripodPinFromExplicit3dPick(viewer, position);
+          const point = offsetMeters !== 0
+            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+            : rawPoint;
+          if (offsetMeters !== 0) {
+            setTripodPin(
+              viewer,
+              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
             );
-            return;
           }
           setTripodPoint(point);
           setMapCenter({ latitude: point.latitude, longitude: point.longitude });
@@ -2712,8 +2806,7 @@ ${diagnosticMessage}
               6
             )}, ${point.longitude.toFixed(6)}`
           );
-          stopPlacementMode();
-        })();
+        });
       },
       () => {
         setSearchMessage(
@@ -2728,7 +2821,7 @@ ${diagnosticMessage}
     );
   }
 
-  async function handle2dMapPlacement(
+  function handle2dMapPlacement(
     event: ReactMouseEvent<HTMLButtonElement>
   ) {
     const placementMode = placementModeRef.current;
@@ -2746,70 +2839,84 @@ ${diagnosticMessage}
     );
 
     if (placementMode === "foreground") {
-      setSearchMessage("人物配置地点の地形高度を取得しています…");
-      try {
+      openPlacementConfirm("person", async (offsetMeters) => {
         const ground = await resolveGroundPoint(
           coordinates.latitude,
           coordinates.longitude,
           "人物配置地点"
         );
-        if (placeForegroundAtCoordinates(
+        const placed = placeForegroundAtCoordinates(
           coordinates.latitude,
           coordinates.longitude,
-          ground.ellipsoidalHeightMeters,
+          ground.ellipsoidalHeightMeters + offsetMeters,
           false,
           undefined,
           "map-2d-resolved"
-        )) {
-          stopPlacementMode();
-          setSearchMessage("人物を配置しました。ドラッグして移動できます");
+        );
+        if (!placed) {
+          throw new Error("人物を配置できませんでした");
         }
-      } catch (error) {
-        console.warn("人物配置地点の高度を取得できませんでした", error);
-        setSearchMessage("地形高度を取得できないため人物を配置できません。再試行してください");
-      }
+        setSearchMessage("人物を配置しました。ドラッグして移動できます");
+      });
     } else if (placementMode === "subject") {
-      const requestId = ++subjectPlacementRequestRef.current;
-      stopPlacementMode();
-      setSearchMessage("被写体地点の地形高度を取得しています…");
-      const point = viewer && !viewer.isDestroyed()
-        ? await setSubjectPinFromCoordinates(
+      openPlacementConfirm("subject", async (offsetMeters) => {
+        const rawPoint = viewer && !viewer.isDestroyed()
+          ? await setSubjectPinFromCoordinates(
+              viewer,
+              coordinates.latitude,
+              coordinates.longitude,
+              "手動指定地点",
+              false
+            )
+          : await resolveGroundPoint(
+              coordinates.latitude,
+              coordinates.longitude,
+              "手動指定地点"
+            );
+        const point = offsetMeters !== 0
+          ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+          : rawPoint;
+        if (offsetMeters !== 0 && viewer && !viewer.isDestroyed()) {
+          setSubjectPinFromPosition(
             viewer,
-            coordinates.latitude,
-            coordinates.longitude,
-            "手動指定地点",
-            false
-          )
-        : await resolveGroundPoint(
-            coordinates.latitude,
-            coordinates.longitude,
-            "手動指定地点"
+            Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+            point.label
           );
-      if (requestId !== subjectPlacementRequestRef.current) return;
-      setSubjectPoint(point);
-      setSearchMessage(
-        `被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
-      );
-      return;
+        }
+        setSubjectPoint(point);
+        setSearchMessage(
+          `被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
+        );
+      });
     } else {
-      const point = viewer && !viewer.isDestroyed()
-        ? await setTripodPinFromCoordinates(
+      openPlacementConfirm("tripod", async (offsetMeters) => {
+        const rawPoint = viewer && !viewer.isDestroyed()
+          ? await setTripodPinFromCoordinates(
+              viewer,
+              coordinates.latitude,
+              coordinates.longitude,
+              false
+            )
+          : await resolveGroundPoint(
+              coordinates.latitude,
+              coordinates.longitude,
+              "三脚位置"
+            );
+        const point = offsetMeters !== 0
+          ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+          : rawPoint;
+        if (offsetMeters !== 0 && viewer && !viewer.isDestroyed()) {
+          setTripodPin(
             viewer,
-            coordinates.latitude,
-            coordinates.longitude,
-            false
-          )
-        : await resolveGroundPoint(
-            coordinates.latitude,
-            coordinates.longitude,
-            "三脚位置"
+            Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
           );
-      setTripodPoint(point);
-      setSearchMessage(
-        `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
-      );
+        }
+        setTripodPoint(point);
+        setSearchMessage(
+          `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
+        );
+      });
     }
-    stopPlacementMode();
   }
 
   function cancelSubjectEdit() {
@@ -2834,22 +2941,22 @@ ${diagnosticMessage}
       return;
     }
 
-    void (async () => {
-      let point;
-      try {
-        point = await setSubjectPinFromExplicit3dPick(
+    openPlacementConfirm("subject", async (offsetMeters) => {
+      const rawPoint = await setSubjectPinFromExplicit3dPick(
+        viewer,
+        position,
+        "3D指定地点"
+      );
+      const point = offsetMeters !== 0
+        ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+        : rawPoint;
+      if (offsetMeters !== 0) {
+        setSubjectPinFromPosition(
           viewer,
-          position,
-          "3D指定地点"
+          Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+          point.label
         );
-      } catch (error) {
-        console.warn("被写体の3D表面高度を確定できませんでした", error);
-        setSearchMessage(
-          "十字位置の3D表面高度を取得できませんでした。建物または地形へ十字を合わせてください"
-        );
-        return;
       }
-
       setSubjectPoint(point);
       setMapCenter({ latitude: point.latitude, longitude: point.longitude });
       setSubjectEditActive(false);
@@ -2858,7 +2965,7 @@ ${diagnosticMessage}
           6
         )}, ${point.longitude.toFixed(6)}`
       );
-    })();
+    });
   }
 
   function savePreview() {
@@ -3225,7 +3332,6 @@ ${diagnosticMessage}
           setSavedPlansOpen(true);
         }}
         onSaveCurrentPlan={saveCurrentComposition}
-        onShareCurrentPlan={shareCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
         onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
         precisionSettings={precisionSettings}
@@ -3753,6 +3859,8 @@ ${diagnosticMessage}
         onLoad={loadPlannerProject}
         onUpdate={updatePlannerProject}
         onDelete={removePlannerProject}
+        onShare={shareProject}
+        onImport={importShareLinkOrCode}
       />
       <CalendarScreen
         open={calendarOpen}
@@ -3778,6 +3886,16 @@ ${diagnosticMessage}
         errorMessage={sharedImportError}
         onCancel={cancelSharedImport}
         onImport={() => void confirmSharedImport()}
+      />
+      <PlacementConfirmDialog
+        open={pendingPlacement !== null}
+        kind={pendingPlacement?.kind ?? null}
+        heightOffsetMeters={pendingPlacementOffsetMeters}
+        onHeightOffsetChange={setPendingPlacementOffsetMeters}
+        busy={pendingPlacementBusy}
+        errorMessage={pendingPlacementError}
+        onConfirm={() => void confirmPendingPlacement()}
+        onCancel={cancelPendingPlacement}
       />
     </main>
   );

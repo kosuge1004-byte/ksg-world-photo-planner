@@ -22,7 +22,6 @@ type Props = {
   onChange: (settings: CameraSettings) => void;
   onOpenSavedPlans: () => void;
   onSaveCurrentPlan: () => void;
-  onShareCurrentPlan: () => void;
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
   precisionSettings: PrecisionSettings;
@@ -34,7 +33,6 @@ export function TopSettingsBar({
   onChange,
   onOpenSavedPlans,
   onSaveCurrentPlan,
-  onShareCurrentPlan,
   onOpenCalendar,
   onOpenMoonAgeCalendar,
   precisionSettings,
@@ -462,7 +460,6 @@ export function TopSettingsBar({
       <nav className="top-quick-actions" aria-label="クイック操作">
         <button type="button" className="top-preset-button" onClick={onOpenSavedPlans}><b aria-hidden="true">▣</b><span>プリセット</span></button>
         <button type="button" className="top-favorite-button" aria-label="現在の構図を保存" onClick={onSaveCurrentPlan}><b aria-hidden="true">☆</b></button>
-        <button type="button" className="top-favorite-button" aria-label="現在の構図を共有" onClick={onShareCurrentPlan}><b aria-hidden="true">⇪</b></button>
       </nav>
       {focalLengthErrorOpen && (
         <div
