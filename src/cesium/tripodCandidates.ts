@@ -25,10 +25,13 @@ const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
 const DEFAULT_SAMPLE_COUNT = 32;
-// 8分割を3往復（512分割相当）する代わりに、24分割を2往復する。
-// 576分割相当へ精度を上げつつ、DEM APIの待機を1往復減らす。
-const DEFAULT_ROOT_REFINEMENT_PASSES = 2;
-const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 24;
+// 24分割を2往復（576分割相当）する代わりに、同じ576分割相当を1往復で
+// まとめて取得する。GSIの標高APIはPNGタイル配信で1回のリクエストに含める
+// 点数を増やしてもデータ量はさほど問題にならず、往復のたびに発生する
+// 固定の通信遅延の方が支配的なため、精度（576分割相当）を落とさずに
+// DEM APIの待機をさらに1往復減らせる。
+const DEFAULT_ROOT_REFINEMENT_PASSES = 1;
+const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 576;
 const CONVERGED_POSITION_METERS = 0.05;
 const CONVERGED_HORIZONTAL_DEGREES = 0.0001;
 export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;

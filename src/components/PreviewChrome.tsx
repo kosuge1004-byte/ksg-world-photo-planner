@@ -12,7 +12,8 @@ type Props = {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetToSubject: () => void;
-  onSavePreview: () => void;
+  measuring: boolean;
+  onToggleMeasuring: () => void;
 };
 
 export function PreviewChrome({
@@ -24,7 +25,8 @@ export function PreviewChrome({
   onZoomIn,
   onZoomOut,
   onResetToSubject,
-  onSavePreview,
+  measuring,
+  onToggleMeasuring,
 }: Props) {
   const [frameMenuOpen, setFrameMenuOpen] = useState(false);
 
@@ -106,7 +108,14 @@ export function PreviewChrome({
       </div>
 
       <div className="preview-actions">
-        <button type="button" onClick={onSavePreview}><span>▧</span><small>保存</small></button>
+        <button
+          type="button"
+          className={measuring ? "active" : ""}
+          aria-pressed={measuring}
+          onClick={onToggleMeasuring}
+        >
+          <span>📏</span><small>計測</small>
+        </button>
         <button type="button" onClick={openFullscreen}><span>⛶</span><small>全画面</small></button>
       </div>
 

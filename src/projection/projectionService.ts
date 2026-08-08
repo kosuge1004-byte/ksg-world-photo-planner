@@ -115,3 +115,47 @@ export function projectToScreen(direction: Vec3, basis: ProjectionBasis): Screen
     yPercent >= 0 && yPercent <= 100;
   return { xPercent, yPercent, inFront: plane.inFront, visibleInFrame };
 }
+
+/**
+ * `projectToScreen()`の逆変換。画面座標（0-100%）から、カメラ原点を基準とした
+ * 方向ベクトルを求める。奥行きの情報は持たないため、そのままでは3D位置は
+ * 定まらない——`positionOnPlaneAtDistance()`と組み合わせて使う。
+ */
+export function screenToDirection(
+  xPercent: number,
+  yPercent: number,
+  basis: ProjectionBasis
+): Vec3 {
+  assertFovDegrees(basis.horizontalFovDegrees, "投影の水平画角");
+  assertFovDegrees(basis.verticalFovDegrees, "投影の垂直画角");
+  const planeX = ((xPercent - 50) / 50) * Math.tan(basis.horizontalFovDegrees * DEG / 2);
+  const planeY = ((yPercent - 50) / 50) * Math.tan(basis.verticalFovDegrees * DEG / 2);
+  // projectDirectionToPlane()のy軸反転（下向きを正にする）を元に戻す。
+  return {
+    x: basis.forward.x + planeX * basis.right.x - planeY * basis.up.x,
+    y: basis.forward.y + planeX * basis.right.y - planeY * basis.up.y,
+    z: basis.forward.z + planeX * basis.right.z - planeY * basis.up.z,
+  };
+}
+
+/**
+ * カメラ原点から`direction`（`screenToDirection()`の戻り値。forward成分が
+ * ちょうど1になるよう構成されている）の向きへ、カメラ前方距離
+ * `forwardDistanceMeters`だけ進んだ3D位置を返す。
+ *
+ * プレビュー画面は静止画像であり、任意の画面上の点（特に空中・空）に
+ * 実際の3D表面があるとは限らない。そのため、被写体と同じカメラ前方距離
+ * （＝被写体の奥行き平面）にあると仮定して2点間の実距離を近似する
+ * ——望遠鏡で空中の2点を見比べるのと同じ考え方。
+ */
+export function positionOnPlaneAtDistance(
+  origin: Vec3,
+  direction: Vec3,
+  forwardDistanceMeters: number
+): Vec3 {
+  return {
+    x: origin.x + direction.x * forwardDistanceMeters,
+    y: origin.y + direction.y * forwardDistanceMeters,
+    z: origin.z + direction.z * forwardDistanceMeters,
+  };
+}

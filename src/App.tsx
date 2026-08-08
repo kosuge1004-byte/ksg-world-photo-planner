@@ -30,6 +30,12 @@ import { PreviewStatus } from "./components/PreviewStatus";
 import { PreviewChrome } from "./components/PreviewChrome";
 import { CelestialTransitSearchDialog } from "./components/CelestialTransitSearchDialog";
 import { PreviewGestureLayer } from "./components/PreviewGestureLayer";
+import { PreviewMeasurementOverlay } from "./components/PreviewMeasurementOverlay";
+import {
+  measurePreviewDistanceMeters,
+  type PreviewMeasurementPoint,
+} from "./measurement/previewMeasurement";
+import { enableMapMeasurement } from "./cesium/mapMeasurement";
 import { ForegroundPreviewOverlay } from "./components/ForegroundPreviewOverlay";
 import { ForegroundObjectControls } from "./components/ForegroundObjectControls";
 import { SpotSearchScreen } from "./components/SpotSearchScreen";
@@ -471,6 +477,11 @@ function App() {
     useState<CameraSettings>(loadCameraSettings);
   const [previewViewCorrection, setPreviewViewCorrection] =
     useState<CameraViewCorrection>(loadCameraViewCorrection);
+  const [previewMeasuring, setPreviewMeasuring] = useState(false);
+  const [previewMeasurePoints, setPreviewMeasurePoints] = useState<PreviewMeasurementPoint[]>([]);
+  const [mapMeasuring, setMapMeasuring] = useState(false);
+  const [mapMeasureDistanceMeters, setMapMeasureDistanceMeters] = useState<number | null>(null);
+  const disableMapMeasurementRef = useRef<(() => void) | null>(null);
   const [precisionSettings, setPrecisionSettings] =
     useState<PrecisionSettings>(loadPrecisionSettings);
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
@@ -565,6 +576,41 @@ function App() {
       : previewFrameMode === "portrait-3-2"
         ? 2 / 3
         : previewViewportAspectRatio;
+
+  const previewMeasureDistanceMeters = useMemo(() => {
+    if (previewMeasurePoints.length < 2 || !tripodPoint || !subjectPoint) return null;
+    const [pointA, pointB] = previewMeasurePoints;
+    try {
+      return measurePreviewDistanceMeters(
+        tripodPoint,
+        subjectPoint,
+        cameraSettings,
+        previewAspectRatio,
+        calculationMode,
+        previewViewCorrection,
+        pointA,
+        pointB
+      ).distanceMeters;
+    } catch (error) {
+      console.warn("プレビュー計測の距離を算出できませんでした", error);
+      return null;
+    }
+  }, [
+    previewMeasurePoints,
+    tripodPoint,
+    subjectPoint,
+    cameraSettings,
+    previewAspectRatio,
+    calculationMode,
+    previewViewCorrection,
+  ]);
+
+  function handlePreviewMeasureTap(xPercent: number, yPercent: number): void {
+    setPreviewMeasurePoints((current) =>
+      current.length >= 2 ? [{ xPercent, yPercent }] : [...current, { xPercent, yPercent }]
+    );
+  }
+
   const previewImagingFrameStyle = useMemo(() => {
     if (previewFrameMode === "screen") {
       return { width: "100%", height: "100%" };
@@ -1741,6 +1787,12 @@ function App() {
   function stopAllEditModes() {
     stopPlacementMode();
     setSubjectEditActive(false);
+    if (disableMapMeasurementRef.current) {
+      disableMapMeasurementRef.current();
+      disableMapMeasurementRef.current = null;
+      setMapMeasuring(false);
+      setMapMeasureDistanceMeters(null);
+    }
   }
 
   /**
@@ -3015,19 +3067,33 @@ ${diagnosticMessage}
     });
   }
 
-  function savePreview() {
-    const canvas = previewCanvasRef.current;
-    if (!canvas) return;
-
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      link.href = url;
-      link.download = `ksg-preview-${dateTimeLocal.replace(/[:T]/g, "-")}.png`;
-      link.click();
-      URL.revokeObjectURL(url);
-    }, "image/png");
+  function toggleMapMeasurement(): void {
+    if (mapMeasuring) {
+      disableMapMeasurementRef.current?.();
+      disableMapMeasurementRef.current = null;
+      setMapMeasuring(false);
+      setMapMeasureDistanceMeters(null);
+      return;
+    }
+    if (mapViewMode !== "3d") {
+      setSearchMessage("計測は3D表示でのみ利用できます");
+      return;
+    }
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) {
+      setSearchMessage("3Dマップの読込完了後にお試しください");
+      return;
+    }
+    stopAllEditModes();
+    setMapTool("none");
+    setMapMeasureDistanceMeters(null);
+    disableMapMeasurementRef.current = enableMapMeasurement(
+      viewer,
+      setMapMeasureDistanceMeters,
+      () => setSearchMessage("計測地点の3D表面を取得できませんでした。地形・建物が見える位置でタップしてください")
+    );
+    setMapMeasuring(true);
+    setSearchMessage("地図を2回タップして、2点間の距離を計測してください");
   }
 
   function openMapFullscreen() {
@@ -3412,6 +3478,13 @@ ${diagnosticMessage}
                 ),
               }));
             }}
+            measuring={previewMeasuring}
+            onMeasureTap={handlePreviewMeasureTap}
+          />
+
+          <PreviewMeasurementOverlay
+            points={previewMeasurePoints}
+            distanceMeters={previewMeasureDistanceMeters}
           />
 
           <CelestialOverlay
@@ -3464,8 +3537,12 @@ ${diagnosticMessage}
           onZoomOut={() =>
             changePreviewFocalLength(cameraSettings.focalLengthMm * 0.88)
           }
-          onSavePreview={savePreview}
           onResetToSubject={() => setPreviewViewCorrection(DEFAULT_CAMERA_VIEW_CORRECTION)}
+          measuring={previewMeasuring}
+          onToggleMeasuring={() => {
+            setPreviewMeasuring((current) => !current);
+            setPreviewMeasurePoints([]);
+          }}
         />
 
         <CelestialMenu
@@ -3693,7 +3770,25 @@ ${diagnosticMessage}
               </div>
             )}
 
+            {mapMeasuring && (
+              <div className="map-tripod-candidate-status complete" role="status" aria-live="polite">
+                {mapMeasureDistanceMeters === null
+                  ? "地図を2回タップして距離を計測してください"
+                  : mapMeasureDistanceMeters >= 1000
+                    ? `距離 ${(mapMeasureDistanceMeters / 1000).toFixed(2)}km（もう一度タップでやり直し）`
+                    : `距離 ${Math.round(mapMeasureDistanceMeters)}m（もう一度タップでやり直し）`}
+              </div>
+            )}
+
             <div className="map-right-actions">
+              <button
+                type="button"
+                className={mapMeasuring ? "active" : ""}
+                aria-pressed={mapMeasuring}
+                onClick={toggleMapMeasurement}
+              >
+                <span>📏</span><small>計測</small>
+              </button>
               <button
                 type="button"
                 onClick={showCurrentLocation}
