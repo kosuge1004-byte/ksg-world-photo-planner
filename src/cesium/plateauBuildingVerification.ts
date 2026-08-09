@@ -1,6 +1,7 @@
-import { Cartesian3, Cartographic, Ellipsoid, Math as CesiumMath, Ray, type Scene, type Viewer } from "cesium";
+import { Cartesian3, Cartographic, Ellipsoid, Ray, type Scene, type Viewer } from "cesium";
 
 import { fetchGsiGeoidHeight, groundPointFromCoordinates } from "./worldTerrain";
+import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
 
@@ -34,6 +35,11 @@ type RayPickingScene = Scene & {
 /** 接地高さの許容誤差。地下部分・DEM解像度による差を吸収する。 */
 const BASE_HEIGHT_TOLERANCE_METERS = 5;
 const VERTICAL_SEARCH_ALTITUDE_METERS = 3000;
+// 鉄塔・電波塔のような鉄骨格子構造は、中心1点だけを垂直に狙うと隙間を
+// 素通りして何にも当たらないことがある。周辺の複数点を試すことで、
+// 手動での再指定を求めずに自動で建物（構造物）を捉えられるようにする。
+const SAMPLING_OFFSETS_METERS = [0, 3, 6, 10];
+const SAMPLING_BEARINGS_DEGREES = [0, 45, 90, 135, 180, 225, 270, 315];
 
 export type PlateauBuildingHeightVerification = {
   /** 建物接地点の高さがGSI DEMと許容範囲内で一致したか。 */
@@ -139,6 +145,11 @@ export async function verifyPlateauBuildingBaseHeight(
  * 全国一律の高さ補正はせず、その建物の接地点をGSI DEMと個別に検証できた
  * 場合だけ屋根高度を採用する。建物が無い・検証できない場合はnullを返し、
  * 呼び出し側は通常のDEM地面高度にフォールバックする。
+ *
+ * 中心点の真上だけでは、鉄塔・電波塔のような格子構造の隙間を素通りして
+ * 何も検出できないことがあるため、中心点に加えて周辺の複数点も自動で
+ * 試す。被写体自体の緯度経度（マーカー位置）は入力のまま変更せず、
+ * 見つかった構造物の高さだけを採用する。
  */
 export async function resolvePlateauRoofGroundPoint(
   viewer: Viewer,
@@ -147,56 +158,76 @@ export async function resolvePlateauRoofGroundPoint(
   label: string,
   signal?: AbortSignal
 ): Promise<ResolvedGroundPoint | null> {
-  const hits = await plateauVerticalRaycast(viewer, longitude, latitude, signal);
-  if (!hits) return null;
-  const lowestHit = hits.reduce((lowest, current) =>
-    current.height < lowest.height ? current : lowest
-  );
-  const highestHit = hits.reduce((highest, current) =>
-    current.height > highest.height ? current : highest
-  );
+  const origin = { latitude, longitude };
+  const candidates: { latitude: number; longitude: number }[] = [origin];
+  for (const offsetMeters of SAMPLING_OFFSETS_METERS.slice(1)) {
+    for (const bearingDegrees of SAMPLING_BEARINGS_DEGREES) {
+      const destination = calculateKarneyDestinationPoint(
+        { latitude, longitude, height: 0, label },
+        bearingDegrees,
+        offsetMeters
+      );
+      candidates.push({ latitude: destination.latitude, longitude: destination.longitude });
+    }
+  }
 
-  let demGroundPoint;
-  try {
-    demGroundPoint = await groundPointFromCoordinates(
-      latitude,
-      longitude,
-      `${label}の接地点検証用DEM`
+  for (const candidate of candidates) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const hits = await plateauVerticalRaycast(viewer, candidate.longitude, candidate.latitude, signal);
+    if (!hits) continue;
+    const lowestHit = hits.reduce((lowest, current) =>
+      current.height < lowest.height ? current : lowest
     );
-  } catch (error) {
-    console.warn("PLATEAU建物検証用のDEM高度を取得できませんでした", error);
-    return null;
-  }
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const highestHit = hits.reduce((highest, current) =>
+      current.height > highest.height ? current : highest
+    );
 
-  const discrepancyMeters = lowestHit.height - demGroundPoint.height;
-  if (Math.abs(discrepancyMeters) > BASE_HEIGHT_TOLERANCE_METERS) {
-    // 接地点がDEMと大きくズレている＝この建物の高さ基準は信頼できない。
-    // 屋根高度を採用せず、呼び出し側は通常のDEM地面高度へフォールバックする。
-    return null;
+    let demGroundPoint;
+    try {
+      demGroundPoint = await groundPointFromCoordinates(
+        candidate.latitude,
+        candidate.longitude,
+        `${label}の接地点検証用DEM`
+      );
+    } catch (error) {
+      console.warn("PLATEAU建物検証用のDEM高度を取得できませんでした", error);
+      continue;
+    }
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+    const discrepancyMeters = lowestHit.height - demGroundPoint.height;
+    if (Math.abs(discrepancyMeters) > BASE_HEIGHT_TOLERANCE_METERS) {
+      // 接地点がDEMと大きくズレている＝この構造物の高さ基準は信頼できない。
+      // この候補点は諦めて、次の候補点を試す。
+      continue;
+    }
+
+    let geoidHeightMeters: number;
+    try {
+      geoidHeightMeters = await fetchGsiGeoidHeight(lowestHit);
+    } catch (error) {
+      console.warn(`${label}のジオイド高を取得できませんでした`, error);
+      continue;
+    }
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+    // 被写体のマーカー位置（緯度経度）は入力のまま変更しない。
+    // 見つかった構造物の高さだけを採用する。
+    const ellipsoidalHeightMeters = highestHit.height;
+    const point: ResolvedGroundPoint = {
+      latitude: origin.latitude,
+      longitude: origin.longitude,
+      height: ellipsoidalHeightMeters,
+      ellipsoidalHeightMeters,
+      orthometricHeightMeters: ellipsoidalHeightMeters - geoidHeightMeters,
+      geoidHeightMeters,
+      heightSource: "3d-picked",
+      label,
+    };
+    if (isResolvedGroundPoint(point)) return point;
   }
 
-  let geoidHeightMeters: number;
-  try {
-    geoidHeightMeters = await fetchGsiGeoidHeight(lowestHit);
-  } catch (error) {
-    console.warn(`${label}のジオイド高を取得できませんでした`, error);
-    return null;
-  }
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-
-  const ellipsoidalHeightMeters = highestHit.height;
-  const point: ResolvedGroundPoint = {
-    latitude: CesiumMath.toDegrees(highestHit.latitude),
-    longitude: CesiumMath.toDegrees(highestHit.longitude),
-    height: ellipsoidalHeightMeters,
-    ellipsoidalHeightMeters,
-    orthometricHeightMeters: ellipsoidalHeightMeters - geoidHeightMeters,
-    geoidHeightMeters,
-    heightSource: "3d-picked",
-    label,
-  };
-  return isResolvedGroundPoint(point) ? point : null;
+  return null;
 }
 
 export { BASE_HEIGHT_TOLERANCE_METERS };

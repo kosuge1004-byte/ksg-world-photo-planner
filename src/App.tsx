@@ -1404,7 +1404,7 @@ function App() {
           });
         }
       });
-    }, 360);
+    }, 150);
     return () => {
       cancelled = true;
       controller.abort();
@@ -1500,7 +1500,7 @@ function App() {
         console.warn("天の川の地形・建物遮蔽を検証できませんでした", error);
         if (!cancelled) setMilkyWayLineOfSight({});
       });
-    }, 360);
+    }, 150);
 
     return () => {
       cancelled = true;

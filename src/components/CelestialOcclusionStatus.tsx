@@ -83,14 +83,6 @@ export function CelestialOcclusionStatus({
       aria-live="polite"
       aria-label="天体の遮蔽・屈折不確実性"
     >
-      <button
-        type="button"
-        className="celestial-occlusion-status-dismiss"
-        aria-label="このメッセージを閉じる"
-        onClick={() => setDismissedSignature(signature)}
-      >
-        ×
-      </button>
       {blocked.map((item) => (
         <span key={item.id} className="blocked">
           <b>{item.label}</b>{item.message}
@@ -117,6 +109,14 @@ export function CelestialOcclusionStatus({
           <b>{ids.map((id) => BODY_LABELS[id]).join("・")}</b>{message}
         </span>
       ))}
+      <button
+        type="button"
+        className="celestial-occlusion-status-dismiss"
+        aria-label="このメッセージを閉じる"
+        onClick={() => setDismissedSignature(signature)}
+      >
+        閉じる ×
+      </button>
     </section>
   );
 }
