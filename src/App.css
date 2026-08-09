@@ -503,9 +503,29 @@ button { cursor: pointer; }
 .preview-actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
 .preview-actions button.active { color: #74a6ff; border-color: #246bd7; }
 .preview-measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 28; }
+.preview-measurement-line-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .preview-measurement-line { stroke: #5ab9ff; stroke-width: 2; stroke-dasharray: 3 2; }
-.preview-measurement-point { fill: #5ab9ff; stroke: #000; stroke-width: 0.6; }
-.preview-measurement-label { display: inline-block; padding: 2px 6px; border-radius: 5px; background: rgba(1,4,8,.88); color: #fff; font-size: 11px; font-weight: 700; white-space: nowrap; transform: translateY(-100%); }
+.preview-measurement-point {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #5ab9ff;
+  border: 1.5px solid #000;
+  transform: translate(-50%, -50%);
+}
+.preview-measurement-label {
+  position: absolute;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(1,4,8,.88);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  margin-top: -8px;
+}
 .preview-actions button { width: 44px; min-height: 40px; padding: 2px; }
 .preview-actions button:last-child { width: 44px; }
 .preview-actions span { font-size: 22px; line-height: .9; }

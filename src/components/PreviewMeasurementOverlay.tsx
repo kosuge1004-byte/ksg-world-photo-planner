@@ -14,41 +14,43 @@ function formatDistance(distanceMeters: number): string {
 export function PreviewMeasurementOverlay({ points, distanceMeters }: Props) {
   if (points.length === 0) return null;
   const [a, b] = points;
+  // 点・ラベルはSVGのviewBox座標（非等方スケーリング）に置くと、円が楕円に
+  // 潰れたりラベル背景が引き伸ばされたりするため、通常のHTML要素を
+  // left/top%で配置する（線だけは両端を%指定するだけなのでSVGのままでよい）。
   return (
-    <svg
-      className="preview-measurement-overlay"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
+    <div className="preview-measurement-overlay" aria-hidden="true">
       {a && b && (
-        <line
-          x1={a.xPercent} y1={a.yPercent}
-          x2={b.xPercent} y2={b.yPercent}
-          className="preview-measurement-line"
-          vectorEffect="non-scaling-stroke"
-        />
+        <svg
+          className="preview-measurement-line-layer"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <line
+            x1={a.xPercent} y1={a.yPercent}
+            x2={b.xPercent} y2={b.yPercent}
+            className="preview-measurement-line"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
       )}
       {points.map((point, index) => (
-        <circle
+        <div
           key={index}
-          cx={point.xPercent}
-          cy={point.yPercent}
-          r={1.4}
           className="preview-measurement-point"
-          vectorEffect="non-scaling-stroke"
+          style={{ left: `${point.xPercent}%`, top: `${point.yPercent}%` }}
         />
       ))}
       {a && b && distanceMeters !== null && (
-        <foreignObject
-          x={Math.min(a.xPercent, b.xPercent, 92)}
-          y={Math.min(a.yPercent, b.yPercent, 92)}
-          width={40}
-          height={12}
+        <div
+          className="preview-measurement-label"
+          style={{
+            left: `${(a.xPercent + b.xPercent) / 2}%`,
+            top: `${(a.yPercent + b.yPercent) / 2}%`,
+          }}
         >
-          <div className="preview-measurement-label">{formatDistance(distanceMeters)}</div>
-        </foreignObject>
+          {formatDistance(distanceMeters)}
+        </div>
       )}
-    </svg>
+    </div>
   );
 }
