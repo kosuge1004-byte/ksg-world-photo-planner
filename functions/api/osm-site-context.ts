@@ -26,14 +26,14 @@ function requestPoints(body: unknown): OsmContextRequestPoint[] | null {
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
-    return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "public, max-age=300");
+    return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
   }
   configureCloudflareServerRuntime(context);
   try {
     const body = await context.request.json() as unknown;
     const points = requestPoints(body);
     if (!points) {
-      return jsonResponse({ error: "候補座標がありません" }, 400, "public, max-age=300");
+      return jsonResponse({ error: "候補座標がありません" }, 400, "no-store");
     }
     const includeDetails = !(typeof body === "object" && body !== null &&
       "includeDetails" in body && body.includeDetails === false);
@@ -52,6 +52,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=300");
   } catch (error) {
-    return jsonResponse({ error: errorMessage(error) }, 422, "public, max-age=300");
+    // エラー応答は公開キャッシュしない（失敗を5分キャッシュして再試行を妨げない）。
+    return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
   }
 };

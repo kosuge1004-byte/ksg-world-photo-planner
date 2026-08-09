@@ -41,16 +41,19 @@ test("large DEM requests split until Cloudflare can complete them", async () => 
     });
   };
 
-  const result = await fetchGsiElevationSamples(points(40), undefined, fetcher);
+  const result = await fetchGsiElevationSamples(points(100), undefined, fetcher);
 
-  assert.equal(result.samples.length, 40);
+  assert.equal(result.samples.length, 100);
   assert.equal(result.failedPointCount, 0);
   assert.ok(result.samples.every((sample) => sample.source === "DEM5A"));
+  // 100点は1リクエストあたり最大64点でまず2つ（64点・36点）に分割され、
+  // サーバーが8点超を拒否するため、8点以下に収まるまで再帰的に半分へ分割し続ける。
+  assert.ok(requestSizes.includes(64));
   assert.ok(requestSizes.includes(32));
   assert.ok(requestSizes.includes(16));
   assert.ok(requestSizes.includes(8));
-  assert.ok(Math.max(...requestSizes) <= 32);
-  assert.ok(maximumActiveRequests <= 2);
+  assert.ok(Math.max(...requestSizes) <= 64);
+  assert.ok(maximumActiveRequests <= 16);
 });
 
 test("an unrecoverable DEM point does not discard its neighboring points", async () => {

@@ -29,13 +29,13 @@ function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
-    return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "public, max-age=3600");
+    return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
   }
   configureCloudflareServerRuntime(context);
   try {
     const points = requestPoints(await context.request.json());
     if (!points) {
-      return jsonResponse({ error: "座標の配列がありません" }, 400, "public, max-age=3600");
+      return jsonResponse({ error: "座標の配列がありません" }, 400, "no-store");
     }
     const cacheKeyInput = points.map((point) => ({
       latitude: Number(point.latitude.toFixed(5)),
@@ -47,6 +47,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }, async () => ({ samples: await lookupGsiElevations(points, context.request.signal) }), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=3600");
   } catch (error) {
-    return jsonResponse({ error: errorMessage(error) }, 422, "public, max-age=3600");
+    // エラー応答は公開キャッシュしない（失敗を1時間キャッシュして再試行を妨げない）。
+    return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
   }
 };

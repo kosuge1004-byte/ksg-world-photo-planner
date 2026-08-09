@@ -10,7 +10,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   const latitude = Number(url.searchParams.get("latitude"));
   const longitude = Number(url.searchParams.get("longitude"));
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-    return jsonResponse({ error: "緯度・経度が不正です" }, 400, "public, max-age=86400");
+    return jsonResponse({ error: "緯度・経度が不正です" }, 400, "no-store");
   }
   try {
     const input = { latitude: Number(latitude.toFixed(4)), longitude: Number(longitude.toFixed(4)) };
@@ -19,8 +19,9 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }, async () => ({ timeZone: (await findCloudflareTimeZones(latitude, longitude, env.ASSETS, request.url))[0] ?? null }), context.waitUntil);
     return result.value.timeZone
       ? jsonResponse({ timeZone: result.value.timeZone, cache: result.cache }, 200, "public, max-age=86400")
-      : jsonResponse({ error: "タイムゾーンを特定できません", cache: result.cache }, 404, "public, max-age=86400");
+      : jsonResponse({ error: "タイムゾーンを特定できません", cache: result.cache }, 404, "no-store");
   } catch (error) {
-    return jsonResponse({ error: error instanceof Error ? error.message : String(error) }, 422, "public, max-age=86400");
+    // エラー応答は公開キャッシュしない（失敗を24時間キャッシュして再試行を妨げない）。
+    return jsonResponse({ error: error instanceof Error ? error.message : String(error) }, 422, "no-store");
   }
 };

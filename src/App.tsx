@@ -2273,8 +2273,7 @@ ${diagnosticMessage}
       return;
     }
     let appliedResult = result;
-    if (precisionSettings.accuracyMode === "highest") {
-      setSpotSearchOpen(false);
+    if (precisionSettings.accuracyMode === "highest") {      setSpotSearchOpen(false);
       setHighestPrecisionProgress({
         percent: 2,
         message: "三脚位置を高精度計算中",
@@ -2310,6 +2309,24 @@ ${diagnosticMessage}
           onAction: () => setSpotSearchOpen(true),
         });
         return;
+      }
+    }
+    // 標準モード：高精度モードのGoogle 3Dクランプに相当する処理として、
+    // PLATEAU建物をGSI DEMで地点ごとに検証した上で被写体を屋根面へ合わせる
+    // （建物が無い・検証できない場合はDEM地面のまま変更しない）。
+    if (precisionSettings.accuracyMode !== "highest") {
+      try {
+        const roofPoint = await resolvePlateauRoofGroundPoint(
+          viewer,
+          appliedResult.subject.latitude,
+          appliedResult.subject.longitude,
+          appliedResult.subject.label
+        );
+        if (roofPoint) {
+          appliedResult = { ...appliedResult, subject: roofPoint };
+        }
+      } catch (error) {
+        console.warn("被写体の建物屋根への合わせ込みに失敗しました", error);
       }
     }
     stopAllEditModes();
@@ -3755,19 +3772,28 @@ ${diagnosticMessage}
             )}
 
             {tripodCandidateCalculationStatus !== "idle" && (
-              <div
-                className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus}`}
-                role="status"
+              <button
+                type="button"
+                className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus} ${
+                  tripodCandidateCalculationStatus === "complete" ? "tappable" : ""
+                }`}
+                role={tripodCandidateCalculationStatus === "complete" ? undefined : "status"}
                 aria-live="polite"
+                disabled={tripodCandidateCalculationStatus !== "complete"}
+                onClick={
+                  tripodCandidateCalculationStatus === "complete"
+                    ? placeTripodAtDisplayedCandidate
+                    : undefined
+                }
               >
                 {tripodCandidateCalculationStatus === "calculating"
                   ? "三脚候補を精密計算中…"
                   : tripodCandidateCalculationStatus === "complete"
-                    ? `確定した三脚候補：${tripodCandidates.length}件`
+                    ? "確定した三脚候補"
                     : tripodCandidateCalculationStatus === "no-solution"
                       ? "現在の条件では確定できる三脚候補がありません"
                       : "三脚候補の計算に失敗しました"}
-              </div>
+              </button>
             )}
 
             {mapMeasuring && (

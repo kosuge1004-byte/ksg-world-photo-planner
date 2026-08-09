@@ -502,7 +502,7 @@ button { cursor: pointer; }
 
 .preview-actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
 .preview-actions button.active { color: #74a6ff; border-color: #246bd7; }
-.preview-measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; }
+.preview-measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 28; }
 .preview-measurement-line { stroke: #5ab9ff; stroke-width: 2; stroke-dasharray: 3 2; }
 .preview-measurement-point { fill: #5ab9ff; stroke: #000; stroke-width: 0.6; }
 .preview-measurement-label { display: inline-block; padding: 2px 6px; border-radius: 5px; background: rgba(1,4,8,.88); color: #fff; font-size: 11px; font-weight: 700; white-space: nowrap; transform: translateY(-100%); }
@@ -840,7 +840,9 @@ button { cursor: pointer; }
 .map-current-location-status.permission-denied button { min-height: 36px; padding: 5px 8px; color: #fff; border: 1px solid #55a7ff; border-radius: 6px; background: #0759a8; font: inherit; font-size: 11px; font-weight: 700; touch-action: manipulation; }
 .location-notice-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 7px; }
 .map-current-location-status.permission-denied .location-notice-actions .secondary { border-color: #596675; background: #202833; }
-.map-tripod-candidate-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(250px, calc(100% - 148px)); padding: 5px 8px; color: #eef7ff; border: 1px solid rgba(90,185,255,.58); border-radius: 6px; background: rgba(2,8,14,.92); font-size: 8px; font-weight: 700; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
+.map-tripod-candidate-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(250px, calc(100% - 148px)); padding: 5px 8px; color: #eef7ff; border: 1px solid rgba(90,185,255,.58); border-radius: 6px; background: rgba(2,8,14,.92); font: inherit; font-size: 8px; font-weight: 700; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
+.map-tripod-candidate-status.tappable { pointer-events: auto !important; cursor: pointer; }
+.map-tripod-candidate-status.tappable:active { background: rgba(2,8,14,.7); }
 .map-tripod-candidate-status.calculating::before { content: "⌛ "; }
 .map-tripod-candidate-status.complete { color: #d9ffe0; border-color: rgba(73,214,111,.64); }
 .map-tripod-candidate-status.no-solution,
@@ -1070,6 +1072,7 @@ button { cursor: pointer; }
 .celestial-transit-dialog {
   width: min(100%, 430px);
   max-height: min(88vh, 760px);
+  max-height: min(88dvh, 760px);
   overflow: auto;
   border: 1px solid #384554;
   border-radius: 14px;

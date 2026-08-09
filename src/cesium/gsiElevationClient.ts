@@ -15,9 +15,16 @@ export type GsiElevationClientResult = {
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-const REQUEST_BATCH_SIZE = 32;
+// 1リクエストあたりの点数と同時実行数。標高APIはGSIタイルCDN＋R2キャッシュに
+// 裏付けられた通常のAPIであり、応答が不安定な国土地理院ジオイドCGIとは事情が
+// 異なるため、ここは純粋な通信I/Oの並列度を上げるだけで安全に速くできる
+// （CPU/GPUを使う計算ではないため、端末性能に応じて絞る必要がない）。
+// 576点の精密化探索は64点ずつ最大9リクエストに分かれるため、同時実行数を
+// それ以上にすれば理論上すべて同時に発火し、体感は「1往復」に近づく。
+// 複数の天体を並行探索する場合に備えて余裕を持たせている。
+const REQUEST_BATCH_SIZE = 64;
 const REQUEST_TIMEOUT_MS = 30_000;
-const MAX_CONCURRENT_REQUESTS = 2;
+const MAX_CONCURRENT_REQUESTS = 16;
 const SINGLE_POINT_RETRY_DELAY_MS = 250;
 
 function emptySamples(count: number): GsiElevationApiSample[] {

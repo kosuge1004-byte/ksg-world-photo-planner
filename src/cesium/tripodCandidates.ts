@@ -33,7 +33,13 @@ const DEFAULT_SAMPLE_COUNT = 32;
 const DEFAULT_ROOT_REFINEMENT_PASSES = 1;
 const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 576;
 const CONVERGED_POSITION_METERS = 0.05;
-const CONVERGED_HORIZONTAL_DEGREES = 0.0001;
+// 収束判定の角度は、探索エンジン自身がどこでも「収束」と扱っている許容誤差
+// （0.002度）に揃える。従来の0.0001度（0.36秒角）は1mメッシュDEMの実測精度
+// より20倍以上厳しく、データの精度を超えた桁を追いかけて3回目の反復（＝
+// 追加のDEM通信往復）をほぼ毎回発生させていた。ここを緩めても、探索の
+// 最終的な角度誤差の許容値自体は変えていないため、得られる位置の精度は
+// 従来と変わらない。
+const CONVERGED_HORIZONTAL_DEGREES = 0.002;
 export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;
 
 export type TerrainSampler = (

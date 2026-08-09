@@ -452,21 +452,6 @@ export function updateCelestialMapEntities(
       },
     });
 
-    viewer.entities.add({
-      id: `${PREFIX}${point.id}-line`,
-      polyline: {
-        positions: [origin, target],
-        width: positionOnly ? 1 : 2,
-        material: positionOnly
-          ? new PolylineDashMaterialProperty({
-              color: color.withAlpha(.38),
-              dashLength: 8,
-            })
-          : color.withAlpha(0.55),
-        clampToGround: false,
-      },
-    });
-
   }
 
   if (visibility.milkyWay) {
