@@ -481,6 +481,16 @@ function TimelinePanelComponent({
         </div>
 
         <div className="timeline-ruler-shell">
+          <button
+            type="button"
+            className="timeline-minute-step timeline-minute-step-back"
+            aria-label="時刻を1分戻す"
+            title="1分戻す"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => updateTimelineTime(selectedTime - TIMELINE_SNAP_MS)}
+          >
+            −1
+          </button>
           <div
             ref={timelineRulerRef}
             className="timeline-ruler timeline-scroll-ruler"
@@ -512,16 +522,6 @@ function TimelinePanelComponent({
             </div>
             <span className="timeline-selection-line" aria-hidden="true" />
           </div>
-          <button
-            type="button"
-            className="timeline-minute-step timeline-minute-step-back"
-            aria-label="時刻を1分戻す"
-            title="1分戻す"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => updateTimelineTime(selectedTime - TIMELINE_SNAP_MS)}
-          >
-            −1
-          </button>
           <button
             type="button"
             className="timeline-minute-step timeline-minute-step-forward"
