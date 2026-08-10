@@ -436,7 +436,7 @@ export function TopSettingsBar({
             className="calculation-menu-close"
             onClick={() => setModeMenuOpen(false)}
           >
-            <b>閉じる</b><small>ハンバーガーメニューを閉じる</small>
+            <b>閉じる</b>
           </button>
         </div>
       )}
