@@ -52,6 +52,7 @@ export function TopSettingsBar({
     return () => document.removeEventListener("pointerdown", handleOutsidePointer);
   }, [modeMenuOpen]);
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
+  const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
   const [focalLengthInput, setFocalLengthInput] = useState(
     String(settings.focalLengthMm)
@@ -122,7 +123,7 @@ export function TopSettingsBar({
       </button>
       {modeMenuOpen && (
         <div
-          className={precisionMenuOpen
+          className={(precisionMenuOpen || threeDSourceMenuOpen)
             ? "calculation-mode-menu precision-open"
             : "calculation-mode-menu"}
           role="dialog"
@@ -163,7 +164,10 @@ export function TopSettingsBar({
             </>
           )}
           <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
-            <b>精度設定</b><small>精度・速度・通信量を確認</small>
+            <b>精度設定</b><small>屈折補正・遮蔽の詳細設定</small>
+          </button>
+          <button type="button" onClick={() => setThreeDSourceMenuOpen((current) => !current)} aria-expanded={threeDSourceMenuOpen}>
+            <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
           </button>
           <button
             type="button"
@@ -207,9 +211,9 @@ export function TopSettingsBar({
               </nav>
             </section>
           )}
-          {precisionMenuOpen && (
+          {threeDSourceMenuOpen && (
             <fieldset className="precision-settings-panel">
-              <legend>精度設定</legend>
+              <legend>3D表示選択</legend>
               <label className="precision-choice">
                 <input
                   type="radio"
@@ -222,10 +226,10 @@ export function TopSettingsBar({
                 />
                 <span className="precision-choice-copy">
                   <span className="precision-choice-title">
-                    <b>標準（無料）</b><small>初期値</small>
+                    <b>標準3D表示（無料）</b><small>初期値</small>
                   </span>
                   <small>
-                    Google Photorealistic 3D Tilesを使用しません。天体計算、Karney測地線、DEM、ジオイド、気象連動屈折補正など従量制でない計算は高精度モードと同じです。
+                    Google Photorealistic 3D Tilesを使用しません。天体計算、Karney測地線、DEM、ジオイド、気象連動屈折補正など従量制でない計算は変わりません。
                   </small>
                 </span>
               </label>
@@ -240,16 +244,16 @@ export function TopSettingsBar({
                   })}
                 />
                 <span className="precision-choice-copy">
-                  <span className="precision-choice-title"><b>高精度（従量制）</b></span>
+                  <span className="precision-choice-title"><b>Google Photorealistic 3D Tiles（有料）</b></span>
                   <small>
-                    標準モードと同じ計算に加え、Google Photorealistic 3D Tilesを使った建物表面・遮蔽・最終3D確認を行います。従量制サービスの利用量が増えます。
+                    標準3D表示と同じ計算に加え、Google Photorealistic 3D Tilesを使った建物表面・遮蔽・最終3D確認を行います。従量制サービスの利用量が増えます。
                   </small>
                 </span>
               </label>
               <div className="precision-data-guide">
                 <strong>使用する地形・3Dデータ</strong>
                 <small>
-                  <b>DEM（地形の高さデータ）</b>、ジオイド、気象補正、天体計算は標準・高精度で共通です。
+                  <b>DEM（地形の高さデータ）</b>、ジオイド、気象補正、天体計算はどちらの表示でも共通です。
                 </small>
                 <small>
                   <b>Google 3D（建物を含む立体データ）</b>は三脚・被写体の高さと建物の遮蔽確認に使います。詳しいデータほど読込時間と通信量が増える場合があります。

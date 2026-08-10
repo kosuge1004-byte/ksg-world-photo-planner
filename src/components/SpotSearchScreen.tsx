@@ -778,6 +778,7 @@ ${diagnostic}` : ""}`
               ? "チェック時のみ天体条件と三脚候補を計算"
               : "被写体を選択した場合のみ利用できます"}</small>
           </span>
+          <b className="spot-search-beta-badge">ベータ版<br />（β版）</b>
         </label>
 
         {searchDateTime && <>
