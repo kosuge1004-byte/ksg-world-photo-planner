@@ -103,7 +103,7 @@ button { cursor: pointer; }
 
 .calculation-mode-menu > strong { font-size: 11px; }
 .calculation-mode-menu.precision-open {
-  width: min(340px, calc(100vw - 10px));
+  width: min(420px, calc(100vw - 8px));
 }
 .calculation-mode-menu > .calculation-menu-section { margin-top: 3px; padding-top: 6px; border-top: 1px solid #313944; color: #8ea0b3; font-size: 8px; }
 .calculation-mode-menu button {
@@ -1488,9 +1488,9 @@ button { cursor: pointer; }
   stroke: rgba(15, 15, 15, .9);
 }
 
-/* 2026-07-23: enlarge menu and main-screen button labels without resizing controls. */
+/* 2026-08-10: use nearly the full phone width so menu labels and descriptions do not feel cramped. */
 .calculation-mode-menu {
-  width: min(320px, calc(100vw - 12px));
+  width: min(420px, calc(100vw - 8px));
   gap: 7px;
   padding: 11px;
 }
@@ -1594,7 +1594,7 @@ button { cursor: pointer; }
 
 @media (max-height: 720px) {
   .calculation-mode-menu {
-    width: min(300px, calc(100vw - 10px));
+    width: min(420px, calc(100vw - 8px));
   }
   .calculation-mode-menu button b { font-size: 15px; }
   .calculation-mode-menu button small { font-size: 11px; }
@@ -2142,4 +2142,15 @@ body.pseudo-fullscreen-active {
 .calculation-mode-menu.precision-open .precision-data-guide strong,
 .calculation-mode-menu.precision-open .precision-number-setting > strong {
   font-size: 12px;
+}
+
+
+/* 2026-08-10: explicit final close action for the hamburger menu. */
+.calculation-mode-menu .calculation-menu-close {
+  margin-top: 3px;
+  border-color: #566170;
+  background: #171d24;
+}
+.calculation-mode-menu .calculation-menu-close b {
+  color: #f4f6f8;
 }

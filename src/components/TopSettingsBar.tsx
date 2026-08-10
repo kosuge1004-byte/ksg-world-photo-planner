@@ -431,6 +431,13 @@ export function TopSettingsBar({
               </div>
             </fieldset>
           )}
+          <button
+            type="button"
+            className="calculation-menu-close"
+            onClick={() => setModeMenuOpen(false)}
+          >
+            <b>閉じる</b><small>ハンバーガーメニューを閉じる</small>
+          </button>
         </div>
       )}
       <label className="top-setting focal-setting">
