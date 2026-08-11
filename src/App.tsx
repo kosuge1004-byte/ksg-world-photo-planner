@@ -770,10 +770,8 @@ function App() {
     if (Number.isNaN(selectedDate.getTime())) {
       return [];
     }
-    // 連続スクロール中も天の川を点表示へ退化させず、帯として追従させる。
-    // 操作中だけサンプル間隔を広げて負荷を抑え、停止後は5°刻みへ戻す。
-    const milkyWaySampleStepDegrees = timelineInteracting ? 15 : 5;
-
+    // 連続スクロール中も点表示へ落とさず、粗い銀河面帯を維持する。
+    // 停止後は5°刻みへ戻し、形状を精密化する。
     return calculateMilkyWayScreenPath(
       selectedDate,
       tripodPoint,
@@ -782,7 +780,7 @@ function App() {
       previewAspectRatio,
       calculationMode,
       previewViewCorrection,
-      milkyWaySampleStepDegrees,
+      timelineInteracting ? 20 : 5,
       previewRefractionWeather
     );
   }, [

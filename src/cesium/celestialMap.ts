@@ -98,7 +98,7 @@ function updateSharedGroundLines(
 const COLORS = {
   sun: Color.GOLD,
   moon: Color.LIGHTCYAN,
-  milkyWay: Color.MEDIUMPURPLE,
+  milkyWay: Color.fromCssColorString("#d8d0c5"),
   polaris: Color.WHITE,
 } as const;
 
@@ -486,12 +486,23 @@ export function updateCelestialMapEntities(
             Math.max(-2, Math.min(45, point.southEdgeAltitudeDegrees)),
             distanceMeters
           ));
+      // 天の川は「紫の点線」ではなく、写真の銀河面に近い自然色の連続帯として示す。
+      // 3D地図では地形を隠さないよう幅と不透明度を抑え、中心方向だけを明確にする。
       viewer.entities.add({
         id: `${PREFIX}milkyWay-band-wide-${segmentIndex}`,
         polyline: {
           positions: centerPositions,
-          width: 12,
-          material: Color.MEDIUMPURPLE.withAlpha(0.18),
+          width: 9,
+          material: Color.fromCssColorString("#9aa8b8").withAlpha(0.11),
+          clampToGround: false,
+        },
+      });
+      viewer.entities.add({
+        id: `${PREFIX}milkyWay-band-body-${segmentIndex}`,
+        polyline: {
+          positions: centerPositions,
+          width: 5,
+          material: Color.fromCssColorString("#d7d1c7").withAlpha(0.22),
           clampToGround: false,
         },
       });
@@ -499,11 +510,8 @@ export function updateCelestialMapEntities(
         id: `${PREFIX}milkyWay-band-core-${segmentIndex}`,
         polyline: {
           positions: centerPositions,
-          width: 3,
-          material: new PolylineDashMaterialProperty({
-            color: Color.MEDIUMPURPLE.withAlpha(0.9),
-            dashLength: 14,
-          }),
+          width: 1.4,
+          material: Color.fromCssColorString("#f3e7d4").withAlpha(0.70),
           clampToGround: false,
         },
       });
@@ -512,11 +520,8 @@ export function updateCelestialMapEntities(
           id: `${PREFIX}milkyWay-band-edge-${segmentIndex}-${edgeIndex}`,
           polyline: {
             positions,
-            width: 1.5,
-            material: new PolylineDashMaterialProperty({
-              color: Color.MEDIUMPURPLE.withAlpha(0.65),
-              dashLength: 9,
-            }),
+            width: 0.7,
+            material: Color.fromCssColorString("#b7c1cc").withAlpha(0.20),
             clampToGround: false,
           },
         });

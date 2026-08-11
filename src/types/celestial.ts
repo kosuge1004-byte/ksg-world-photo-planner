@@ -113,6 +113,7 @@ export type CelestialScreenPoint = HorizontalCoordinates & {
 };
 
 export type MilkyWayPathPoint = HorizontalCoordinates & {
+  galacticLongitudeDegrees: number;
   xPercent: number;
   yPercent: number;
   northEdgeAzimuthDegrees: number;

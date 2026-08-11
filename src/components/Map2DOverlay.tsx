@@ -298,15 +298,17 @@ export function Map2DOverlay({
         )}
 
         {milkyWaySegments.map((segment, segmentIndex) => {
-          const north = segment.map((point) => `${point.north.x},${point.north.y}`);
-          const south = segment.map((point) => `${point.south.x},${point.south.y}`);
-          const outline = north.concat([...south].reverse()).join(" ");
-          const centerLine = segment.map((point) => `${point.center.x},${point.center.y}`).join(" ");
+          const visible = segment.filter((point) => point.lineOfSightVisible !== false);
+          if (visible.length < 2) return null;
+          const outline = visible
+            .map((point) => `${point.north.x},${point.north.y}`)
+            .concat([...visible].reverse().map((point) => `${point.south.x},${point.south.y}`))
+            .join(" ");
+          const centerLine = visible.map((point) => `${point.center.x},${point.center.y}`).join(" ");
           return (
             <g key={`milky-way-band-${segmentIndex}`} className="map-milky-way-band">
-              <polygon className="map-milky-way-photo-band" points={outline} />
-              <polyline className="map-milky-way-luminous-spine" points={centerLine} />
-              <polyline className="map-milky-way-dust-lane" points={centerLine} />
+              <polygon className="map-milky-way-fill" points={outline} />
+              <polyline className="map-milky-way-core" points={centerLine} />
             </g>
           );
         })}

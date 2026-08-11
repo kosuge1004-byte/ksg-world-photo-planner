@@ -100,11 +100,28 @@ function projectedMoonMaria(point: CelestialScreenPoint) {
 }
 
 type MilkyWayBandSegment = {
-  outline: string;
-  northEdge: string;
-  southEdge: string;
+  outer: string;
+  body: string;
+  inner: string;
+  darkLane: string;
   center: string;
 };
+
+function milkyWayCrossPoint(point: MilkyWayPathPoint, ratio: number): PreviewPoint {
+  return {
+    x: point.southEdgeXPercent + (point.northEdgeXPercent - point.southEdgeXPercent) * ratio,
+    y: point.southEdgeYPercent + (point.northEdgeYPercent - point.southEdgeYPercent) * ratio,
+  };
+}
+
+function milkyWayStrip(points: MilkyWayPathPoint[], southRatio: number, northRatio: number): string {
+  const north = points.map((point) => milkyWayCrossPoint(point, northRatio));
+  const south = points.map((point) => milkyWayCrossPoint(point, southRatio));
+  return north
+    .concat([...south].reverse())
+    .map((point) => `${point.x},${point.y}`)
+    .join(" ");
+}
 
 function milkyWayBandSegments(
   points: MilkyWayPathPoint[],
@@ -114,19 +131,12 @@ function milkyWayBandSegments(
   let current: MilkyWayPathPoint[] = [];
   const flush = () => {
     if (current.length > 1) {
-      const north = current.map(
-        (point) => `${point.northEdgeXPercent},${point.northEdgeYPercent}`
-      );
-      const south = current.map(
-        (point) => `${point.southEdgeXPercent},${point.southEdgeYPercent}`
-      );
       segments.push({
-        outline: north.concat([...south].reverse()).join(" "),
-        northEdge: north.join(" "),
-        southEdge: south.join(" "),
-        center: current.map(
-          (point) => `${point.xPercent},${point.yPercent}`
-        ).join(" "),
+        outer: milkyWayStrip(current, 0.06, 0.94),
+        body: milkyWayStrip(current, 0.18, 0.82),
+        inner: milkyWayStrip(current, 0.31, 0.69),
+        darkLane: milkyWayStrip(current, 0.46, 0.56),
+        center: current.map((point) => `${point.xPercent},${point.yPercent}`).join(" "),
       });
     }
     current = [];
@@ -145,6 +155,59 @@ function milkyWayBandSegments(
   }
   flush();
   return segments;
+}
+
+type MilkyWayStar = { x: number; y: number; radius: number; opacity: number; warm: boolean };
+
+function deterministicFraction(value: number): number {
+  const x = Math.sin(value * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function milkyWayStars(points: MilkyWayPathPoint[]): MilkyWayStar[] {
+  const stars: MilkyWayStar[] = [];
+  for (const point of points) {
+    if (!point.visibleInFrame || point.lineOfSightVisible === false) continue;
+    const coreDistance = Math.min(
+      point.galacticLongitudeDegrees,
+      360 - point.galacticLongitudeDegrees
+    );
+    const coreBoost = Math.exp(-((coreDistance / 42) ** 2));
+    const count = coreBoost > 0.45 ? 6 : 3;
+    for (let index = 0; index < count; index += 1) {
+      const seed = point.galacticLongitudeDegrees * 11 + index * 37;
+      const across = 0.16 + deterministicFraction(seed + 1) * 0.68;
+      const alongJitter = (deterministicFraction(seed + 2) - 0.5) * 1.8;
+      const cross = milkyWayCrossPoint(point, across);
+      const edgeDx = point.northEdgeXPercent - point.southEdgeXPercent;
+      const edgeDy = point.northEdgeYPercent - point.southEdgeYPercent;
+      const edgeLength = Math.max(0.001, Math.hypot(edgeDx, edgeDy));
+      const tangentX = -edgeDy / edgeLength;
+      const tangentY = edgeDx / edgeLength;
+      stars.push({
+        x: cross.x + tangentX * alongJitter,
+        y: cross.y + tangentY * alongJitter,
+        radius: 0.07 + deterministicFraction(seed + 3) * (0.12 + coreBoost * 0.08),
+        opacity: 0.34 + deterministicFraction(seed + 4) * (0.38 + coreBoost * 0.18),
+        warm: deterministicFraction(seed + 5) > 0.72,
+      });
+    }
+  }
+  return stars;
+}
+
+function milkyWayCorePoint(points: MilkyWayPathPoint[]): MilkyWayPathPoint | null {
+  let best: MilkyWayPathPoint | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const point of points) {
+    if (!point.visibleInFrame || point.lineOfSightVisible === false) continue;
+    const distance = Math.min(point.galacticLongitudeDegrees, 360 - point.galacticLongitudeDegrees);
+    if (distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
+    }
+  }
+  return bestDistance <= 32 ? best : null;
 }
 
 type PreviewPoint = { x: number; y: number };
@@ -231,6 +294,8 @@ function CelestialOverlayComponent({
 }: Props) {
   const milkyWaySegments = milkyWayBandSegments(milkyWayPath, true);
   const hiddenMilkyWaySegments = milkyWayBandSegments(milkyWayPath, false);
+  const milkyWayStarField = milkyWayStars(milkyWayPath);
+  const milkyWayCore = milkyWayCorePoint(milkyWayPath);
 
   return (
     <div
@@ -283,44 +348,53 @@ function CelestialOverlayComponent({
       {visibility.milkyWay && (milkyWaySegments.length > 0 || hiddenMilkyWaySegments.length > 0) && (
         <svg className="milky-way-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
           <defs>
-            <linearGradient id="milky-way-base" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0" stopColor="#a9b9cf" stopOpacity="0.08" />
-              <stop offset="0.35" stopColor="#f2e5d3" stopOpacity="0.34" />
-              <stop offset="0.5" stopColor="#fff7e9" stopOpacity="0.72" />
-              <stop offset="0.68" stopColor="#c7d3df" stopOpacity="0.28" />
-              <stop offset="1" stopColor="#8aa0bc" stopOpacity="0.06" />
-            </linearGradient>
-            <filter id="milky-way-clouds" x="-25%" y="-25%" width="150%" height="150%">
-              <feTurbulence type="fractalNoise" baseFrequency="0.075 0.018" numOctaves="5" seed="23" result="largeNoise" />
-              <feTurbulence type="fractalNoise" baseFrequency="0.24 0.055" numOctaves="3" seed="41" result="fineNoise" />
-              <feBlend in="largeNoise" in2="fineNoise" mode="screen" result="combinedNoise" />
-              <feColorMatrix in="combinedNoise" type="saturate" values="0" result="mono" />
-              <feComponentTransfer in="mono" result="contrast">
-                <feFuncR type="gamma" amplitude="1.35" exponent="1.65" offset="-0.1" />
-                <feFuncG type="gamma" amplitude="1.28" exponent="1.6" offset="-0.09" />
-                <feFuncB type="gamma" amplitude="1.2" exponent="1.55" offset="-0.07" />
-                <feFuncA type="table" tableValues="0 0.12 0.42 0.78 1" />
-              </feComponentTransfer>
-              <feBlend in="SourceGraphic" in2="contrast" mode="screen" />
-            </filter>
+            <radialGradient id="milky-way-core-glow" cx="50%" cy="50%" r="50%">
+              <stop offset="0" stopColor="#fff5df" stopOpacity="0.72" />
+              <stop offset="0.28" stopColor="#e9d7bd" stopOpacity="0.32" />
+              <stop offset="0.68" stopColor="#9fb0c5" stopOpacity="0.08" />
+              <stop offset="1" stopColor="#8799ad" stopOpacity="0" />
+            </radialGradient>
           </defs>
           {milkyWaySegments.map((segment, index) => (
-            <g key={`visible-${index}`}>
-              <polygon
-                className="milky-way-photo-band"
-                points={segment.outline}
-                fill="url(#milky-way-base)"
-                filter="url(#milky-way-clouds)"
-              />
-              <polyline className="milky-way-luminous-spine" points={segment.center} />
-              <polyline className="milky-way-dust-lane" points={segment.center} />
+            <g key={`visible-${index}`} className="milky-way-natural-segment">
+              <polygon className="milky-way-ribbon-outer" points={segment.outer} />
+              <polygon className="milky-way-ribbon-body" points={segment.body} />
+              <polygon className="milky-way-ribbon-inner" points={segment.inner} />
+              <polygon className="milky-way-ribbon-dark-lane" points={segment.darkLane} />
+              <polyline className="milky-way-center-highlight" points={segment.center} />
             </g>
           ))}
           {hiddenMilkyWaySegments.map((segment, index) => (
-            <g key={`hidden-${index}`} className="milky-way-hidden-band">
-              <polygon className="milky-way-hidden-outline" points={segment.outline} />
-              <polyline className="milky-way-hidden-center" points={segment.center} />
+            <g key={`hidden-${index}`} className="milky-way-natural-segment hidden">
+              <polygon className="milky-way-ribbon-outer" points={segment.outer} />
+              <polyline className="milky-way-center-highlight" points={segment.center} />
             </g>
+          ))}
+          {milkyWayCore && (() => {
+            const width = Math.max(3.5, Math.min(18, Math.hypot(
+              milkyWayCore.northEdgeXPercent - milkyWayCore.southEdgeXPercent,
+              milkyWayCore.northEdgeYPercent - milkyWayCore.southEdgeYPercent
+            ) * 1.15));
+            return (
+              <ellipse
+                className="milky-way-core-glow"
+                cx={milkyWayCore.xPercent}
+                cy={milkyWayCore.yPercent}
+                rx={width}
+                ry={Math.max(2.2, width * 0.42)}
+                fill="url(#milky-way-core-glow)"
+              />
+            );
+          })()}
+          {milkyWayStarField.map((star, index) => (
+            <circle
+              key={`mw-star-${index}`}
+              className={star.warm ? "milky-way-star warm" : "milky-way-star"}
+              cx={star.x}
+              cy={star.y}
+              r={star.radius}
+              opacity={star.opacity}
+            />
           ))}
         </svg>
       )}
@@ -332,7 +406,7 @@ function CelestialOverlayComponent({
           point.altitudeDegrees > -1 &&
           point.id !== "milkyWay";
         if (
-          (point.id === "milkyWay" && milkyWayPath.length > 0) ||
+          (point.id === "milkyWay") ||
           !visibility[point.id] ||
           (!point.visibleInFrame && !offscreenPosition)
         ) {

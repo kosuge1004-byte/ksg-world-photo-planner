@@ -723,6 +723,7 @@ export function calculateMilkyWayScreenPath(
       point.xPercent >= -15 && point.xPercent <= 115 &&
       point.yPercent >= -15 && point.yPercent <= 115;
     path.push({
+      galacticLongitudeDegrees: l,
       azimuthDegrees: center.azimuthDegrees,
       altitudeDegrees: center.altitudeDegrees,
       xPercent: center.xPercent,
