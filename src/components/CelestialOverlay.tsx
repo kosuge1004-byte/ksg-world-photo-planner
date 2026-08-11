@@ -431,8 +431,6 @@ function CelestialOverlayComponent({
               physicalDisc ? " celestial-physical-marker" : ""
             }${positionOnly ? " celestial-hidden-position" : ""}${
               offscreenPosition ? " celestial-offscreen-position" : ""
-            }${
-              fastMode && point.id === "milkyWay" ? " celestial-fast-position" : ""
             }`}
             style={markerStyle}
           >
