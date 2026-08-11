@@ -297,25 +297,19 @@ export function Map2DOverlay({
           </g>
         )}
 
-        {milkyWaySegments.map((segment, segmentIndex) => (
-          <g key={`milky-way-markers-${segmentIndex}`} className="map-milky-way-markers">
-            {segment.filter((_, index) => index % 7 === 0).map((point, pointIndex) => {
-              const halfWidth = Math.hypot(
-                point.north.x - point.south.x,
-                point.north.y - point.south.y
-              ) / 2;
-              return (
-                <circle
-                  key={`${segmentIndex}-${pointIndex}`}
-                  className={point.lineOfSightVisible === false ? "map-milky-way-marker hidden" : "map-milky-way-marker visible"}
-                  cx={point.center.x}
-                  cy={point.center.y}
-                  r={Math.max(3, Math.min(18, halfWidth * 0.42))}
-                />
-              );
-            })}
-          </g>
-        ))}
+        {milkyWaySegments.map((segment, segmentIndex) => {
+          const north = segment.map((point) => `${point.north.x},${point.north.y}`);
+          const south = segment.map((point) => `${point.south.x},${point.south.y}`);
+          const outline = north.concat([...south].reverse()).join(" ");
+          const centerLine = segment.map((point) => `${point.center.x},${point.center.y}`).join(" ");
+          return (
+            <g key={`milky-way-band-${segmentIndex}`} className="map-milky-way-band">
+              <polygon className="map-milky-way-photo-band" points={outline} />
+              <polyline className="map-milky-way-luminous-spine" points={centerLine} />
+              <polyline className="map-milky-way-dust-lane" points={centerLine} />
+            </g>
+          );
+        })}
 
         {tripodPixel && tracks.flatMap((track) => {
           if (!visibility[track.id]) return null;

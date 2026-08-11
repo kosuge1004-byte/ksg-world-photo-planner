@@ -290,39 +290,38 @@ function CelestialOverlayComponent({
               <stop offset="0.68" stopColor="#c7d3df" stopOpacity="0.28" />
               <stop offset="1" stopColor="#8aa0bc" stopOpacity="0.06" />
             </linearGradient>
-            <filter id="milky-way-clouds" x="-20%" y="-20%" width="140%" height="140%">
-              <feTurbulence type="fractalNoise" baseFrequency="0.11 0.025" numOctaves="4" seed="23" result="noise" />
-              <feColorMatrix in="noise" type="saturate" values="0" result="mono" />
+            <filter id="milky-way-clouds" x="-25%" y="-25%" width="150%" height="150%">
+              <feTurbulence type="fractalNoise" baseFrequency="0.075 0.018" numOctaves="5" seed="23" result="largeNoise" />
+              <feTurbulence type="fractalNoise" baseFrequency="0.24 0.055" numOctaves="3" seed="41" result="fineNoise" />
+              <feBlend in="largeNoise" in2="fineNoise" mode="screen" result="combinedNoise" />
+              <feColorMatrix in="combinedNoise" type="saturate" values="0" result="mono" />
               <feComponentTransfer in="mono" result="contrast">
-                <feFuncR type="gamma" amplitude="1.25" exponent="1.8" offset="-0.08" />
-                <feFuncG type="gamma" amplitude="1.18" exponent="1.7" offset="-0.07" />
-                <feFuncB type="gamma" amplitude="1.1" exponent="1.6" offset="-0.05" />
-                <feFuncA type="table" tableValues="0 0.15 0.55 0.9" />
+                <feFuncR type="gamma" amplitude="1.35" exponent="1.65" offset="-0.1" />
+                <feFuncG type="gamma" amplitude="1.28" exponent="1.6" offset="-0.09" />
+                <feFuncB type="gamma" amplitude="1.2" exponent="1.55" offset="-0.07" />
+                <feFuncA type="table" tableValues="0 0.12 0.42 0.78 1" />
               </feComponentTransfer>
               <feBlend in="SourceGraphic" in2="contrast" mode="screen" />
             </filter>
           </defs>
           {milkyWaySegments.map((segment, index) => (
             <g key={`visible-${index}`}>
-              <polygon className="milky-way-photo-band" points={segment.outline} fill="url(#milky-way-base)" filter="url(#milky-way-clouds)" />
+              <polygon
+                className="milky-way-photo-band"
+                points={segment.outline}
+                fill="url(#milky-way-base)"
+                filter="url(#milky-way-clouds)"
+              />
+              <polyline className="milky-way-luminous-spine" points={segment.center} />
+              <polyline className="milky-way-dust-lane" points={segment.center} />
             </g>
           ))}
-          {milkyWayPath.filter((point, index) => point.visibleInFrame && index % 9 === 0).map((point, index) => {
-            const visible = point.lineOfSightVisible !== false;
-            const width = Math.hypot(
-              point.northEdgeXPercent - point.southEdgeXPercent,
-              point.northEdgeYPercent - point.southEdgeYPercent
-            );
-            return (
-              <circle
-                key={`milky-way-marker-${index}`}
-                className={visible ? "milky-way-position-marker visible" : "milky-way-position-marker hidden"}
-                cx={point.xPercent}
-                cy={point.yPercent}
-                r={Math.max(0.55, Math.min(3.2, width * 0.22))}
-              />
-            );
-          })}
+          {hiddenMilkyWaySegments.map((segment, index) => (
+            <g key={`hidden-${index}`} className="milky-way-hidden-band">
+              <polygon className="milky-way-hidden-outline" points={segment.outline} />
+              <polyline className="milky-way-hidden-center" points={segment.center} />
+            </g>
+          ))}
         </svg>
       )}
 
@@ -333,7 +332,7 @@ function CelestialOverlayComponent({
           point.altitudeDegrees > -1 &&
           point.id !== "milkyWay";
         if (
-          (point.id === "milkyWay" && !fastMode) ||
+          (point.id === "milkyWay" && milkyWayPath.length > 0) ||
           !visibility[point.id] ||
           (!point.visibleInFrame && !offscreenPosition)
         ) {

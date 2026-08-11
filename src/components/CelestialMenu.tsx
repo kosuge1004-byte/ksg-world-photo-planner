@@ -5,6 +5,8 @@ type Props = {
   visibility: CelestialVisibility;
   onToggleOpen: () => void;
   onChangeVisibility: (visibility: CelestialVisibility) => void;
+  lightPollutionEnabled: boolean;
+  onChangeLightPollution: (enabled: boolean) => void;
 };
 
 const items: Array<{
@@ -23,6 +25,8 @@ export function CelestialMenu({
   visibility,
   onToggleOpen,
   onChangeVisibility,
+  lightPollutionEnabled,
+  onChangeLightPollution,
 }: Props) {
   return (
     <section className="celestial-menu">
@@ -55,6 +59,17 @@ export function CelestialMenu({
               </label>
             ))}
           </div>
+          {visibility.milkyWay && (
+            <label className="light-pollution-toggle">
+              <span className="celestial-symbol">◉</span>
+              <span>光害マップ</span>
+              <input
+                type="checkbox"
+                checked={lightPollutionEnabled}
+                onChange={(event) => onChangeLightPollution(event.target.checked)}
+              />
+            </label>
+          )}
           <button
             type="button"
             className="celestial-reset-button"

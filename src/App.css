@@ -103,7 +103,7 @@ button { cursor: pointer; }
 
 .calculation-mode-menu > strong { font-size: 11px; }
 .calculation-mode-menu.precision-open {
-  width: min(420px, calc(100vw - 8px));
+  width: min(340px, calc(100vw - 10px));
 }
 .calculation-mode-menu > .calculation-menu-section { margin-top: 3px; padding-top: 6px; border-top: 1px solid #313944; color: #8ea0b3; font-size: 8px; }
 .calculation-mode-menu button {
@@ -1455,42 +1455,74 @@ button { cursor: pointer; }
   }
 }
 
-/* Sun Surveyor型の天の川表示：見通せる部分は写真調の帯、遮蔽部分は位置マーカーのみ。 */
+/* サンサベイヤーの動画を参考に、天の川は点ではなく連続した帯として表示する。
+   画像素材の複製は行わず、既存の銀河面計算から独自の半透明・疑似写真調表現を生成する。 */
 .milky-way-photo-band {
-  opacity: .82;
+  opacity: .88;
   mix-blend-mode: screen;
-  stroke: rgba(244, 238, 225, .22);
-  stroke-width: .18;
+  stroke: rgba(244, 238, 225, .2);
+  stroke-width: .15;
 }
-.milky-way-position-marker {
+.milky-way-luminous-spine {
+  fill: none;
+  stroke: rgba(255, 247, 231, .34);
+  stroke-width: 2.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: blur(.55px);
+  mix-blend-mode: screen;
+}
+.milky-way-dust-lane {
+  fill: none;
+  stroke: rgba(22, 24, 30, .36);
+  stroke-width: .95;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: blur(.2px);
+  mix-blend-mode: multiply;
+}
+.milky-way-hidden-band { opacity: .34; }
+.milky-way-hidden-outline {
+  fill: rgba(164, 173, 190, .08);
+  stroke: rgba(205, 211, 220, .32);
+  stroke-width: .22;
+  stroke-dasharray: 1.2 1;
+}
+.milky-way-hidden-center {
+  fill: none;
+  stroke: rgba(210, 214, 220, .36);
+  stroke-width: .32;
+  stroke-dasharray: 1.2 1.1;
+}
+.map-milky-way-photo-band {
+  fill: rgba(210, 219, 229, .24);
+  stroke: rgba(244, 239, 228, .5);
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
-  stroke-width: .24;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.48));
 }
-.milky-way-position-marker.visible {
-  fill: rgba(244, 244, 240, .63);
-  stroke: rgba(255, 255, 255, .78);
-}
-.milky-way-position-marker.hidden {
-  fill: rgba(40, 42, 45, .68);
-  stroke: rgba(190, 190, 190, .48);
-}
-.map-milky-way-marker {
+.map-milky-way-luminous-spine {
+  fill: none;
+  stroke: rgba(255, 248, 232, .72);
+  stroke-width: 5.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .56;
   vector-effect: non-scaling-stroke;
-  stroke-width: 1.25;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,.72));
 }
-.map-milky-way-marker.visible {
-  fill: rgba(240, 240, 236, .92);
-  stroke: rgba(20, 20, 20, .9);
-}
-.map-milky-way-marker.hidden {
-  fill: rgba(82, 82, 82, .92);
-  stroke: rgba(15, 15, 15, .9);
+.map-milky-way-dust-lane {
+  fill: none;
+  stroke: rgba(35, 38, 45, .72);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .72;
+  vector-effect: non-scaling-stroke;
 }
 
-/* 2026-08-10: use nearly the full phone width so menu labels and descriptions do not feel cramped. */
+/* 2026-07-23: enlarge menu and main-screen button labels without resizing controls. */
 .calculation-mode-menu {
-  width: min(420px, calc(100vw - 8px));
+  width: min(320px, calc(100vw - 12px));
   gap: 7px;
   padding: 11px;
 }
@@ -1499,8 +1531,7 @@ button { cursor: pointer; }
   line-height: 1.25;
 }
 .calculation-mode-menu button {
-  grid-template-columns: 112px minmax(0, 1fr);
-  column-gap: 10px;
+  grid-template-columns: 76px minmax(0, 1fr);
   padding: 8px 10px;
 }
 .calculation-mode-menu button b {
@@ -1595,7 +1626,7 @@ button { cursor: pointer; }
 
 @media (max-height: 720px) {
   .calculation-mode-menu {
-    width: min(420px, calc(100vw - 8px));
+    width: min(300px, calc(100vw - 10px));
   }
   .calculation-mode-menu button b { font-size: 15px; }
   .calculation-mode-menu button small { font-size: 11px; }
@@ -2145,14 +2176,89 @@ body.pseudo-fullscreen-active {
   font-size: 12px;
 }
 
-
-/* 2026-08-10: explicit final close action for the hamburger menu. */
-.calculation-mode-menu .calculation-menu-close {
-  grid-template-columns: 1fr;
-  margin-top: 3px;
-  border-color: #566170;
-  background: #171d24;
+/* 天の川選択時のみ表示できる NASA VIIRS Black Marble 光害タイル。 */
+.light-pollution-toggle {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 2px;
+  border-top: 1px solid rgba(255,255,255,.10);
+  color: #fff;
+  font-size: 8px;
 }
-.calculation-mode-menu .calculation-menu-close b {
-  color: #f4f6f8;
+.light-pollution-toggle input { margin: 0; }
+.light-pollution-tile-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgba(0,0,0,.16);
+}
+.light-pollution-tile-overlay img {
+  position: absolute;
+  display: block;
+  max-width: none;
+  opacity: .62;
+  user-select: none;
+}
+.light-pollution-credit {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(0,0,0,.62);
+  color: rgba(255,255,255,.86);
+  font-size: 7px;
+  line-height: 1.2;
+}
+
+/* 2026-08-11: hamburger-menu guide for reading the VIIRS Black Marble light-pollution overlay. */
+.light-pollution-guide {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  color: #d8dde5;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #0d1218;
+}
+.light-pollution-guide > strong {
+  color: #fff;
+  font-size: 13px;
+}
+.light-pollution-guide-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #252d37;
+}
+.light-pollution-guide-row b {
+  color: #fff;
+  font-size: 12px;
+}
+.light-pollution-guide-row span {
+  color: #c9d3de;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.light-pollution-guide-row small {
+  grid-column: 1 / -1;
+  color: #eef2f7;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.light-pollution-guide p {
+  margin: 0;
+  color: #d8dde5;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.light-pollution-guide .light-pollution-guide-note {
+  color: #aebdcb;
+  font-size: 10px;
 }

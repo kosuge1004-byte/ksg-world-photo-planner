@@ -54,6 +54,7 @@ export function TopSettingsBar({
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
+  const [lightPollutionGuideOpen, setLightPollutionGuideOpen] = useState(false);
   const [focalLengthInput, setFocalLengthInput] = useState(
     String(settings.focalLengthMm)
   );
@@ -123,7 +124,7 @@ export function TopSettingsBar({
       </button>
       {modeMenuOpen && (
         <div
-          className={(precisionMenuOpen || threeDSourceMenuOpen)
+          className={(precisionMenuOpen || threeDSourceMenuOpen || mapSourcesOpen || lightPollutionGuideOpen)
             ? "calculation-mode-menu precision-open"
             : "calculation-mode-menu"}
           role="dialog"
@@ -169,6 +170,35 @@ export function TopSettingsBar({
           <button type="button" onClick={() => setThreeDSourceMenuOpen((current) => !current)} aria-expanded={threeDSourceMenuOpen}>
             <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
           </button>
+          <button
+            type="button"
+            onClick={() => setLightPollutionGuideOpen((current) => !current)}
+            aria-expanded={lightPollutionGuideOpen}
+          >
+            <b>光害マップの見方</b><small>明るさと天の川撮影の目安</small>
+          </button>
+          {lightPollutionGuideOpen && (
+            <section className="light-pollution-guide" aria-label="光害マップの見方">
+              <strong>光害マップの見方</strong>
+              <div className="light-pollution-guide-row">
+                <b>暗い地域</b>
+                <span>人工の夜間光が少ない</span>
+                <small>天の川撮影：撮りやすい</small>
+              </div>
+              <div className="light-pollution-guide-row">
+                <b>中間の明るさ</b>
+                <span>周辺の街明かりの影響あり</span>
+                <small>天の川撮影：条件次第</small>
+              </div>
+              <div className="light-pollution-guide-row">
+                <b>明るい地域</b>
+                <span>人工の夜間光が多い</span>
+                <small>天の川撮影：難しい</small>
+              </div>
+              <p>明るく表示されるほど人工光が強く、暗いほど人工光が少ない地域です。</p>
+              <p className="light-pollution-guide-note">このマップはNASA VIIRS Black Marbleの地上夜間光を示すもので、空の明るさ（skyglow）そのものではありません。月、雲、透明度、天の川の高度・方向は含まれないため、撮影可否を断定する表示ではありません。</p>
+            </section>
+          )}
           <button
             type="button"
             onClick={() => setMapSourcesOpen((current) => !current)}
@@ -431,13 +461,6 @@ export function TopSettingsBar({
               </div>
             </fieldset>
           )}
-          <button
-            type="button"
-            className="calculation-menu-close"
-            onClick={() => setModeMenuOpen(false)}
-          >
-            <b>閉じる</b>
-          </button>
         </div>
       )}
       <label className="top-setting focal-setting">

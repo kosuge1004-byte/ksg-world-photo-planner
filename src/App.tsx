@@ -20,6 +20,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./App.css";
 
 import { CelestialMenu } from "./components/CelestialMenu";
+import { LightPollutionTileOverlay } from "./components/LightPollutionTileOverlay";
 import { CelestialOverlay } from "./components/CelestialOverlay";
 import { CelestialOcclusionStatus } from "./components/CelestialOcclusionStatus";
 import { MetricsPanel } from "./components/MetricsPanel";
@@ -93,6 +94,7 @@ import { calculateTripodCandidates } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer } from "./cesium/createMapViewer";
+import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
@@ -502,6 +504,7 @@ function App() {
   const pinDrawerRef = useRef<HTMLDivElement>(null);
   const [celestialVisibility, setCelestialVisibility] =
     useState<CelestialVisibility>(loadCelestialVisibility);
+  const [lightPollutionEnabled, setLightPollutionEnabled] = useState(false);
   const [celestialOcclusion, setCelestialOcclusion] =
     useState<CelestialOcclusionMap>({});
   const [milkyWayLineOfSight, setMilkyWayLineOfSight] =
@@ -767,9 +770,9 @@ function App() {
     if (Number.isNaN(selectedDate.getTime())) {
       return [];
     }
-    // 連続スクロール中は天の川中心（celestialPoints）だけを毎フレーム更新し、
-    // 219点の帯輪郭は停止後に高精度再計算する。
-    if (timelineInteracting) return [];
+    // 連続スクロール中も天の川を点表示へ退化させず、帯として追従させる。
+    // 操作中だけサンプル間隔を広げて負荷を抑え、停止後は5°刻みへ戻す。
+    const milkyWaySampleStepDegrees = timelineInteracting ? 15 : 5;
 
     return calculateMilkyWayScreenPath(
       selectedDate,
@@ -779,7 +782,7 @@ function App() {
       previewAspectRatio,
       calculationMode,
       previewViewCorrection,
-      5,
+      milkyWaySampleStepDegrees,
       previewRefractionWeather
     );
   }, [
@@ -1192,6 +1195,33 @@ function App() {
       }
     };
   }, [mapInitializationAttempt, precisionSettings.accuracyMode, setSearchMessage, showUserNotice]);
+
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed() || !mapReady) return;
+    setLightPollutionLayerVisible(
+      viewer,
+      lightPollutionEnabled && celestialVisibility.milkyWay
+    );
+  }, [celestialVisibility.milkyWay, lightPollutionEnabled, mapReady]);
+
+  useEffect(() => {
+    if (!celestialVisibility.milkyWay && lightPollutionEnabled) {
+      setLightPollutionEnabled(false);
+    }
+  }, [celestialVisibility.milkyWay, lightPollutionEnabled]);
+
+  useEffect(() => {
+    // Google Photorealistic 3D Tilesには外部WMTSを直接ドレープできないため、
+    // 高精度3D中に光害マップを有効化した場合は、位置が正確に一致する2D表示へ切り替える。
+    if (
+      lightPollutionEnabled &&
+      precisionSettings.accuracyMode === "highest" &&
+      mapViewMode === "3d"
+    ) {
+      setMapViewMode("2d");
+    }
+  }, [lightPollutionEnabled, mapViewMode, precisionSettings.accuracyMode]);
 
   useEffect(() => {
     const element = previewSectionRef.current;
@@ -3569,6 +3599,8 @@ ${diagnosticMessage}
             setCelestialMenuOpen((current) => !current)
           }
           onChangeVisibility={setCelestialVisibility}
+          lightPollutionEnabled={lightPollutionEnabled}
+          onChangeLightPollution={setLightPollutionEnabled}
         />
 
         <div className="preview-load-status">
@@ -3611,6 +3643,13 @@ ${diagnosticMessage}
               stage.classList.remove("dragging");
             }}
           />
+          {mapViewMode === "2d" && lightPollutionEnabled && celestialVisibility.milkyWay && (
+            <LightPollutionTileOverlay
+              center={mapCenter}
+              zoom={mapZoom}
+              size={mapSize}
+            />
+          )}
           {mapViewMode === "2d" && (
             <Map2DOverlay
               center={mapCenter}
