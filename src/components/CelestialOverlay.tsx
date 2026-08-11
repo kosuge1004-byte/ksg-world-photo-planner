@@ -14,7 +14,6 @@ type Props = {
   milkyWayPath: MilkyWayPathPoint[];
   visibility: CelestialVisibility;
   occlusion: CelestialOcclusionMap;
-  fastMode: boolean;
 };
 
 const MOON_MARIA = [
@@ -290,7 +289,6 @@ function CelestialOverlayComponent({
   milkyWayPath,
   visibility,
   occlusion,
-  fastMode,
 }: Props) {
   const milkyWaySegments = milkyWayBandSegments(milkyWayPath, true);
   const hiddenMilkyWaySegments = milkyWayBandSegments(milkyWayPath, false);

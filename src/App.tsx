@@ -3538,7 +3538,6 @@ ${diagnosticMessage}
             milkyWayPath={visibleMilkyWayPath}
             visibility={celestialVisibility}
             occlusion={celestialOcclusion}
-            fastMode={timelineInteracting}
           />
 
           <CelestialOcclusionStatus
