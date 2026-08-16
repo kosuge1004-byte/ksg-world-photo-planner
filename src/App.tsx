@@ -45,6 +45,8 @@ import { CalendarScreen } from "./components/CalendarScreen";
 import { MoonAgeCalendarScreen } from "./components/MoonAgeCalendarScreen";
 import { ProjectSaveDialog } from "./components/ProjectSaveDialog";
 import { SharedProjectImportDialog } from "./components/SharedProjectImportDialog";
+import { ProjectShareQrDialog } from "./components/ProjectShareQrDialog";
+import { ProjectQrScanDialog } from "./components/ProjectQrScanDialog";
 import { PlacementConfirmDialog } from "./components/PlacementConfirmDialog";
 import {
   decodeProjectShareCode,
@@ -54,6 +56,11 @@ import {
 } from "./sharing/projectShareCode";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
+import { ArCameraScreen, type ArCameraProjection } from "./components/ArCameraScreen";
+import {
+  requestArOrientationPermissionFromUserGesture,
+  type ArTrackingSnapshot,
+} from "./ar/deviceTracking";
 import { TopSettingsBar } from "./components/TopSettingsBar";
 import { UserNotice } from "./components/UserNotice";
 import { coordinatesAtMapPixel } from "./map/webMercator";
@@ -421,11 +428,20 @@ function App() {
     });
   }, []);
   const [spotSearchOpen, setSpotSearchOpen] = useState(false);
+  const [arCameraOpen, setArCameraOpen] = useState(false);
+  const [arTracking, setArTracking] = useState<ArTrackingSnapshot>({ location: null, orientation: null });
+  const [arCameraProjection, setArCameraProjection] = useState<ArCameraProjection | null>(null);
+  const [arSearchTripod, setArSearchTripod] = useState<GroundPoint | null>(null);
+  const [arSearchCameraSettings, setArSearchCameraSettings] = useState<CameraSettings | null>(null);
+  const [arSearchAspectRatio, setArSearchAspectRatio] = useState<number | null>(null);
+  const [projectSaveTripodOverride, setProjectSaveTripodOverride] = useState<GroundPoint | null>(null);
   const [celestialTransitSearchOpen, setCelestialTransitSearchOpen] = useState(false);
-  const openCelestialTransitSearch = useCallback(
-    () => setCelestialTransitSearchOpen(true),
-    []
-  );
+  const openCelestialTransitSearch = useCallback(() => {
+    setArSearchTripod(null);
+    setArSearchCameraSettings(null);
+    setArSearchAspectRatio(null);
+    setCelestialTransitSearchOpen(true);
+  }, []);
   const [savedPlansOpen, setSavedPlansOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [moonAgeCalendarOpen, setMoonAgeCalendarOpen] = useState(false);
@@ -440,6 +456,9 @@ function App() {
     useState<SharedProjectPayloadV1 | null>(null);
   const [sharedImportBusy, setSharedImportBusy] = useState(false);
   const [sharedImportError, setSharedImportError] = useState<string | null>(null);
+  const [qrShareUrl, setQrShareUrl] = useState<string | null>(null);
+  const [qrShareProjectName, setQrShareProjectName] = useState("");
+  const [qrScanOpen, setQrScanOpen] = useState(false);
   const [pendingPlacement, setPendingPlacement] = useState<
     { kind: "subject" | "tripod" | "person"; commit: (offsetMeters: number) => Promise<void> } | null
   >(null);
@@ -547,6 +566,11 @@ function App() {
     // 起動時は必ずプレビュー＋マップのメイン画面を表示する。
     // 保存済みのスポット検索ジョブは維持し、検索画面を手動で開いた際に再開できる。
     setSpotSearchOpen(false);
+    setArCameraOpen(false);
+    setArSearchTripod(null);
+    setArSearchCameraSettings(null);
+    setArSearchAspectRatio(null);
+    setProjectSaveTripodOverride(null);
     setCelestialTransitSearchOpen(false);
     setSavedPlansOpen(false);
     setCalendarOpen(false);
@@ -556,6 +580,11 @@ function App() {
     const showMainScreenAfterPageRestore = (event: PageTransitionEvent) => {
       if (!event.persisted) return;
       setSpotSearchOpen(false);
+      setArCameraOpen(false);
+      setArSearchTripod(null);
+      setArSearchCameraSettings(null);
+      setArSearchAspectRatio(null);
+      setProjectSaveTripodOverride(null);
       setCelestialTransitSearchOpen(false);
       setSavedPlansOpen(false);
       setCalendarOpen(false);
@@ -791,7 +820,6 @@ function App() {
     previewAspectRatio,
     calculationMode,
     previewViewCorrection,
-    calculationMode,
     timelineInteracting,
     previewRefractionWeather,
   ]);
@@ -2398,10 +2426,30 @@ ${diagnosticMessage}
   }
 
   function saveCurrentComposition(): void {
+    setProjectSaveTripodOverride(null);
     if (!subjectPoint || !tripodPoint) {
       setSearchMessage("保存するには三脚ピンと被写体ピンを設定してください");
       return;
     }
+    setProjectSaveOpen(true);
+  }
+
+  function saveCurrentCompositionFromAr(): void {
+    if (!subjectPoint) {
+      setSearchMessage("保存するには被写体を設定してください");
+      return;
+    }
+    const location = arTracking.location;
+    if (!location) {
+      setSearchMessage("現在地を取得してから保存してください");
+      return;
+    }
+    setProjectSaveTripodOverride({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      height: location.altitudeMeters ?? 0,
+      label: "AR現在地",
+    });
     setProjectSaveOpen(true);
   }
 
@@ -2415,19 +2463,21 @@ ${diagnosticMessage}
   }
 
   function commitProjectSave(name: string, calendarRegistered: boolean): void {
-    if (!subjectPoint || !tripodPoint) return;
+    const effectiveTripod = projectSaveTripodOverride ?? tripodPoint;
+    if (!subjectPoint || !effectiveTripod) return;
     const now = new Date();
     const project: PlannerProject = {
       id: crypto.randomUUID?.() ?? `project-${now.getTime()}`,
       name: name || formatProjectFallbackName(now),
       createdAtIso: now.toISOString(), updatedAtIso: now.toISOString(),
       shootingDateTimeLocal: dateTimeLocal, timeZone, calendarRegistered,
-      subject: subjectPoint, tripod: tripodPoint, foregroundObjects,
+      subject: subjectPoint, tripod: effectiveTripod, foregroundObjects,
       cameraSettings, celestialVisibility, previewFrameMode, mapViewMode, mapZoom, mapCenter,
       displaySettings: { celestialMenuOpen },
     };
     setProjects(upsertProject(project));
     setProjectSaveOpen(false);
+    setProjectSaveTripodOverride(null);
     setSearchMessage("現在の撮影計画をプロジェクトへ保存しました");
   }
 
@@ -2526,7 +2576,18 @@ ${diagnosticMessage}
       previewFrameMode: project.previewFrameMode,
     });
     const url = `${window.location.origin}${window.location.pathname}#share=${code}`;
-    void shareUrlViaSystemOrClipboard(url);
+    setQrShareProjectName(project.name);
+    setQrShareUrl(url);
+  }
+
+  function closeQrShareDialog(): void {
+    setQrShareUrl(null);
+    setQrShareProjectName("");
+  }
+
+  function handleQrScanned(text: string): void {
+    setQrScanOpen(false);
+    importShareLinkOrCode(text);
   }
 
   function cancelSharedImport(): void {
@@ -3443,6 +3504,53 @@ ${diagnosticMessage}
     setCameraSettings((current) => ({ ...current, focalLengthMm }));
   }
 
+  const openArTransitSearch = useCallback(() => {
+    if (!subjectPoint) {
+      setSearchMessage("被写体を設定してください");
+      return;
+    }
+    if (!arCameraOpen) return;
+    const location = arTracking.location;
+    if (!location) {
+      setSearchMessage("現在地を取得してから検索してください");
+      return;
+    }
+    // GPSの揺れで検索基準が動かないよう、検索ボタンを押した瞬間の現在地を固定する。
+    setArSearchTripod({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      height: location.altitudeMeters ?? 0,
+      label: "AR検索開始位置",
+    });
+
+    // ARカメラの実FOVを、既存のフルサイズ基準検索へ等価焦点距離として渡す。
+    // 実焦点距離そのものを流用するとセンサーサイズ差で画角が破綻するため、FOVから換算する。
+    if (arCameraProjection) {
+      const hFovRad = arCameraProjection.horizontalFovDeg * Math.PI / 180;
+      const vFovRad = arCameraProjection.verticalFovDeg * Math.PI / 180;
+      const equivalentFocalLength = 36 / (2 * Math.tan(hFovRad / 2));
+      const safeFocalLength = Math.min(
+        FOCAL_LENGTH_MAX,
+        Math.max(FOCAL_LENGTH_MIN, equivalentFocalLength)
+      );
+      const aspect = Math.tan(hFovRad / 2) / Math.max(1e-9, Math.tan(vFovRad / 2));
+      setArSearchCameraSettings({ ...cameraSettings, focalLengthMm: safeFocalLength });
+      setArSearchAspectRatio(Number.isFinite(aspect) && aspect > 0 ? aspect : previewAspectRatio);
+    } else {
+      setArSearchCameraSettings(null);
+      setArSearchAspectRatio(null);
+    }
+    setCelestialTransitSearchOpen(true);
+  }, [
+    arCameraOpen,
+    arCameraProjection,
+    arTracking.location,
+    cameraSettings,
+    previewAspectRatio,
+    setSearchMessage,
+    subjectPoint,
+  ]);
+
   function placeTripodAtDisplayedCandidate() {
     if (selectableDisplayedTripodCandidates.length === 0) return;
     if (selectableDisplayedTripodCandidates.length === 1) {
@@ -3481,7 +3589,7 @@ ${diagnosticMessage}
 
 
   return (
-    <main className="app">
+    <main className="app" data-ar-tracking={arTracking.location || arTracking.orientation ? "active" : "idle"}>
       <TopSettingsBar
         settings={cameraSettings}
         onChange={setCameraSettings}
@@ -3492,8 +3600,35 @@ ${diagnosticMessage}
         onSaveCurrentPlan={saveCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
         onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
+        onOpenArCamera={() => {
+          // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
+          void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
+        }}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
+      />
+      <ArCameraScreen
+        open={arCameraOpen}
+        dateTimeLocal={dateTimeLocal}
+        timeZone={timeZone}
+        calculationMode={calculationMode}
+        refractionWeather={previewRefractionWeather}
+        timelineLocation={tripodPoint ?? subjectPoint}
+        visibility={celestialVisibility}
+        celestialMenuOpen={celestialMenuOpen}
+        lightPollutionEnabled={lightPollutionEnabled}
+        subjectAvailable={Boolean(subjectPoint)}
+        subjectPoint={subjectPoint}
+        onClose={() => setArCameraOpen(false)}
+        onSaveCurrentPlan={saveCurrentCompositionFromAr}
+        onChangeDateTime={setDateTimeLocal}
+        onInteractionChange={setTimelineInteracting}
+        onToggleCelestialMenu={() => setCelestialMenuOpen((current) => !current)}
+        onChangeVisibility={setCelestialVisibility}
+        onChangeLightPollution={setLightPollutionEnabled}
+        onRequestSearch={openArTransitSearch}
+        onCameraProjectionChange={setArCameraProjection}
+        onTrackingChange={setArTracking}
       />
       <section
         ref={previewSectionRef}
@@ -4028,14 +4163,19 @@ ${diagnosticMessage}
         open={celestialTransitSearchOpen}
         currentDate={selectedDate}
         timeZone={timeZone}
-        tripod={tripodPoint}
+        tripod={arSearchTripod ?? tripodPoint}
         subject={subjectPoint}
         visibility={celestialVisibility}
         precisionSettings={precisionSettings}
-        cameraSettings={cameraSettings}
-        previewAspectRatio={previewAspectRatio}
+        cameraSettings={arSearchCameraSettings ?? cameraSettings}
+        previewAspectRatio={arSearchAspectRatio ?? previewAspectRatio}
         viewCorrection={previewViewCorrection}
-        onClose={() => setCelestialTransitSearchOpen(false)}
+        onClose={() => {
+          setCelestialTransitSearchOpen(false);
+          setArSearchTripod(null);
+          setArSearchCameraSettings(null);
+          setArSearchAspectRatio(null);
+        }}
         onSelect={(result, refractionWeather) => {
           const localized = zonedDateTimeLocalFromDate(result.date, timeZone);
           setPreviewRefractionWeather(
@@ -4079,6 +4219,19 @@ ${diagnosticMessage}
         onDelete={removePlannerProject}
         onShare={shareProject}
         onImport={importShareLinkOrCode}
+        onOpenQrScan={() => setQrScanOpen(true)}
+      />
+      <ProjectShareQrDialog
+        open={qrShareUrl !== null}
+        url={qrShareUrl}
+        projectName={qrShareProjectName}
+        onClose={closeQrShareDialog}
+        onShareLink={() => qrShareUrl && void shareUrlViaSystemOrClipboard(qrShareUrl)}
+      />
+      <ProjectQrScanDialog
+        open={qrScanOpen}
+        onClose={() => setQrScanOpen(false)}
+        onScanned={handleQrScanned}
       />
       <CalendarScreen
         open={calendarOpen}
@@ -4094,7 +4247,10 @@ ${diagnosticMessage}
       />
       <ProjectSaveDialog
         open={projectSaveOpen}
-        onCancel={() => setProjectSaveOpen(false)}
+        onCancel={() => {
+          setProjectSaveOpen(false);
+          setProjectSaveTripodOverride(null);
+        }}
         onSave={commitProjectSave}
       />
       <SharedProjectImportDialog

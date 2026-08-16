@@ -80,7 +80,9 @@
     "geo-tz": "^8.1.8",
     "geobuf": "^3.0.2",
     "geographiclib-geodesic": "^2.2.0",
+    "jsqr": "^1.4.0",
     "pbf": "^3.2.1",
+    "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -90,6 +92,7 @@
     "@types/geobuf": "^3.0.4",
     "@types/node": "^24.13.2",
     "@types/pbf": "^3.0.4",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",

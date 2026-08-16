@@ -2178,14 +2178,13 @@ body.pseudo-fullscreen-active {
   z-index: 2;
   overflow: hidden;
   pointer-events: none;
-  background: rgba(0,0,0,.16);
+  background: transparent;
 }
-.light-pollution-tile-overlay img {
+.light-pollution-tile-overlay canvas {
   position: absolute;
+  inset: 0;
   display: block;
   max-width: none;
-  opacity: .62;
-  user-select: none;
 }
 .light-pollution-credit {
   position: absolute;
@@ -2244,4 +2243,290 @@ body.pseudo-fullscreen-active {
 .light-pollution-guide .light-pollution-guide-note {
   color: #aebdcb;
   font-size: 10px;
+}
+
+/* Hamburger-menu beginner guides: plain, friendly copy for first-time (including child) users. */
+.usage-guide,
+.tutorial-guide {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  color: #d8dde5;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #0d1218;
+}
+.usage-guide > strong,
+.tutorial-guide > strong {
+  color: #fff;
+  font-size: 13px;
+}
+.usage-guide > p {
+  margin: 0;
+  color: #d8dde5;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.usage-guide-row {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px solid #252d37;
+}
+.usage-guide-row b {
+  color: #fff;
+  font-size: 12px;
+}
+.usage-guide-row span {
+  color: #c9d3de;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.usage-guide-note,
+.tutorial-guide-note {
+  margin: 0;
+  color: #aebdcb;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tutorial-guide ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+.tutorial-guide li {
+  display: grid;
+  gap: 2px;
+  color: #fff;
+  font-size: 12px;
+}
+.tutorial-guide li b {
+  color: #fff;
+}
+.tutorial-guide li span {
+  color: #c9d3de;
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+/* AR camera phases 1-3: full-screen shell, live camera, location and device-orientation tracking. */
+.ar-camera-screen {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  color: #fff;
+  background: #020305;
+}
+
+.ar-camera-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(60, 73, 88, .24), transparent 42%),
+    linear-gradient(180deg, #090c11 0%, #020305 100%);
+}
+
+.ar-camera-foundation {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.ar-camera-foundation > span {
+  color: rgba(255, 255, 255, .08);
+  font-size: clamp(72px, 24vw, 170px);
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.ar-camera-top-controls {
+  position: absolute;
+  z-index: 75;
+  top: calc(7px + env(safe-area-inset-top));
+  right: 7px;
+  left: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.ar-camera-back-button,
+.ar-camera-favorite-button {
+  pointer-events: auto;
+  min-height: 36px;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 7px;
+  background: rgba(2,5,9,.86);
+}
+
+.ar-camera-back-button {
+  min-width: 68px;
+  padding: 5px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ar-camera-favorite-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  padding: 0;
+  color: #ffdc25;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.ar-camera-stage > .celestial-menu {
+  top: calc(50px + env(safe-area-inset-top));
+  right: 7px;
+}
+
+.ar-camera-stage > .celestial-menu .celestial-menu-popover {
+  max-height: min(310px, calc(100dvh - 240px));
+}
+
+.ar-camera-foundation-note {
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 5px;
+  width: min(84vw, 430px);
+  padding: 12px 14px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 9px;
+  background: rgba(2,5,9,.70);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.ar-camera-foundation-note strong { font-size: 15px; }
+.ar-camera-foundation-note span { color: #d5dce5; font-size: 11px; line-height: 1.45; }
+.ar-camera-foundation-note small { color: #aeb9c6; font-size: 10px; line-height: 1.4; }
+
+
+.ar-camera-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.ar-camera-video.ready {
+  opacity: 1;
+}
+
+.ar-camera-camera-status {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: 12px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 8px;
+  background: rgba(0,0,0,.52);
+  color: #fff;
+  pointer-events: none;
+}
+
+.ar-camera-camera-status strong { font-size: 12px; }
+.ar-camera-camera-status span,
+.ar-camera-camera-status small { font-size: 10px; line-height: 1.35; color: #d8dee8; }
+
+.ar-camera-timeline {
+  position: relative;
+  z-index: 80;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid rgba(255,255,255,.18);
+  background: rgba(3,6,10,.98);
+}
+
+.ar-camera-timeline .timeline-section {
+  margin: 0;
+}
+
+/* AR camera Phase 4: Cesium 3D overlay follows live GPS / heading / device tilt. */
+.ar-camera-cesium-overlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+  transition: opacity 100ms linear;
+}
+
+.ar-camera-cesium-overlay .cesium-viewer,
+.ar-camera-cesium-overlay .cesium-viewer-cesiumWidgetContainer,
+.ar-camera-cesium-overlay .cesium-widget,
+.ar-camera-cesium-overlay canvas {
+  width: 100% !important;
+  height: 100% !important;
+  background: transparent !important;
+  pointer-events: none !important;
+}
+
+.ar-camera-cesium-overlay .cesium-viewer-bottom {
+  z-index: 5;
+  opacity: .82;
+}
+
+.ar-camera-map-opacity-control {
+  position: absolute;
+  z-index: 70;
+  top: calc(54px + env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: auto minmax(92px, 24vw) 36px;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,.28);
+  border-radius: 7px;
+  background: rgba(2,5,9,.78);
+  color: #fff;
+  font-size: 11px;
+}
+
+.ar-camera-map-opacity-control input {
+  min-width: 92px;
+  margin: 0;
+}
+
+.ar-camera-map-opacity-control strong {
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* AR camera phase 6: dialogs launched from the full-screen AR shell must remain above it. */
+.celestial-transit-backdrop,
+.project-dialog-backdrop {
+  z-index: 11000;
 }

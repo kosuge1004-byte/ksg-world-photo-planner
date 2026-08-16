@@ -11,8 +11,9 @@ type Props = {
   onDelete: (id: string) => void;
   onShare: (p: PlannerProject) => void;
   onImport: (text: string) => void;
+  onOpenQrScan: () => void;
 };
-export function ProjectsScreen({ open, projects, onBack, onLoad, onUpdate, onDelete, onShare, onImport }: Props) {
+export function ProjectsScreen({ open, projects, onBack, onLoad, onUpdate, onDelete, onShare, onImport, onOpenQrScan }: Props) {
   const [editing, setEditing] = useState<PlannerProject | null>(null);
   const [importText, setImportText] = useState("");
   useEffect(() => { if (!open) { setEditing(null); setImportText(""); } }, [open]);
@@ -32,6 +33,9 @@ export function ProjectsScreen({ open, projects, onBack, onLoad, onUpdate, onDel
         onClick={() => { if (importText.trim()) { onImport(importText); setImportText(""); } }}
       >
         取り込む
+      </button>
+      <button type="button" onClick={onOpenQrScan}>
+        QRコードを読み取る
       </button>
     </div>
     {editing ? <div className="project-editor"><label>プロジェクト名<input value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})}/></label><label>撮影日時<input type="datetime-local" value={editing.shootingDateTimeLocal} onChange={e=>setEditing({...editing,shootingDateTimeLocal:e.target.value})}/></label><label className="check"><input type="checkbox" checked={editing.calendarRegistered} onChange={e=>setEditing({...editing,calendarRegistered:e.target.checked})}/>カレンダーへ登録</label><div className="project-actions"><button onClick={()=>setEditing(null)}>キャンセル</button><button className="primary" onClick={()=>{onUpdate({...editing,updatedAtIso:new Date().toISOString()});setEditing(null)}}>変更を保存</button></div></div>
