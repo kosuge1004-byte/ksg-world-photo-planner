@@ -1,4 +1,5 @@
 import { configureServerRuntime } from "../../server/cloudflareRuntime.ts";
+import { persistentCacheFromR2 } from "../../server/r2PersistentCache.ts";
 import type {
   SpotSearchJobKv,
   SpotSearchQueueMessage,
@@ -24,9 +25,7 @@ export function configureCloudflareServerRuntime(
   configureServerRuntime({
     cesiumIonToken:
       context.env.CESIUM_ION_TOKEN ?? context.env.VITE_CESIUM_ION_TOKEN,
-    // 時間変更・ピン移動・標高参照などの通常UI操作でWorkers KVへ
-    // DEMタイルを書き込まない。ブラウザ/サーバーメモリキャッシュを使用する。
-    persistentCache: undefined,
+    persistentCache: persistentCacheFromR2(context.env.NETWORK_CACHE),
     waitUntil: (promise) => context.waitUntil(promise),
   });
 }

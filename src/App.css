@@ -1514,13 +1514,16 @@ button { cursor: pointer; }
   line-height: 1.25;
 }
 .calculation-mode-menu button {
-  grid-template-columns: 76px minmax(0, 1fr);
+  /* 76px固定だと「光害マップの見方」等の長いラベルが16pxフォントで
+     収まらず、右側のsmall説明文へ重なっていた（2026-08-16報告）。
+     折り返しを許可しつつ、列幅にも余裕を持たせて重なりを防ぐ。 */
+  grid-template-columns: minmax(92px, 34%) minmax(0, 1fr);
   padding: 8px 10px;
 }
 .calculation-mode-menu button b {
   font-size: 16px;
   line-height: 1.2;
-  white-space: nowrap;
+  white-space: normal;
 }
 .calculation-mode-menu button small {
   font-size: 12px;

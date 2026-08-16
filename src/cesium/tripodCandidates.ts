@@ -533,7 +533,13 @@ export async function calculateTripodCandidates(
   previewAspectRatio = 3 / 2,
   distanceRange?: TripodDistanceRange,
   searchProfile?: TripodSearchProfile,
-  refractionWeather?: RefractionWeatherContext
+  refractionWeather?: RefractionWeatherContext,
+  // 天体ごとに方位が異なるため、単一のsearchProfile.preferredDistanceMetersでは
+  // 全天体を代表できない。呼び出し側が把握している「天体ID→前回の確定距離」を
+  // ここで受け取り、天体ごとに個別のヒントとして使う。
+  // （spotPresetSearch.tsの前回距離再利用と同じ考え方。id未登録の天体は
+  // 通常どおりsearchProfile.preferredDistanceMetersにフォールバックする。）
+  preferredDistancesById?: Partial<Record<CelestialScreenPoint["id"], number>>
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -553,8 +559,13 @@ export async function calculateTripodCandidates(
 
 
   const results = await Promise.all(
-    visiblePoints.map((point) =>
-      calculateOneCandidate(
+    visiblePoints.map((point) => {
+      const preferredDistanceMeters = preferredDistancesById?.[point.id];
+      const pointSearchProfile: TripodSearchProfile | undefined =
+        preferredDistanceMeters !== undefined
+          ? { ...searchProfile, preferredDistanceMeters }
+          : searchProfile;
+      return calculateOneCandidate(
         subject,
         point,
         cameraSettings,
@@ -564,10 +575,10 @@ export async function calculateTripodCandidates(
         terrainSampler,
         signal,
         distanceRange,
-        searchProfile,
+        pointSearchProfile,
         refractionWeather
-      )
-    )
+      );
+    })
   );
   abortIfRequested(signal);
   return results.filter((candidate): candidate is TripodCandidate => Boolean(candidate));

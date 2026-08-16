@@ -10,6 +10,18 @@
       "id": "92197c38d81d48489ef4fdd25b1b9a58"
     }
   ],
+  // Pages Functions側のNETWORK_CACHE（PHASE5_4_CLOUDFLARE_R2_CACHE.md参照）と
+  // 同じR2バケットをここにも束縛すると、DEMタイルキャッシュ（空判定含む）を
+  // 対話的な三脚候補探索とバックグラウンドのスポット検索ジョブの両方で
+  // 共有できる。bucket_nameは実際に作成したR2バケット名に置き換えること。
+  // 未設定のままでも従来どおり動作する（persistentCacheFromR2がundefinedを
+  // 許容しフォールバックする）。
+  "r2_buckets": [
+    {
+      "binding": "NETWORK_CACHE",
+      "bucket_name": "REPLACE_WITH_YOUR_NETWORK_CACHE_R2_BUCKET_NAME"
+    }
+  ],
   "queues": {
     "consumers": [
       {

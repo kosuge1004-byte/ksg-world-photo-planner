@@ -1034,6 +1034,16 @@ function App() {
       return;
     }
 
+    // 直前の確定候補を天体IDごとの距離ヒントとして保持する。時刻操作後の
+    // 再計算や被写体ピンの微調整では、実際の解が前回とほぼ同じ距離帯に
+    // あることが多く、これを渡すとDEMの全距離走査（コールドスタート）を
+    // 避けて1点確認または近傍のみの狭い走査で済むことが多い
+    // （spotPresetSearch.tsの前回距離再利用と同じ仕組み）。
+    // 外れていた場合は自動的に従来どおりの全距離走査へフォールバックする。
+    const preferredDistancesById = Object.fromEntries(
+      tripodCandidatesRef.current.map((candidate) => [candidate.id, candidate.distanceMeters])
+    ) as Partial<Record<TripodCandidate["id"], number>>;
+
     // 精密計算が完了するまでは候補点を地図へ表示しない。
     // 粗探索の方位候補（既定距離500m）を一時表示すると、確定候補と誤認されるため。
     tripodCandidatesRef.current = [];
@@ -1054,7 +1064,8 @@ function App() {
         previewAspectRatio,
         undefined,
         undefined,
-        previewRefractionWeather
+        previewRefractionWeather,
+        preferredDistancesById
       )
         .then((candidates) => {
           if (!cancelled) {
@@ -1225,11 +1236,15 @@ function App() {
   useEffect(() => {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed() || !mapReady) return;
+    // Cesumの3Dビューアは3D表示を隠している間もopacity:0で裏レンダリングを
+    // 続けているため、mapViewModeを見ずに有効化すると2D表示中でも裏の3D側に
+    // 光害タイルの読込負荷がかかりフリーズ・暗転していた（2026-08-16報告）。
+    // 実際に3Dが表示されているときだけ有効化する。
     setLightPollutionLayerVisible(
       viewer,
-      lightPollutionEnabled && celestialVisibility.milkyWay
+      mapViewMode === "3d" && lightPollutionEnabled && celestialVisibility.milkyWay
     );
-  }, [celestialVisibility.milkyWay, lightPollutionEnabled, mapReady]);
+  }, [celestialVisibility.milkyWay, lightPollutionEnabled, mapReady, mapViewMode]);
 
   useEffect(() => {
     if (!celestialVisibility.milkyWay && lightPollutionEnabled) {

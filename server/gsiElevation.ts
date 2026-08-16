@@ -1,6 +1,6 @@
 import { createAbortError, createTimeoutError, isAbortError } from "./runtimeErrors.ts";
 import { inflateSync } from "node:zlib";
-import { serverPersistentCache } from "./cloudflareRuntime.ts";
+import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.ts";
 import { bilinearInterpolate } from "./bilinearInterpolation.ts";
 import { constrainedBicubicInterpolate, type BicubicGrid4x4 } from "./constrainedBicubicInterpolation.ts";
 
@@ -52,7 +52,6 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_TILE_CACHE_ENTRIES = 512;
-const PERSISTENT_TILE_FORMAT_VERSION = 1;
 export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 12;
 const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
@@ -261,18 +260,54 @@ function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
 }
 
 function persistentTileKey(source: ElevationTileSource, x: number, y: number): string {
-  return `gsi-decoded-dem-v1/${source.id}/${source.zoom}/${x}/${y}.bin`;
+  return `gsi-decoded-dem-v2/${source.id}/${source.zoom}/${x}/${y}.bin`;
 }
 
-function deserializeDecodedElevationTile(bytes: ArrayBuffer): DecodedElevationTile | null {
-  const headerBytes = 12;
-  if (bytes.byteLength < headerBytes) return null;
+// 先頭1バイトの種別フラグ:
+//   0 = タイル自体が存在しない（該当ソースがこの地点をカバーしていない、
+//       すなわち以前の404応答）ことが確定している「空」マーカー。
+//   1 = 実際にデコードした標高タイル本体が後続する。
+// 探索が空振りだった結果も含めて永続化することで、次回以降は同じ
+// タイルについて「DEM1A→5A→5B→5C→10Bを律儀に順に試す」通信を省略できる
+// （山間部などレーザ測量が無い地域で特に効く）。
+const PERSISTENT_TILE_KIND_EMPTY = 0;
+const PERSISTENT_TILE_KIND_DATA = 1;
+
+type PersistentTileLookup =
+  | { kind: "empty" }
+  | { kind: "data"; tile: DecodedElevationTile };
+
+function serializeEmptyPersistentTile(): ArrayBuffer {
+  return new Uint8Array([PERSISTENT_TILE_KIND_EMPTY]).buffer;
+}
+
+function serializeDecodedElevationTile(tile: DecodedElevationTile): ArrayBuffer {
+  const headerBytes = 9;
+  const dataBytes = new Uint8Array(
+    tile.heightsCentimeters.buffer,
+    tile.heightsCentimeters.byteOffset,
+    tile.heightsCentimeters.byteLength
+  );
+  const combined = new Uint8Array(headerBytes + dataBytes.byteLength);
+  const view = new DataView(combined.buffer);
+  view.setUint8(0, PERSISTENT_TILE_KIND_DATA);
+  view.setUint32(1, tile.width, true);
+  view.setUint32(5, tile.height, true);
+  combined.set(dataBytes, headerBytes);
+  return combined.buffer;
+}
+
+function deserializePersistentTile(bytes: ArrayBuffer): PersistentTileLookup | null {
+  if (bytes.byteLength < 1) return null;
   const view = new DataView(bytes);
-  const version = view.getUint32(0, true);
-  const width = view.getUint32(4, true);
-  const height = view.getUint32(8, true);
+  const kind = view.getUint8(0);
+  if (kind === PERSISTENT_TILE_KIND_EMPTY) return { kind: "empty" };
+  if (kind !== PERSISTENT_TILE_KIND_DATA) return null;
+  const headerBytes = 9;
+  if (bytes.byteLength < headerBytes) return null;
+  const width = view.getUint32(1, true);
+  const height = view.getUint32(5, true);
   if (
-    version !== PERSISTENT_TILE_FORMAT_VERSION ||
     width <= 0 ||
     height <= 0 ||
     width * height > 1_048_576 ||
@@ -281,33 +316,51 @@ function deserializeDecodedElevationTile(bytes: ArrayBuffer): DecodedElevationTi
     return null;
   }
   const copied = bytes.slice(headerBytes);
-  return { width, height, heightsCentimeters: new Int32Array(copied) };
+  return { kind: "data", tile: { width, height, heightsCentimeters: new Int32Array(copied) } };
 }
 
-async function readPersistentDecodedTile(
+async function readPersistentTile(
   source: ElevationTileSource,
   x: number,
   y: number
-): Promise<DecodedElevationTile | null> {
+): Promise<PersistentTileLookup | null> {
   const persistentCache = serverPersistentCache();
   if (!persistentCache) return null;
   try {
     const bytes = await persistentCache.get(persistentTileKey(source, x, y), {
       type: "arrayBuffer",
     });
-    return bytes instanceof ArrayBuffer ? deserializeDecodedElevationTile(bytes) : null;
+    return bytes instanceof ArrayBuffer ? deserializePersistentTile(bytes) : null;
   } catch {
-    // ローカル開発やBlob未設定環境では永続キャッシュを使わず従来処理を継続する。
+    // ローカル開発やR2未設定環境では永続キャッシュを使わず従来処理を継続する。
     return null;
   }
 }
 
 /**
- * DEMタイルは検索中に大量取得されるためWorkers KVへ書き込まない。
- * 既存KVの読み取り互換性だけ維持し、新規取得分はプロセスメモリの
- * tileCacheで再利用する。時間変更・三脚候補更新・検索進捗による
- * KV PUTを確実に0回にするための設計。
+ * タイル本体・空判定の永続化はR2（`NETWORK_CACHE`、functions/_shared/env.ts
+ * 経由）へ書き込む。Workers KVは書き込み回数・レートに強い制約があり
+ * DEMタイルのような高頻度取得とは相性が悪いためWORKERS_KV_PUT_REDUCTION
+ * 各stageで意図的に0PUTへ削減した（scripts/verify-workers-kv-writes.mjsで
+ * 監視）。R2はそれと別物で、`functions/_shared/r2Cache.ts`の標高バッチ
+ * キャッシュで既に同種の書き込みを行っており、ここでも同じ経路
+ * （bucket.put経由、env.X.putを直接書かない）を踏襲するため監視対象外。
+ * 応答をブロックしないよう、書き込みはkeepServerTaskAliveへ渡す。
  */
+function writePersistentTile(
+  source: ElevationTileSource,
+  x: number,
+  y: number,
+  payload: ArrayBuffer
+): void {
+  const persistentCache = serverPersistentCache();
+  if (!persistentCache) return;
+  keepServerTaskAlive(
+    persistentCache.put(persistentTileKey(source, x, y), payload).catch(() => {
+      // 永続化の失敗は探索結果に影響させない（次回また通常取得へフォールバック）。
+    })
+  );
+}
 
 const GSI_TILE_REQUEST_TIMEOUT_MS = 8_000;
 
@@ -343,17 +396,24 @@ async function fetchDecodedTile(
   // 個々の検索中断で共有処理そのものを停止させると、別検索まで巻き込むため、
   // 基礎Promiseは中断信号から独立させ、各呼び出し側の待機だけを中断可能にする。
   const promise = withTileRequestLimit(async () => {
-    const persistent = await readPersistentDecodedTile(source, x, y);
-    if (persistent) return persistent;
+    const persistent = await readPersistentTile(source, x, y);
+    if (persistent?.kind === "empty") return null;
+    if (persistent?.kind === "data") return persistent.tile;
 
     const response = await fetchGsiTileWithTimeout(
       `https://cyberjapandata.gsi.go.jp/xyz/${source.id}/${source.zoom}/${x}/${y}.png`
     );
-    if (response.status === 404) return null;
+    if (response.status === 404) {
+      // このソースはこのタイル位置をカバーしていないことが確定。
+      // 次回以降は同じ判定を通信なしで再利用できるよう永続化する。
+      writePersistentTile(source, x, y, serializeEmptyPersistentTile());
+      return null;
+    }
     if (!response.ok) {
       throw new Error(`国土地理院標高タイル取得エラー：${response.status}`);
     }
     const decoded = decodeElevationTile(new Uint8Array(await response.arrayBuffer()));
+    writePersistentTile(source, x, y, serializeDecodedElevationTile(decoded));
     return decoded;
   }).catch((error: unknown) => {
     // 中断や一時的な通信失敗をキャッシュせず、次の判定で再取得できるようにする。

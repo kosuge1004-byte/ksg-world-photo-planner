@@ -17,7 +17,7 @@ export function setLightPollutionLayerVisible(
   if (viewer.isDestroyed()) return;
 
   const typedViewer = viewer as ViewerWithLightPollutionLayer;
-  let layer = typedViewer[LAYER_KEY];
+  const layer = typedViewer[LAYER_KEY];
 
   if (!layer && visible) {
     const provider = new UrlTemplateImageryProvider({
@@ -25,15 +25,28 @@ export function setLightPollutionLayerVisible(
       maximumLevel: LIGHT_POLLUTION_MAX_ZOOM,
       credit: "NASA EOSDIS GIBS / VIIRS Black Marble",
     });
-    layer = new ImageryLayer(provider);
-    layer.alpha = 0.62;
-    layer.show = true;
-    viewer.imageryLayers.add(layer);
-    typedViewer[LAYER_KEY] = layer;
+    const created = new ImageryLayer(provider);
+    created.alpha = 0.62;
+    created.show = true;
+    viewer.imageryLayers.add(created);
+    typedViewer[LAYER_KEY] = created;
+    viewer.scene.requestRender();
+    return;
   }
 
-  if (layer) {
-    layer.show = visible;
+  if (layer && !visible) {
+    // show=falseで隠すだけだと、読み込み済みタイルがGPUメモリに残り続ける。
+    // 3D表示中はrequestRenderMode有効でも常時読み込みが走り得るため、非表示
+    // 化のたびに実際にレイヤーを取り除いてメモリを解放する（2026-08-16の
+    // フリーズ報告を受けた対策）。次にONにする際は再生成すればよい。
+    viewer.imageryLayers.remove(layer, true);
+    delete typedViewer[LAYER_KEY];
+    viewer.scene.requestRender();
+    return;
+  }
+
+  if (layer && visible) {
+    layer.show = true;
     viewer.scene.requestRender();
   }
 }

@@ -1,4 +1,5 @@
 import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
+import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import { runSpotSearchJob } from "../server/runSpotSearchJob.ts";
 import {
   createSpotSearchJobUpdater,
@@ -11,6 +12,7 @@ interface ConsumerEnv {
   SPOT_SEARCH_JOBS: KVNamespace;
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
+  NETWORK_CACHE?: R2Bucket;
 }
 
 function isQueueMessage(value: unknown): value is SpotSearchQueueMessage {
@@ -28,9 +30,10 @@ export default {
     const kv = env.SPOT_SEARCH_JOBS as unknown as SpotSearchJobKv;
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      // 三脚候補検索中のDEM取得をWorkers KVへ永続化しない。
-      // 検索中はプロセスメモリのタイルキャッシュだけを使用する。
-      persistentCache: undefined,
+      // DEMタイル本体・空判定はR2（NETWORK_CACHE）で永続化し、全ユーザー・
+      // 全検索ジョブで共有する（server/r2PersistentCache.ts）。Workers KV
+      // へは書き込まない方針は維持（server/gsiElevation.tsのコメント参照）。
+      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE),
       waitUntil: (promise) => context.waitUntil(promise),
     });
 
