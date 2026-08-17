@@ -102,6 +102,7 @@ import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer } from "./cesium/createMapViewer";
 import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
+import { TutorialOverlay, type TutorialOverlayMode } from "./components/TutorialOverlay";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
@@ -509,6 +510,7 @@ function App() {
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
   const [celestialMenuOpen, setCelestialMenuOpen] = useState(true);
+  const [tutorialMode, setTutorialMode] = useState<TutorialOverlayMode | null>(null);
   const initialMapStateRef = useRef<LastMapState>(loadLastMapState());
   const [mapViewMode, setMapViewMode] = useState<"2d" | "3d">(
     initialMapStateRef.current.viewMode
@@ -1236,15 +1238,29 @@ function App() {
   useEffect(() => {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed() || !mapReady) return;
-    // Cesumの3Dビューアは3D表示を隠している間もopacity:0で裏レンダリングを
+    // Cesiumの3Dビューアは3D表示を隠している間もopacity:0で裏レンダリングを
     // 続けているため、mapViewModeを見ずに有効化すると2D表示中でも裏の3D側に
     // 光害タイルの読込負荷がかかりフリーズ・暗転していた（2026-08-16報告）。
     // 実際に3Dが表示されているときだけ有効化する。
+    // さらに、highest（Google Photorealistic 3D Tiles）中は、下の
+    // 自動2D切替useEffectが効くのが次のレンダリング以降になるため、
+    // ここでも明示的に除外しないと切替が反映される前の1フレームだけ
+    // 外部WMTSがPhotorealistic 3D Tilesへ重なってしまい、それが
+    // クラッシュ（画面ごと暗転）につながっていた（スクリーンショット報告）。
     setLightPollutionLayerVisible(
       viewer,
-      mapViewMode === "3d" && lightPollutionEnabled && celestialVisibility.milkyWay
+      mapViewMode === "3d" &&
+        precisionSettings.accuracyMode !== "highest" &&
+        lightPollutionEnabled &&
+        celestialVisibility.milkyWay
     );
-  }, [celestialVisibility.milkyWay, lightPollutionEnabled, mapReady, mapViewMode]);
+  }, [
+    celestialVisibility.milkyWay,
+    lightPollutionEnabled,
+    mapReady,
+    mapViewMode,
+    precisionSettings.accuracyMode,
+  ]);
 
   useEffect(() => {
     if (!celestialVisibility.milkyWay && lightPollutionEnabled) {
@@ -3619,6 +3635,8 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
+        onOpenUsageGuide={() => setTutorialMode("guide")}
+        onOpenTutorial={() => setTutorialMode("training")}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
       />
@@ -3879,8 +3897,8 @@ ${diagnosticMessage}
             <div className="map-native-top-left-mask" aria-hidden="true" />
             <div className="map-left-controls">
               <div className="map-tool-rail" aria-label="地図表示ツール">
-                <button type="button" className={mapViewMode === "2d" ? "active" : ""} onClick={() => changeMapViewMode("2d")}><span>▣</span><small>2D</small></button>
-                <button type="button" className={mapViewMode === "3d" ? "active" : ""} onClick={() => changeMapViewMode("3d")}><span>◇</span><small>3D</small></button>
+                <button type="button" data-tutorial-id="map-mode-2d" className={mapViewMode === "2d" ? "active" : ""} onClick={() => changeMapViewMode("2d")}><span>▣</span><small>2D</small></button>
+                <button type="button" data-tutorial-id="map-mode-3d" className={mapViewMode === "3d" ? "active" : ""} onClick={() => changeMapViewMode("3d")}><span>◇</span><small>3D</small></button>
                 <button
                   type="button"
                   ref={pinToolButtonRef}
@@ -3995,6 +4013,7 @@ ${diagnosticMessage}
             <div className="map-right-actions">
               <button
                 type="button"
+                data-tutorial-id="map-measure"
                 className={mapMeasuring ? "active" : ""}
                 aria-pressed={mapMeasuring}
                 onClick={toggleMapMeasurement}
@@ -4012,7 +4031,7 @@ ${diagnosticMessage}
               </button>
               <button type="button" onClick={showSubjectOnMap}><span>⌖</span><small>被写体</small></button>
               <button type="button" onClick={showTripodOnMap}><span>●</span><small>三脚</small></button>
-              <button type="button" onClick={openMapFullscreen}><span>⛶</span><small>全画面</small></button>
+              <button type="button" data-tutorial-id="map-fullscreen" onClick={openMapFullscreen}><span>⛶</span><small>全画面</small></button>
             </div>
 
             <button
@@ -4285,6 +4304,20 @@ ${diagnosticMessage}
         errorMessage={pendingPlacementError}
         onConfirm={() => void confirmPendingPlacement()}
         onCancel={cancelPendingPlacement}
+      />
+      <TutorialOverlay
+        mode={tutorialMode}
+        onClose={() => setTutorialMode(null)}
+        liveState={{
+          hasSubjectPoint: Boolean(subjectPoint),
+          hasTripodPoint: Boolean(tripodPoint),
+          tripodCandidateCount: tripodCandidates.length,
+          mapViewMode,
+          spotSearchOpen,
+          celestialMenuOpen,
+          lightPollutionEnabled,
+          accuracyMode: precisionSettings.accuracyMode,
+        }}
       />
     </main>
   );

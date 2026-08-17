@@ -4,6 +4,13 @@ export const LIGHT_POLLUTION_MAX_ZOOM = 8;
 export const LIGHT_POLLUTION_TILE_URL =
   "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png";
 
+// 2D表示（明るいGoogleマップのroadmapベース）向けの既定値。
+export const LIGHT_POLLUTION_DEFAULT_ALPHA = 0.62;
+// 標準3D表示は衛星写真ベースの地図で、Black Marble自体もほぼ黒い夜間画像
+// なので、2Dと同じ不透明度だと重なって画面全体が暗く見えすぎていた
+// （2026-08-16報告）。3Dだけ薄めに調整する。
+export const LIGHT_POLLUTION_3D_ALPHA = 0.32;
+
 const LAYER_KEY = "__astrosightLightPollutionLayer";
 
 type ViewerWithLightPollutionLayer = Viewer & {
@@ -12,7 +19,8 @@ type ViewerWithLightPollutionLayer = Viewer & {
 
 export function setLightPollutionLayerVisible(
   viewer: Viewer,
-  visible: boolean
+  visible: boolean,
+  alpha: number = LIGHT_POLLUTION_3D_ALPHA
 ): void {
   if (viewer.isDestroyed()) return;
 
@@ -26,7 +34,7 @@ export function setLightPollutionLayerVisible(
       credit: "NASA EOSDIS GIBS / VIIRS Black Marble",
     });
     const created = new ImageryLayer(provider);
-    created.alpha = 0.62;
+    created.alpha = alpha;
     created.show = true;
     viewer.imageryLayers.add(created);
     typedViewer[LAYER_KEY] = created;
@@ -47,6 +55,7 @@ export function setLightPollutionLayerVisible(
 
   if (layer && visible) {
     layer.show = true;
+    layer.alpha = alpha;
     viewer.scene.requestRender();
   }
 }

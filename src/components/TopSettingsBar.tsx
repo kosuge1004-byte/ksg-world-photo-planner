@@ -25,6 +25,8 @@ type Props = {
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
   onOpenArCamera: () => void;
+  onOpenUsageGuide: () => void;
+  onOpenTutorial: () => void;
   precisionSettings: PrecisionSettings;
   onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
 };
@@ -37,6 +39,8 @@ export function TopSettingsBar({
   onOpenCalendar,
   onOpenMoonAgeCalendar,
   onOpenArCamera,
+  onOpenUsageGuide,
+  onOpenTutorial,
   precisionSettings,
   onPrecisionSettingsChange,
 }: Props) {
@@ -57,8 +61,6 @@ export function TopSettingsBar({
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
   const [lightPollutionGuideOpen, setLightPollutionGuideOpen] = useState(false);
-  const [usageGuideOpen, setUsageGuideOpen] = useState(false);
-  const [tutorialOpen, setTutorialOpen] = useState(false);
   const [focalLengthInput, setFocalLengthInput] = useState(
     String(settings.focalLengthMm)
   );
@@ -128,7 +130,7 @@ export function TopSettingsBar({
       </button>
       {modeMenuOpen && (
         <div
-          className={(precisionMenuOpen || threeDSourceMenuOpen || mapSourcesOpen || lightPollutionGuideOpen || usageGuideOpen || tutorialOpen)
+          className={(precisionMenuOpen || threeDSourceMenuOpen || mapSourcesOpen || lightPollutionGuideOpen)
             ? "calculation-mode-menu precision-open"
             : "calculation-mode-menu"}
           role="dialog"
@@ -155,79 +157,22 @@ export function TopSettingsBar({
           </button>
           <button
             type="button"
-            onClick={() => setUsageGuideOpen((current) => !current)}
-            aria-expanded={usageGuideOpen}
+            onClick={() => {
+              setModeMenuOpen(false);
+              onOpenUsageGuide();
+            }}
           >
-            <b>使い方</b><small>このアプリでできること</small>
+            <b>使い方</b><small>実画面をハイライトしながら、どこに何があるか確認</small>
           </button>
-          {usageGuideOpen && (
-            <section className="usage-guide" aria-label="使い方">
-              <strong>このアプリでできること</strong>
-              <p>
-                太陽・月・星が「いつ」「どこに」見えるかを、地図の上でかんたんに調べられるアプリだよ。
-              </p>
-              <div className="usage-guide-row">
-                <b>① カメラを置く場所</b>
-                <span>地図をタップすると「三脚（さんきゃく）ピン」が立つよ。ここが写真をとる場所。</span>
-              </div>
-              <div className="usage-guide-row">
-                <b>② 撮りたいもの</b>
-                <span>山や建物など、写したいものの場所に「被写体（ひしゃたい）ピン」を置こう。</span>
-              </div>
-              <div className="usage-guide-row">
-                <b>③ プレビュー</b>
-                <span>その日時に太陽や月がどこに見えるか、写真のわく（フレーム）の中に表示されるよ。</span>
-              </div>
-              <div className="usage-guide-row">
-                <b>④ ARカメラ</b>
-                <span>スマホのカメラごしに、実際の景色と星の位置を重ねて見られるよ。</span>
-              </div>
-              <p className="usage-guide-note">
-                くわしい手順は「チュートリアル」を見てね。
-              </p>
-            </section>
-          )}
           <button
             type="button"
-            onClick={() => setTutorialOpen((current) => !current)}
-            aria-expanded={tutorialOpen}
+            onClick={() => {
+              setModeMenuOpen(false);
+              onOpenTutorial();
+            }}
           >
-            <b>チュートリアル</b><small>はじめての人向けの手順</small>
+            <b>チュートリアル</b><small>実際に操作しながら一通り練習する</small>
           </button>
-          {tutorialOpen && (
-            <section className="tutorial-guide" aria-label="チュートリアル">
-              <strong>はじめての人向け・かんたん手順</strong>
-              <ol>
-                <li>
-                  <b>地図をタップしよう</b>
-                  <span>カメラを置きたい場所を1回タップすると、三脚（さんきゃく）ピンが立つよ。</span>
-                </li>
-                <li>
-                  <b>もう一度タップしよう</b>
-                  <span>写したいもの（山・タワー・建物など）の場所をタップすると、被写体ピンが立つよ。</span>
-                </li>
-                <li>
-                  <b>日にちと時間をえらぼう</b>
-                  <span>画面したのタイムラインで、見たい日と時間を動かしてみよう。</span>
-                </li>
-                <li>
-                  <b>プレビューを見てみよう</b>
-                  <span>太陽や月が写真のどこに写るか、丸いマークで表示されるよ。</span>
-                </li>
-                <li>
-                  <b>気に入ったらほぞんしよう</b>
-                  <span>右上の☆ボタンをおすと、その組み合わせをあとで見返せるよ。</span>
-                </li>
-                <li>
-                  <b>ARカメラでも見てみよう</b>
-                  <span>メニューの「ARカメラ」をひらくと、スマホのカメラごしに実際の景色と重ねて見られるよ。</span>
-                </li>
-              </ol>
-              <p className="tutorial-guide-note">
-                まちがえてピンを置いても、もう一度その場所をタップすれば動かせるよ。あわてなくて大丈夫！
-              </p>
-            </section>
-          )}
           {pwaInstall.supported && !pwaInstall.installed && (
             <>
               <button
