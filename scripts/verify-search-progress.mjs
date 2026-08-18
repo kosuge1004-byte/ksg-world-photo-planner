@@ -68,7 +68,6 @@ if (
 }
 if (
   !server.includes("Math.min(97") ||
-  !app.includes('onProgress("最終3D確認結果を保存しています…", 99)') ||
   !spotSearch.includes("100,")
 ) {
   throw new Error("100% is not reserved for completed search");

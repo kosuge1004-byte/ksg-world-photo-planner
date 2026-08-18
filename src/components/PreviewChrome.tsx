@@ -1,13 +1,9 @@
 import { useState } from "react";
-import { zonedDateTimeLocalFromDate } from "../time/zonedTime";
 import type { PreviewFrameMode } from "../types/camera";
 import { enterElementFullscreen, exitElementFullscreen } from "../ui/fullscreen";
 
 type Props = {
-  dateTimeLocal: string;
-  timeZone: string;
   frameMode: PreviewFrameMode;
-  onChangeDateTime: (value: string) => void;
   onChangeFrameMode: (mode: PreviewFrameMode) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -17,10 +13,7 @@ type Props = {
 };
 
 export function PreviewChrome({
-  dateTimeLocal,
-  timeZone,
   frameMode,
-  onChangeDateTime,
   onChangeFrameMode,
   onZoomIn,
   onZoomOut,
@@ -83,27 +76,6 @@ export function PreviewChrome({
 
         <button type="button" className="map-right-actions-style" onClick={onResetToSubject}>
           <span>⌖</span><small>被写体</small>
-        </button>
-      </div>
-
-      <div className="preview-date-control">
-        <label className="preview-date-time" title="撮影日時を変更">
-          <input
-            type="datetime-local"
-            step="60"
-            value={dateTimeLocal}
-            onChange={(event) => onChangeDateTime(event.target.value)}
-            aria-label="撮影日時を変更"
-          />
-        </label>
-        <button
-          type="button"
-          className="preview-now-button"
-          onClick={() =>
-            onChangeDateTime(zonedDateTimeLocalFromDate(new Date(), timeZone))
-          }
-        >
-          現時刻
         </button>
       </div>
 
