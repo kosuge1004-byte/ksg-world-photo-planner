@@ -1,0 +1,2685 @@
+:root {
+  font-family: Inter, "Noto Sans JP", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f7f9fc;
+  background: #000;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+.app {
+  position: fixed;
+  inset-block: 0;
+  inset-inline: 0;
+  display: grid;
+  grid-template-rows: 6.65% 27.3% 15% 45.25% 5.8%;
+  width: min(100vw, calc(100vh * .45));
+  width: min(100vw, calc(100dvh * .45));
+  height: 100vh;
+  height: 100dvh;
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  overflow: hidden;
+  overflow: clip;
+  margin-inline: auto;
+  background: #020304;
+  box-shadow: 0 0 0 1px #1e252e, 0 0 48px rgba(0, 0, 0, .88);
+  /* アプリのUIは通常の文章ではないため、長押しでの文字選択・iOSの
+     選択ポップアップ（コピー/共有等）を全体で無効化する。入力欄だけ
+     下で通常の選択挙動に戻す。 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.app input,
+.app textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Top settings */
+.mobile-top-settings {
+  position: relative;
+  z-index: 100;
+  display: grid;
+  /* ハンバーガーのタップ幅を従来の9%から1.5倍へ広げる。 */
+  grid-template-columns: 13.5% 23% 18% 45.5%;
+  min-width: 0;
+  border-bottom: 1px solid #21262e;
+  background: #020304;
+}
+
+.hamburger-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 0;
+  color: #fff;
+  border: 0;
+  border-right: 1px solid #20262e;
+  background: transparent;
+  font-size: clamp(18px, 4vw, 25px);
+}
+
+.hamburger-button span { transform: scaleX(1.05); }
+.hamburger-button b {
+  position: absolute;
+  left: 1px;
+  bottom: 2px;
+  padding: 1px 3px;
+  color: #050505;
+  border-radius: 3px;
+  background: #ffdc25;
+  font-size: 6px;
+  line-height: 1;
+}
+
+.calculation-mode-menu {
+  position: absolute;
+  z-index: 250;
+  top: calc(100% + 4px);
+  left: 4px;
+  display: grid;
+  gap: 5px;
+  width: min(520px, calc(100vw - 8px));
+  max-height: calc(100vh - 58px - env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 58px - env(safe-area-inset-bottom));
+  padding: 9px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #3a424d;
+  border-radius: 9px;
+  background: rgba(5, 7, 10, .97);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .72);
+}
+
+.calculation-mode-menu > strong { font-size: 11px; }
+.calculation-mode-menu.precision-open {
+  width: min(520px, calc(100vw - 8px));
+}
+.calculation-mode-menu > .calculation-menu-section { margin-top: 3px; padding-top: 6px; border-top: 1px solid #313944; color: #8ea0b3; font-size: 8px; }
+.calculation-mode-menu button {
+  display: grid;
+  grid-template-columns: minmax(122px, 40%) minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  padding: 7px 8px;
+  color: #d8dde5;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #11161c;
+  text-align: left;
+}
+.calculation-mode-menu button.active {
+  color: #fff;
+  border-color: #ffdc25;
+  background: #25230e;
+}
+.calculation-mode-menu button b { min-width: 0; font-size: 11px; line-height: 1.18; white-space: nowrap; }
+.calculation-mode-menu button small {
+  min-width: 0;
+  overflow: visible;
+  font-size: 8px;
+  line-height: 1.25;
+  white-space: normal;
+  text-overflow: clip;
+}
+@media (max-width: 360px) {
+  .calculation-mode-menu { left: 2px; width: calc(100vw - 4px); padding: 7px; }
+  .calculation-mode-menu.precision-open { width: calc(100vw - 4px); }
+  .calculation-mode-menu button { grid-template-columns: minmax(112px, 42%) minmax(0, 1fr); padding: 7px 6px; }
+}
+
+.calculation-mode-menu .pwa-install-hint {
+  padding: 2px 4px;
+  color: #b9c8d8;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.top-setting {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 9px;
+  border-right: 1px solid #20262e;
+  text-align: left;
+}
+
+.top-setting > span:first-child {
+  overflow: hidden;
+  color: #d2d6dc;
+  font-size: clamp(8px, 1.6vw, 12px);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.top-setting strong {
+  overflow: hidden;
+  color: #ffdb21;
+  font-size: clamp(11px, 2.4vw, 18px);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.top-setting small {
+  overflow: hidden;
+  color: #d6d9de;
+  font-size: clamp(7px, 1.25vw, 9px);
+  white-space: nowrap;
+}
+
+.top-setting-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 0;
+  color: #ffdc25;
+}
+
+.top-setting-value input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  color: #ffdc25;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: clamp(11px, 1.9vw, 15px);
+  font-weight: 500;
+  line-height: 1;
+  appearance: textfield;
+}
+
+.top-setting-value input::-webkit-inner-spin-button { display: none; }
+.top-setting-value b { min-width: 0; color: #ffdc25; font-size: clamp(6px, 1vw, 9px); font-weight: 500; line-height: 1; white-space: nowrap; }
+.focal-setting .top-setting-value input { max-width: 48px; }
+.height-setting { padding-inline: 5px; }
+.height-setting .top-setting-value input { max-width: 36px; }
+.top-setting-value i { display: none; }
+
+.sensor-cycle-button {
+  width: max-content;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 2px 7px;
+  overflow: hidden;
+  color: #cfd5dd;
+  border: 1px solid #3c434d;
+  border-radius: 5px;
+  background: #111419;
+  font-size: clamp(7px, 1.35vw, 10px);
+  white-space: nowrap;
+}
+
+.top-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 6px 4px 8px;
+}
+
+.top-quick-actions button {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px;
+  color: #eff3f8;
+  border: 1px solid #303741;
+  border-radius: 7px;
+  background: #07090c;
+}
+
+.top-quick-actions b { font-size: clamp(11px, 2.1vw, 16px); font-weight: 400; line-height: 1; }
+.top-quick-actions span { width: 100%; overflow: hidden; font-size: clamp(5.5px, 1vw, 8px); line-height: 1; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.top-quick-actions .top-preset-button span { font-size: clamp(5px, .9vw, 7px); }
+.top-quick-actions .top-favorite-button { place-content: center; padding: 0; }
+
+.focal-length-validation-backdrop {
+  position: fixed;
+  z-index: 800;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding:
+    calc(16px + env(safe-area-inset-top))
+    calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom))
+    calc(16px + env(safe-area-inset-left));
+  background: rgba(0, 0, 0, .72);
+}
+
+.focal-length-validation-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(340px, 100%);
+  padding: 20px;
+  color: #f7f9fc;
+  border: 1px solid #667386;
+  border-radius: 14px;
+  background: #101821;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .8);
+}
+
+.focal-length-validation-dialog strong {
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.focal-length-validation-dialog p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.focal-length-validation-dialog button {
+  min-height: 44px;
+  padding: 8px 18px;
+  color: #fff;
+  border: 1px solid #69788c;
+  border-radius: 9px;
+  background: #1a2a3b;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* Shared preview/map surfaces */
+.preview-section, .map-section {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  margin-inline: 2px;
+  overflow: hidden;
+  background: #071019;
+}
+
+.preview-section { border-radius: 11px 11px 0 0; }
+.map-section { margin-top: 4px; border-radius: 11px; }
+.preview-imaging-frame {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  overflow: hidden;
+  background: #020304;
+  transform: translate(-50%, -50%);
+}
+.preview-imaging-frame.frame-landscape-3-2,
+.preview-imaging-frame.frame-portrait-3-2 {
+  outline: 1px solid rgba(255, 255, 255, .72);
+  outline-offset: -1px;
+}
+.preview-canvas, .map-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
+.preview-canvas {
+  z-index: 1;
+  display: block;
+  object-fit: cover;
+  background:
+    radial-gradient(circle at 50% 23%, rgba(76, 86, 122, .64), transparent 28%),
+    linear-gradient(180deg, #071523 0%, #101722 48%, #05080d 100%);
+}
+.preview-gesture-layer { position: absolute; z-index: 22; inset: 0; cursor: zoom-in; touch-action: none; }
+.preview-subject-center { position: absolute; z-index: 27; top: 50%; left: 50%; width: 5.6px; height: 8px; transform: translate(-50%, -100%); filter: drop-shadow(0 1px 1px #000); pointer-events: none; }
+.preview-subject-center svg { display: block; width: 5.6px; height: 8px; overflow: visible; }
+.preview-subject-center path { fill: #e53935; stroke: #fff; stroke-width: 3; }
+.preview-subject-center circle { fill: #fff; }
+
+.preview-empty-state {
+  position: absolute;
+  z-index: 14;
+  /* 左右の操作レールと右下ボタンの間だけを使い、案内が操作を隠さないようにする。 */
+  left: calc(50% - 24px);
+  bottom: 8px;
+  display: grid;
+  gap: 7px;
+  box-sizing: border-box;
+  width: min(247px, calc(100% - 162px));
+  padding: 8px 12px;
+  color: #cbd2dc;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 9px;
+  background: rgba(2, 5, 9, .72);
+  font-size: 16px;
+  line-height: 1.35;
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.preview-empty-state strong { color: #fff; font-size: 18px; line-height: 1.1; white-space: nowrap; }
+.preview-load-status, .app-status { display: none; }
+
+.user-notice {
+  position: fixed;
+  z-index: 13000;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  box-sizing: border-box;
+  width: min(520px, calc(100% - 20px));
+  min-height: 48px;
+  padding: 9px 10px 9px 12px;
+  color: #f7fbff;
+  border: 1px solid rgba(255, 190, 86, .72);
+  border-radius: 9px;
+  background: rgba(25, 18, 5, .96);
+  box-shadow: 0 7px 24px rgba(0, 0, 0, .45);
+  font-size: 12px;
+  line-height: 1.45;
+  transform: translateX(-50%);
+}
+.user-notice.error {
+  border-color: rgba(255, 112, 112, .78);
+  background: rgba(40, 8, 10, .97);
+}
+.user-notice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.user-notice-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+.user-notice button {
+  min-height: 34px;
+  padding: 5px 9px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .45);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .12);
+  font: inherit;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.user-notice button:active { background: rgba(255, 255, 255, .24); }
+.user-notice .user-notice-dismiss {
+  width: 34px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+@media (max-width: 480px) {
+  .user-notice {
+    align-items: flex-start;
+    font-size: 11px;
+  }
+  .user-notice-actions { align-self: center; }
+}
+
+/* Preview controls */
+.preview-chrome { position: absolute; z-index: 30; inset: 0; pointer-events: none; }
+.preview-chrome button, .preview-chrome input { pointer-events: auto; }
+
+.preview-tool-rail {
+  position: absolute;
+  top: 24px;
+  left: 13px;
+  display: grid;
+  gap: 6px;
+}
+
+.preview-frame-menu {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 5px);
+  display: grid;
+  gap: 3px;
+  width: 82px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 7px;
+  background: rgba(1, 4, 8, .94);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .48);
+}
+.preview-frame-menu button {
+  width: 100%;
+  min-height: 25px;
+  padding: 3px;
+  color: #eef2f7;
+  border: 1px solid #303946;
+  border-radius: 4px;
+  background: #11161d;
+  font-size: 7px;
+  white-space: nowrap;
+}
+.preview-frame-menu button.active {
+  color: #fff5a5;
+  border-color: #d6bd20;
+  background: #37320d;
+}
+
+.preview-tool-rail > button, .preview-actions button {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 2px;
+  width: 48px;
+  min-height: 52px;
+  padding: 4px 2px;
+  color: #f3f6fa;
+  border: 1px solid rgba(255, 255, 255, .17);
+  border-radius: 8px;
+  background: rgba(1, 4, 8, .86);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .28);
+}
+
+.preview-tool-rail > button.active { color: #74a6ff; border-color: #246bd7; }
+.preview-tool-rail > button span, .preview-actions span { font-size: 20px; line-height: 1; }
+.preview-tool-rail > button small, .preview-actions small { font-size: 8px; white-space: nowrap; }
+.preview-zoom-control { display: grid; grid-template-rows: repeat(2, 62px); width: 48px; overflow: hidden; border: 1px solid rgba(255,255,255,.17); border-radius: 8px; background: rgba(1,4,8,.86); box-shadow: 0 4px 12px rgba(0,0,0,.28); }
+.preview-zoom-control button { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 0; padding: 0; overflow: hidden; color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,.11); background: transparent; font-size: 18px; line-height: 1; }
+.preview-zoom-control button:last-child { border-bottom: 0; }
+/* マップ画面右下の「被写体」等ボタンと同じデザイン・大きさを再利用する。 */
+.map-right-actions-style { display: grid; place-content: center; justify-items: center; gap: 1px; width: 44px; min-height: 40px; padding: 2px; color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(1,4,8,.87); }
+.map-right-actions-style span { font-size: 22px; line-height: .9; }
+.map-right-actions-style small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
+
+.preview-date-control {
+  position: absolute;
+  top: 15px;
+  right: 9px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  pointer-events: auto;
+}
+.preview-date-time {
+  width: clamp(139px, 24vw, 170px);
+  padding: 3px 5px;
+  color: #f4f6f9;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 6px;
+  background: rgba(0, 2, 5, .83);
+  font-size: clamp(8px, 1.7vw, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.preview-date-time input { position: static; display: block; width: 100%; min-width: 0; height: 25px; padding: 1px 2px; color: #f4f6f9; border: 0; outline: 0; background: transparent; font-size: clamp(12px, 2.25vw, 14px); line-height: 1; letter-spacing: -0.25px; font-weight: 700; color-scheme: dark; cursor: pointer; }
+.preview-date-time input::-webkit-calendar-picker-indicator { margin: 0; padding: 1px; filter: brightness(1.45); cursor: pointer; }
+.preview-now-button { min-width: 43px; padding: 3px 5px; color: #fff; border: 1px solid rgba(255,255,255,.24); border-radius: 6px; background: rgba(0,2,5,.88); font-size: 8px; font-weight: 700; }
+
+.preview-actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
+.preview-actions button.active { color: #74a6ff; border-color: #246bd7; }
+.preview-measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 28; }
+.preview-measurement-line-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.preview-measurement-line { stroke: #5ab9ff; stroke-width: 2; stroke-dasharray: 3 2; }
+.preview-measurement-point {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #5ab9ff;
+  border: 1.5px solid #000;
+  transform: translate(-50%, -50%);
+}
+.preview-measurement-label {
+  position: absolute;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(1,4,8,.88);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  margin-top: -8px;
+}
+.preview-actions button { width: 44px; min-height: 40px; padding: 2px; }
+.preview-actions button:last-child { width: 44px; }
+.preview-actions span { font-size: 22px; line-height: .9; }
+.preview-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; }
+
+.fullscreen-exit-button {
+  position: absolute;
+  z-index: 200;
+  top: 14px;
+  left: 50%;
+  display: none;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 13px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .4);
+  border-radius: 8px;
+  background: rgba(2, 5, 9, .92);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, .55);
+  font-size: 11px;
+  font-weight: 700;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.fullscreen-exit-button span { font-size: 15px; }
+.preview-section:fullscreen .preview-fullscreen-exit,
+.preview-section:-webkit-full-screen .preview-fullscreen-exit,
+.map-section:fullscreen .map-fullscreen-exit,
+.map-section:-webkit-full-screen .map-fullscreen-exit { display: flex; }
+/* Celestial overlay and menu */
+.celestial-overlay { position: absolute; z-index: 21; inset: 0; overflow: hidden; pointer-events: none; }
+.celestial-track-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.celestial-track-line { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: .42; stroke-dasharray: 1.4 1; filter: drop-shadow(0 0 .8px #000); }
+.track-sun { stroke: rgba(255, 199, 0, .95); }
+.track-moon { stroke: rgba(76, 192, 255, .95); }
+.track-milkyWay { stroke: rgba(199, 109, 255, .9); }
+.track-polaris { stroke: rgba(170, 116, 255, .92); }
+.celestial-track-time { position: absolute; z-index: 3; padding: 1px 2px; border-radius: 2px; background: rgba(0, 0, 0, .55); font-size: clamp(5px, 1.05vw, 8px); line-height: 1; white-space: nowrap; transform: translate(-50%, -50%); text-shadow: 0 1px 2px #000; }
+.track-time-sun { color: #ffd43a; }
+.track-time-moon { color: #6fd4ff; }
+.track-time-milkyWay { color: #d997ff; }
+.track-time-polaris { color: #c8a6ff; }
+.celestial-marker { position: absolute; display: grid; justify-items: center; gap: 4px; transform: translate(-50%, -50%); filter: drop-shadow(0 1px 4px #000); }
+.celestial-dot { display: block; width: 15px; height: 15px; border: 2px solid #fff; border-radius: 50%; background: #ffd22e; box-shadow: 0 0 14px #ffd22e; }
+.celestial-label { padding: 2px 5px; color: #fff; border-radius: 5px; background: rgba(0,0,0,.72); font-size: 10px; white-space: nowrap; }
+.celestial-physical-marker { display: block; min-width: 0; min-height: 0; }
+.celestial-physical-disc { display: block; width: 100%; height: 100%; overflow: visible; }
+.celestial-physical-marker .celestial-label { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); }
+.celestial-hidden-position { min-width: 18px; min-height: 18px; opacity: .72; filter: none; }
+.celestial-hidden-position.celestial-physical-marker { width: 18px !important; height: 18px !important; }
+.celestial-offscreen-position { opacity: .86; }
+.celestial-offscreen-position .celestial-hidden-dot { border-style: solid; background: rgba(16,29,42,.62); box-shadow: 0 0 0 2px rgba(97,190,255,.2); }
+.celestial-hidden-dot { display: block; width: 18px; height: 18px; border: 1.5px dashed rgba(255,255,255,.92); border-radius: 50%; background: rgba(18,24,32,.24); box-shadow: inset 0 0 0 3px rgba(255,255,255,.08); }
+.celestial-hidden-dot::after { content: ""; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
+.celestial-hidden-position .celestial-label,
+.celestial-hidden-label { color: #dce8f3; border: 1px dashed rgba(210,228,244,.55); background: rgba(5,10,16,.58); font-size: 7px; font-weight: 500; }
+.celestial-hidden-label { position: absolute; z-index: 5; padding: 2px 4px; border-radius: 4px; white-space: nowrap; transform: translate(-50%, -50%); }
+.celestial-occlusion-status {
+  position: absolute;
+  z-index: 24;
+  bottom: 8px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: calc(100% - 16px);
+  max-width: 440px;
+  color: #eef5fb;
+  font-size: clamp(10px, 3vw, 12px);
+  line-height: 1.4;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+.celestial-occlusion-status-dismiss {
+  pointer-events: auto;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, .32);
+  background: rgba(3, 8, 13, .9);
+  color: #eef5fb;
+  font-size: 11px;
+}
+.celestial-occlusion-status > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, .32);
+  border-radius: 7px;
+  background: rgba(3, 8, 13, .82);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+  text-align: center;
+}
+.celestial-occlusion-status b {
+  flex: 0 0 auto;
+  color: #fff;
+  font-size: inherit;
+}
+.celestial-occlusion-status .blocked {
+  border-color: rgba(255, 176, 91, .64);
+  background: rgba(33, 15, 4, .86);
+}
+.celestial-occlusion-status .checking {
+  color: #c8d8e7;
+  border-style: dashed;
+}
+.celestial-occlusion-status .unavailable {
+  color: #ffd9a1;
+  border-color: rgba(255, 194, 100, .58);
+}
+.celestial-occlusion-status .refraction-uncertain {
+  color: #ffe6b3;
+  border-color: rgba(255, 200, 110, .5);
+  background: rgba(30, 20, 4, .82);
+}
+.milky-way-hidden-position { opacity: .34; }
+.milky-way-hidden-position .milky-way-outline { fill: rgba(174,129,255,.1); stroke: rgba(220,197,255,.8); stroke-width: .28; stroke-dasharray: 1.1 1; }
+.milky-way-hidden-position .milky-way-core-line { stroke: rgba(221,198,255,.9); stroke-width: .3; stroke-dasharray: 1 1; }
+.sun-disc circle { fill: #ffd34d; stroke: rgba(255,245,184,.95); stroke-width: 2; }
+.moon-shadow { fill: #080a0d; }
+.moon-light-surface { fill: #eee9d8; }
+.moon-mare { fill: #676965; }
+.moon-crater-tycho { fill: #dad7c9; stroke: #8f908a; stroke-width: .8; }
+.moon-limb { fill: none; stroke: rgba(235,244,255,.95); stroke-width: 2; }
+.celestial-polaris .celestial-dot { width: 23px; height: 23px; border-width: 3px; background: #fff; box-shadow: 0 0 18px #b994ff; }
+.celestial-polaris .celestial-label { font-weight: 700; }
+.milky-way-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.milky-way-natural-segment { opacity: .98; }
+.milky-way-natural-segment.hidden { opacity: .18; }
+.milky-way-ribbon-outer { fill: rgba(155, 174, 194, .07); stroke: none; }
+.milky-way-ribbon-body { fill: rgba(188, 197, 205, .12); stroke: none; }
+.milky-way-ribbon-inner { fill: rgba(231, 222, 207, .18); stroke: none; }
+.milky-way-ribbon-dark-lane { fill: rgba(8, 10, 14, .30); stroke: none; }
+.milky-way-center-highlight { fill: none; stroke: rgba(244, 233, 214, .33); stroke-width: .28; stroke-linecap: round; stroke-linejoin: round; }
+.milky-way-core-glow { opacity: .78; }
+.milky-way-star { fill: #eef4ff; filter: drop-shadow(0 0 .35px rgba(224,238,255,.85)); }
+.milky-way-star.warm { fill: #ffe5bc; }
+.celestial-milkyWay { display: none; }
+.celestial-milkyWay.celestial-fast-position { display: none; }
+
+.celestial-menu { position: absolute; z-index: 60; top: 47px; right: 7px; pointer-events: auto; }
+.celestial-menu-button { min-width: 94px; min-height: 27px; padding: 3px 7px; color: #fff; border: 1px solid #343c46; border-radius: 6px; background: rgba(2,5,9,.91); font-size: 8px; }
+.celestial-menu-popover { position: absolute; top: 30px; right: 0; width: 98px; max-height: calc(27.3dvh - 127px); padding: 3px; overflow-y: auto; border: 1px solid #333b46; border-radius: 6px; background: rgba(1,4,8,.94); box-shadow: 0 10px 26px rgba(0,0,0,.65); }
+.preview-section:fullscreen .celestial-menu-popover,
+.preview-section:-webkit-full-screen .celestial-menu-popover { max-height: calc(100dvh - 127px); }
+.celestial-checks { display: grid; gap: 1px; }
+.celestial-checks label { display: grid; grid-template-columns: 15px 1fr 14px; align-items: center; gap: 1px; min-height: 20px; padding: 1px; font-size: 7px; }
+.celestial-checks input { width: 12px; height: 12px; margin: 0; accent-color: #547cff; }
+.celestial-symbol { color: #ffe23d; font-size: 10px; }
+.celestial-reset-button { width: 100%; min-height: 20px; padding: 1px; color: #fff; border: 1px solid #3d4652; border-radius: 4px; background: #11161d; font-size: 7px; }
+
+/* Timeline */
+.timeline-section {
+  position: relative;
+  z-index: 55;
+  display: grid;
+  grid-template-rows: minmax(74px, 66%) minmax(44px, 34%);
+  min-width: 0;
+  margin: 0 2px;
+  padding: 4px 10px 5px;
+  overflow: hidden;
+  border: 1px solid #1e252d;
+  border-top: 0;
+  border-radius: 0 0 11px 11px;
+  background: #05070a;
+}
+
+.timeline-main-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) 18px; align-items: center; gap: 7px; min-width: 0; }
+.timeline-title { display: grid; place-items: center; min-height: 34px; color: #f4f6f9; border: 1px solid #343b45; border-radius: 6px; background: #080b0f; font-size: 11px; }
+.timeline-ruler-shell { display: flex; align-items: stretch; gap: 4px; min-width: 0; height: 72px; }
+.timeline-minute-step { flex: 0 0 auto; z-index: 6; display: grid; place-items: center; width: 34px; padding: 0; border: 1px solid rgba(255,255,255,.28); border-radius: 5px; color: #fff; background: rgba(5,7,10,.88); font-size: 9px; font-weight: 600; line-height: 1; cursor: pointer; touch-action: manipulation; }
+.timeline-minute-step:active { background: rgba(36,93,229,.9); }
+.timeline-minute-step:focus-visible { outline: 1px solid #fff; outline-offset: 1px; }
+.timeline-ruler { position: relative; flex: 1 1 auto; min-width: 0; height: 72px; overflow: hidden; outline: 0; cursor: grab; touch-action: none; user-select: none; }
+.timeline-ruler:active { cursor: grabbing; }
+.timeline-ruler:focus-visible { border-radius: 4px; box-shadow: inset 0 0 0 1px #4d7cff; }
+.timeline-current-time { position: absolute; z-index: 4; top: 2px; left: 50%; padding: 3px 8px; color: #fff; border-radius: 5px; background: #0c50e9; font-size: 16px; font-weight: 700; transform: translateX(-50%); }
+.timeline-current-time::after { position: absolute; top: 100%; left: 50%; border: 4px solid transparent; border-top-color: #0c50e9; content: ""; transform: translateX(-50%); }
+.timeline-scroll-track { position: absolute; z-index: 1; right: 0; bottom: 6px; left: 0; height: 34px; border-bottom: 2px solid #245de5; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(34,91,255,.12), rgba(255,255,255,.05)); }
+.timeline-scroll-tick { position: absolute; bottom: -1px; width: 1px; height: 7px; background: rgba(226,232,241,.58); transform: translateX(-50%); }
+.timeline-scroll-tick.major { height: 13px; background: #e3e8ef; }
+.timeline-scroll-tick b { position: absolute; bottom: 18px; left: 50%; color: #d9dde4; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; transform: translateX(-50%); }
+.timeline-selection-line { position: absolute; z-index: 3; top: 24px; bottom: 4px; left: 50%; width: 2px; background: #fff; box-shadow: 0 0 4px rgba(0,0,0,.8); transform: translateX(-50%); }
+.timeline-selection-line::after { position: absolute; bottom: 0; left: 50%; width: 8px; height: 8px; border: 2px solid #fff; border-radius: 50%; background: #8ea9c8; content: ""; transform: translate(-50%, 45%); }
+.timeline-date-control { position: relative; width: 18px; height: 34px; overflow: hidden; }
+.timeline-date-control::before { position: absolute; top: 8px; left: 1px; color: #e3e8ef; content: "▦"; font-size: 16px; }
+.timeline-date-control input { position: absolute; inset: 0; width: 18px; opacity: 0; cursor: pointer; }
+.celestial-event-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; gap: 5px; min-width: 0; }
+.event-card { display: grid; grid-template-columns: 18px minmax(0, 1fr); grid-template-rows: 1fr 1fr; align-items: center; gap: 0 2px; min-width: 0; height: 42px; min-height: 42px; padding: 3px 5px; overflow: hidden; border: 1px solid rgba(255,255,255,.1); border-radius: 5px; font-size: clamp(7px, 1.15vw, 9px); }
+.event-card span { font-size: 15px; }
+.event-card > span { grid-row: 1 / 3; }
+.event-card b { align-self: end; overflow: hidden; white-space: nowrap; }
+.event-card strong { align-self: start; overflow: hidden; font-size: clamp(6px, 1vw, 8px); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.event-card.sunrise { color: #fff6bf; background: linear-gradient(90deg, #4b3700, #7a5800); }
+.event-card.sunset { color: #ffd8cb; background: linear-gradient(90deg, #521405, #6b210d); }
+.event-card.moonrise, .event-card.moonset { color: #d8e9ff; background: linear-gradient(90deg, #05295c, #062348); }
+.event-card.moonrise b { display: flex; align-items: baseline; gap: 1px; font-size: clamp(5.5px, .92vw, 7px); }
+.event-card.moonrise b i { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: clamp(4.2px, .68vw, 5px); font-style: normal; letter-spacing: -.15px; text-overflow: clip; white-space: nowrap; }
+.event-card.milkyway { color: #efd9ff; background: linear-gradient(90deg, #30104b, #542175); }
+.event-card.milkyway strong { overflow: hidden; font-size: clamp(5px, .82vw, 6.5px); line-height: 1; text-overflow: clip; white-space: pre-line; }
+.timeline-day-slider { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* Map controls */
+.map-controls-layer { position: absolute; z-index: 45; inset: 0; pointer-events: none; }
+.map-controls-layer > * { pointer-events: auto; }
+.map-controls-layer > .map-native-top-left-mask { position: absolute; top: 0; left: 0; width: min(225px, 60%); height: 56px; border-radius: 0 0 10px 0; background: linear-gradient(90deg, rgba(1,4,8,.96) 0%, rgba(1,4,8,.86) 76%, rgba(1,4,8,0) 100%); pointer-events: none; }
+.map-section .cesium-viewer-toolbar { display: none; }
+.map-section .cesium-widget-credits { font-size: 7px; opacity: .55; }
+.gsi-map-attribution {
+  position: absolute;
+  z-index: 44;
+  bottom: 1px;
+  left: 50%;
+  padding: 1px 3px;
+  color: rgba(255, 255, 255, .72);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, .48);
+  font-size: 5.5px;
+  line-height: 1;
+  text-decoration: none;
+  transform: translateX(-50%);
+}
+.map-viewer { z-index: 0; opacity: 0; pointer-events: none; }
+.map-viewer.active { opacity: 1; pointer-events: auto; }
+.map-2d-stage { position: absolute; z-index: 1; inset: 0; display: none; overflow: hidden; background: #e5e3df; will-change: transform; }
+.map-2d-stage.active { display: block; }
+.map-2d-stage.dragging { overflow: visible; box-shadow: 0 0 0 180px #e5e3df; }
+.google-map-2d { position: absolute; z-index: 1; inset: 0; display: block; width: 100%; height: 100%; border: 0; pointer-events: none; }
+.map-2d-overlay { position: absolute; z-index: 25; inset: 0; overflow: hidden; pointer-events: none; }
+.map-celestial-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.map-tripod-subject-line { stroke: rgba(54, 202, 255, .95); stroke-width: 3; }
+.map-horizon-outline { fill: rgba(0,0,0,.04); stroke: rgba(0,0,0,.84); stroke-width: 7; }
+.map-horizon-circle { fill: none; stroke: rgba(218,222,228,.92); stroke-width: 3.5; filter: drop-shadow(0 1px 1px rgba(0,0,0,.85)); }
+.map-compass-tick { fill: #727881; stroke: #05070a; stroke-width: 1.2; }
+.map-compass-tick.cardinal { fill: #e7ebf0; stroke-width: 1.6; }
+.map-cardinal-label { fill: #fff; stroke: rgba(0,0,0,.94); stroke-width: 2px; paint-order: stroke; font-size: clamp(6.5px, 1.6vw, 11px); font-weight: 800; }
+.map-cardinal-label.north { fill: #ff2b25; }
+.map-milky-way-fill { fill: rgba(177, 188, 198, .12); stroke: none; }
+.map-milky-way-edge { fill: none; stroke: rgba(205, 214, 222, .26); stroke-width: 1; }
+.map-milky-way-core { fill: none; stroke: rgba(242, 231, 214, .72); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 1px #000); }
+.map-celestial-track { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 1px #000); }
+.map-track-sun { stroke: #ffbd16; }
+.map-track-moon { stroke: #62c9f5; }
+.map-track-milkyWay { stroke: rgba(220,211,198,.72); stroke-dasharray: 5 4; }
+.map-track-polaris { stroke: rgba(184,149,255,.92); stroke-dasharray: 3 3; }
+.map-rise-set-ray { stroke-width: 3; opacity: .68; filter: drop-shadow(0 1px 1px #000); }
+.map-current-body-ray { stroke-width: 3.6; opacity: .82; filter: drop-shadow(0 1px 1px #000); }
+.map-ray-sun { stroke: #e8a700; }
+.map-ray-moon { stroke: #54bce9; }
+.map-ray-milkyWay { stroke: #d8d0c5; }
+.map-ray-polaris { stroke: #a77aff; }
+.map-track-hour-dot { stroke: rgba(0,0,0,.78); stroke-width: 1; }
+.map-track-hour-sun { fill: #ffc21a; }
+.map-track-hour-moon { fill: #72d2fa; }
+.map-track-hour-milkyWay { fill: #e0d8cc; }
+.map-track-hour-polaris { fill: #c1a2ff; }
+.map-track-hour-label { stroke: rgba(0,0,0,.92); stroke-width: 2.4px; paint-order: stroke; font-size: clamp(6px, 1.25vw, 9px); font-weight: 800; }
+.map-track-hour-label-sun { fill: #ffc21a; }
+.map-track-hour-label-moon { fill: #8cddff; }
+.map-current-body { stroke: rgba(0,0,0,.9); stroke-width: 2; filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+.map-current-body-sun { fill: #ffdc72; }
+.map-current-body-moon { fill: #08090b; stroke: #8ddcff; }
+.map-current-moon-light { fill: #e5f3ff; pointer-events: none; }
+.map-current-body-milkyWay { fill: #e4ded4; }
+.map-current-body-polaris { fill: #fff; stroke: #a980ff; }
+.map-observer-center { fill: #25ec47; stroke: #06380d; stroke-width: 1.5; }
+.map-tripod-candidate-line { stroke-width: 2.5; stroke-dasharray: 6 4; filter: drop-shadow(0 1px 1px #000); }
+.map-candidate-sun { stroke: rgba(255, 185, 0, .95); }
+.map-candidate-moon { stroke: rgba(37, 191, 255, .95); }
+.map-candidate-milkyWay { stroke: rgba(222, 214, 202, .9); }
+.map-candidate-polaris { stroke: rgba(158, 108, 255, .95); }
+.map-track-time, .map-tripod-candidate-label { position: absolute; padding: 1px 2px; border-radius: 2px; background: rgba(0, 0, 0, .64); font-size: clamp(5px, 1vw, 7px); font-weight: 700; line-height: 1; white-space: nowrap; transform: translate(-50%, -50%); text-shadow: 0 1px 2px #000; }
+.map-track-time-sun, .map-candidate-label-sun { color: #ffc928; }
+.map-track-time-moon, .map-candidate-label-moon { color: #52d0ff; }
+.map-track-time-milkyWay, .map-candidate-label-milkyWay { color: #da9aff; }
+.map-track-time-polaris, .map-candidate-label-polaris { color: #c0a1ff; }
+.map-tripod-candidate-label { display: flex; align-items: center; gap: 3px; padding: 3px 5px; color: inherit; border: 1px solid currentColor; font-size: clamp(6px, 1.15vw, 8px); pointer-events: auto; }
+.map-tripod-candidate-label span { font-size: 9px; }
+.map-2d-pin { position: absolute; z-index: 8; width: 14px; height: 20px; transform: translate(-50%, -100%); filter: drop-shadow(0 1px 1px rgba(0,0,0,.55)); }
+.map-2d-pin > svg { display: block; width: 14px; height: 20px; overflow: visible; }
+.map-2d-pin path { fill: #e53935; stroke: #fff; stroke-width: 2; }
+.map-2d-pin circle { fill: #fff; }
+.map-2d-tripod-pin path { fill: #1976d2; }
+.map-tripod-distance { position: absolute; top: calc(100% + 2px); left: 50%; padding: 1px 3px; color: #fff; border-radius: 3px; background: rgba(0,0,0,.64); font-size: 6px; font-weight: 700; line-height: 1.15; white-space: nowrap; transform: translateX(-50%); }
+.map-2d-placement-layer { position: absolute; z-index: 30; inset: 0; width: 100%; height: 100%; padding: 0; color: #fff; border: 0; outline: 0; background: rgba(0, 25, 55, .06); cursor: crosshair; }
+.map-2d-placement-layer > span { position: absolute; top: 10px; left: 50%; padding: 6px 10px; border: 1px solid rgba(255,255,255,.55); border-radius: 6px; background: rgba(0,0,0,.82); font-size: 9px; font-weight: 700; transform: translateX(-50%); }
+.map-2d-pan-layer { position: absolute; z-index: 20; inset: 0; cursor: grab; touch-action: none; }
+.map-2d-pan-layer:active { cursor: grabbing; }
+
+.map-left-controls { position: absolute; top: 8px; bottom: 8px; left: 8px; display: flex; flex-direction: column; width: clamp(39px, 6.2vw, 43px); min-height: 0; }
+.map-tool-rail { position: static; display: grid; grid-template-rows: repeat(3, minmax(0, 1fr)); flex: 1 1 auto; min-height: 0; margin-bottom: 7px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(1,4,8,.87); }
+.map-tool-rail button { display: grid; place-content: center; justify-items: center; gap: 1px; width: 100%; min-height: 0; padding: 1px; color: #f4f6f9; border: 0; border-bottom: 1px solid rgba(255,255,255,.09); background: transparent; }
+.map-tool-rail button:last-child { border-bottom: 0; }
+.map-tool-rail button.active { color: #5b8cff; background: rgba(18,74,164,.26); }
+.map-tool-rail span { font-size: 20px; line-height: 1; }
+.map-tool-rail small { font-size: 8px; }
+.map-zoom-control { position: static; display: grid; grid-template-rows: repeat(2, clamp(54px, 6.6dvh, 76px)); flex: 0 0 auto; width: 100%; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(1,4,8,.87); }
+.map-zoom-control button { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 0; padding: 0; overflow: hidden; color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,.11); background: transparent; font-size: 20px; line-height: 1; }
+.map-zoom-control button:last-child { border-bottom: 0; }
+.map-right-actions { position: absolute; right: 12px; bottom: 13px; display: grid; gap: 6px; }
+.map-right-actions button { display: grid; place-content: center; justify-items: center; gap: 1px; width: 44px; min-height: 40px; padding: 2px; color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(1,4,8,.87); }
+.map-right-actions button.active { color: #74a6ff; border-color: #246bd7; }
+.map-right-actions button:disabled { opacity: .72; cursor: progress; }
+.map-right-actions span { font-size: 22px; line-height: .9; }
+.map-right-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
+.map-current-location-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(270px, calc(100% - 148px)); padding: 5px 8px; color: #edf4fb; border: 1px solid rgba(158,190,225,.45); border-radius: 6px; background: rgba(2,8,14,.9); font-size: 8px; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
+.map-current-location-status.permission-denied {
+  /* 起動時プレビュー案内と同じ幅・文字・余白に統一し、左右の地図操作を塞がない。 */
+  top: 50%;
+  left: calc(50% - 24px);
+  display: grid;
+  gap: 7px;
+  box-sizing: border-box;
+  width: min(247px, calc(100% - 162px));
+  max-height: calc(100% - 32px);
+  padding: 8px 12px;
+  overflow-y: auto;
+  color: #cbd2dc;
+  border-color: rgba(255, 255, 255, .16);
+  border-radius: 9px;
+  background: rgba(2, 5, 9, .92);
+  font-size: 16px;
+  line-height: 1.35;
+  transform: translate(-50%, -50%);
+  pointer-events: auto !important;
+}
+.map-current-location-status.permission-denied button { min-height: 36px; padding: 5px 8px; color: #fff; border: 1px solid #55a7ff; border-radius: 6px; background: #0759a8; font: inherit; font-size: 11px; font-weight: 700; touch-action: manipulation; }
+.location-notice-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 7px; }
+.map-current-location-status.permission-denied .location-notice-actions .secondary { border-color: #596675; background: #202833; }
+.map-tripod-candidate-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(250px, calc(100% - 148px)); padding: 5px 8px; color: #eef7ff; border: 1px solid rgba(90,185,255,.58); border-radius: 6px; background: rgba(2,8,14,.92); font: inherit; font-size: 8px; font-weight: 700; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
+.map-tripod-candidate-status.tappable { pointer-events: auto !important; cursor: pointer; }
+.map-tripod-candidate-status.tappable:active { background: rgba(2,8,14,.7); }
+.map-tripod-candidate-status.calculating::before { content: "⌛ "; }
+.map-tripod-candidate-status.complete { color: #d9ffe0; border-color: rgba(73,214,111,.64); }
+.map-tripod-candidate-status.no-solution,
+.map-tripod-candidate-status.error { color: #ffe6b3; border-color: rgba(255,184,77,.68); }
+.map-fullscreen-exit { top: 14px; }
+
+.map-pin-drawer { position: absolute; z-index: 12; top: 58px; left: 62px; width: min(330px, calc(100% - 140px)); max-height: calc(100% - 68px); padding: 8px; overflow-y: auto; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(2,6,10,.95); box-shadow: 0 12px 30px rgba(0,0,0,.55); }
+.map-drawer-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 10px; }
+.map-drawer-heading button { width: 25px; height: 25px; color: #fff; border: 0; background: transparent; font-size: 19px; }
+.map-search-control { position: absolute; z-index: 16; top: 8px; left: 60px; width: 112px; }
+.map-search-toggle { display: flex; align-items: center; gap: 5px; min-height: 34px; padding: 5px 9px; color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; background: rgba(2,6,10,.91); font-size: 9px; white-space: nowrap; }
+.map-search-toggle span { font-size: 15px; }
+
+/* メイン画面と同じ20:9幅を使い、PCでも検索画面だけ横へ広がらないようにする。 */
+.spot-search-screen { position: fixed; z-index: 250; top: 0; left: 50%; width: min(100vw, calc(100vh * .45)); width: min(100vw, calc(100dvh * .45)); height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; padding-inline: env(safe-area-inset-left) env(safe-area-inset-right); overflow-x: hidden; overflow-y: auto; color: #f2f5f9; background: #05070a; box-shadow: 0 0 0 1px #1e252e, 0 0 48px rgba(0,0,0,.88); transform: translateX(-50%); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.spot-search-screen::-webkit-scrollbar { width: 4px; }
+.spot-search-screen::-webkit-scrollbar-thumb { border-radius: 4px; background: #66717e; }
+.spot-search-header { position: sticky; z-index: 4; top: 0; display: grid; grid-template-columns: 72px minmax(0, 1fr) 72px; align-items: center; min-height: calc(52px + env(safe-area-inset-top)); padding: calc(6px + env(safe-area-inset-top)) 10px 6px; border-bottom: 1px solid #29313b; background: rgba(5,7,10,.97); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.spot-search-header h1 { margin: 0; overflow: hidden; font-size: 16px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.spot-search-header button { display: flex; align-items: center; gap: 2px; min-width: 0; min-height: 36px; padding: 4px 6px; color: #fff; border: 1px solid #3b4653; border-radius: 7px; background: #111820; font-size: 10px; }
+.spot-search-header button span { font-size: 23px; line-height: .8; }
+.spot-search-content { display: grid; gap: 10px; width: 100%; min-width: 0; padding: 12px 12px calc(28px + env(safe-area-inset-bottom)); }
+.spot-search-field, .spot-search-group { min-width: 0; margin: 0; padding: 10px; border: 1px solid #29333f; border-radius: 10px; background: #0a0f15; }
+.spot-search-field { display: grid; gap: 7px; }
+.spot-search-field > span, .spot-search-group legend { color: #dfe6ee; font-size: 10px; font-weight: 700; }
+.spot-search-group legend { padding: 0 4px; }
+.spot-search-field > input, .spot-search-field > select, .spot-custom-period input { width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px; color: #fff; border: 1px solid #465365; border-radius: 7px; outline: 0; background: #111821; font-size: 16px; color-scheme: dark; }
+.spot-search-field > input:focus, .spot-search-field > select:focus, .spot-custom-period input:focus { border-color: #4f83e1; box-shadow: 0 0 0 2px rgba(64,120,220,.2); }
+.spot-search-date-toggle { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 54px; padding: 9px 10px; color: #cbd3dd; border: 1px solid #394554; border-radius: 10px; background: #0a0f15; }
+.spot-search-date-toggle.selected { color: #fff6ad; border-color: #d5b829; background: #292608; }
+.spot-search-date-toggle:has(input:disabled) { opacity: .55; }
+.spot-search-date-toggle > input { flex: 0 0 auto; width: 17px; height: 17px; margin: 0; accent-color: #efd02b; }
+.spot-search-date-toggle > span { display: grid; gap: 2px; min-width: 0; }
+.spot-search-date-toggle strong { font-size: 10px; }
+.spot-search-date-toggle small { color: #8e9aa8; font-size: 7px; line-height: 1.35; }
+.spot-search-beta-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 7px;
+  border: 1px solid #ffb545;
+  border-radius: 6px;
+  background: rgba(255, 181, 69, .16);
+  color: #ffc978;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+}
+.spot-weekday-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.spot-weekday-grid label { display: grid; place-items: center; min-width: 0; min-height: 34px; color: #aab6c3; border: 1px solid #35414e; border-radius: 7px; background: #0b1118; font-size: 9px; }
+.spot-weekday-grid label:first-child { color: #ff9b91; }
+.spot-weekday-grid label:last-child { color: #8fbfff; }
+.spot-weekday-grid label.selected { color: #fff8ae; border-color: #d2b92e; background: #2b2708; }
+.spot-weekday-grid input { position: absolute; opacity: 0; pointer-events: none; }
+.spot-weekday-note { display: block; margin-top: 5px; color: #84919f; font-size: 7px; }
+.spot-result-detail { display: grid; align-content: start; gap: 10px; min-height: calc(100vh - 55px); min-height: calc(100dvh - 55px); padding: 12px; }
+.spot-result-detail article { padding: 14px; border: 1px solid #364250; border-radius: 11px; background: #0c1219; }
+.spot-result-detail article > small { color: #d9c245; font-size: 9px; }
+.spot-result-detail h2 { margin: 5px 0 13px; font-size: 14px; }
+.spot-result-detail dl { display: grid; gap: 7px; margin: 0; }
+.spot-result-detail dl div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; padding-bottom: 6px; border-bottom: 1px solid #202a35; }
+.spot-result-detail dt { color: #8e9ba9; font-size: 8px; }
+.spot-result-detail dd { margin: 0; font-size: 9px; text-align: right; overflow-wrap: anywhere; }
+.spot-result-detail > button { min-height: 46px; border-radius: 9px; font-size: 10px; font-weight: 700; }
+.spot-result-apply { color: #0c1218; border: 0; background: #e0c934; }
+.spot-choice-grid { display: grid; gap: 6px; min-width: 0; }
+.spot-choice-grid.celestial { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.spot-choice-grid.periods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.spot-choice-grid.sun-timing { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.spot-choice-grid label { display: grid; place-content: center; justify-items: center; gap: 2px; min-width: 0; min-height: 44px; padding: 5px; overflow: hidden; color: #cbd3dd; border: 1px solid #394554; border-radius: 7px; background: #10161e; font-size: 9px; text-align: center; }
+.spot-choice-grid label.selected { color: #fff6ad; border-color: #d5b829; background: #39330c; }
+.spot-choice-grid input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.spot-choice-grid b { font-size: 17px; line-height: 1; }
+.spot-choice-grid span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.moon-age-range > div { display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 18px; align-items: end; gap: 6px; min-width: 0; }
+.moon-age-range label { display: grid; gap: 4px; min-width: 0; color: #aeb9c6; font-size: 8px; }
+.moon-age-range input { width: 100%; min-width: 0; min-height: 38px; padding: 5px 7px; color: #ffe064; border: 1px solid #465365; border-radius: 6px; outline: 0; background: #111821; font-size: 16px; text-align: right; color-scheme: dark; }
+.moon-age-range > div > span, .moon-age-range > div > small { padding-bottom: 11px; color: #aeb9c6; font-size: 9px; text-align: center; }
+.moon-age-range > small { display: block; margin-top: 6px; color: #84919f; font-size: 7px; }
+.spot-condition-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; min-width: 0; }
+.spot-condition-grid label { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 40px; padding: 7px; color: #cbd3dd; border: 1px solid #394554; border-radius: 7px; background: #10161e; font-size: 9px; }
+.spot-condition-grid label.selected { color: #fff6ad; border-color: #d5b829; background: #39330c; }
+.spot-condition-grid input { flex: 0 0 auto; width: 15px; height: 15px; margin: 0; accent-color: #efd02b; }
+.spot-condition-grid span { min-width: 0; overflow-wrap: anywhere; }
+.spot-condition-note { display: block; margin-top: 7px; color: #8e9aa8; font-size: 7px; line-height: 1.45; }
+.spot-search-field.focal > div { display: grid; grid-template-columns: minmax(0, 1fr) 70px 22px; align-items: center; gap: 6px; min-width: 0; }
+.spot-search-field.focal input[type="range"] { width: 100%; min-width: 0; accent-color: #f1d232; }
+.spot-search-field.focal input[type="number"] { width: 70px; min-height: 38px; padding: 5px; color: #ffe044; border: 1px solid #465365; border-radius: 6px; background: #111821; font-size: 16px; text-align: right; }
+.spot-search-field.focal small { color: #cdd5df; font-size: 9px; }
+.spot-custom-period { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; }
+.spot-custom-period label { display: grid; gap: 4px; min-width: 0; color: #b9c3cf; font-size: 8px; }
+.spot-custom-period input { min-height: 38px; padding: 5px; font-size: 16px; }
+.spot-search-action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+.spot-search-submit { width: 100%; min-height: 46px; color: #08101b; border: 0; border-radius: 9px; background: linear-gradient(180deg, #ffdf36, #e8b918); font-size: 13px; font-weight: 800; }
+.spot-search-submit:disabled { color: #acb3bc; background: #303843; }
+.spot-search-pause { min-width: 88px; min-height: 46px; padding: 0 14px; border: 1px solid #ffb54a; border-radius: 9px; color: #ffd28a; background: #21170d; font-size: 13px; font-weight: 800; }
+.spot-search-pause.resume { border-color: #6aa9ff; color: #b9d8ff; background: #0f1d31; }
+
+.spot-search-results { display: grid; gap: 7px; min-width: 0; padding-top: 3px; }
+.spot-search-results h2 { margin: 4px 0 0; font-size: 12px; }
+.spot-search-message { margin: 0; padding: 8px; color: #cbd4df; border-radius: 7px; background: #0d141c; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
+.spot-preset-result { display: grid; gap: 3px; width: 100%; min-width: 0; padding: 10px; overflow: hidden; color: #eef3f8; border: 1px solid #344253; border-radius: 8px; background: #0c131b; text-align: left; }
+.spot-preset-result strong { color: #ffe064; font-size: 10px; }
+.spot-preset-result span { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.spot-preset-result small { color: #aeb9c6; font-size: 8px; overflow-wrap: anywhere; }
+.spot-preset-result .spot-result-landmarks { color: #b8dca8; }
+.spot-preset-result .spot-result-3d-status { width: fit-content; padding: 2px 5px; border: 1px solid currentColor; border-radius: 4px; font-weight: 700; }
+.spot-result-3d-status.status-visible { color: #82e6a0; background: rgba(27, 92, 48, .28); }
+.spot-result-3d-status.status-possibly-obstructed { color: #ffc178; background: rgba(113, 55, 10, .3); }
+.spot-result-3d-status.status-unverified { color: #b7c4d5; background: rgba(60, 72, 88, .3); }
+.spot-search-credit { color: #7f8b99; font-size: 7px; }
+.pin-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 7px; }
+.pin-button, .subject-google-maps-button, .tripod-candidate-pin-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 8px; }
+.pin-button.subject.active { background: #6d2925; }
+.pin-button.tripod.active { background: #124675; }
+.subject-google-maps-button { width: 100%; margin-top: 5px; border-color: #3f86cf; }
+.tripod-google-maps-button { width: 100%; margin-top: 5px; border-color: #3f86cf; }
+.subject-google-maps-button:disabled, .tripod-candidate-pin-button:disabled, .tripod-google-maps-button:disabled { opacity: .45; }
+.metrics-panel { position: absolute; right: 12px; bottom: 13px; display: grid; grid-template-columns: repeat(3, minmax(58px, 1fr)); gap: 4px; width: min(250px, calc(100% - 78px)); padding: 6px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: rgba(2,6,10,.92); }
+.metrics-panel > div { padding: 5px; border-radius: 5px; background: rgba(255,255,255,.055); }
+.metrics-panel span, .metrics-panel strong { display: block; }
+.metrics-panel span { color: #aeb7c3; font-size: 7px; }
+.metrics-panel strong { margin-top: 2px; font-size: 10px; }
+.metrics-panel.empty { display: block; color: #c5cbd4; font-size: 8px; }
+
+/* Subject precision edit */
+.subject-crosshair { position: fixed; z-index: 90; top: 67%; left: 50%; width: 54px; height: 54px; transform: translate(-50%,-50%); pointer-events: none; }
+.crosshair-horizontal, .crosshair-vertical { position: absolute; background: #ff4b4b; }
+.crosshair-horizontal { top: 26px; left: 0; width: 54px; height: 2px; }
+.crosshair-vertical { top: 0; left: 26px; width: 2px; height: 54px; }
+.crosshair-center { position: absolute; top: 22px; left: 22px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; background: rgba(255,75,75,.45); }
+.subject-edit-panel { position: fixed; z-index: 95; left: 50%; bottom: 7%; width: min(390px, calc(100% - 20px)); padding: 10px; color: #fff; border: 1px solid #555e6b; border-radius: 9px; background: rgba(5,7,10,.96); transform: translateX(-50%); }
+.subject-edit-panel p { margin: 0 0 8px; font-size: 10px; }
+.subject-edit-actions { display: grid; grid-template-columns: 1fr 1.5fr; gap: 6px; }
+.subject-edit-actions button { min-height: 38px; color: #fff; border-radius: 6px; }
+.subject-edit-cancel { border: 1px solid #626b77; background: #272d35; }
+.subject-edit-confirm { border: 1px solid #ff8a61; background: #9d4028; }
+
+@media (max-width: 520px) {
+  .app { width: 100vw; box-shadow: none; }
+  .spot-search-screen { width: 100vw; box-shadow: none; }
+  .top-setting { padding-inline: 6px; }
+  .top-setting-value input { font-size: 12px; }
+  .top-quick-actions { gap: 3px; padding-inline: 6px 3px; }
+  .top-quick-actions button { gap: 2px; padding: 2px; }
+  .preview-tool-rail { top: 14px; left: 8px; gap: 4px; }
+  .preview-tool-rail > button { width: 42px; min-height: 45px; }
+  .preview-zoom-control { grid-template-rows: repeat(2, 56px); width: 42px; }
+  .preview-date-control { top: 9px; right: 7px; }
+  .celestial-menu { top: 46px; right: 6px; }
+  .preview-actions { right: 7px; bottom: 7px; }
+  .preview-actions button { width: 42px; min-height: 38px; }
+  .timeline-section { padding-inline: 5px; }
+  .timeline-main-row { grid-template-columns: 45px minmax(0,1fr) 16px; gap: 4px; }
+  .celestial-event-row { gap: 3px; }
+  .event-card { grid-template-columns: 12px minmax(0, 1fr); height: 40px; min-height: 40px; padding-inline: 2px; font-size: 6.5px; }
+  .event-card span { font-size: 10px; }
+  .event-card strong { display: block; font-size: 6px; }
+  .map-left-controls { top: 6px; bottom: 6px; left: 6px; width: 39px; }
+  .map-tool-rail span { font-size: 16px; }
+  .map-tool-rail small { font-size: 7px; }
+  .map-zoom-control { grid-template-rows: repeat(2, clamp(50px, 6.2dvh, 64px)); }
+  .map-right-actions { right: 8px; bottom: 8px; }
+  .map-right-actions button { width: 42px; min-height: 38px; }
+  .map-search-control { top: 6px; left: 53px; width: 104px; }
+  .map-pin-drawer { top: 52px; left: 53px; width: calc(100% - 116px); max-height: calc(100% - 60px); }
+}
+
+@media (max-height: 760px) {
+  .preview-tool-rail > button { min-height: 38px; }
+  .celestial-menu-popover { max-height: 150px; overflow-y: auto; }
+}
+
+.foreground-controls { display:grid; gap:8px; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.14); }
+.foreground-controls-title { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.foreground-controls-title small { opacity:.7; }
+.foreground-controls button, .foreground-controls input { min-height:36px; border-radius:7px; border:1px solid rgba(255,255,255,.22); background:#121a22; color:#fff; }
+.foreground-controls button.active { border-color:#f5c542; box-shadow:0 0 0 1px #f5c542 inset; }
+.foreground-controls label { display:flex; align-items:center; gap:8px; }
+.foreground-controls input { width:76px; padding:0 8px; }
+.foreground-controls .foreground-delete { color:#ffb4b4; }
+.map-2d-foreground-pin { position:absolute; z-index:11; width:32px; height:44px; padding:0; border:0; background:transparent; transform:translate(-50%,-100%); touch-action:none; pointer-events:auto; filter:drop-shadow(0 1px 2px #000); }
+.map-2d-foreground-pin svg { width:100%; height:100%; overflow:visible; }
+.map-2d-foreground-pin .person-pin-body { fill:#111; stroke:#fff; stroke-width:4; }
+.map-2d-foreground-pin .person-pin-head,.map-2d-foreground-pin .person-pin-figure { fill:#fff; stroke:none; }
+.map-2d-foreground-pin.editing { filter:drop-shadow(0 0 4px #f5c542); }
+/* プレビューでは前景被写体を天体オーバーレイより前に描画する。 */
+.foreground-preview-object { position:absolute; z-index:24; transform:translateX(-50%); pointer-events:none; filter:drop-shadow(0 2px 2px rgba(0,0,0,.8)); }
+.foreground-preview-object svg { width:100%; height:100%; overflow:visible; }
+.foreground-preview-object circle,.foreground-preview-object path { fill:rgba(8,8,8,.92); stroke:rgba(255,255,255,.88); stroke-width:2; vector-effect:non-scaling-stroke; }
+
+/* Subject search history and favorites */
+.spot-subject-search-block { position: relative; }
+.spot-subject-input-row { display: flex; gap: 8px; align-items: center; }
+.spot-subject-input-row > input { flex: 1; min-width: 0; }
+.spot-subject-icon { width: 42px; min-width: 42px; height: 42px; border: 1px solid rgba(255,255,255,.22); border-radius: 10px; background: rgba(10,16,28,.92); color: #d7dde8; font-size: 20px; }
+.spot-subject-icon.active { color: #ffd45a; border-color: rgba(255,212,90,.7); }
+.spot-subject-icon:disabled { opacity: .35; }
+.spot-subject-list { margin-top: 8px; border: 1px solid rgba(255,255,255,.16); border-radius: 12px; background: rgba(10,16,28,.98); overflow: hidden; }
+.spot-subject-list > header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.12); }
+.spot-subject-list > header button { border: 0; background: transparent; color: inherit; font-size: 20px; }
+.spot-subject-list > p { margin: 0; padding: 16px 12px; color: #aeb7c6; }
+.spot-subject-list-item { display: flex; align-items: stretch; border-bottom: 1px solid rgba(255,255,255,.08); }
+.spot-subject-list-item:last-child { border-bottom: 0; }
+.spot-subject-list-item > button:first-child { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; color: inherit; padding: 11px 12px; display: flex; flex-direction: column; gap: 3px; }
+.spot-subject-list-item small { color: #8f9aad; }
+.spot-list-favorite { width: 48px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #ffd45a; font-size: 20px; }
+.spot-list-rename { width: 40px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #9db3cc; font-size: 15px; }
+.spot-list-favorite-rename { display: flex; align-items: center; gap: 6px; flex: 1; padding: 8px 10px; }
+.spot-list-favorite-rename input { flex: 1; min-width: 0; padding: 8px; border-radius: 6px; border: 1px solid #526176; background: #07101b; color: #fff; }
+.spot-list-favorite-rename button { border: 0; background: transparent; color: #9db3cc; font-size: 16px; padding: 4px 6px; }
+
+.tripod-distance-range { display: grid; gap: 9px; }
+.tripod-distance-slider-row { display: grid; gap: 7px; }
+.tripod-distance-slider-row label { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 7px; color: #cbd4df; font-size: 8px; }
+.tripod-distance-slider-row input[type="range"] { width: 100%; min-width: 0; accent-color: #f1d232; }
+.tripod-distance-number-row { display: grid; grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr); align-items: end; gap: 6px; }
+.tripod-distance-number-row > span { padding-bottom: 10px; color: #97a3b1; font-size: 10px; text-align: center; }
+.tripod-distance-number-row label { display: grid; grid-template-columns: minmax(0, 1fr) 22px; gap: 4px; align-items: end; }
+.tripod-distance-number-row label > span { grid-column: 1 / -1; color: #aeb8c4; font-size: 8px; }
+.tripod-distance-number-row input { width: 100%; min-width: 0; min-height: 38px; padding: 5px 7px; color: #ffe044; border: 1px solid #465365; border-radius: 6px; background: #111821; font-size: 16px; text-align: right; }
+.tripod-distance-number-row small { padding-bottom: 10px; color: #cdd5df; font-size: 9px; }
+.tripod-distance-note { color: #8995a3; font-size: 7px; line-height: 1.4; }
+
+
+.celestial-transit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding:
+    calc(14px + env(safe-area-inset-top))
+    calc(14px + env(safe-area-inset-right))
+    calc(14px + env(safe-area-inset-bottom))
+    calc(14px + env(safe-area-inset-left));
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.celestial-transit-dialog {
+  width: min(100%, 430px);
+  max-height: min(88vh, 760px);
+  max-height: min(88dvh, 760px);
+  overflow: auto;
+  border: 1px solid #384554;
+  border-radius: 14px;
+  background: #101720;
+  color: #eef3f8;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+.celestial-transit-dialog > header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2e3946;
+  background: #101720;
+}
+
+.celestial-transit-dialog h2 { margin: 0; font-size: 16px; }
+.celestial-transit-dialog > header button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: #eef3f8;
+  font-size: 24px;
+}
+.celestial-transit-dialog form { display: grid; gap: 10px; padding: 12px; }
+.celestial-transit-submit {
+  min-height: 42px;
+  border: 1px solid #d2b92e;
+  border-radius: 9px;
+  background: #d2b92e;
+  color: #151300;
+  font-weight: 800;
+}
+.celestial-transit-submit:disabled { opacity: 0.48; }
+
+.celestial-transit-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 7px;
+  min-height: 14px;
+}
+
+.celestial-transit-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #303741;
+}
+
+.celestial-transit-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #ffdc25;
+  transition: width 120ms linear;
+}
+
+.celestial-transit-progress strong {
+  color: #d8dde5;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.celestial-transit-message { margin: 0; color: #c7d1dc; font-size: 12px; }
+.celestial-transit-results { display: grid; gap: 1px; padding: 0 12px 12px; }
+.celestial-transit-result-sort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  color: #c7d1dc;
+  font-size: 12px;
+}
+.celestial-transit-result-sort select {
+  min-height: 34px;
+  max-width: 70%;
+  padding: 4px 28px 4px 8px;
+  border: 1px solid #435160;
+  border-radius: 6px;
+  background: #111923;
+  color: #f1f5f9;
+  font-size: 12px;
+}
+.celestial-transit-results button {
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #2d3945;
+  background: #0b1118;
+  color: #f1f5f9;
+  text-align: left;
+  font-size: 14px;
+}
+.celestial-transit-results button span,
+.celestial-transit-results button small { display: block; }
+.celestial-transit-results button small {
+  margin-top: 3px;
+  color: #9eabb8;
+  font-size: 11px;
+}
+.celestial-transit-results button:active { background: #242a0d; }
+
+/* 2026-07 UI corrections */
+
+/* Spot search: keep every control inside the 20:9 application viewport. */
+.spot-search-screen,
+.spot-search-screen *,
+.spot-search-content,
+.spot-search-field,
+.spot-search-group {
+  box-sizing: border-box;
+}
+.spot-search-screen {
+  right: auto;
+  max-width: 100vw;
+  overflow-x: clip;
+}
+.spot-search-content,
+.spot-subject-search-block,
+.spot-search-field,
+.spot-search-group,
+.spot-subject-input-row {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.spot-search-field,
+.spot-search-group {
+  overflow: hidden;
+}
+.spot-subject-input-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.spot-subject-input-row > input {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+.spot-subject-icon {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
+  font-size: 18px;
+}
+
+/* Celestial transit search belongs beside the timeline date control, not on the preview. */
+.timeline-main-row {
+  grid-template-columns: 54px minmax(0, 1fr) 60px;
+}
+.timeline-date-actions {
+  display: grid;
+  grid-template-columns: 18px 34px;
+  align-items: center;
+  justify-content: end;
+  gap: 5px;
+  min-width: 0;
+}
+.timeline-transit-search-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: #f4f6f9;
+  border: 1px solid #343b45;
+  border-radius: 6px;
+  background: #080b0f;
+}
+.timeline-transit-search-button span {
+  font-size: 17px;
+  line-height: 1;
+}
+.timeline-transit-search-button:active {
+  color: #ffe45c;
+  border-color: #d2b92e;
+  background: #242108;
+}
+
+/* Pin menu: subject pin -> 3D subject specification -> tripod pin. */
+.map-pin-drawer {
+  font-size: 11px;
+}
+.map-drawer-heading {
+  font-size: 12px;
+}
+.pin-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 7px;
+}
+.pin-button,
+.subject-google-maps-button,
+.tripod-candidate-pin-button,
+.tripod-google-maps-button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.subject-google-maps-button {
+  border-color: #3f86cf;
+}
+.tripod-google-maps-button {
+  margin-top: 6px;
+}
+
+/* Foreground controls use one medium text size throughout. */
+.foreground-controls {
+  gap: 7px;
+  margin-top: 10px;
+  padding-top: 10px;
+  font-size: 11px;
+}
+.foreground-controls-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.foreground-controls-title strong,
+.foreground-controls-title small {
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.foreground-controls-title small {
+  opacity: .78;
+  text-align: right;
+}
+.foreground-controls button,
+.foreground-controls label,
+.foreground-controls input,
+.foreground-controls span {
+  font-size: 11px;
+}
+.foreground-controls button {
+  min-height: 38px;
+  padding: 6px 8px;
+}
+.foreground-height-control {
+  display: grid;
+  grid-template-columns: auto minmax(64px, 1fr) 66px auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.foreground-height-control label {
+  white-space: nowrap;
+}
+.foreground-height-control input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  accent-color: #f5c542;
+}
+.foreground-height-control input[type="number"] {
+  width: 66px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 6px;
+  text-align: right;
+}
+
+/* While placing a person, remove the large menu and all map chrome from the click area. */
+.foreground-placement-mode .map-native-top-left-mask,
+.foreground-placement-mode .map-left-controls,
+.foreground-placement-mode .map-search-control,
+.foreground-placement-mode .map-right-actions,
+.foreground-placement-mode .map-fullscreen-exit,
+.foreground-placement-mode .map-pin-drawer,
+.foreground-placement-mode .metrics-panel {
+  display: none;
+}
+.foreground-placement-cancel {
+  position: absolute;
+  z-index: 60;
+  top: 8px;
+  right: 8px;
+  min-height: 34px;
+  padding: 5px 10px;
+  color: #fff;
+  border: 1px solid #f5c542;
+  border-radius: 7px;
+  background: rgba(20, 17, 3, .92);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 520px) {
+  .timeline-main-row {
+    grid-template-columns: 45px minmax(0, 1fr) 57px;
+    gap: 4px;
+  }
+  .timeline-date-actions {
+    grid-template-columns: 17px 34px;
+    gap: 4px;
+  }
+  .spot-search-content {
+    padding-inline: 10px;
+  }
+  .spot-subject-input-row {
+    gap: 5px;
+  }
+  .foreground-controls-title,
+  .foreground-controls-title strong,
+  .foreground-controls-title small,
+  .foreground-controls button,
+  .foreground-controls label,
+  .foreground-controls input,
+  .foreground-controls span,
+  .pin-button,
+  .subject-google-maps-button,
+  .tripod-candidate-pin-button,
+  .tripod-google-maps-button {
+    font-size: 10px;
+  }
+  .foreground-height-control {
+    grid-template-columns: auto minmax(48px, 1fr) 60px auto;
+    gap: 5px;
+  }
+  .foreground-height-control input[type="number"] {
+    width: 60px;
+  }
+}
+
+/* Sun Surveyor型の天の川表示：見通せる部分は写真調の帯、遮蔽部分は位置マーカーのみ。 */
+.milky-way-photo-band {
+  opacity: .82;
+  mix-blend-mode: screen;
+  stroke: rgba(244, 238, 225, .22);
+  stroke-width: .18;
+}
+.milky-way-position-marker {
+  vector-effect: non-scaling-stroke;
+  stroke-width: .24;
+}
+.milky-way-position-marker.visible {
+  fill: rgba(244, 244, 240, .63);
+  stroke: rgba(255, 255, 255, .78);
+}
+.milky-way-position-marker.hidden {
+  fill: rgba(40, 42, 45, .68);
+  stroke: rgba(190, 190, 190, .48);
+}
+.map-milky-way-marker {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1.25;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.72));
+}
+.map-milky-way-marker.visible {
+  fill: rgba(240, 240, 236, .92);
+  stroke: rgba(20, 20, 20, .9);
+}
+.map-milky-way-marker.hidden {
+  fill: rgba(82, 82, 82, .92);
+  stroke: rgba(15, 15, 15, .9);
+}
+
+/* 2026-07-23: enlarge menu and main-screen button labels without resizing controls. */
+.calculation-mode-menu {
+  width: min(320px, calc(100vw - 12px));
+  gap: 7px;
+  padding: 11px;
+}
+.calculation-mode-menu > strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+.calculation-mode-menu button {
+  /* 76px固定だと「光害マップの見方」等の長いラベルが16pxフォントで
+     収まらず、右側のsmall説明文へ重なっていた（2026-08-16報告）。
+     折り返しを許可しつつ、列幅にも余裕を持たせて重なりを防ぐ。 */
+  grid-template-columns: minmax(92px, 34%) minmax(0, 1fr);
+  padding: 8px 10px;
+}
+.calculation-mode-menu button b {
+  font-size: 16px;
+  line-height: 1.2;
+  white-space: normal;
+}
+.calculation-mode-menu button small {
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+/* Top and preview controls: preserve their boxes, enlarge only their labels. */
+.top-quick-actions span {
+  font-size: clamp(7px, 1.35vw, 10px);
+  letter-spacing: -.02em;
+}
+.top-quick-actions .top-preset-button span {
+  font-size: clamp(6.5px, 1.2vw, 9px);
+}
+.preview-frame-menu button {
+  font-size: 9px;
+  letter-spacing: -.02em;
+}
+.preview-tool-rail > button small,
+.preview-actions small {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+.preview-actions small {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.08em;
+}
+.preview-now-button {
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: -.03em;
+}
+.celestial-menu-button {
+  font-size: 10px;
+  line-height: 1.1;
+  letter-spacing: -.03em;
+}
+.celestial-checks label {
+  font-size: 9px;
+  line-height: 1;
+}
+.celestial-reset-button {
+  font-size: 9px;
+  line-height: 1;
+}
+.timeline-title {
+  font-size: 13px;
+  line-height: 1;
+}
+.event-card {
+  font-size: clamp(8px, 1.35vw, 10px);
+  line-height: 1;
+}
+.event-card strong {
+  font-size: clamp(7px, 1.15vw, 9px);
+  line-height: 1;
+}
+.event-card.moonrise b {
+  font-size: clamp(6.5px, 1.05vw, 8px);
+}
+.event-card.moonrise b i {
+  font-size: clamp(5px, .8vw, 6px);
+}
+.event-card.milkyway strong {
+  font-size: clamp(6px, .95vw, 7.5px);
+}
+.map-tool-rail small {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+.map-right-actions small {
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: -.05em;
+}
+.map-search-toggle {
+  font-size: 11px;
+  line-height: 1;
+}
+
+@media (max-height: 720px) {
+  .calculation-mode-menu {
+    width: min(300px, calc(100vw - 10px));
+  }
+  .calculation-mode-menu button b { font-size: 15px; }
+  .calculation-mode-menu button small { font-size: 11px; }
+  .event-card { font-size: 7.5px; }
+  .event-card strong { font-size: 6.8px; }
+}
+
+.spot-time-range input[type="time"] { min-width: 0; width: 100%; }
+
+/* Precision settings in the hamburger menu. */
+.precision-settings-panel {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #090d12;
+}
+
+.precision-settings-panel legend {
+  padding: 0 4px;
+  color: #f4f6f8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.precision-settings-panel label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  color: #d8dde5;
+  font-size: 11px;
+}
+
+.precision-settings-panel .precision-choice {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  min-height: 48px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.precision-choice-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.precision-choice-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 16px;
+}
+
+.precision-choice-title b { color: #edf2f7; font-size: 11px; }
+.precision-choice-title small {
+  padding: 1px 4px;
+  color: #101318;
+  border-radius: 999px;
+  background: #ffdc25;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.precision-choice-copy > small {
+  color: #aeb9c7;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.precision-settings-panel input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #ffdc25;
+}
+
+.precision-settings-panel small {
+  color: #8ea0b3;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.precision-data-guide {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border-top: 1px solid #313944;
+  color: #aeb9c7;
+}
+.precision-data-guide strong { color: #edf2f7; font-size: 10px; }
+.precision-data-guide small b { color: #dce8f5; }
+.precision-setting-intro {
+  display: block;
+  margin: 4px 0 6px;
+  color: #aeb9c7 !important;
+}
+.precision-control-help {
+  display: block;
+  margin: -2px 0 3px 24px;
+}
+
+/* スポット検索の進捗表示は通過日時検索と同じ視認性を使用する。 */
+.spot-search-progress { margin-top: -2px; }
+.search-progress-eta,
+.search-progress-detail {
+  grid-column: 1 / -1;
+  color: #aeb8c5;
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+
+/* Fullscreen control layout: keep the same control sizes and relative placement as split view. */
+.preview-section:fullscreen .fullscreen-exit-button,
+.preview-section:-webkit-full-screen .fullscreen-exit-button,
+.map-section:fullscreen .fullscreen-exit-button,
+.map-section:-webkit-full-screen .fullscreen-exit-button {
+  top: auto;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+/* The map rail normally stretches because its parent becomes the full screen height.
+   Limit it to the same vertical working area used by the map in the two-panel layout. */
+.map-section:fullscreen .map-left-controls,
+.map-section:-webkit-full-screen .map-left-controls {
+  top: 8px;
+  bottom: auto;
+  height: calc(45.25dvh - 16px);
+}
+
+.map-section:fullscreen .map-tool-rail,
+.map-section:-webkit-full-screen .map-tool-rail,
+.map-section:fullscreen .map-zoom-control,
+.map-section:-webkit-full-screen .map-zoom-control,
+.map-section:fullscreen .map-right-actions button,
+.map-section:-webkit-full-screen .map-right-actions button,
+.preview-section:fullscreen .preview-tool-rail > button,
+.preview-section:-webkit-full-screen .preview-tool-rail > button,
+.preview-section:fullscreen .preview-zoom-control,
+.preview-section:-webkit-full-screen .preview-zoom-control,
+.preview-section:fullscreen .preview-actions button,
+.preview-section:-webkit-full-screen .preview-actions button {
+  transform: none;
+  zoom: 1;
+}
+
+@media (max-width: 520px) {
+  .map-section:fullscreen .map-left-controls,
+  .map-section:-webkit-full-screen .map-left-controls {
+    top: 6px;
+    left: 6px;
+    height: calc(45.25dvh - 12px);
+  }
+
+  .map-section:fullscreen .map-search-control,
+  .map-section:-webkit-full-screen .map-search-control {
+    top: max(6px, env(safe-area-inset-top));
+    right: 6px;
+    left: 53px;
+  }
+
+  .preview-section:fullscreen .fullscreen-exit-button,
+  .preview-section:-webkit-full-screen .fullscreen-exit-button,
+  .map-section:fullscreen .fullscreen-exit-button,
+  .map-section:-webkit-full-screen .fullscreen-exit-button {
+    bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Map fullscreen: use the remaining top width without covering the left tool rail. */
+.map-section:fullscreen .map-search-control,
+.map-section:-webkit-full-screen .map-search-control {
+  top: max(8px, env(safe-area-inset-top));
+  right: 8px;
+  left: calc(8px + clamp(39px, 6.2vw, 43px) + 8px);
+  width: auto;
+}
+
+.map-section:fullscreen .map-search-toggle,
+.map-section:-webkit-full-screen .map-search-toggle {
+  justify-content: center;
+  width: 100%;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+/* 2026-07-25: Enlarge timeline event text without changing card dimensions.
+   Milky Way card intentionally retains its existing typography. */
+.event-card:not(.milkyway) b {
+  font-size: clamp(10px, 2.2vw, 13px);
+  line-height: .98;
+  letter-spacing: -.035em;
+}
+.event-card:not(.milkyway) strong {
+  font-size: clamp(9px, 1.9vw, 12px);
+  line-height: .98;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.event-card.moonrise b {
+  font-size: clamp(9px, 1.85vw, 11px);
+}
+.event-card.moonrise b i {
+  font-size: clamp(5.5px, 1.05vw, 7px);
+  letter-spacing: -.08em;
+}
+
+@media (max-height: 720px) {
+  .event-card:not(.milkyway) b { font-size: 10px; }
+  .event-card:not(.milkyway) strong { font-size: 9px; }
+  .event-card.moonrise b { font-size: 8.5px; }
+  .event-card.moonrise b i { font-size: 5.5px; }
+}
+
+
+/* Celestial transit in-frame mode: independent focal length selector. */
+.celestial-transit-focal {
+  gap: 7px;
+}
+.celestial-transit-focal > small {
+  color: #84919f;
+  font-size: 7px;
+  line-height: 1.45;
+}
+
+/* iPhone Safari does not support the Fullscreen API for ordinary page elements.
+   This fixed-position fallback provides the same in-app fullscreen behavior. */
+body.pseudo-fullscreen-active {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+.preview-section.ios-pseudo-fullscreen,
+.map-section.ios-pseudo-fullscreen {
+  position: fixed !important;
+  z-index: 10000 !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #05070a;
+}
+.preview-section.ios-pseudo-fullscreen .fullscreen-exit-button,
+.map-section.ios-pseudo-fullscreen .fullscreen-exit-button {
+  display: flex;
+  top: auto;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+}
+.map-section.ios-pseudo-fullscreen .map-left-controls {
+  top: max(6px, env(safe-area-inset-top));
+  bottom: auto;
+  left: 6px;
+  height: calc(45.25dvh - 12px);
+}
+.map-section.ios-pseudo-fullscreen .map-search-control {
+  top: max(6px, env(safe-area-inset-top));
+  right: 6px;
+  left: 53px;
+  width: auto;
+}
+.map-section.ios-pseudo-fullscreen .map-search-toggle {
+  justify-content: center;
+  width: 100%;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+.spot-search-results-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.spot-search-results-heading h2 {
+  margin: 0;
+}
+
+.spot-search-results-heading label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.spot-search-results-heading select {
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  padding: 0.35rem 1.8rem 0.35rem 0.55rem;
+}
+
+.precision-number-setting {
+  margin-top: .65rem;
+  padding-top: .65rem;
+  border-top: 1px solid rgba(255,255,255,.14);
+}
+.precision-number-setting > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.precision-number-setting input {
+  width: 5.5rem;
+}
+.spot-condition-note.warning {
+  display: block;
+  margin-top: .4rem;
+}
+
+.highest-precision-progress {
+  position: fixed;
+  z-index: 12000;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: stretch;
+  gap: .7rem;
+  width: min(32rem, calc(100% - 2rem));
+  height: fit-content;
+  margin: auto;
+  padding: 1.25rem;
+  color: #fff;
+  border: 1px solid rgba(90,185,255,.72);
+  border-radius: .9rem;
+  background: rgba(2,8,14,.97);
+  box-shadow: 0 0 0 100vmax rgba(0,0,0,.7), 0 1rem 3rem rgba(0,0,0,.55);
+  text-align: center;
+}
+.highest-precision-progress progress {
+  width: 100%;
+  height: 1rem;
+  accent-color: #42a5f5;
+}
+
+/* Hamburger menu: map data sources */
+.map-data-sources {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  color: #d8dde5;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #0d1218;
+}
+
+.map-data-sources > strong {
+  color: #fff;
+  font-size: 11px;
+}
+
+.map-data-sources dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.map-data-sources dl > div {
+  display: grid;
+  gap: 1px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #252d37;
+}
+
+.map-data-sources dt {
+  color: #8ea0b3;
+  font-size: 8px;
+}
+
+.map-data-sources dd {
+  margin: 0;
+  color: #eef2f7;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.map-data-sources > small {
+  color: #aebdcb;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.map-data-sources nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.map-data-sources a {
+  padding: 4px 6px;
+  color: #ffdc25;
+  border: 1px solid #3a424d;
+  border-radius: 4px;
+  background: #11161c;
+  font-size: 8px;
+  text-decoration: none;
+}
+
+.tripod-candidate-selection-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 280;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, .72);
+}
+
+.tripod-candidate-selection-dialog {
+  width: min(360px, 100%);
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 12px;
+  background: #0b1521;
+  color: #fff;
+  box-shadow: 0 18px 46px rgba(0,0,0,.62);
+}
+
+.tripod-candidate-selection-dialog h2 {
+  margin: 0 0 7px;
+  font-size: 18px;
+}
+
+.tripod-candidate-selection-dialog p {
+  margin: 0 0 12px;
+  color: #c6d0dc;
+  font-size: 13px;
+}
+
+.tripod-candidate-selection-list {
+  display: grid;
+  gap: 7px;
+}
+
+.tripod-candidate-selection-list button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 12px;
+  text-align: left;
+  color: #fff;
+  background: #172638;
+  border: 1px solid #40546b;
+  border-radius: 9px;
+}
+
+.tripod-candidate-selection-list button:active {
+  background: #21364e;
+}
+
+.tripod-candidate-selection-list small {
+  color: #b9c6d5;
+}
+
+.tripod-candidate-selection-cancel {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  color: #fff;
+  background: #111c29;
+  border: 1px solid #40546b;
+  border-radius: 9px;
+}
+
+/* Person controls are kept together in the pin drawer: location selection, height, subject-pin placement, delete. */
+.subject-person-placement-button {
+  border-color: #d7a72d;
+}
+
+/* A 2D person is a map marker, not a life-size silhouette. Keep it legible without covering nearby pins. */
+.map-2d-foreground-pin {
+  width: 20px;
+  height: 42px;
+}
+
+.spot-pin-target-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.spot-pin-target-group legend {
+  margin-bottom: 6px;
+  color: #cbd3dd;
+  font-size: 10px;
+  font-weight: 700;
+}
+.spot-pin-target-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.spot-pin-target-options label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 8px 10px;
+  color: #cbd3dd;
+  border: 1px solid #394554;
+  border-radius: 10px;
+  background: #0a0f15;
+}
+.spot-pin-target-options label.selected {
+  color: #fff6ad;
+  border-color: #d5b829;
+  background: #292608;
+}
+.spot-pin-target-options input {
+  margin: 0;
+  accent-color: #efd02b;
+}
+
+/* 2026-08-05: improve readability of explanatory text in hamburger-menu detail settings. */
+.calculation-mode-menu.precision-open .precision-choice-copy > small,
+.calculation-mode-menu.precision-open .precision-settings-panel > small,
+.calculation-mode-menu.precision-open .precision-settings-panel .precision-setting-intro,
+.calculation-mode-menu.precision-open .precision-settings-panel .precision-control-help,
+.calculation-mode-menu.precision-open .precision-data-guide small,
+.calculation-mode-menu.precision-open .precision-number-setting > small {
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.calculation-mode-menu.precision-open .precision-choice-title small {
+  font-size: 9px;
+}
+
+.calculation-mode-menu.precision-open .precision-data-guide strong,
+.calculation-mode-menu.precision-open .precision-number-setting > strong {
+  font-size: 12px;
+}
+
+/* 天の川選択時のみ表示できる NASA VIIRS Black Marble 光害タイル。 */
+.light-pollution-toggle {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 2px;
+  border-top: 1px solid rgba(255,255,255,.10);
+  color: #fff;
+  font-size: 8px;
+}
+.light-pollution-toggle input { margin: 0; }
+.light-pollution-tile-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+}
+.light-pollution-tile-overlay canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  max-width: none;
+}
+.light-pollution-credit {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(0,0,0,.62);
+  color: rgba(255,255,255,.86);
+  font-size: 7px;
+  line-height: 1.2;
+}
+
+/* 2026-08-11: hamburger-menu guide for reading the VIIRS Black Marble light-pollution overlay. */
+.light-pollution-guide {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  color: #d8dde5;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #0d1218;
+}
+.light-pollution-guide > strong {
+  color: #fff;
+  font-size: 13px;
+}
+.light-pollution-guide-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #252d37;
+}
+.light-pollution-guide-row b {
+  color: #fff;
+  font-size: 12px;
+}
+.light-pollution-guide-row span {
+  color: #c9d3de;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.light-pollution-guide-row small {
+  grid-column: 1 / -1;
+  color: #eef2f7;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.light-pollution-guide p {
+  margin: 0;
+  color: #d8dde5;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.light-pollution-guide .light-pollution-guide-note {
+  color: #aebdcb;
+  font-size: 10px;
+}
+
+/* Hamburger-menu beginner guides: plain, friendly copy for first-time (including child) users. */
+.usage-guide,
+.tutorial-guide {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  color: #d8dde5;
+  border: 1px solid #313944;
+  border-radius: 6px;
+  background: #0d1218;
+}
+.usage-guide > strong,
+.tutorial-guide > strong {
+  color: #fff;
+  font-size: 13px;
+}
+.usage-guide > p {
+  margin: 0;
+  color: #d8dde5;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.usage-guide-row {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px solid #252d37;
+}
+.usage-guide-row b {
+  color: #fff;
+  font-size: 12px;
+}
+.usage-guide-row span {
+  color: #c9d3de;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.usage-guide-note,
+.tutorial-guide-note {
+  margin: 0;
+  color: #aebdcb;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tutorial-guide ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+.tutorial-guide li {
+  display: grid;
+  gap: 2px;
+  color: #fff;
+  font-size: 12px;
+}
+.tutorial-guide li b {
+  color: #fff;
+}
+.tutorial-guide li span {
+  color: #c9d3de;
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+/* AR camera phases 1-3: full-screen shell, live camera, location and device-orientation tracking. */
+.ar-camera-screen {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  color: #fff;
+  background: #020305;
+}
+
+.ar-camera-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(60, 73, 88, .24), transparent 42%),
+    linear-gradient(180deg, #090c11 0%, #020305 100%);
+}
+
+.ar-camera-foundation {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.ar-camera-foundation > span {
+  color: rgba(255, 255, 255, .08);
+  font-size: clamp(72px, 24vw, 170px);
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.ar-camera-top-controls {
+  position: absolute;
+  z-index: 75;
+  top: calc(7px + env(safe-area-inset-top));
+  right: 7px;
+  left: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.ar-camera-back-button,
+.ar-camera-favorite-button {
+  pointer-events: auto;
+  min-height: 36px;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 7px;
+  background: rgba(2,5,9,.86);
+}
+
+.ar-camera-back-button {
+  min-width: 68px;
+  padding: 5px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ar-camera-favorite-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  padding: 0;
+  color: #ffdc25;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.ar-camera-stage > .celestial-menu {
+  top: calc(50px + env(safe-area-inset-top));
+  right: 7px;
+}
+
+.ar-camera-stage > .celestial-menu .celestial-menu-popover {
+  max-height: min(310px, calc(100dvh - 240px));
+}
+
+.ar-camera-foundation-note {
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 5px;
+  width: min(84vw, 430px);
+  padding: 12px 14px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 9px;
+  background: rgba(2,5,9,.70);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.ar-camera-foundation-note strong { font-size: 15px; }
+.ar-camera-foundation-note span { color: #d5dce5; font-size: 11px; line-height: 1.45; }
+.ar-camera-foundation-note small { color: #aeb9c6; font-size: 10px; line-height: 1.4; }
+
+
+.ar-camera-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.ar-camera-video.ready {
+  opacity: 1;
+}
+
+.ar-camera-camera-status {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: 12px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 8px;
+  background: rgba(0,0,0,.52);
+  color: #fff;
+  pointer-events: none;
+}
+
+.ar-camera-camera-status strong { font-size: 12px; }
+.ar-camera-camera-status span,
+.ar-camera-camera-status small { font-size: 10px; line-height: 1.35; color: #d8dee8; }
+
+.ar-camera-timeline {
+  position: relative;
+  z-index: 80;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid rgba(255,255,255,.18);
+  background: rgba(3,6,10,.98);
+}
+
+.ar-camera-timeline .timeline-section {
+  margin: 0;
+}
+
+/* AR camera Phase 4: Cesium 3D overlay follows live GPS / heading / device tilt. */
+.ar-camera-cesium-overlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+  transition: opacity 100ms linear;
+}
+
+.ar-camera-cesium-overlay .cesium-viewer,
+.ar-camera-cesium-overlay .cesium-viewer-cesiumWidgetContainer,
+.ar-camera-cesium-overlay .cesium-widget,
+.ar-camera-cesium-overlay canvas {
+  width: 100% !important;
+  height: 100% !important;
+  background: transparent !important;
+  pointer-events: none !important;
+}
+
+.ar-camera-cesium-overlay .cesium-viewer-bottom {
+  z-index: 5;
+  opacity: .82;
+}
+
+.ar-camera-map-opacity-control {
+  position: absolute;
+  z-index: 70;
+  top: calc(54px + env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: auto minmax(92px, 24vw) 36px;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,.28);
+  border-radius: 7px;
+  background: rgba(2,5,9,.78);
+  color: #fff;
+  font-size: 11px;
+}
+
+.ar-camera-map-opacity-control input {
+  min-width: 92px;
+  margin: 0;
+}
+
+.ar-camera-map-opacity-control strong {
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* AR camera phase 6: dialogs launched from the full-screen AR shell must remain above it. */
+.celestial-transit-backdrop,
+.project-dialog-backdrop {
+  z-index: 11000;
+}
+
+/* 2026-08-16: interactive usage guide (使い方) and tutorial (チュートリアル)
+   overlay. Guide mode lets the person browse freely and highlight any real
+   button on screen; training mode walks through steps in order, advancing
+   automatically once the corresponding live app state changes. */
+.tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+}
+.tutorial-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 9, 14, 0.55);
+}
+.tutorial-spotlight {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow: 0 0 0 4000px rgba(6, 9, 14, 0.6);
+  outline: 2px solid #ffcc4d;
+  pointer-events: none;
+  transition: top 0.15s ease, left 0.15s ease, width 0.15s ease, height 0.15s ease;
+  z-index: 1;
+}
+.tutorial-module-list {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(260px, 78vw);
+  background: #12161d;
+  border-right: 1px solid #2a3038;
+  overflow-y: auto;
+  padding-bottom: 16px;
+  z-index: 2;
+}
+.tutorial-module-list-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: #12161d;
+  border-bottom: 1px solid #2a3038;
+  color: #f2f4f7;
+}
+.tutorial-module-list-header button {
+  background: none;
+  border: none;
+  color: #aeb6c2;
+  font-size: 18px;
+  line-height: 1;
+}
+.tutorial-module-group {
+  padding: 10px 10px 2px;
+}
+.tutorial-module-group > p {
+  margin: 0 0 4px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: #8b93a1;
+}
+.tutorial-module-group button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #d8dde5;
+  font-size: 13px;
+}
+.tutorial-module-group button.active {
+  background: #263042;
+  color: #ffcc4d;
+}
+.tutorial-card {
+  position: absolute;
+  left: min(260px, 78vw);
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 auto 18px;
+  max-width: 420px;
+  width: calc(100% - 24px);
+  background: #171c24;
+  border: 1px solid #2f3742;
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: #eef1f5;
+}
+.tutorial-overlay.training .tutorial-card {
+  left: 0;
+}
+.tutorial-progress {
+  font-size: 11px;
+  color: #8b93a1;
+  margin-bottom: 4px;
+}
+.tutorial-card > strong {
+  display: block;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+.tutorial-card > p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #cbd1da;
+}
+.tutorial-check {
+  font-size: 12px;
+  color: #8b93a1;
+}
+.tutorial-check.done {
+  color: #7fd08a;
+}
+.tutorial-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.tutorial-card-actions button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #3a4250;
+  background: #232a34;
+  color: #eef1f5;
+  font-size: 13px;
+}
+.tutorial-card-actions button.tutorial-secondary {
+  border-color: transparent;
+  background: transparent;
+  color: #8b93a1;
+  margin-right: auto;
+}
+.tutorial-card-actions button:disabled {
+  opacity: 0.4;
+}
+
+@media (min-width: 640px) {
+  .tutorial-card {
+    left: min(260px, 78vw);
+    bottom: 24px;
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "astrosight-prewarm-landmark-cron",
+  "main": "./workers/prewarm-landmark-cron.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // R2バインディングはあえて未設定にしてある（今は意図的にコメントアウト）。
+  // R2を設定しなくてもこのWorkerは正常にデプロイ・実行できる
+  // （persistentCacheFromR2がundefinedを安全に許容するため、キャッシュへの
+  // 保存だけがスキップされ、通信自体はそのまま成功する）。
+  //
+  // 後でキャッシュの効果を得たくなったら、以下のコメントを外して
+  // bucket_nameを実際に作成したR2バケット名に置き換えるだけでよい。
+  // "r2_buckets": [
+  //   {
+  //     "binding": "NETWORK_CACHE",
+  //     "bucket_name": "ここに実際のR2バケット名"
+  //   }
+  // ],
+  // 毎日 UTC 18:00（日本時間 翌3:00、深夜・利用の少ない時間帯）に1回実行。
+  // 1回あたりserver/prewarmLandmarkCore.tsのCHUNK_SIZE件だけ処理し、
+  // 日をまたいでランドマーク全件を自動的に巡回する。
+  // 頻度・時間帯を変更したい場合はcron式を書き換える
+  // （https://developers.cloudflare.com/workers/configuration/cron-triggers/）。
+  "triggers": {
+    "crons": ["0 18 * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

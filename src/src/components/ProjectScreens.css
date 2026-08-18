@@ -1,0 +1,46 @@
+.project-screen{position:fixed;z-index:260;top:0;left:50%;width:min(100vw,calc(100dvh * .45));height:100dvh;background:#07101b;color:#fff;overflow:auto;transform:translateX(-50%);box-shadow:0 0 0 1px #1e252e,0 0 48px rgba(0,0,0,.88)}.project-screen>header{position:sticky;z-index:2;top:0;display:grid;grid-template-columns:80px 1fr 80px;align-items:center;padding:12px;background:#0d1927;border-bottom:1px solid #334155}.project-screen header h1{text-align:center;margin:0;font-size:18px}.project-screen button{color:inherit;background:#172436;border:1px solid #42526a;border-radius:8px;padding:10px}.project-screen-back{min-height:42px;font-weight:700}.project-list,.project-editor,.calendar-projects{padding:14px;display:grid;gap:12px}.project-list article{background:#101d2c;border:1px solid #334155;border-radius:12px;padding:12px;display:grid;gap:10px}.project-main{display:grid;text-align:left;gap:5px}.project-main span{color:#a8b4c5}.check{display:flex!important;align-items:center;gap:8px}.project-list article>div,.project-actions{display:flex;gap:8px;justify-content:flex-end}.danger{border-color:#a33!important}.primary{background:#1769aa!important}.project-editor label{display:grid;gap:6px}.project-editor input{padding:11px;border-radius:8px;border:1px solid #526176;background:#07101b;color:white}.calendar-nav{display:flex;justify-content:space-between;align-items:center;padding:14px}.calendar-week,.calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;padding:0 10px}.calendar-week b{text-align:center;padding:8px}.calendar-grid>button,.calendar-grid>span{min-height:58px}.calendar-grid button{display:flex;flex-direction:column;align-items:center;justify-content:center}.calendar-grid i{font-style:normal;color:#4db4ff;font-size:10px}.calendar-grid .selected{outline:2px solid #4db4ff}.calendar-projects button{display:flex;justify-content:space-between}.project-dialog-backdrop{position:fixed;inset:0;z-index:120;background:#000a;display:grid;place-items:center;padding:20px}.project-dialog{width:min(420px,100%);background:#101d2c;color:#fff;border:1px solid #526176;border-radius:14px;padding:18px;display:grid;gap:16px}.project-dialog h2{margin:0}.project-dialog label{display:grid;gap:7px}.project-dialog input[type=text],.project-dialog input:not([type]){padding:11px;border-radius:8px;border:1px solid #526176;background:#07101b;color:#fff}.project-dialog-check{display:flex!important;align-items:center}.project-dialog>div{display:flex;justify-content:flex-end;gap:8px}.project-dialog button{padding:10px 15px;border-radius:8px;border:1px solid #526176;background:#172436;color:#fff}.project-dialog dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:14px}.project-dialog dt{color:#a8b4c5}.project-dialog dd{margin:0}.project-dialog-note{margin:0;font-size:13px;color:#a8b4c5}.project-dialog-error{margin:0;font-size:13px;color:#ff8080}.placement-offset-input{display:inline-flex;align-items:center;gap:6px;margin-left:8px}.placement-offset-input input{width:80px}.project-import-row{display:flex;gap:8px;padding:14px 14px 0}.project-import-row input{flex:1;padding:11px;border-radius:8px;border:1px solid #526176;background:#07101b;color:#fff}.project-row-options{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.qr-share-image-wrap{display:grid;place-items:center;padding:10px;background:#fff;border-radius:10px}
+.qr-share-image-wrap img{display:block;width:240px;height:240px}
+.qr-share-image-placeholder{width:240px;height:240px;display:grid;place-items:center;text-align:center;color:#233;font-size:13px;padding:12px}
+.qr-scan-mode-tabs{display:flex;gap:8px}
+.qr-scan-mode-tabs button{flex:1}
+.qr-scan-camera-wrap{display:grid;gap:8px}
+.qr-scan-video{width:100%;aspect-ratio:3/4;border-radius:10px;background:#000;object-fit:cover}
+.qr-scan-image-wrap{display:grid;gap:8px}
+.qr-scan-image-label{display:grid;gap:8px;padding:14px;border:1px dashed #526176;border-radius:10px;text-align:center;color:#c9d3de;font-size:13px}
+
+.moon-age-calendar-screen { overflow-y: auto; background: #05080c; }
+.moon-calendar-offline-note { margin: 0 12px 8px; color: #8fa0b2; font-size: 9px; text-align: center; }
+.moon-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; padding: 0 7px; }
+.moon-calendar-grid > span { min-height: 72px; }
+.moon-calendar-grid button { display: grid; place-items: center; gap: 1px; min-width: 0; min-height: 72px; padding: 3px 1px; color: #e6ebf0; border: 1px solid #202833; border-radius: 5px; background: #0d1218; }
+.moon-calendar-grid button.selected { border-color: #f1d84e; background: #29250d; box-shadow: inset 0 0 0 1px rgba(241,216,78,.22); }
+.moon-calendar-grid button > span { justify-self: start; padding-left: 4px; font-size: 10px; }
+.moon-calendar-grid button small { overflow: hidden; max-width: 100%; color: #a9b3be; font-size: 7px; white-space: nowrap; }
+.moon-age-icon { display: block; filter: drop-shadow(0 0 3px rgba(210,225,255,.2)); }
+.moon-day-detail { display: grid; grid-template-columns: 88px minmax(0,1fr); align-items: center; gap: 12px; margin: 10px 8px 18px; padding: 12px; border: 1px solid #303946; border-radius: 9px; background: #0d131a; }
+.moon-day-detail h2 { margin: 0 0 4px; font-size: 14px; }
+.moon-day-detail strong { color: #f5df65; font-size: 12px; }
+.moon-day-detail p { margin: 3px 0 0; color: #c2cad3; font-size: 10px; }
+
+/* Stage 13: older WebViews use vh; modern mobile browsers use dynamic dvh. */
+.project-screen {
+  width: min(100vw, calc(100vh * .45));
+  width: min(100vw, calc(100dvh * .45));
+  height: 100vh;
+  height: 100dvh;
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+.project-screen > header {
+  min-height: calc(66px + env(safe-area-inset-top));
+  padding: calc(12px + env(safe-area-inset-top)) 12px 12px;
+}
+.project-dialog-backdrop {
+  padding:
+    calc(20px + env(safe-area-inset-top))
+    calc(20px + env(safe-area-inset-right))
+    calc(20px + env(safe-area-inset-bottom))
+    calc(20px + env(safe-area-inset-left));
+}
