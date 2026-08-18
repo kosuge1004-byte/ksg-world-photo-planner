@@ -481,19 +481,6 @@ function TimelinePanelComponent({
   return (
     <section className="timeline-section" aria-label="撮影日時">
       <div className="timeline-main-row">
-        <div className="timeline-date-actions timeline-date-actions-left">
-          <label className="timeline-date-control" aria-label="撮影日時">
-            <input
-              type="datetime-local"
-              step="60"
-              min={`${MIN_YEAR}-01-01T00:00`}
-              max={`${MAX_YEAR}-12-31T23:59`}
-              value={`${selectedDateText}T${selectedTimeText}`}
-              onChange={(event) => changeDateTime(event.target.value)}
-            />
-          </label>
-        </div>
-
         <div className="timeline-ruler-shell">
           <button
             type="button"
@@ -519,9 +506,21 @@ function TimelinePanelComponent({
             onKeyDown={useTimelineKeyboard}
           >
             <div className="timeline-current-time-anchor">
-              <span className="timeline-current-date" aria-hidden="true">
+              <label
+                className="timeline-current-date"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
                 {selectedDateText.replace(/-/g, "/")}
-              </span>
+                <input
+                  type="datetime-local"
+                  step="60"
+                  min={`${MIN_YEAR}-01-01T00:00`}
+                  max={`${MAX_YEAR}-12-31T23:59`}
+                  value={`${selectedDateText}T${selectedTimeText}`}
+                  onChange={(event) => changeDateTime(event.target.value)}
+                  aria-label="撮影日時"
+                />
+              </label>
               <output className="timeline-current-time">
                 {selectedTimeText}
               </output>
