@@ -2,6 +2,7 @@ import {
   Cartesian2,
   Cartesian3,
   Cesium3DTileset,
+  Cesium3DTileStyle,
   CesiumTerrainProvider,
   createGooglePhotorealistic3DTileset,
   Ellipsoid,
@@ -32,7 +33,7 @@ const PLATEAU_TERRAIN_URL = "https://tile.plateauview.mlit.go.jp/terrain/";
 
 /**
  * PLATEAU建物タイルセットを読み込む（標準モードの表示専用）。
- * 遮蔽判定・検索・標高計算には接続しない（2026-08-06付けの過去の決定と同じ方針。
+ * 遮蔽判定には接続しない（2026-08-06付けの過去の決定と同じ方針。
  * 遮蔽判定へPLATEAUを再接続する試みは検証ロジックが機能しない疑いがあり撤回した）。
  */
 export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
@@ -44,6 +45,42 @@ export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
   buildings.preferLeaves = true;
   buildings.show = true;
   return buildings;
+}
+
+const HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER = Symbol("astrosight-hidden-plateau-height-lookup");
+
+/**
+ * 高精度モード（Google Photorealistic 3D Tiles）では、Googleの利用規約により
+ * その形状データを検索・高さ判定に使えないため、被写体ピンを建物の屋根に
+ * 合わせる機能（resolvePlateauRoofGroundPoint）専用に、完全に透明な
+ * PLATEAU建物タイルセットを別途・追加で読み込む。画面には一切表示されない
+ * （Googleタイルの見た目はそのまま）。既に読み込み済みなら何もしない。
+ */
+export async function ensureHiddenPlateauBuildingsForHeightLookup(
+  viewer: Viewer
+): Promise<void> {
+  const alreadyLoaded = viewer.scene.primitives.length > 0 &&
+    (() => {
+      for (let i = 0; i < viewer.scene.primitives.length; i += 1) {
+        const primitive = viewer.scene.primitives.get(i) as unknown as Record<symbol, boolean>;
+        if (primitive[HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER]) return true;
+      }
+      return false;
+    })();
+  if (alreadyLoaded) return;
+
+  const buildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
+  buildings.maximumScreenSpaceError = 32;
+  buildings.dynamicScreenSpaceError = true;
+  buildings.skipLevelOfDetail = true;
+  buildings.preferLeaves = true;
+  buildings.style = new Cesium3DTileStyle({ color: 'color("white", 0)' });
+  (buildings as unknown as Record<symbol, boolean>)[HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER] = true;
+  if (viewer.isDestroyed()) {
+    buildings.destroy();
+    return;
+  }
+  viewer.scene.primitives.add(buildings);
 }
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {

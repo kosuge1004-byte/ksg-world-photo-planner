@@ -98,7 +98,7 @@ import {
 import { calculateTripodCandidates } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
-import { createMapViewer } from "./cesium/createMapViewer";
+import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
 import { authorizeHighPrecisionSession } from "./precision/highPrecisionSession";
 import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
 import { TutorialOverlay, type TutorialOverlayMode } from "./components/TutorialOverlay";
@@ -1902,14 +1902,18 @@ function App() {
   ): Promise<GroundPoint> {
     // 検索・URL・座標入力ではまずDEM（地面）で確定する。
     const groundPoint = await resolveGroundPoint(latitude, longitude, label);
-    // その上で、その地点に建物があれば屋根面へ合わせる（高精度モードは
-    // Google 3D Tiles、標準モードはPLATEAU建物。同じ仕組みで、読み込まれて
-    // いるタイルセットに対して垂直レイを通す）。建物が無い・接地点をDEMと
-    // 突き合わせて検証できない場合は、DEM地面の値のまま変更しない
-    // （全国一律の補正はしない）。
+    // その上で、その地点に建物があれば屋根面へ合わせる。標準モードは表示用に
+    // 読み込まれているPLATEAU建物へ垂直レイを通す。高精度モードはGoogleタイルの
+    // 形状データを規約上読み取れないため、この判定専用に完全透明なPLATEAU建物を
+    // 別途読み込んでから同じ判定を行う（画面の見た目はGoogleタイルのまま）。
+    // 建物が無い・接地点を検証できない場合は、DEM地面の値のまま変更しない。
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) return groundPoint;
     try {
+      if (precisionSettings.accuracyMode === "highest") {
+        await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
+        if (viewer.isDestroyed()) return groundPoint;
+      }
       const roofPoint = await resolvePlateauRoofGroundPoint(
         viewer,
         latitude,

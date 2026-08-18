@@ -24,6 +24,15 @@ type SceneRayIntersection = {
   position?: Cartesian3;
 };
 
+type PickedFeatureLike = {
+  getProperty?: (name: string) => unknown;
+};
+
+type RaycastHit = {
+  cartographic: Cartographic;
+  feature: unknown;
+};
+
 type RayPickingScene = Scene & {
   drillPickFromRayMostDetailed?: (
     ray: Ray,
@@ -40,12 +49,9 @@ type RayPickingScene = Scene & {
 const BASE_HEIGHT_TOLERANCE_METERS = 5;
 /**
  * 被写体を建物の屋根に合わせる際の粗大な異常値だけを弾くための緩い上限。
- * 垂直レイは、底面ポリゴンを持たない建物モデル（PLATEAU LOD2に多い）では
- * 屋根にしか当たらないことがあり、その場合BASE_HEIGHT_TOLERANCE_METERS
- * （5m）を使うとほぼ必ず「未検証」扱いになって地面へフォールバックして
- * しまう。被写体ピンは「屋根の上」をデフォルトにしたいため、ここでは
- * 建物高さとして非現実的な値（地域ごとのタイルセット位置ズレ等）だけを
- * 弾く緩いチェックにとどめ、通常の建物高さの差は許容する。
+ * PLATEAUのbldg:measuredHeight属性を取得できない場合のジオメトリ由来の
+ * フォールバック（交点の最高点）でのみ使う保険で、タイルセットの地域的な
+ * 位置ズレ等、非現実的な値だけを弾く。
  */
 const GROSS_MISALIGNMENT_TOLERANCE_METERS = 120;
 const VERTICAL_SEARCH_ALTITUDE_METERS = 3000;
@@ -54,6 +60,14 @@ const VERTICAL_SEARCH_ALTITUDE_METERS = 3000;
 // 手動での再指定を求めずに自動で建物（構造物）を捉えられるようにする。
 const SAMPLING_OFFSETS_METERS = [0, 3, 6, 10];
 const SAMPLING_BEARINGS_DEGREES = [0, 45, 90, 135, 180, 225, 270, 315];
+// PLATEAUの3D Tilesは建物フィーチャーにCityGML由来の実測高さ属性を持つ。
+// ジオメトリの交点（屋根のどこに当たったか）に依存せず、この属性を直接
+// 読み取れれば、底面ポリゴンの有無に関わらず正確な建物高さが得られる。
+const MEASURED_HEIGHT_PROPERTY_NAMES = [
+  "bldg:measuredHeight",
+  "measuredHeight",
+  "building:measuredHeight",
+];
 
 export type PlateauBuildingHeightVerification = {
   /** 建物接地点の高さがGSI DEMと許容範囲内で一致したか。 */
@@ -62,18 +76,35 @@ export type PlateauBuildingHeightVerification = {
   discrepancyMeters: number | null;
 };
 
+/** ピックしたフィーチャーからPLATEAUの実測高さ属性を読み取る。無ければnull。 */
+function readMeasuredHeightMeters(feature: unknown): number | null {
+  const candidate = feature as PickedFeatureLike | undefined;
+  if (!candidate || typeof candidate.getProperty !== "function") return null;
+  for (const propertyName of MEASURED_HEIGHT_PROPERTY_NAMES) {
+    let value: unknown;
+    try {
+      value = candidate.getProperty(propertyName);
+    } catch {
+      continue;
+    }
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
 /**
  * 指定した経緯度直下でPLATEAU建物タイルセットに垂直レイを通し、その地点の
- * 全交点（Cartographic配列）を返す。地形（globe）は誤検出を避けるため
- * 一時的に隠す。交点が無い場合はnull（直下に建物がない、または壁を
- * 斜めから見ているだけ）。
+ * 全交点（Cartographicとフィーチャー参照）を返す。地形（globe）は誤検出を
+ * 避けるため一時的に隠す。交点が無い場合はnull（直下に建物がない、または
+ * 壁を斜めから見ているだけ）。
  */
 async function plateauVerticalRaycast(
   viewer: Viewer,
   longitude: number,
   latitude: number,
   signal?: AbortSignal
-): Promise<Cartographic[] | null> {
+): Promise<RaycastHit[] | null> {
   const scene = viewer.scene as RayPickingScene;
   if (typeof scene.drillPickFromRayMostDetailed !== "function") {
     return null;
@@ -113,7 +144,10 @@ async function plateauVerticalRaycast(
   const hits = intersections
     .filter((intersection): intersection is SceneRayIntersection & { position: Cartesian3 } =>
       intersection.position !== undefined)
-    .map((intersection) => Cartographic.fromCartesian(intersection.position));
+    .map((intersection) => ({
+      cartographic: Cartographic.fromCartesian(intersection.position),
+      feature: intersection.object,
+    }));
   return hits.length > 0 ? hits : null;
 }
 
@@ -133,7 +167,7 @@ export async function verifyPlateauBuildingBaseHeight(
     return { verified: false, discrepancyMeters: null };
   }
   const lowestHit = hits.reduce((lowest, current) =>
-    current.height < lowest.height ? current : lowest
+    current.cartographic.height < lowest.cartographic.height ? current : lowest
   );
 
   let demGroundPoint;
@@ -149,7 +183,7 @@ export async function verifyPlateauBuildingBaseHeight(
   }
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-  const discrepancyMeters = lowestHit.height - demGroundPoint.height;
+  const discrepancyMeters = lowestHit.cartographic.height - demGroundPoint.height;
   return {
     verified: Math.abs(discrepancyMeters) <= BASE_HEIGHT_TOLERANCE_METERS,
     discrepancyMeters,
@@ -159,12 +193,18 @@ export async function verifyPlateauBuildingBaseHeight(
 /**
  * 標準モード用：被写体地点にPLATEAU建物があれば、その屋根面へ被写体高度を
  * 合わせる（高精度モードでGoogle 3D Tilesへクランプするのと同じ考え方）。
- * 被写体ピンは「建物の屋根の上」をデフォルトにするため、垂直レイで検出できた
- * 構造物の最高点をそのまま採用する。全国一律の高さ補正はしないが、
- * タイルセットの地域的な位置ズレによる非現実的な高さ（屋根がDEM地面より
- * 低い、または120mを超えて高い）だけは弾いて次の候補点を試す。
- * 建物が無い・弾かれた場合はnullを返し、呼び出し側は通常のDEM地面高度に
- * フォールバックする。
+ * 被写体ピンは「建物の屋根の上」をデフォルトにする。
+ *
+ * PLATEAUの3D TilesはCityGML由来のbldg:measuredHeight（実測高さ）属性を
+ * フィーチャーごとに持つため、垂直レイが当たったフィーチャーからこの属性を
+ * 直接読み取れれば「DEM地面 + 実測高さ」で屋根の高さを求める。ジオメトリの
+ * 交点が屋根のどこに当たったか（底面ポリゴンの有無等）に左右されない、
+ * より確実な方法。属性を読み取れない建物（データ欠落等）だけ、垂直レイの
+ * 最高交点をそのまま使うジオメトリ由来のフォールバックにする。
+ * どちらの方法でも、タイルセットの地域的な位置ズレによる非現実的な高さ
+ * （屋根がDEM地面より低い、または120mを超えて高い）だけは弾いて次の候補点
+ * を試す。建物が無い・弾かれた場合はnullを返し、呼び出し側は通常のDEM
+ * 地面高度にフォールバックする。
  *
  * 中心点の真上だけでは、鉄塔・電波塔のような格子構造の隙間を素通りして
  * 何も検出できないことがあるため、中心点に加えて周辺の複数点も自動で
@@ -195,9 +235,6 @@ export async function resolvePlateauRoofGroundPoint(
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const hits = await plateauVerticalRaycast(viewer, candidate.longitude, candidate.latitude, signal);
     if (!hits) continue;
-    const highestHit = hits.reduce((highest, current) =>
-      current.height > highest.height ? current : highest
-    );
 
     let demGroundPoint;
     try {
@@ -212,11 +249,29 @@ export async function resolvePlateauRoofGroundPoint(
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-    // 屋根（highestHit）が地面（DEM）より低い、または非現実的に高い場合だけ
-    // 「このタイルセットはこの地点で位置ズレしている」とみなして候補を諦める。
-    // lowestHitとDEMの厳密な突き合わせは行わない（屋根に合わせたい被写体を
-    // 底面ポリゴンの有無に依存させないため）。
-    const roofAboveGroundMeters = highestHit.height - demGroundPoint.height;
+    // まずbldg:measuredHeight属性を持つフィーチャーが無いか探す（どの高さの
+    // 交点でも、属性さえ取れれば地面基準から確実に屋根高さを算出できる）。
+    let roofEllipsoidalHeightMeters: number | null = null;
+    for (const hit of hits) {
+      const measuredHeight = readMeasuredHeightMeters(hit.feature);
+      if (measuredHeight !== null) {
+        roofEllipsoidalHeightMeters = demGroundPoint.height + measuredHeight;
+        break;
+      }
+    }
+    // 属性が読み取れない場合だけ、交点の最高点をそのまま使う
+    // （ジオメトリ由来のフォールバック）。
+    if (roofEllipsoidalHeightMeters === null) {
+      const highestHit = hits.reduce((highest, current) =>
+        current.cartographic.height > highest.cartographic.height ? current : highest
+      );
+      roofEllipsoidalHeightMeters = highestHit.cartographic.height;
+    }
+
+    // 屋根が地面（DEM）より低い、または非現実的に高い場合だけ「このタイル
+    // セットはこの地点で位置ズレしている／属性が壊れている」とみなして
+    // 候補を諦める。
+    const roofAboveGroundMeters = roofEllipsoidalHeightMeters - demGroundPoint.height;
     if (
       roofAboveGroundMeters < 0 ||
       roofAboveGroundMeters > GROSS_MISALIGNMENT_TOLERANCE_METERS
@@ -226,7 +281,9 @@ export async function resolvePlateauRoofGroundPoint(
 
     let geoidHeightMeters: number;
     try {
-      geoidHeightMeters = await fetchGsiGeoidHeight(highestHit);
+      geoidHeightMeters = await fetchGsiGeoidHeight(
+        Cartographic.fromDegrees(candidate.longitude, candidate.latitude, roofEllipsoidalHeightMeters)
+      );
     } catch (error) {
       console.warn(`${label}のジオイド高を取得できませんでした`, error);
       continue;
@@ -235,13 +292,12 @@ export async function resolvePlateauRoofGroundPoint(
 
     // 被写体のマーカー位置（緯度経度）は入力のまま変更しない。
     // 見つかった構造物の高さだけを採用する。
-    const ellipsoidalHeightMeters = highestHit.height;
     const point: ResolvedGroundPoint = {
       latitude: origin.latitude,
       longitude: origin.longitude,
-      height: ellipsoidalHeightMeters,
-      ellipsoidalHeightMeters,
-      orthometricHeightMeters: ellipsoidalHeightMeters - geoidHeightMeters,
+      height: roofEllipsoidalHeightMeters,
+      ellipsoidalHeightMeters: roofEllipsoidalHeightMeters,
+      orthometricHeightMeters: roofEllipsoidalHeightMeters - geoidHeightMeters,
       geoidHeightMeters,
       heightSource: "3d-picked",
       label,
