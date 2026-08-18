@@ -192,9 +192,11 @@ function milkyWayShootingWindow(
   location: GroundPoint,
   scanStart: Date,
   scanEnd: Date,
+  selectedDaySerial: number,
+  timeZone: string,
   calculationMode: CalculationMode,
   refractionWeather?: RefractionWeatherContext
-): { start: Date | null; end: Date | null } {
+): string {
   let currentStart: Date | null = null;
   let bestStart: Date | null = null;
   let bestEnd: Date | null = null;
@@ -249,7 +251,7 @@ function milkyWayShootingWindow(
     }
   }
 
-  return { start: bestStart, end: bestEnd };
+  return formatWindow(bestStart, bestEnd, selectedDaySerial, timeZone);
 }
 
 function TimelinePanelComponent({
@@ -296,7 +298,6 @@ function TimelinePanelComponent({
         sunset: null,
         moonrise: null,
         moonset: null,
-        milkyWayStart: null,
         milkyWay: "位置未設定",
       };
     }
@@ -323,25 +324,19 @@ function TimelinePanelComponent({
       );
     }
 
-    const milkyWayWindow = milkyWayShootingWindow(
-      resolvedLocation,
-      dateFromZonedDateTimeLocal(`${dayText}T12:00`, timeZone),
-      dateFromZonedDateTimeLocal(`${followingDayText}T12:00`, timeZone),
-      calculationMode,
-      refractionWeather
-    );
-
     return {
       sunrise: find("sun", 1),
       sunset: find("sun", -1),
       moonrise: find("moon", 1),
       moonset: find("moon", -1),
-      milkyWayStart: milkyWayWindow.start,
-      milkyWay: formatWindow(
-        milkyWayWindow.start,
-        milkyWayWindow.end,
+      milkyWay: milkyWayShootingWindow(
+        resolvedLocation,
+        dateFromZonedDateTimeLocal(`${dayText}T12:00`, timeZone),
+        dateFromZonedDateTimeLocal(`${followingDayText}T12:00`, timeZone),
         selectedDaySerial,
-        timeZone
+        timeZone,
+        calculationMode,
+        refractionWeather
       ),
     };
   }, [calculationMode, location, refractionWeather, selectedDaySerial, timeZone]);
@@ -370,9 +365,9 @@ function TimelinePanelComponent({
     }
   }, []);
 
-  function changeDateTime(value: string) {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return;
-    onChangeDateTime(value.slice(0, 16));
+  function changeDate(value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    onChangeDateTime(`${value}T${selectedTimeText}`);
   }
 
   const timelineTicks = useMemo(() => {
@@ -481,18 +476,8 @@ function TimelinePanelComponent({
   return (
     <section className="timeline-section" aria-label="撮影日時">
       <div className="timeline-main-row">
-        <div className="timeline-date-actions timeline-date-actions-left">
-          <label className="timeline-date-control" aria-label="撮影日時">
-            <input
-              type="datetime-local"
-              step="60"
-              min={`${MIN_YEAR}-01-01T00:00`}
-              max={`${MAX_YEAR}-12-31T23:59`}
-              value={`${selectedDateText}T${selectedTimeText}`}
-              onChange={(event) => changeDateTime(event.target.value)}
-            />
-            <span className="timeline-action-caption">カレンダー</span>
-          </label>
+        <div className="timeline-title">
+          時間
         </div>
 
         <div className="timeline-ruler-shell">
@@ -519,34 +504,21 @@ function TimelinePanelComponent({
             onPointerCancel={stopTimelineDrag}
             onKeyDown={useTimelineKeyboard}
           >
-            <div className="timeline-current-time-anchor">
-              <span className="timeline-current-date" aria-hidden="true">
-                {selectedDateText.replace(/-/g, "/")}
-              </span>
-              <output className="timeline-current-time">
-                {selectedTimeText}
-              </output>
-              <button
-                type="button"
-                className="timeline-now-button"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => onChangeDateTime(zonedDateTimeLocalFromDate(new Date(), timeZone))}
-              >
-                現在時刻
-              </button>
-            </div>
-            <div className="timeline-scroll-clip" aria-hidden="true">
-              <div className="timeline-scroll-track">
-                {timelineTicks.map((tick) => (
-                  <span
-                    key={tick.time}
-                    className={tick.major ? "timeline-scroll-tick major" : "timeline-scroll-tick"}
-                    style={{ left: tick.left }}
-                  >
-                    {tick.label && <b>{tick.label}</b>}
-                  </span>
-                ))}
-              </div>
+            <output
+              className="timeline-current-time"
+            >
+              {selectedTimeText}
+            </output>
+            <div className="timeline-scroll-track" aria-hidden="true">
+              {timelineTicks.map((tick) => (
+                <span
+                  key={tick.time}
+                  className={tick.major ? "timeline-scroll-tick major" : "timeline-scroll-tick"}
+                  style={{ left: tick.left }}
+                >
+                  {tick.label && <b>{tick.label}</b>}
+                </span>
+              ))}
             </div>
             <span className="timeline-selection-line" aria-hidden="true" />
           </div>
@@ -562,7 +534,16 @@ function TimelinePanelComponent({
           </button>
         </div>
 
-        <div className="timeline-date-actions timeline-date-actions-right">
+        <div className="timeline-date-actions">
+          <label className="timeline-date-control" aria-label="撮影日">
+            <input
+              type="date"
+              min={`${MIN_YEAR}-01-01`}
+              max={`${MAX_YEAR}-12-31`}
+              value={selectedDateText}
+              onChange={(event) => changeDate(event.target.value)}
+            />
+          </label>
           <button
             type="button"
             className="timeline-transit-search-button"
@@ -571,53 +552,16 @@ function TimelinePanelComponent({
             title="天体通過日時検索"
           >
             <span aria-hidden="true">🔍</span>
-            <span className="timeline-action-caption">時間検索</span>
           </button>
         </div>
       </div>
 
       <div className="celestial-event-row" aria-label="日の出・日の入り時刻">
-        <button
-          type="button"
-          className="event-card sunrise"
-          disabled={!eventTimes.sunrise}
-          onClick={() => eventTimes.sunrise && onChangeDateTime(zonedDateTimeLocalFromDate(eventTimes.sunrise, timeZone))}
-        >
-          <span>☀</span><b>日の出</b><strong>{formatZonedTime(eventTimes.sunrise, timeZone)}</strong>
-        </button>
-        <button
-          type="button"
-          className="event-card sunset"
-          disabled={!eventTimes.sunset}
-          onClick={() => eventTimes.sunset && onChangeDateTime(zonedDateTimeLocalFromDate(eventTimes.sunset, timeZone))}
-        >
-          <span>▣</span><b>日没</b><strong>{formatZonedTime(eventTimes.sunset, timeZone)}</strong>
-        </button>
-        <button
-          type="button"
-          className="event-card moonrise"
-          disabled={!eventTimes.moonrise}
-          onClick={() => eventTimes.moonrise && onChangeDateTime(zonedDateTimeLocalFromDate(eventTimes.moonrise, timeZone))}
-        >
-          <span>☾</span><b>月出<i>月齢{moonAgeDays === null ? "--" : moonAgeDays.toFixed(1)}</i></b><strong>{formatZonedTime(eventTimes.moonrise, timeZone)}</strong>
-        </button>
-        <button
-          type="button"
-          className="event-card moonset"
-          disabled={!eventTimes.moonset}
-          onClick={() => eventTimes.moonset && onChangeDateTime(zonedDateTimeLocalFromDate(eventTimes.moonset, timeZone))}
-        >
-          <span>☾</span><b>月没</b><strong>{formatZonedTime(eventTimes.moonset, timeZone)}</strong>
-        </button>
-        <button
-          type="button"
-          className="event-card milkyway"
-          title="太陽高度−12°以下・月明かりが弱い・天の川中心高度8°以上"
-          disabled={!eventTimes.milkyWayStart}
-          onClick={() => eventTimes.milkyWayStart && onChangeDateTime(zonedDateTimeLocalFromDate(eventTimes.milkyWayStart, timeZone))}
-        >
-          <span>✦</span><b>天の川</b><strong>{eventTimes.milkyWay}</strong>
-        </button>
+        <div className="event-card sunrise"><span>☀</span><b>日の出</b><strong>{formatZonedTime(eventTimes.sunrise, timeZone)}</strong></div>
+        <div className="event-card sunset"><span>▣</span><b>日没</b><strong>{formatZonedTime(eventTimes.sunset, timeZone)}</strong></div>
+        <div className="event-card moonrise"><span>☾</span><b>月出<i>月齢{moonAgeDays === null ? "--" : moonAgeDays.toFixed(1)}</i></b><strong>{formatZonedTime(eventTimes.moonrise, timeZone)}</strong></div>
+        <div className="event-card moonset"><span>☾</span><b>月没</b><strong>{formatZonedTime(eventTimes.moonset, timeZone)}</strong></div>
+        <div className="event-card milkyway" title="太陽高度−12°以下・月明かりが弱い・天の川中心高度8°以上"><span>✦</span><b>天の川</b><strong>{eventTimes.milkyWay}</strong></div>
       </div>
 
       <input

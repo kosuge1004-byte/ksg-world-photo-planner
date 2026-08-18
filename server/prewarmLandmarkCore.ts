@@ -27,12 +27,25 @@ const BODY_LABELS: Record<CelestialBodyId, string> = {
 
 // 季節差（太陽・天の川の見え方が大きく変わる）をカバーするための代表日時。
 // 時刻は各天体がそれなりの高度に来やすい時間帯をおおまかに散らしている。
-const SAMPLE_OFFSETS_DAYS = [0, 90, 180, 270]; // 四季をおおまかにカバー
-const SAMPLE_HOURS = [6, 19, 22]; // 朝・夕方・深夜
+// フル版（CLI/Cron Trigger用、実行時間に余裕がある）。
+const FULL_SAMPLE_OFFSETS_DAYS = [0, 90, 180, 270]; // 四季をおおまかにカバー
+const FULL_SAMPLE_HOURS = [6, 19, 22]; // 朝・夕方・深夜
+
+// 軽量版（HTTPリクエスト経由用）。Cloudflare Pages Functionsは1リクエスト
+// あたりの実行時間に上限があり、フル版（最大12パターン×1.5秒待機+実通信）
+// を1回のHTTPリクエストで回すと制限時間を超えて中断される
+// （実地検証で「非Errorオブジェクト」＝AbortSignal由来と見られる例外が
+// 全試行で発生することを確認済み）。そのため既定は1パターンのみに絞り、
+// 待機時間も大幅に短縮する。複数パターン欲しい場合は日をまたいで
+// Cron Triggerで回すか、CLIスクリプトを使う。
+const LIGHT_SAMPLE_OFFSETS_DAYS = [0];
+const LIGHT_SAMPLE_HOURS = [19];
 
 const DEFAULT_CAMERA: CameraSettings = { focalLengthMm: 50, lensCenterHeightMeters: 1.5 };
-export const REQUEST_DELAY_MS = 1500; // GSIサーバーへの配慮（1リクエストごとの間隔）
-export const LANDMARK_DELAY_MS = 4000; // ランドマーク間の追加の間隔
+export const REQUEST_DELAY_MS = 1500; // GSIサーバーへの配慮（1リクエストごとの間隔、CLI/Cron用）
+export const LANDMARK_DELAY_MS = 4000; // ランドマーク間の追加の間隔（CLI/Cron用）
+export const LIGHT_REQUEST_DELAY_MS = 300; // HTTPリクエスト経由の軽量版用（実行時間を圧迫しない範囲）
+export const LIGHT_LANDMARK_DELAY_MS = 500; // HTTPリクエスト経由の軽量版用
 
 const terrainSampler: TerrainSampler = (points, signal, maximumDetail) =>
   sampleServerWorldTerrain(points, signal, maximumDetail ? points.map(() => maximumDetail) : undefined);
@@ -58,9 +71,12 @@ function buildScreenPoint(
   };
 }
 
+export type PrewarmMode = "full" | "light";
+
 export async function prewarmOne(
   landmark: PrewarmLandmark,
-  log: (message: string) => void = () => {}
+  log: (message: string) => void = () => {},
+  mode: PrewarmMode = "full"
 ): Promise<{ attempts: number; candidatesFound: number }> {
   const subject: GroundPoint = {
     latitude: landmark.latitude,
@@ -68,11 +84,14 @@ export async function prewarmOne(
     height: 0,
     label: landmark.name,
   };
+  const offsets = mode === "light" ? LIGHT_SAMPLE_OFFSETS_DAYS : FULL_SAMPLE_OFFSETS_DAYS;
+  const hours = mode === "light" ? LIGHT_SAMPLE_HOURS : FULL_SAMPLE_HOURS;
+  const requestDelayMs = mode === "light" ? LIGHT_REQUEST_DELAY_MS : REQUEST_DELAY_MS;
   let attempts = 0;
   let candidatesFound = 0;
 
-  for (const dayOffset of SAMPLE_OFFSETS_DAYS) {
-    for (const hour of SAMPLE_HOURS) {
+  for (const dayOffset of offsets) {
+    for (const hour of hours) {
       const date = new Date();
       date.setDate(date.getDate() + dayOffset);
       date.setHours(hour, 0, 0, 0);
@@ -97,10 +116,10 @@ export async function prewarmOne(
         const detail =
           error instanceof Error
             ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`
-            : `非Errorオブジェクト: ${JSON.stringify(error)}`;
+            : `非Errorオブジェクト（${Object.prototype.toString.call(error)}）: ${JSON.stringify(error)}`;
         log(`  ! ${landmark.name} ${date.toISOString()} 失敗: ${detail}`);
       }
-      await sleep(REQUEST_DELAY_MS);
+      await sleep(requestDelayMs);
     }
   }
 
@@ -109,17 +128,19 @@ export async function prewarmOne(
 
 export async function prewarmMany(
   targets: PrewarmLandmark[],
-  log: (message: string) => void = () => {}
+  log: (message: string) => void = () => {},
+  mode: PrewarmMode = "full"
 ): Promise<{ totalAttempts: number; totalCandidates: number }> {
+  const landmarkDelayMs = mode === "light" ? LIGHT_LANDMARK_DELAY_MS : LANDMARK_DELAY_MS;
   let totalAttempts = 0;
   let totalCandidates = 0;
   for (const [index, landmark] of targets.entries()) {
     log(`[${index + 1}/${targets.length}] ${landmark.name} を事前取得中...`);
-    const result = await prewarmOne(landmark, log);
+    const result = await prewarmOne(landmark, log, mode);
     totalAttempts += result.attempts;
     totalCandidates += result.candidatesFound;
     log(`  → ${result.attempts}回試行、候補${result.candidatesFound}件`);
-    await sleep(LANDMARK_DELAY_MS);
+    await sleep(landmarkDelayMs);
   }
   return { totalAttempts, totalCandidates };
 }

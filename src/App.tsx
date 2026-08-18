@@ -64,6 +64,7 @@ import {
 import { TopSettingsBar } from "./components/TopSettingsBar";
 import { UserNotice } from "./components/UserNotice";
 import { coordinatesAtMapPixel } from "./map/webMercator";
+import { adaptiveSearchConcurrency } from "./search/adaptiveConcurrency";
 import {
   refineSpotPresetHighestPrecision,
   type HighestPrecisionProgress,
@@ -91,6 +92,7 @@ import {
 import { updateCelestialMapEntities } from "./cesium/celestialMap";
 import {
   evaluateCelestialLineOfSight,
+  evaluatePhotorealisticMeshSegmentLineOfSight,
   invalidateCelestialOcclusionCaches,
   prepareCelestialLineOfSightObserver,
   thirdDimensionSourceForAccuracyMode,
@@ -99,7 +101,6 @@ import { calculateTripodCandidates } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer } from "./cesium/createMapViewer";
-import { authorizeHighPrecisionSession } from "./precision/highPrecisionSession";
 import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
 import { TutorialOverlay, type TutorialOverlayMode } from "./components/TutorialOverlay";
 import {
@@ -133,7 +134,7 @@ import {
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
 import type { PrecisionSettings } from "./types/precision";
-
+import { DEFAULT_PRECISION_SETTINGS, selectSubjectObstructionExclusionMeters } from "./types/precision";
 import type {
   CalculationMode,
   CameraSettings,
@@ -540,9 +541,6 @@ function App() {
     loadCelestialDateTime
   );
   const [timelineInteracting, setTimelineInteracting] = useState(false);
-  // 時間軸を操作中（ドラッグ中）だけ天体オーバーレイに掛ける透明度。
-  // 静止時は3D静止画側に建物への隠れ方まで焼き込むため、この値は使わない。
-  const [celestialDragOpacity, setCelestialDragOpacity] = useState(0.55);
   const mapCenterRef = useRef(mapCenter);
   const dateTimeLocalRef = useRef(dateTimeLocal);
   const timeZoneRef = useRef(timeZone);
@@ -1144,9 +1142,43 @@ function App() {
 
     const authorizeHighPrecision = async (): Promise<void> => {
       if (accuracyMode !== "highest") return;
-      // ARカメラ側（ArCesiumOverlay）とセッションID・上限カウントの仕組みを
-      // 共有するため、共通ヘルパーへ切り出したものを呼び出す。
-      await authorizeHighPrecisionSession();
+      const storageKey = "astrosight-high-precision-session-v1";
+      const now = Date.now();
+      let sessionId = "";
+      try {
+        const cached = JSON.parse(localStorage.getItem(storageKey) ?? "null") as
+          | { sessionId?: string; expiresAt?: number }
+          | null;
+        if (cached?.sessionId && typeof cached.expiresAt === "number" && cached.expiresAt > now) {
+          sessionId = cached.sessionId;
+        }
+      } catch {
+        localStorage.removeItem(storageKey);
+      }
+      if (!sessionId) {
+        sessionId = crypto.randomUUID().replaceAll("-", "");
+      }
+      const response = await fetch("/api/high-precision-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const result = await response.json() as {
+        allowed?: boolean;
+        sessionId?: string;
+        sessionTtlSeconds?: number;
+        count?: number;
+        stopLimit?: number;
+      };
+      if (!response.ok || !result.allowed) {
+        throw new Error(
+          `今月の高精度モード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードをご利用ください。`
+        );
+      }
+      localStorage.setItem(storageKey, JSON.stringify({
+        sessionId: result.sessionId ?? sessionId,
+        expiresAt: now + (result.sessionTtlSeconds ?? 10800) * 1000,
+      }));
     };
 
     void authorizeHighPrecision()
@@ -1768,8 +1800,7 @@ function App() {
             subjectPoint,
             cameraSettings,
             calculationMode,
-            previewViewCorrection,
-            celestialPoints
+            previewViewCorrection
           );
 
           if (!cancelled && jobId === previewJobRef.current) {
@@ -1829,7 +1860,6 @@ function App() {
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
-    celestialPoints,
   ]);
 
   function stopPlacementMode() {
@@ -2049,35 +2079,161 @@ function App() {
     }
   }
 
-  /**
-   * バックグラウンド検索（サーバー側でDEM地形の遮蔽まで判定済み）の結果を
-   * そのまま確定する。かつてはここでさらに三脚〜被写体間の建物3D遮蔽を
-   * 追加確認していたが、その検証ロジックが実際には機能していない疑いが
-   * あったため撤去した。遮蔽判定は地形（DEM）のみで行う。
-   */
   async function completeBackgroundSpotSearch(
     active: ActiveSpotSearchJob,
     job: SpotSearchJob,
     signal: AbortSignal,
     onProgress: (message: string, percent: number) => void
   ): Promise<SpotPresetResult[]> {
-    void signal;
-    const results = deserializeSpotSearchResults(job.results).map((result) => ({
-      ...result,
-      candidate3dStatus: "disabled" as const,
-    }));
-    await finalizeBackgroundSpotSearch(active, results);
-    if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+    const results = deserializeSpotSearchResults(job.results);
     const diagnosticMessage = job.progress.includes("検索診断")
       ? job.progress.slice(job.progress.indexOf("検索診断"))
       : "";
+    if (!job.input.criteria.subjectObstructionCheckEnabled) {
+      const uncheckedResults = results.map((result) => ({
+        ...result,
+        candidate3dStatus: "disabled" as const,
+      }));
+      const returnedResults = job.input.criteria.verifiedVisibilityOnly
+        ? []
+        : uncheckedResults;
+      await finalizeBackgroundSpotSearch(active, returnedResults);
+      if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+      onProgress(`${uncheckedResults.length}件を取得しました（遮蔽物確認OFF）`, 100);
+      return returnedResults;
+    }
+    if (job.status === "complete") {
+      clearActiveSpotSearchJob(active);
+      return job.input.criteria.verifiedVisibilityOnly
+        ? results.filter((result) => result.candidate3dStatus === "visible")
+        : results;
+    }
+    const accuracyMode = job.input.precisionSettings?.accuracyMode ?? "standard";
+    const thirdDimensionSource = thirdDimensionSourceForAccuracyMode(accuracyMode);
+    let viewer = mapViewerRef.current;
+    for (
+      let attempt = 0;
+      mapReady && (!viewer || viewer.isDestroyed()) && attempt < 120;
+      attempt += 1
+    ) {
+      if (signal.aborted) {
+        throw new DOMException("最終3D確認を中止しました", "AbortError");
+      }
+      onProgress("3Dマップの読込完了を待っています…", 98);
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      viewer = mapViewerRef.current;
+    }
+    if (!viewer || viewer.isDestroyed()) {
+      // 3Dを確認できないことを「撮影不可」と同一視しない。
+      // 候補は未確認状態で保存し、利用者が三脚ピンとプレビューで確認できるようにする。
+      const unverifiedResults = results.map((result) => ({
+        ...result,
+        candidate3dStatus: "unverified" as const,
+      }));
+      const returnedResults = job.input.criteria.verifiedVisibilityOnly
+        ? []
+        : unverifiedResults;
+      await finalizeBackgroundSpotSearch(active, returnedResults);
+      if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+      onProgress(
+        `${unverifiedResults.length}件を候補として保持しました（3D未確認）`,
+        100
+      );
+      return returnedResults;
+    }
+    const assessedResults: SpotPresetResult[] = [];
+    const concurrency = adaptiveSearchConcurrency("mesh-los", job.input.calculationMode);
+    for (let offset = 0; offset < results.length; offset += concurrency) {
+      if (signal.aborted) {
+        throw new DOMException("最終3D確認を中止しました", "AbortError");
+      }
+      onProgress(
+        `${accuracyMode === "highest" ? "Google 3D" : "PLATEAU建物（DEM検証つき）"}で建物の遮蔽を確認しています… ${Math.min(
+          results.length,
+          offset + concurrency
+        )}/${results.length}`,
+        98 + Math.floor(
+          Math.min(results.length, offset + concurrency) /
+          Math.max(1, results.length)
+        )
+      );
+      const batch = await Promise.all(
+        results.slice(offset, offset + concurrency).map(async (result) => {
+          try {
+            const observer = await prepareCelestialLineOfSightObserver(
+              viewer,
+              result.tripod,
+              job.input.lensCenterHeightMeters,
+              signal
+            );
+            const subjectPosition = Cartesian3.fromDegrees(
+              result.subject.longitude,
+              result.subject.latitude,
+              result.subject.height
+            );
+            const subjectDistanceMeters = Cartesian3.distance(
+              observer.meshOrigin,
+              subjectPosition
+            );
+            const configuredExclusionSettings =
+              job.input.criteria.subjectObstructionExclusionMeters ??
+              DEFAULT_PRECISION_SETTINGS.subjectObstructionExclusionMeters;
+            const subjectExclusionMeters = selectSubjectObstructionExclusionMeters(
+              subjectDistanceMeters,
+              configuredExclusionSettings
+            );
+            const maximumObstructionDistanceMeters = Math.max(
+              3,
+              subjectDistanceMeters - subjectExclusionMeters
+            );
+            const visibility = await evaluatePhotorealisticMeshSegmentLineOfSight(
+              viewer,
+              observer,
+              subjectPosition,
+              signal,
+              maximumObstructionDistanceMeters,
+              thirdDimensionSource
+            );
+            return {
+              ...result,
+              candidate3dStatus: visibility.verified
+                ? visibility.visible
+                  ? "visible" as const
+                  : "possibly-obstructed" as const
+                : "unverified" as const,
+              buildingObstructedFractionPercent: visibility.obstructedFractionPercent,
+            };
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+              throw error;
+            }
+            console.warn("候補の最終3D状態を確認できないため未確認として残します", error);
+            return { ...result, candidate3dStatus: "unverified" as const };
+          }
+        })
+      );
+      assessedResults.push(...batch);
+    }
+    const returnedResults = job.input.criteria.verifiedVisibilityOnly
+      ? assessedResults.filter((result) => result.candidate3dStatus === "visible")
+      : assessedResults;
+    onProgress("最終3D確認結果を保存しています…", 99);
+    await finalizeBackgroundSpotSearch(active, returnedResults);
+    if (job.input.cacheKey) markSpotSearchPrepared(job.input.cacheKey);
+    const visibleCount = assessedResults.filter(
+      (result) => result.candidate3dStatus === "visible"
+    ).length;
+    const obstructedCount = assessedResults.filter(
+      (result) => result.candidate3dStatus === "possibly-obstructed"
+    ).length;
+    const unverifiedCount = assessedResults.length - visibleCount - obstructedCount;
     onProgress(
-      `${results.length}件を取得しました${diagnosticMessage ? `
+      `${assessedResults.length}件を候補として保持しました（確認済み ${visibleCount}／遮蔽可能性 ${obstructedCount}／未確認 ${unverifiedCount}）${diagnosticMessage ? `
 ${diagnosticMessage}
-候補保持: ${results.length}件` : ""}`,
+候補保持: ${assessedResults.length}件` : ""}`,
       100
     );
-    return results;
+    return returnedResults;
   }
 
   async function resumeSpotSearch(
@@ -3495,8 +3651,6 @@ ${diagnosticMessage}
         lightPollutionEnabled={lightPollutionEnabled}
         subjectAvailable={Boolean(subjectPoint)}
         subjectPoint={subjectPoint}
-        accuracyMode={precisionSettings.accuracyMode}
-        cesiumIonToken={import.meta.env.VITE_CESIUM_ION_TOKEN}
         onClose={() => setArCameraOpen(false)}
         onSaveCurrentPlan={saveCurrentCompositionFromAr}
         onChangeDateTime={setDateTimeLocal}
@@ -3545,19 +3699,13 @@ ${diagnosticMessage}
             distanceMeters={previewMeasureDistanceMeters}
           />
 
-          <div
-            className="celestial-overlay-opacity-wrap"
-            style={{ opacity: timelineInteracting ? celestialDragOpacity : 1 }}
-          >
-            <CelestialOverlay
-              points={celestialPoints}
-              tracks={celestialTracks}
-              milkyWayPath={visibleMilkyWayPath}
-              visibility={celestialVisibility}
-              occlusion={celestialOcclusion}
-              physicalDiscsBakedIntoScene={!timelineInteracting}
-            />
-          </div>
+          <CelestialOverlay
+            points={celestialPoints}
+            tracks={celestialTracks}
+            milkyWayPath={visibleMilkyWayPath}
+            visibility={celestialVisibility}
+            occlusion={celestialOcclusion}
+          />
 
           <CelestialOcclusionStatus
             visibility={celestialVisibility}
@@ -3589,7 +3737,10 @@ ${diagnosticMessage}
         <PreviewStatus ready={previewReady} />
 
         <PreviewChrome
+          dateTimeLocal={dateTimeLocal}
+          timeZone={timeZone}
           frameMode={previewFrameMode}
+          onChangeDateTime={setDateTimeLocal}
           onChangeFrameMode={setPreviewFrameMode}
           onZoomIn={() =>
             changePreviewFocalLength(cameraSettings.focalLengthMm * 1.14)
@@ -3615,19 +3766,6 @@ ${diagnosticMessage}
           lightPollutionEnabled={lightPollutionEnabled}
           onChangeLightPollution={setLightPollutionEnabled}
         />
-
-        <label className="celestial-drag-opacity-control">
-          <span>天体の透明度（時間移動中）</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={celestialDragOpacity}
-            onChange={(event) => setCelestialDragOpacity(Number(event.target.value))}
-          />
-          <strong>{Math.round(celestialDragOpacity * 100)}%</strong>
-        </label>
 
         <div className="preview-load-status">
           {previewStatus}

@@ -142,7 +142,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
         id: "timeline-now",
         title: "「現時刻」ボタン",
         body: "今の日時にジャンプします。",
-        targetSelector: ".timeline-now-button",
+        targetSelector: ".preview-now-button",
       },
       {
         id: "timeline-minute",

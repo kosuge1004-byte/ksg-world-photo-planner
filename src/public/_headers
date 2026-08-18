@@ -1,9 +1,0 @@
-/*
-  X-Robots-Tag: noindex, nofollow
-  Permissions-Policy: camera=(self), geolocation=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)
-
-/sw.js
-  Cache-Control: no-cache
-
-/manifest.webmanifest
-  Cache-Control: no-cache

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import type { CalculationMode } from "../types/camera";
 import type { CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import type { AccuracyMode } from "../types/precision";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import {
   computeCameraFovDegrees,
@@ -40,8 +39,6 @@ type Props = {
   lightPollutionEnabled: boolean;
   subjectAvailable: boolean;
   subjectPoint: GroundPoint | null;
-  accuracyMode: AccuracyMode;
-  cesiumIonToken: string | undefined;
   onClose: () => void;
   onSaveCurrentPlan: () => void;
   onChangeDateTime: (value: string) => void;
@@ -66,8 +63,6 @@ export function ArCameraScreen({
   lightPollutionEnabled,
   subjectAvailable,
   subjectPoint,
-  accuracyMode,
-  cesiumIonToken,
   onClose,
   onSaveCurrentPlan,
   onChangeDateTime,
@@ -275,8 +270,6 @@ export function ArCameraScreen({
           orientation={arOrientation}
           projection={cameraProjection}
           subjectPoint={subjectPoint}
-          accuracyMode={accuracyMode}
-          cesiumIonToken={cesiumIonToken}
           dateTimeLocal={dateTimeLocal}
           timeZone={timeZone}
           calculationMode={calculationMode}

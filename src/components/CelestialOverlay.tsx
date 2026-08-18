@@ -14,8 +14,6 @@ type Props = {
   milkyWayPath: MilkyWayPathPoint[];
   visibility: CelestialVisibility;
   occlusion: CelestialOcclusionMap;
-  /** trueの間、太陽・月の実写的な円盤は描画しない（3D静止画側へ深度合成済みのため）。 */
-  physicalDiscsBakedIntoScene?: boolean;
 };
 
 const MOON_MARIA = [
@@ -291,7 +289,6 @@ function CelestialOverlayComponent({
   milkyWayPath,
   visibility,
   occlusion,
-  physicalDiscsBakedIntoScene = false,
 }: Props) {
   const milkyWaySegments = milkyWayBandSegments(milkyWayPath, true);
   const hiddenMilkyWaySegments = milkyWayBandSegments(milkyWayPath, false);
@@ -419,10 +416,6 @@ function CelestialOverlayComponent({
           occlusion[point.id]
         );
         const positionOnly = hiddenByScene || offscreenPosition;
-        // 太陽・月は、静止画側（プレビューCanvas）に深度合成済みの実写的な円盤が
-        // 焼き込まれているため、このSVG円盤は二重に描かない（ラベルだけ残す）。
-        const bakedElsewhere =
-          physicalDiscsBakedIntoScene && physicalDisc && !positionOnly;
         const markerStyle = offscreenPosition
           ? offscreenPositionStyle(point)
           : physicalDisc
@@ -436,10 +429,10 @@ function CelestialOverlayComponent({
               physicalDisc ? " celestial-physical-marker" : ""
             }${positionOnly ? " celestial-hidden-position" : ""}${
               offscreenPosition ? " celestial-offscreen-position" : ""
-            }${bakedElsewhere ? " celestial-baked-elsewhere" : ""}`}
+            }`}
             style={markerStyle}
           >
-            {bakedElsewhere ? null : positionOnly ? (
+            {positionOnly ? (
               <span className="celestial-hidden-dot" />
             ) : point.id === "moon" ? (
               <svg className="celestial-physical-disc moon-disc" viewBox="0 0 100 100" preserveAspectRatio="none">

@@ -27,7 +27,6 @@ import type { GroundPoint } from "../types/points";
 import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { directionToHorizontalDegrees, horizontalDirectionToVec3 } from "../projection/projectionService";
-import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
 import { verifyPlateauBuildingBaseHeight } from "./plateauBuildingVerification";
 import {
   adaptiveCoarseDistances,
@@ -56,34 +55,25 @@ type RayPickingScene = Scene & {
 
 /**
  * 3D遮蔽判定に使う情報源。
- * - google-3d: 過去に使っていたモード（Google Photorealistic 3D Tilesの形状データを
- *   直接読み取る）。Googleの利用規約（Map Tiles API Policies）は、そのタイルセットの
- *   形状データをプログラムで読み取る用途（物体検出・ジオデータ抽出等）を明確に禁止して
- *   いるため使用しない。型としては後方互換のために残している。
- * - plateau-verified: 過去に試みたモード（PLATEAU建物＋地点ごとのGSI DEM検証）。
- *   検証ロジックが実際には機能していない疑いがあり（垂直レイが屋根にしか当たらず
- *   接地高さを正しく取得できないケースがあるため）、現在は使用しない。
- *   型としては後方互換のために残している。
- * - none: 3D遮蔽判定を行わない。DEM地形のみで判定する（現在の既定）。
- *   PLATEAUは標準モードの表示専用として使い、遮蔽・検索・標高計算には接続しない
- *   （2026-08-06付けの過去の決定と同じ方針）。
+ * - google-3d: 高精度モード。Google Photorealistic 3D Tiles。追加の高さ検証はしない
+ *   （実測写真測量ベースで既に高い信頼性があるため）。
+ * - plateau-verified: 標準モード。表示専用のPLATEAU建物を遮蔽判定にも使うが、
+ *   全国一律の高さ補正はできない経緯があるため、交差した建物ごとにGSI DEMと
+ *   個別に接地高さを突き合わせ、検証できた場合のみ採用する。
+ * - none: 3D遮蔽判定を行わない（DEM地形のみ）。
  */
 export type ThirdDimensionSource = "google-3d" | "plateau-verified" | "none";
 
 /**
- * 精度モードから3D遮蔽情報源への対応を一本化する。
- * 高精度モードのGoogle Photorealistic 3D Tilesは形状データを遮蔽判定に使わず
- * （Googleの利用規約が禁止しているため）、PLATEAU建物による遮蔽判定も
- * 検証ロジックが信頼できないため使わない（DEM地形のみで判定する）。
- * 標準・高精度どちらのモードでも遮蔽判定の情報源は常に同じ（DEM地形のみ）にする。
- * この対応関係を各呼び出し元で個別に判断させない。
+ * 精度モードから3D遮蔽情報源への対応を一本化する。高精度モード＝Google 3D、
+ * 標準モード＝PLATEAU（地点ごとにDEMで検証）。この対応関係を各呼び出し元で
+ * 個別に判断させない。
  */
 export function thirdDimensionSourceForAccuracyMode(
-  _accuracyMode: "standard" | "highest"
+  accuracyMode: "standard" | "highest"
 ): ThirdDimensionSource {
-  return "none";
+  return accuracyMode === "highest" ? "google-3d" : "plateau-verified";
 }
-
 
 type TerrainHorizon = {
   maximumElevationDegrees: number;
@@ -279,7 +269,7 @@ function meshLineOfSightKey(
     horizontal.azimuthDegrees,
     horizontal.altitudeDegrees,
     maximumDistanceMeters ?? "unbounded",
-    thirdDimensionSource ?? "plateau-verified",
+    thirdDimensionSource ?? "google-3d",
   ].join(":");
 }
 
@@ -300,7 +290,7 @@ async function calculatePhotorealisticMeshIntersection(
   observer: CelestialLineOfSightObserver,
   horizontal: HorizontalCoordinates,
   maximumDistanceMeters?: number,
-  thirdDimensionSource: ThirdDimensionSource = "plateau-verified",
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<MeshIntersectionResult> {
   const scene = viewer.scene as RayPickingScene;
   if (
@@ -319,10 +309,7 @@ async function calculatePhotorealisticMeshIntersection(
     scene,
     ray,
     24,
-    // Googleタイルの形状データは遮蔽判定に一切使わない（利用規約上の理由）。
-    // thirdDimensionSourceの値に関わらず、シーン内のGoogle由来タイルセットは
-    // 常にレイピックの対象から除外する（多層防御）。
-    [...viewer.entities.values, ...collectGoogleTilesetsToExclude(viewer)],
+    [...viewer.entities.values],
     0.12
   );
   const minimumDistance = Math.max(3, observer.lensCenterHeightMeters * 0.75);
@@ -361,7 +348,7 @@ async function photorealisticMeshIntersection(
   horizontal: HorizontalCoordinates,
   signal?: AbortSignal,
   maximumDistanceMeters?: number,
-  thirdDimensionSource: ThirdDimensionSource = "plateau-verified",
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<MeshIntersectionResult> {
   abortIfRequested(signal);
   let viewerCache = meshLineOfSightCache.get(viewer);
@@ -482,7 +469,7 @@ export async function evaluateCelestialLineOfSight(
   horizontal: HorizontalCoordinates,
   signal?: AbortSignal,
   onDemVerified?: (result: CelestialOcclusion) => void,
-  thirdDimensionSource: ThirdDimensionSource = "plateau-verified",
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<CelestialOcclusion> {
   if (horizontal.altitudeDegrees <= 0) {
     return {
@@ -651,7 +638,7 @@ export async function evaluatePhotorealisticMeshSegmentLineOfSight(
   target: Cartesian3,
   signal?: AbortSignal,
   maximumDistanceMeters?: number,
-  thirdDimensionSource: ThirdDimensionSource = "plateau-verified",
+  thirdDimensionSource: ThirdDimensionSource = "google-3d",
 ): Promise<CelestialOcclusion> {
   abortIfRequested(signal);
   const worldDirection = Cartesian3.subtract(

@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">AstroSight</string>
-    <string name="title_activity_main">AstroSight</string>
-    <string name="package_name">jp.ksg.worldphotoplanner</string>
-    <string name="custom_url_scheme">jp.ksg.worldphotoplanner</string>
-</resources>

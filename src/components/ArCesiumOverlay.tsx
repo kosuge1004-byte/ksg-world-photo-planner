@@ -6,7 +6,6 @@ import {
   CesiumTerrainProvider,
   Color,
   ImageryLayer,
-  Ion,
   Math as CesiumMath,
   PerspectiveFrustum,
   UrlTemplateImageryProvider,
@@ -16,14 +15,10 @@ import {
 import type { ArDeviceLocation, ArDeviceOrientation } from "../ar/deviceTracking";
 import { calculateCelestialHorizontalCoordinates } from "../cesium/celestial";
 import { celestialWorldDirection } from "../cesium/celestialOcclusion";
-import { loadGooglePhotorealisticTilesetWithRetry } from "../cesium/createMapViewer";
-import { markAsGoogleTileset } from "../cesium/googleTilesetMarker";
 import { dateFromZonedDateTimeLocal, daySerialFromDateText, dateTextFromDaySerial, zonedDateParts } from "../time/zonedTime";
-import { authorizeHighPrecisionSession } from "../precision/highPrecisionSession";
 import type { CalculationMode } from "../types/camera";
 import type { CelestialBodyId, CelestialVisibility, HorizontalCoordinates } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import type { AccuracyMode } from "../types/precision";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import type { ArCameraProjection } from "./ArCameraScreen";
 
@@ -47,13 +42,6 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * DeviceOrientation beta=90° を「端末を縦に持ち、背面カメラが水平を向く」基準とする。
  * ARCore/ARKit接続前のPhase 4では、磁気方位＋姿勢センサーをCesiumカメラへ直接接続する。
- *
- * pitch/rollは、W3Cのalpha/beta/gamma回転行列（compassHeadingFromEulerと同じ規約）を
- * 使って「背面カメラの向き（-Z軸）」と「端末上端の向き（+Y軸）」をワールドENU座標へ
- * 変換し、そこから幾何学的に求める。betaだけ・gammaだけを個別に流用すると、
- * 端末を上下に傾けた時に符号が反転したり、左右に傾けた時に本来の傾きと無関係な値
- * （betaが90°付近ではgammaの変化がほぼ方位側に化けてしまう等）が混入するため、
- * 単純な角度の付け替えでは正しい姿勢にならない。
  */
 function orientationToCesiumPose(orientation: ArDeviceOrientation | null): {
   headingRadians: number;
@@ -63,57 +51,14 @@ function orientationToCesiumPose(orientation: ArDeviceOrientation | null): {
   const heading = orientation?.headingDegrees;
   if (heading === null || heading === undefined || !Number.isFinite(heading)) return null;
 
-  const betaDeg = orientation?.betaDegrees;
-  const gammaDeg = orientation?.gammaDegrees;
-
-  let pitchDegrees = 0;
-  let rollDegrees = 0;
-
-  if (
-    betaDeg !== null && betaDeg !== undefined && Number.isFinite(betaDeg) &&
-    gammaDeg !== null && gammaDeg !== undefined && Number.isFinite(gammaDeg)
-  ) {
-    const degToRad = Math.PI / 180;
-    const beta = betaDeg * degToRad;
-    const gamma = gammaDeg * degToRad;
-    const cB = Math.cos(beta);
-    const sB = Math.sin(beta);
-    const cG = Math.cos(gamma);
-    const sG = Math.sin(gamma);
-
-    // alpha（方位）はpitch/rollの値そのものには影響しない（headingは別途webkit-compass/
-    // Euler由来の値をそのまま使う）ため、alpha=0の場合の式まで簡約して計算する。
-    // forward: 背面カメラが向く方向（端末の-Z軸）をワールドENU(East, North, Up)で表したもの。
-    const forward = { east: -sG, north: cG * sB, up: -cB * cG };
-    // deviceUp: 端末上端が向く方向（端末の+Y軸）をワールドENUで表したもの。
-    const deviceUp = { east: 0, north: cB, up: sB };
-
-    pitchDegrees = clamp(Math.asin(clamp(forward.up, -1, 1)) / degToRad, -85, 85);
-
-    // "傾き無し"の基準up（ワールドUpのうちforwardに直交する成分）に対して、
-    // deviceUpがforward軸周りにどれだけ回転しているかをrollとする。
-    const worldUpDotForward = forward.up; // worldUp=(0,0,1)とforwardの内積
-    const refUp = {
-      east: -forward.east * worldUpDotForward,
-      north: -forward.north * worldUpDotForward,
-      up: 1 - forward.up * worldUpDotForward,
-    };
-    const refUpLength = Math.hypot(refUp.east, refUp.north, refUp.up);
-    // forward×worldUp = forwardをforward軸周りでrollゼロの"right"方向とする基準ベクトル。
-    const right = { east: forward.north, north: -forward.east, up: 0 };
-    const rightLength = Math.hypot(right.east, right.north, right.up);
-
-    if (refUpLength > 1e-6 && rightLength > 1e-6) {
-      const refUpNorm = { east: refUp.east / refUpLength, north: refUp.north / refUpLength, up: refUp.up / refUpLength };
-      const rightNorm = { east: right.east / rightLength, north: right.north / rightLength, up: right.up / rightLength };
-      const rollRight = deviceUp.east * rightNorm.east + deviceUp.north * rightNorm.north + deviceUp.up * rightNorm.up;
-      const rollUp = deviceUp.east * refUpNorm.east + deviceUp.north * refUpNorm.north + deviceUp.up * refUpNorm.up;
-      rollDegrees = clamp(Math.atan2(rollRight, rollUp) / degToRad, -89, 89);
-    }
-    // refUpLength/rightLengthがほぼ0（真上・真下を向いている等）の場合はrollを定義できないため0のまま。
-  } else if (betaDeg !== null && betaDeg !== undefined && Number.isFinite(betaDeg)) {
-    pitchDegrees = clamp(betaDeg - 90, -85, 85);
-  }
+  const beta = orientation?.betaDegrees;
+  const gamma = orientation?.gammaDegrees;
+  const pitchDegrees = beta === null || beta === undefined
+    ? 0
+    : clamp(90 - beta, -85, 85);
+  const rollDegrees = gamma === null || gamma === undefined
+    ? 0
+    : clamp(-gamma, -45, 45);
 
   return {
     headingRadians: CesiumMath.toRadians(heading),
@@ -135,19 +80,13 @@ function resolveObserverAltitude(viewer: Viewer, location: ArDeviceLocation): nu
   if (location.altitudeMeters !== null && Number.isFinite(location.altitudeMeters)) {
     return location.altitudeMeters + CAMERA_EYE_HEIGHT_METERS;
   }
-  // 高精度（Google）モードはglobeを表示しない（globe: false）ため、
-  // viewer.scene.globeがundefinedになる。GSI/PLATEAU側の地表高を使った
-  // フォールバックはglobeがある場合のみ試みる。
-  const globe = viewer.scene.globe;
-  if (globe) {
-    const cartographic = globe.ellipsoid.cartesianToCartographic(
-      Cartesian3.fromDegrees(location.longitude, location.latitude, 0)
-    );
-    if (cartographic) {
-      const terrainHeight = globe.getHeight(cartographic);
-      if (terrainHeight !== undefined && Number.isFinite(terrainHeight)) {
-        return terrainHeight + CAMERA_EYE_HEIGHT_METERS;
-      }
+  const cartographic = viewer.scene.globe.ellipsoid.cartesianToCartographic(
+    Cartesian3.fromDegrees(location.longitude, location.latitude, 0)
+  );
+  if (cartographic) {
+    const terrainHeight = viewer.scene.globe.getHeight(cartographic);
+    if (terrainHeight !== undefined && Number.isFinite(terrainHeight)) {
+      return terrainHeight + CAMERA_EYE_HEIGHT_METERS;
     }
   }
   // 高さが未確定の間に地中へ入るのを避けるため、初期表示だけ安全な高さを使用する。
@@ -231,8 +170,6 @@ type Props = {
   refractionWeather?: RefractionWeatherContext;
   visibility: CelestialVisibility;
   opacity: number;
-  accuracyMode: AccuracyMode;
-  cesiumIonToken: string | undefined;
   onStatusChange?: (message: string) => void;
 };
 
@@ -248,8 +185,6 @@ export function ArCesiumOverlay({
   refractionWeather,
   visibility,
   opacity,
-  accuracyMode,
-  cesiumIonToken,
   onStatusChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -261,44 +196,11 @@ export function ArCesiumOverlay({
     let disposed = false;
     let viewer: Viewer | null = null;
 
-    // AR用の透過3Dシーン共通設定。GSI/Googleどちらの中身でも、背後のカメラ映像が
-    // 透けて見えるようにする点は共通のため、ここへ集約する。
-    function configureTransparentArScene(target: Viewer): void {
-      target.scene.backgroundColor = Color.TRANSPARENT;
-      if (target.scene.skyBox) target.scene.skyBox.show = false;
-      if (target.scene.skyAtmosphere) target.scene.skyAtmosphere.show = false;
-      if (target.scene.sun) target.scene.sun.show = false;
-      if (target.scene.moon) target.scene.moon.show = false;
-      target.scene.fog.enabled = false;
-      target.scene.screenSpaceCameraController.enableInputs = false;
-    }
+    async function create() {
+      const container = containerRef.current;
+      if (!container) return;
+      onStatusChange?.("AR 3D地図を準備しています…");
 
-    const commonViewerOptions = {
-      animation: false,
-      baseLayerPicker: false,
-      fullscreenButton: false,
-      geocoder: false,
-      homeButton: false,
-      infoBox: false,
-      navigationHelpButton: false,
-      sceneModePicker: false,
-      selectionIndicator: false,
-      timeline: false,
-      requestRenderMode: true,
-      maximumRenderTimeChange: Number.POSITIVE_INFINITY,
-      contextOptions: {
-        webgl: {
-          alpha: true,
-          antialias: true,
-        },
-      },
-    } as const;
-
-    // メインの3Dマップ（標準＝国土地理院＋PLATEAU／高精度＝Google Photorealistic
-    // 3D Tiles）と同じソースをAR側でも表示する。GSI/PLATEAUは地表判定（高度の
-    // フォールバック等）にも使うためglobeを維持するが、Googleタイルは
-    // メインマップと同様globe非表示でタイルセットのみを描画する。
-    async function createGsiViewer(container: HTMLDivElement): Promise<Viewer> {
       let terrainProvider: CesiumTerrainProvider | undefined;
       try {
         terrainProvider = await CesiumTerrainProvider.fromUrl(PLATEAU_TERRAIN_URL, {
@@ -307,7 +209,7 @@ export function ArCesiumOverlay({
       } catch (error) {
         console.warn("AR PLATEAU terrain load failed", error);
       }
-      if (disposed) throw new Error("disposed");
+      if (disposed) return;
 
       const baseLayer = new ImageryLayer(new UrlTemplateImageryProvider({
         url: GSI_STANDARD_TILE_URL,
@@ -315,25 +217,49 @@ export function ArCesiumOverlay({
         maximumLevel: 18,
       }));
 
-      const gsiViewer = new Viewer(container, {
-        ...commonViewerOptions,
+      viewer = new Viewer(container, {
         baseLayer,
         terrainProvider,
+        animation: false,
+        baseLayerPicker: false,
+        fullscreenButton: false,
+        geocoder: false,
+        homeButton: false,
+        infoBox: false,
+        navigationHelpButton: false,
+        sceneModePicker: false,
+        selectionIndicator: false,
+        timeline: false,
+        requestRenderMode: true,
+        maximumRenderTimeChange: Number.POSITIVE_INFINITY,
+        contextOptions: {
+          webgl: {
+            alpha: true,
+            antialias: true,
+          },
+        },
       });
 
       if (disposed) {
-        gsiViewer.destroy();
-        throw new Error("disposed");
+        viewer.destroy();
+        return;
       }
 
-      configureTransparentArScene(gsiViewer);
-      gsiViewer.scene.globe.depthTestAgainstTerrain = true;
-      gsiViewer.scene.globe.enableLighting = false;
+      viewerRef.current = viewer;
+      viewer.scene.backgroundColor = Color.TRANSPARENT;
+      if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
+      if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false;
+      if (viewer.scene.sun) viewer.scene.sun.show = false;
+      if (viewer.scene.moon) viewer.scene.moon.show = false;
+      viewer.scene.fog.enabled = false;
+      viewer.scene.globe.depthTestAgainstTerrain = true;
+      viewer.scene.globe.enableLighting = false;
+      viewer.scene.screenSpaceCameraController.enableInputs = false;
 
       if (terrainProvider) {
         try {
           const buildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
-          if (!disposed && !gsiViewer.isDestroyed()) {
+          if (!disposed && viewer && !viewer.isDestroyed()) {
             buildings.maximumScreenSpaceError = 8;
             buildings.dynamicScreenSpaceError = true;
             buildings.skipLevelOfDetail = true;
@@ -341,7 +267,7 @@ export function ArCesiumOverlay({
             buildings.style = new Cesium3DTileStyle({
               color: 'color("white", 0.92)',
             });
-            gsiViewer.scene.primitives.add(buildings);
+            viewer.scene.primitives.add(buildings);
           } else {
             buildings.destroy();
           }
@@ -350,96 +276,20 @@ export function ArCesiumOverlay({
         }
       }
 
+      if (disposed || !viewer || viewer.isDestroyed()) return;
+      applyCameraFov(viewer, projection);
+      setReady(true);
       onStatusChange?.(
         terrainProvider
           ? "AR 3D：PLATEAU地形・建物を半透明表示中"
           : "AR 3D：地形未取得のため地理院地図を表示中"
       );
-      return gsiViewer;
-    }
-
-    async function createGoogleViewer(container: HTMLDivElement): Promise<Viewer> {
-      if (!cesiumIonToken) {
-        throw new Error("高精度3D表示に必要なCesium ion設定が不足しています");
-      }
-
-      // メイン3Dマップと同じセッションID・上限カウントの仕組みを流用するため、
-      // ここで独自にセッションを新規発行することはしない（共通ヘルパー任せ）。
-      onStatusChange?.("AR 3D：Google 3Dの利用可否を確認しています…");
-      await authorizeHighPrecisionSession();
-      if (disposed) throw new Error("disposed");
-
-      Ion.defaultAccessToken = cesiumIonToken;
-
-      const googleViewer = new Viewer(container, {
-        ...commonViewerOptions,
-        globe: false,
-      });
-
-      if (disposed) {
-        googleViewer.destroy();
-        throw new Error("disposed");
-      }
-
-      onStatusChange?.("AR 3D：Google 3Dデータを読み込んでいます…");
-      let tileset;
-      try {
-        tileset = await loadGooglePhotorealisticTilesetWithRetry(
-          (message) => onStatusChange?.(`AR 3D：${message}`)
-        );
-      } catch (error) {
-        googleViewer.destroy();
-        throw error;
-      }
-
-      if (disposed || googleViewer.isDestroyed()) {
-        tileset.destroy();
-        googleViewer.destroy();
-        throw new Error("disposed");
-      }
-
-      configureTransparentArScene(googleViewer);
-      markAsGoogleTileset(tileset);
-      googleViewer.scene.primitives.add(tileset);
-      onStatusChange?.("AR 3D：Google Photorealistic 3D Tilesを半透明表示中");
-      return googleViewer;
-    }
-
-    async function create() {
-      const container = containerRef.current;
-      if (!container) return;
-      onStatusChange?.("AR 3D地図を準備しています…");
-
-      let createdViewer: Viewer;
-      if (accuracyMode === "highest") {
-        try {
-          createdViewer = await createGoogleViewer(container);
-        } catch (error) {
-          if (disposed) return;
-          console.warn("AR Google 3D viewer initialization failed; falling back to GSI", error);
-          onStatusChange?.("AR 3D：Google 3Dを利用できないため国土地理院地図で表示します");
-          createdViewer = await createGsiViewer(container);
-        }
-      } else {
-        createdViewer = await createGsiViewer(container);
-      }
-
-      if (disposed || createdViewer.isDestroyed()) {
-        if (!createdViewer.isDestroyed()) createdViewer.destroy();
-        return;
-      }
-
-      viewer = createdViewer;
-      viewerRef.current = createdViewer;
-      applyCameraFov(createdViewer, projection);
-      setReady(true);
-      createdViewer.scene.requestRender();
+      viewer.scene.requestRender();
     }
 
     void create().catch((error) => {
-      if (disposed) return;
       console.error("AR 3D viewer initialization failed", error);
-      onStatusChange?.("AR 3D地図を開始できませんでした");
+      if (!disposed) onStatusChange?.("AR 3D地図を開始できませんでした");
     });
 
     return () => {
@@ -448,7 +298,7 @@ export function ArCesiumOverlay({
       viewerRef.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
     };
-  }, [active, accuracyMode, cesiumIonToken, onStatusChange]);
+  }, [active, onStatusChange]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

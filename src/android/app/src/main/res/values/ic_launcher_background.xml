@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- 指定済みの紺色KSGアイコンと同色にして、adaptive iconの余白を目立たせない。 -->
-    <color name="ic_launcher_background">#061532</color>
-</resources>

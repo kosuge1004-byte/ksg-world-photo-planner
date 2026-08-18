@@ -22,7 +22,13 @@ import { jsonResponse, errorMessage } from "../_shared/http.ts";
 import { PREWARM_LANDMARKS, type PrewarmLandmark } from "../../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../../server/prewarmLandmarkCore.ts";
 
-const DEFAULT_CHUNK_SIZE = 8;
+// HTTPリクエスト1回あたりの実行時間制限に収まるよう、既定は1件・軽量
+// モード（代表日時1パターンのみ）にしてある。実地検証で、既定の
+// フル版（8件×最大12パターン）を1リクエストで回すと制限時間を超えて
+// 全試行が失敗することを確認済み。件数を増やしたい場合は
+// ?count=でチャンクサイズを、複数パターン欲しい場合はCLIスクリプト
+// （server/prewarmLandmarkCache.ts、フルモード）を使うこと。
+const DEFAULT_CHUNK_SIZE = 1;
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   configureCloudflareServerRuntime(context);
@@ -41,7 +47,11 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   ];
 
   try {
-    const { totalAttempts, totalCandidates } = await prewarmMany(targets, (message) => logs.push(message));
+    const { totalAttempts, totalCandidates } = await prewarmMany(
+      targets,
+      (message) => logs.push(message),
+      "light"
+    );
     logs.push(`完了。合計試行 ${totalAttempts}回、候補 ${totalCandidates}件。`);
     return jsonResponse({ ok: true, targets: targets.map((t) => t.name), logs }, 200, "no-store");
   } catch (error) {

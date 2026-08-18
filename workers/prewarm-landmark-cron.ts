@@ -1,5 +1,5 @@
 // 主要ランドマークのDEMタイルキャッシュを定期的に温めるCloudflare Worker。
-// wrangler.prewarm.jsonc のCron Triggerから起動される。
+// wrangler.jsonc のCron Triggerから起動される。
 //
 // 197件（今後増える見込み）を一度に処理すると1回の実行が長くなりすぎる
 // ため、server/prewarmLandmarkCore.ts の selectDailyChunk() で
