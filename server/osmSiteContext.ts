@@ -257,6 +257,27 @@ function isWalkable(element: OsmElement, point: OsmContextRequestPoint): boolean
   return distanceToElementMeters(element, point) <= 25;
 }
 
+const OPEN_PUBLIC_LAND_TAGS: ReadonlyArray<readonly [string, string]> = [
+  ["landuse", "riverbank"],
+  ["natural", "beach"],
+  ["leisure", "park"],
+];
+
+/**
+ * 河川敷・公園・砂浜のような、highwayタグを持たない開けた公共空間。
+ * 近くに歩道が地図に無くても、この面（ポリゴン）の内側にある候補地点は
+ * 歩行可能とみなす。私有地扱い（access/footが制限値）のものは除外する。
+ */
+function isOnOpenPublicLand(element: OsmElement, point: OsmContextRequestPoint): boolean {
+  const tags = element.tags ?? {};
+  const isOpenLand = OPEN_PUBLIC_LAND_TAGS.some(([key, value]) => tags[key] === value);
+  if (!isOpenLand) return false;
+  if (PRIVATE_ACCESS_VALUES.has(tags.access) || PRIVATE_ACCESS_VALUES.has(tags.foot)) {
+    return false;
+  }
+  return polygonContainsPoint(geometryOf(element), point);
+}
+
 function isOnMappedWay(element: OsmElement, point: OsmContextRequestPoint): boolean {
   const tags = element.tags ?? {};
   if (!tags.highway) return false;
@@ -500,6 +521,11 @@ function queryForPoints(
       `way${aroundAccess}["highway"]`,
       `nwr${aroundAccess}["access"~"^(private|no|customers|permit)$"]`,
       `nwr${aroundAccess}["foot"~"^(private|no)$"]`,
+      // 河川敷・公園・砂浜などhighwayタグを持たない開けた公共空間。
+      // 近くに歩道が無くても、この中に入っていれば歩行可能とみなす。
+      `way${aroundAccess}["landuse"="riverbank"]`,
+      `way${aroundAccess}["natural"="beach"]`,
+      `way${aroundAccess}["leisure"="park"]`,
     ];
     const detailStatements = [
       `nwr${aroundLandmark}["amenity"="place_of_worship"]`,
@@ -618,7 +644,8 @@ export async function lookupOsmSiteContexts(
   return points.map((point) => {
     const structures = nearbyStructures(elements, point);
     return {
-      walkingAccessible: elements.some((element) => isWalkable(element, point)),
+      walkingAccessible: elements.some((element) => isWalkable(element, point)) ||
+        elements.some((element) => isOnOpenPublicLand(element, point)),
       onMappedWay: elements.some((element) => isOnMappedWay(element, point)),
       restrictedAccess: elements.some((element) => isRestricted(element, point)),
       onMotorRoad: elements.some((element) => isOnMotorRoad(element, point)),

@@ -14,13 +14,7 @@ import { calculateKarneyDestinationPoint, calculateKarneyLineMetrics } from "../
 import { fetchSiteContexts } from "../search/siteContext";
 import { sampleWorldTerrainHighestPrecision, geoidHeightMetersForHighestPrecisionSample } from "../cesium/worldTerrain";
 import {
-  evaluatePhotorealisticMeshSegmentLineOfSight,
-  evaluatePhotorealisticMeshLineOfSight,
-  prepareCelestialLineOfSightObserver,
-} from "../cesium/celestialOcclusion";
-import {
   calculateCelestialHorizontalCoordinates,
-  celestialAngularDiameterDegrees,
   createCameraProjection,
   isCelestialInCameraFrame,
   projectHorizontalToPreview,
@@ -234,29 +228,17 @@ export async function refineSpotPresetHighestPrecision(
     signal
   );
 
-  reportProgress(72, "ECEF座標で視線と遮蔽物を再判定しています");
-  const targetEcef = Cartesian3.fromDegrees(
-    meshSubject.longitude,
-    meshSubject.latitude,
-    meshSubject.height
-  );
+  reportProgress(72, "構図を再判定しています");
   const verified: CompositionVerifiedCandidate[] = [];
   for (let index = 0; index < meshCandidates.length; index += 1) {
     const candidate = meshCandidates[index];
-    const observer = await prepareCelestialLineOfSightObserver(
-      viewer,
-      candidate,
-      cameraSettings.lensCenterHeightMeters,
-      signal
-    );
-    const distance = Cartesian3.distance(observer.meshOrigin, targetEcef);
-    const lineOfSight = await evaluatePhotorealisticMeshSegmentLineOfSight(
-      viewer,
-      observer,
-      targetEcef,
-      signal,
-      Math.max(0, distance - 0.5)
-    );
+    // 建物3D遮蔽チェック（旧evaluatePhotorealisticMeshSegmentLineOfSight／
+    // evaluatePhotorealisticMeshLineOfSight）は撤去した。検証ロジックが
+    // 実際には機能していない疑いがあり（垂直レイが屋根にしか当たらず
+    // 接地高さを正しく取得できないケースがある）、常に「未確認」を返して
+    // このステップ自体が候補を全滅させてしまっていたため。遮蔽判定は
+    // 検索時点のDEM地形判定（サーバー側）にのみ依存する。局所再探索の
+    // 範囲（半径20m以内）では地形遮蔽の状況は実質的に変わらない。
     const composition = verifyComposition(
       candidate,
       meshSubject,
@@ -266,47 +248,18 @@ export async function refineSpotPresetHighestPrecision(
       calculationMode,
       refractionWeather
     );
-    const celestialLineOfSight = composition
-      ? await evaluatePhotorealisticMeshLineOfSight(
-          viewer,
-          observer,
-          composition.celestialHorizontal,
-          signal,
-          undefined,
-          {
-            angularDiameterDegrees: celestialAngularDiameterDegrees(
-              result.celestialId,
-              result.date,
-              candidate
-            ),
-            detailSettings: {
-              detailedEdgeCheckEnabled:
-                result.celestialId === "sun" || result.celestialId === "moon",
-              edgeSampleCount: 12,
-              // 最高精度では中心または縁の1点でも遮蔽されれば候補を確定しない。
-              obstructedThresholdPercent: 1,
-            },
-          }
-        )
-      : null;
-    if (
-      lineOfSight.verified &&
-      lineOfSight.visible &&
-      composition &&
-      celestialLineOfSight?.verified &&
-      celestialLineOfSight.visible
-    ) {
+    if (composition) {
       verified.push(composition);
     }
     reportProgress(
       72 + Math.round(((index + 1) / meshCandidates.length) * 22),
-      `高精度の遮蔽物判定中 ${index + 1}/${meshCandidates.length}`,
+      `構図判定中 ${index + 1}/${meshCandidates.length}`,
       index + 1,
       meshCandidates.length
     );
   }
   if (verified.length === 0) {
-    throw new Error("高精度データでは構図と建物遮蔽の両条件を満たす三脚地点を確認できません");
+    throw new Error("高精度データでは構図の条件を満たす三脚地点を確認できません");
   }
 
   const tripod = verified.reduce((best, candidate) => {

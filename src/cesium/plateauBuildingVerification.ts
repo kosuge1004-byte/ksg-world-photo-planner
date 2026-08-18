@@ -1,6 +1,7 @@
 import { Cartesian3, Cartographic, Ellipsoid, Ray, type Scene, type Viewer } from "cesium";
 
 import { fetchGsiGeoidHeight, groundPointFromCoordinates } from "./worldTerrain";
+import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
@@ -65,8 +66,9 @@ async function plateauVerticalRaycast(
     return null;
   }
 
-  const globeWasShown = scene.globe.show;
-  scene.globe.show = false;
+  const globe = scene.globe;
+  const globeWasShown = globe?.show;
+  if (globe) globe.show = false;
   let intersections: SceneRayIntersection[];
   try {
     const origin = Cartesian3.fromDegrees(
@@ -82,14 +84,16 @@ async function plateauVerticalRaycast(
       scene,
       new Ray(origin, down),
       32,
-      [...viewer.entities.values],
+      // Googleタイルの形状データは遮蔽判定（この接地高さ検証を含む）に
+      // 一切使わない（利用規約上の理由）。
+      [...viewer.entities.values, ...collectGoogleTilesetsToExclude(viewer)],
       0.12
     );
   } catch (error) {
     console.warn("PLATEAU建物の交点を取得できませんでした", error);
     return null;
   } finally {
-    scene.globe.show = globeWasShown;
+    if (globe) globe.show = globeWasShown ?? true;
   }
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 

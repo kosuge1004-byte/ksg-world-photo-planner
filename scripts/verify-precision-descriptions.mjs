@@ -14,15 +14,12 @@ const precisionTypes = read("src/types/precision.ts");
 
 for (const [expected, label] of [
   ["Google Photorealistic 3D Tilesを使用しません", "standard mode"],
-  ["標準3D表示と同じ計算に加え、Google Photorealistic 3D Tilesを使った建物表面・遮蔽・最終3D確認を行います", "highest mode"],
+  ["遮蔽判定・最終確認は標準モードと同じくDEM地形のみ", "highest mode"],
   ["DEM（地形の高さデータ）", "DEM"],
   ["Google 3D（建物を含む立体データ）", "Google 3D"],
   ["利用できる天気データで空気による光の曲がりを補正します", "automatic refraction"],
   ["一般的な気温・気圧を使って補正します", "standard refraction"],
   ["天文学上の位置を表示します", "no refraction"],
-  ["被写体そのものを建物などの遮蔽物と誤判定しないため", "obstruction exclusion"],
-  ["点数が多いほど円盤の縁を細かく確認できます", "edge samples"],
-  ["小さい値ほど一部が隠れただけでも遮蔽物ありと判定", "occlusion threshold"],
 ]) {
   requireText(settings, expected, `${label} explanation is missing`);
 }
@@ -43,13 +40,6 @@ requireText(
 for (const expected of [
   'accuracyMode: "standard"',
   'refractionCorrectionMode: "auto"',
-  "under100m: 3",
-  "from100mTo500m: 10",
-  "from500mTo2km: 20",
-  "over2km: 50",
-  "detailedEdgeCheckEnabled: false",
-  "edgeSampleCount: 8",
-  "obstructedThresholdPercent: 50",
 ]) {
   requireText(precisionTypes, expected, `default setting changed or missing: ${expected}`);
 }

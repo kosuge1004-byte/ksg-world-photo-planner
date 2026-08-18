@@ -6,7 +6,7 @@ import {
 
 import type { CameraSettings } from "../types/camera";
 import type { PrecisionSettings, RefractionCorrectionMode } from "../types/precision";
-import { DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS, DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS, REFRACTION_MODE_LABELS } from "../types/precision";
+import { REFRACTION_MODE_LABELS } from "../types/precision";
 
 const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
   auto: "利用できる天気データで空気による光の曲がりを補正します。地平線付近ほど効果が大きく、取得時は通信と待ち時間が増えます。",
@@ -26,7 +26,6 @@ type Props = {
   onOpenMoonAgeCalendar: () => void;
   onOpenArCamera: () => void;
   onOpenUsageGuide: () => void;
-  onOpenTutorial: () => void;
   precisionSettings: PrecisionSettings;
   onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
 };
@@ -40,7 +39,6 @@ export function TopSettingsBar({
   onOpenMoonAgeCalendar,
   onOpenArCamera,
   onOpenUsageGuide,
-  onOpenTutorial,
   precisionSettings,
   onPrecisionSettingsChange,
 }: Props) {
@@ -163,15 +161,6 @@ export function TopSettingsBar({
             }}
           >
             <b>使い方</b><small>実画面をハイライトしながら、どこに何があるか確認</small>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setModeMenuOpen(false);
-              onOpenTutorial();
-            }}
-          >
-            <b>チュートリアル</b><small>実際に操作しながら一通り練習する</small>
           </button>
           {pwaInstall.supported && !pwaInstall.installed && (
             <>
@@ -306,7 +295,7 @@ export function TopSettingsBar({
                 <span className="precision-choice-copy">
                   <span className="precision-choice-title"><b>Google Photorealistic 3D Tiles（有料）</b></span>
                   <small>
-                    標準3D表示と同じ計算に加え、Google Photorealistic 3D Tilesを使った建物表面・遮蔽・最終3D確認を行います。従量制サービスの利用量が増えます。
+                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。遮蔽判定・最終確認は標準モードと同じくDEM地形のみで行います（建物3Dは表示専用です）。従量制サービスの利用量が増えます。
                   </small>
                 </span>
               </label>
@@ -348,147 +337,6 @@ export function TopSettingsBar({
                   </span>
                 </label>
               ))}
-              <div className="precision-number-setting">
-                <strong>被写体を遮蔽物として扱わない距離</strong>
-                <small className="precision-setting-intro">
-                  被写体そのものを建物などの遮蔽物と誤判定しないため、ピン直前を確認対象から外す距離です。距離を大きくすると被写体付近の別の障害物を見落とす場合があります。速度と通信量への影響はほぼありません。
-                </small>
-                {([
-                  ["under100m", "被写体まで100m未満"],
-                  ["from100mTo500m", "被写体まで100～500m"],
-                  ["from500mTo2km", "被写体まで500m～2km"],
-                  ["over2km", "被写体まで2km以上"],
-                ] as const).map(([key, label]) => (
-                  <label key={key} htmlFor={`subject-obstruction-exclusion-${key}`}>
-                    <span>{label}</span>
-                    <span>
-                      <input
-                        id={`subject-obstruction-exclusion-${key}`}
-                        type="number"
-                        inputMode="decimal"
-                        min={0}
-                        max={500}
-                        step={1}
-                        value={precisionSettings.subjectObstructionExclusionMeters[key]}
-                        onChange={(event) => {
-                          const parsed = Number(event.target.value);
-                          const next = Number.isFinite(parsed)
-                            ? Math.min(500, Math.max(0, parsed))
-                            : DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS[key];
-                          onPrecisionSettingsChange({
-                            ...precisionSettings,
-                            subjectObstructionExclusionMeters: {
-                              ...precisionSettings.subjectObstructionExclusionMeters,
-                              [key]: next,
-                            },
-                          });
-                        }}
-                      />
-                      <small>m</small>
-                    </span>
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => onPrecisionSettingsChange({
-                    ...precisionSettings,
-                    subjectObstructionExclusionMeters: {
-                      ...DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS,
-                    },
-                  })}
-                >
-                  初期値に戻す
-                </button>
-                <small>被写体までの距離帯ごとの初期値は3m／10m／20m／50mです。</small>
-              </div>
-              <div className="precision-number-setting">
-                <strong>建物3D遮蔽の詳細判定</strong>
-                <small className="precision-setting-intro">
-                  Google 3Dの建物が太陽・月の円盤をどの程度隠すか詳しく確認します。ONにすると判定精度が上がりますが、処理時間と通信量が増える場合があります。
-                </small>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={precisionSettings.buildingOcclusionDetailSettings.detailedEdgeCheckEnabled}
-                    onChange={(event) => onPrecisionSettingsChange({
-                      ...precisionSettings,
-                      buildingOcclusionDetailSettings: {
-                        ...precisionSettings.buildingOcclusionDetailSettings,
-                        detailedEdgeCheckEnabled: event.target.checked,
-                      },
-                    })}
-                  />
-                  <span>太陽・月の視直径を考慮した縁判定を有効にする</span>
-                </label>
-                <label htmlFor="building-occlusion-edge-sample-count">
-                  <span>縁のサンプル点数</span>
-                  <select
-                    id="building-occlusion-edge-sample-count"
-                    value={precisionSettings.buildingOcclusionDetailSettings.edgeSampleCount}
-                    disabled={!precisionSettings.buildingOcclusionDetailSettings.detailedEdgeCheckEnabled}
-                    onChange={(event) => onPrecisionSettingsChange({
-                      ...precisionSettings,
-                      buildingOcclusionDetailSettings: {
-                        ...precisionSettings.buildingOcclusionDetailSettings,
-                        edgeSampleCount: Number(event.target.value) as 4 | 8 | 12,
-                      },
-                    })}
-                  >
-                    <option value={4}>4点</option>
-                    <option value={8}>8点（初期値）</option>
-                    <option value={12}>12点</option>
-                  </select>
-                </label>
-                <small className="precision-control-help">
-                  点数が多いほど円盤の縁を細かく確認できますが、判定に時間がかかります。
-                </small>
-                <label htmlFor="building-occlusion-threshold-percent">
-                  <span>「遮蔽物あり」と判定する遮蔽割合</span>
-                  <span>
-                    <input
-                      id="building-occlusion-threshold-percent"
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      max={100}
-                      step={5}
-                      disabled={!precisionSettings.buildingOcclusionDetailSettings.detailedEdgeCheckEnabled}
-                      value={precisionSettings.buildingOcclusionDetailSettings.obstructedThresholdPercent}
-                      onChange={(event) => {
-                        const parsed = Number(event.target.value);
-                        const next = Number.isFinite(parsed)
-                          ? Math.min(100, Math.max(0, parsed))
-                          : DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.obstructedThresholdPercent;
-                        onPrecisionSettingsChange({
-                          ...precisionSettings,
-                          buildingOcclusionDetailSettings: {
-                            ...precisionSettings.buildingOcclusionDetailSettings,
-                            obstructedThresholdPercent: next,
-                          },
-                        });
-                      }}
-                    />
-                    <small>%</small>
-                  </span>
-                </label>
-                <small className="precision-control-help">
-                  小さい値ほど一部が隠れただけでも遮蔽物ありと判定し、大きい値ほど広く隠れた場合だけ判定します。
-                </small>
-                <button
-                  type="button"
-                  onClick={() => onPrecisionSettingsChange({
-                    ...precisionSettings,
-                    buildingOcclusionDetailSettings: {
-                      ...DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS,
-                    },
-                  })}
-                >
-                  初期値に戻す
-                </button>
-                <small>
-                  OFFの場合は従来どおり天体の中心1点だけを確認します。天の川・北極星は対象外です。初期値はOFF／8点／50%です。
-                </small>
-              </div>
             </fieldset>
           )}
         </div>

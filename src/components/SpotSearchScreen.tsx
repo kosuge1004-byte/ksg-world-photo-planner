@@ -325,8 +325,6 @@ export function SpotSearchScreen({
   const [timeRange, setTimeRange] = useSearchTimeRange();
   const [interval, setInterval] = useState<SpotSearchInterval>("30-minutes");
   const [displayCount, setDisplayCount] = useState<SpotSearchDisplayCount>(10);
-  const [subjectObstructionCheckEnabled, setSubjectObstructionCheckEnabled] = useState(true);
-  const [verifiedVisibilityOnly, setVerifiedVisibilityOnly] = useState(false);
   const [siteConstraints, setSiteConstraints] = useState<SiteConstraintFlags>({
     walkingOnly: false,
     roadsAndPathsOnly: false,
@@ -547,10 +545,6 @@ export function SpotSearchScreen({
         interval,
         displayCount,
         siteConstraints,
-        subjectObstructionCheckEnabled,
-        verifiedVisibilityOnly,
-        subjectObstructionExclusionMeters: precisionSettings.subjectObstructionExclusionMeters,
-        buildingOcclusionDetailSettings: precisionSettings.buildingOcclusionDetailSettings,
       };
       const nextResults = await onSearch(
         criteria,
@@ -1029,40 +1023,13 @@ ${diagnostic}` : ""}`
               />
               <span>歩行できる場所だけ探す</span>
             </label>
-            <label className={subjectObstructionCheckEnabled ? "selected" : ""}>
-              <input
-                type="checkbox"
-                checked={subjectObstructionCheckEnabled}
-                onChange={(event) => setSubjectObstructionCheckEnabled(event.target.checked)}
-              />
-              <span>被写体までの建物3Dを確認する</span>
-            </label>
-            <label className={verifiedVisibilityOnly ? "selected" : ""}>
-              <input
-                type="checkbox"
-                checked={verifiedVisibilityOnly}
-                onChange={(event) => {
-                  setVerifiedVisibilityOnly(event.target.checked);
-                  if (event.target.checked) setSubjectObstructionCheckEnabled(true);
-                }}
-              />
-              <span>建物に遮られていない候補だけ表示</span>
-            </label>
           </div>
           <small className="spot-condition-note">
             「歩行できる場所だけ探す」：OpenStreetMapの登録情報から、歩いて行けると判定できる地点だけを候補にします（現地の実際の立入可否は保証しません。未登録の地点は除外されます）。
           </small>
-          <small className="spot-condition-note warning">
-            「被写体までの建物3Dを確認する」：候補ごとに三脚から被写体までの間を、建物が実際に遮っていないか3Dデータで検証します（高精度モード：Google Photorealistic 3D Tiles／標準モード：PLATEAU建物をGSI DEMで地点ごとに検証した上で使用）。候補が増えるほど検索に時間がかかります。
+          <small className="spot-condition-note">
+            候補地点は国土地理院の地形データ（DEM）による遮蔽判定を経ています。山や丘など地形による遮蔽は候補から除外されますが、建物による遮蔽は現在確認していません。
           </small>
-          <small className="spot-condition-note warning">
-            「建物に遮られていない候補だけ表示」：上の確認で「確実に見える」と判定できた候補だけを残します。3Dを読み込めなかった候補・未確認の候補・遮られている候補は表示されません。
-          </small>
-          {precisionSettings.accuracyMode !== "highest" && (
-            <small className="spot-condition-note">
-              標準モードでの建物確認は、表示専用のPLATEAU建物3Dを使いますが、全国一律の高さ補正はできないため、候補地点ごとにGSI DEMと個別に照合できた建物だけを判定に使います（過去に全国一律補正を試みて撤回した経緯があります）。照合できない建物は「未確認」のままになります。Google 3D Tilesによる確認をご希望の場合は、上部の設定から高精度モードに切り替えてください。
-            </small>
-          )}
         </fieldset>
 
         </>}

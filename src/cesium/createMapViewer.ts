@@ -4,6 +4,7 @@ import {
   Cesium3DTileset,
   CesiumTerrainProvider,
   createGooglePhotorealistic3DTileset,
+  Ellipsoid,
   ImageryLayer,
   Ion,
   IonGeocodeProviderType,
@@ -15,9 +16,10 @@ import {
 } from "cesium";
 
 import type { AccuracyMode } from "../types/precision";
+import { markAsGoogleTileset } from "./googleTilesetMarker";
 import { pickSceneSurfacePosition } from "./surfacePicking";
 
-type GooglePhotorealisticTileset = Awaited<
+export type GooglePhotorealisticTileset = Awaited<
   ReturnType<typeof createGooglePhotorealistic3DTileset>
 >;
 
@@ -28,12 +30,36 @@ const PLATEAU_BUILDINGS_TILESET_URL =
   "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-maxlod2-latest/tileset.json";
 const PLATEAU_TERRAIN_URL = "https://tile.plateauview.mlit.go.jp/terrain/";
 
+/**
+ * PLATEAU建物タイルセットを読み込む（標準モードの表示専用）。
+ * 遮蔽判定・検索・標高計算には接続しない（2026-08-06付けの過去の決定と同じ方針。
+ * 遮蔽判定へPLATEAUを再接続する試みは検証ロジックが機能しない疑いがあり撤回した）。
+ */
+export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
+  const buildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
+  buildings.show = false;
+  buildings.maximumScreenSpaceError = 8;
+  buildings.dynamicScreenSpaceError = true;
+  buildings.skipLevelOfDetail = true;
+  buildings.preferLeaves = true;
+  buildings.show = true;
+  return buildings;
+}
+
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {
   let timedOut = false;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const request = createGooglePhotorealistic3DTileset({
-    onlyUsingWithGoogleGeocoder: true,
-  });
+  const request = createGooglePhotorealistic3DTileset(
+    {
+      onlyUsingWithGoogleGeocoder: true,
+    },
+    {
+      // Googleの公式ポリシー（Map Tiles API Policies）はCesiumJSでの利用時、
+      // showCreditsOnScreenを有効にしてタイルの著作権表示を行うことを明示的に
+      // 要求している。これを付けないと契約上必須の属性表示ができない。
+      showCreditsOnScreen: true,
+    }
+  );
   try {
     return await Promise.race([
       request,
@@ -106,15 +132,9 @@ async function createStandardViewer(
 
   try {
     setStatus("標準3D：PLATEAU建物を読み込み中…");
-    const plateauBuildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
-    plateauBuildings.show = false;
-    plateauBuildings.maximumScreenSpaceError = 8;
-    plateauBuildings.dynamicScreenSpaceError = true;
-    plateauBuildings.skipLevelOfDetail = true;
-    plateauBuildings.preferLeaves = true;
+    const plateauBuildings = await loadPlateauBuildingsTileset();
 
     viewer.scene.primitives.add(plateauBuildings);
-    plateauBuildings.show = true;
     setStatus("標準3D：PLATEAU建物表示中（利用可能な最高LOD・テクスチャ優先）");
     viewer.scene.requestRender();
   } catch (error) {
@@ -123,6 +143,34 @@ async function createStandardViewer(
   }
 
   return viewer;
+}
+
+/**
+ * Google Photorealistic 3D Tilesをタイムアウト＋リトライ付きで読み込む。
+ * メイン3Dマップ（高精度モード）とARカメラのオーバーレイの両方から呼ばれる
+ * 唯一の場所とし、読み込み挙動（タイムアウト秒数・リトライ回数・調整パラメータ）
+ * が両者でズレないようにする。呼び出し側でCesium ionトークンの設定は済ませておくこと。
+ */
+export async function loadGooglePhotorealisticTilesetWithRetry(
+  setStatus: (message: string) => void
+): Promise<GooglePhotorealisticTileset> {
+  let tileset: GooglePhotorealisticTileset | null = null;
+  for (let attempt = 1; attempt <= TILESET_INITIALIZATION_ATTEMPTS; attempt += 1) {
+    try {
+      tileset = await createPhotorealisticTilesetWithTimeout();
+      break;
+    } catch (error) {
+      if (attempt === TILESET_INITIALIZATION_ATTEMPTS) throw error;
+      setStatus("Google 3Dデータへ再接続中…");
+      await new Promise<void>((resolve) => setTimeout(resolve, 900));
+    }
+  }
+  if (!tileset) {
+    throw new Error("Google 3Dタイルを初期化できませんでした");
+  }
+  tileset.maximumScreenSpaceError = 24;
+  tileset.dynamicScreenSpaceError = true;
+  return tileset;
 }
 
 async function createHighestPrecisionViewer(
@@ -152,31 +200,16 @@ async function createHighestPrecisionViewer(
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
 
-  let tileset: GooglePhotorealisticTileset | null = null;
+  let tileset: GooglePhotorealisticTileset;
   try {
-    for (let attempt = 1; attempt <= TILESET_INITIALIZATION_ATTEMPTS; attempt += 1) {
-      try {
-        tileset = await createPhotorealisticTilesetWithTimeout();
-        break;
-      } catch (error) {
-        if (attempt === TILESET_INITIALIZATION_ATTEMPTS) throw error;
-        setStatus("Google 3Dデータへ再接続中…");
-        await new Promise<void>((resolve) => setTimeout(resolve, 900));
-      }
-    }
+    tileset = await loadGooglePhotorealisticTilesetWithRetry(setStatus);
   } catch (error) {
     viewer.destroy();
     throw error;
   }
-
-  if (!tileset) {
-    viewer.destroy();
-    throw new Error("Google 3Dタイルを初期化できませんでした");
-  }
-
-  tileset.maximumScreenSpaceError = 24;
-  tileset.dynamicScreenSpaceError = true;
+  markAsGoogleTileset(tileset);
   viewer.scene.primitives.add(tileset);
+
   return viewer;
 }
 
@@ -193,7 +226,9 @@ function enableDoubleTapZoom(viewer: Viewer): void {
     if (viewer.isDestroyed()) return;
     const target =
       pickSceneSurfacePosition(viewer, movement.position) ??
-      viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
+      // 高精度モードはglobeを表示しない（globe: false）ためscene.globeが
+      // undefinedになりうる。常に存在するWGS84楕円体定数を使う。
+      viewer.camera.pickEllipsoid(movement.position, Ellipsoid.WGS84);
     if (!target) return;
     const camera = viewer.camera;
     // タップした地点へ向けて距離を半分に詰める（向きはそのまま）。
