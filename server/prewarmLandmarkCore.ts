@@ -94,7 +94,11 @@ export async function prewarmOne(
         );
         candidatesFound += candidates.length;
       } catch (error) {
-        log(`  ! ${landmark.name} ${date.toISOString()} 失敗: ${(error as Error).message}`);
+        const detail =
+          error instanceof Error
+            ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`
+            : `非Errorオブジェクト: ${JSON.stringify(error)}`;
+        log(`  ! ${landmark.name} ${date.toISOString()} 失敗: ${detail}`);
       }
       await sleep(REQUEST_DELAY_MS);
     }
