@@ -568,7 +568,8 @@ function TimelinePanelComponent({
             aria-label="天体通過日時検索"
             title="天体通過日時検索"
           >
-            <span aria-hidden="true">🔍</span>
+            <span aria-hidden="true">🕐</span>
+            <small aria-hidden="true">検索</small>
           </button>
         </div>
       </div>

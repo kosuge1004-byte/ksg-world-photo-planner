@@ -1277,8 +1277,11 @@ button { cursor: pointer; }
 
 /* Celestial transit search belongs beside the timeline date control, not on the preview. */
 .timeline-transit-search-button {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   width: 100%;
   height: 34px;
   padding: 0;
@@ -1288,8 +1291,13 @@ button { cursor: pointer; }
   background: #080b0f;
 }
 .timeline-transit-search-button span {
-  font-size: 17px;
+  font-size: 13px;
   line-height: 1;
+}
+.timeline-transit-search-button small {
+  font-size: 6.5px;
+  line-height: 1;
+  font-weight: 600;
 }
 .timeline-transit-search-button:active {
   color: #ffe45c;
@@ -2519,13 +2527,20 @@ body.pseudo-fullscreen-active {
   z-index: 25;
   top: 8px;
   left: 50%;
-  width: min(120px, 28vw);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: min(170px, 40vw);
   transform: translateX(-50%);
+  color: #cdd3db;
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .celestial-drag-opacity-control input {
   display: block;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
 }
 

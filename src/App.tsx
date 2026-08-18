@@ -3617,6 +3617,7 @@ ${diagnosticMessage}
         />
 
         <label className="celestial-drag-opacity-control">
+          <span>天体透明度</span>
           <input
             type="range"
             min="0"
