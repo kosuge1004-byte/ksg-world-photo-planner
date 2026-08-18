@@ -33,8 +33,21 @@ type RayPickingScene = Scene & {
   ) => Promise<SceneRayIntersection[]>;
 };
 
-/** 接地高さの許容誤差。地下部分・DEM解像度による差を吸収する。 */
+/** 接地高さの許容誤差。地下部分・DEM解像度による差を吸収する。
+ * 遮蔽判定の検証（verifyPlateauBuildingBaseHeight）にのみ使う値で、
+ * 被写体の屋根合わせ（resolvePlateauRoofGroundPoint）には使わない
+ * （後述のGROSS_MISALIGNMENT_TOLERANCE_METERSを参照）。 */
 const BASE_HEIGHT_TOLERANCE_METERS = 5;
+/**
+ * 被写体を建物の屋根に合わせる際の粗大な異常値だけを弾くための緩い上限。
+ * 垂直レイは、底面ポリゴンを持たない建物モデル（PLATEAU LOD2に多い）では
+ * 屋根にしか当たらないことがあり、その場合BASE_HEIGHT_TOLERANCE_METERS
+ * （5m）を使うとほぼ必ず「未検証」扱いになって地面へフォールバックして
+ * しまう。被写体ピンは「屋根の上」をデフォルトにしたいため、ここでは
+ * 建物高さとして非現実的な値（地域ごとのタイルセット位置ズレ等）だけを
+ * 弾く緩いチェックにとどめ、通常の建物高さの差は許容する。
+ */
+const GROSS_MISALIGNMENT_TOLERANCE_METERS = 120;
 const VERTICAL_SEARCH_ALTITUDE_METERS = 3000;
 // 鉄塔・電波塔のような鉄骨格子構造は、中心1点だけを垂直に狙うと隙間を
 // 素通りして何にも当たらないことがある。周辺の複数点を試すことで、
@@ -146,9 +159,12 @@ export async function verifyPlateauBuildingBaseHeight(
 /**
  * 標準モード用：被写体地点にPLATEAU建物があれば、その屋根面へ被写体高度を
  * 合わせる（高精度モードでGoogle 3D Tilesへクランプするのと同じ考え方）。
- * 全国一律の高さ補正はせず、その建物の接地点をGSI DEMと個別に検証できた
- * 場合だけ屋根高度を採用する。建物が無い・検証できない場合はnullを返し、
- * 呼び出し側は通常のDEM地面高度にフォールバックする。
+ * 被写体ピンは「建物の屋根の上」をデフォルトにするため、垂直レイで検出できた
+ * 構造物の最高点をそのまま採用する。全国一律の高さ補正はしないが、
+ * タイルセットの地域的な位置ズレによる非現実的な高さ（屋根がDEM地面より
+ * 低い、または120mを超えて高い）だけは弾いて次の候補点を試す。
+ * 建物が無い・弾かれた場合はnullを返し、呼び出し側は通常のDEM地面高度に
+ * フォールバックする。
  *
  * 中心点の真上だけでは、鉄塔・電波塔のような格子構造の隙間を素通りして
  * 何も検出できないことがあるため、中心点に加えて周辺の複数点も自動で
@@ -179,9 +195,6 @@ export async function resolvePlateauRoofGroundPoint(
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const hits = await plateauVerticalRaycast(viewer, candidate.longitude, candidate.latitude, signal);
     if (!hits) continue;
-    const lowestHit = hits.reduce((lowest, current) =>
-      current.height < lowest.height ? current : lowest
-    );
     const highestHit = hits.reduce((highest, current) =>
       current.height > highest.height ? current : highest
     );
@@ -199,16 +212,21 @@ export async function resolvePlateauRoofGroundPoint(
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-    const discrepancyMeters = lowestHit.height - demGroundPoint.height;
-    if (Math.abs(discrepancyMeters) > BASE_HEIGHT_TOLERANCE_METERS) {
-      // 接地点がDEMと大きくズレている＝この構造物の高さ基準は信頼できない。
-      // この候補点は諦めて、次の候補点を試す。
+    // 屋根（highestHit）が地面（DEM）より低い、または非現実的に高い場合だけ
+    // 「このタイルセットはこの地点で位置ズレしている」とみなして候補を諦める。
+    // lowestHitとDEMの厳密な突き合わせは行わない（屋根に合わせたい被写体を
+    // 底面ポリゴンの有無に依存させないため）。
+    const roofAboveGroundMeters = highestHit.height - demGroundPoint.height;
+    if (
+      roofAboveGroundMeters < 0 ||
+      roofAboveGroundMeters > GROSS_MISALIGNMENT_TOLERANCE_METERS
+    ) {
       continue;
     }
 
     let geoidHeightMeters: number;
     try {
-      geoidHeightMeters = await fetchGsiGeoidHeight(lowestHit);
+      geoidHeightMeters = await fetchGsiGeoidHeight(highestHit);
     } catch (error) {
       console.warn(`${label}のジオイド高を取得できませんでした`, error);
       continue;
