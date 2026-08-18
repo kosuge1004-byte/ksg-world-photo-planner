@@ -569,7 +569,8 @@ function TimelinePanelComponent({
             title="天体通過日時検索"
           >
             <span aria-hidden="true">🕐</span>
-            <small aria-hidden="true">検索</small>
+            <span aria-hidden="true">検</span>
+            <span aria-hidden="true">索</span>
           </button>
         </div>
       </div>
