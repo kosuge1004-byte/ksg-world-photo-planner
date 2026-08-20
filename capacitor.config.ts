@@ -1,20 +1,25 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
+// appId / webDir は android/app/build.gradle の applicationId・Web資産の
+// 出力先（vite build成果物）と一致させている。
 const config: CapacitorConfig = {
-  appId: "jp.ksg.worldphotoplanner",
+  appId: "jp.astrosight.app",
   appName: "AstroSight",
   webDir: "dist",
-  // 既存の縦長撮影UIをAndroidでも維持するため、WebViewの背景色を
-  // 起動画面と同じ暗色に固定し、初回描画時の白い点滅を防ぐ。
   backgroundColor: "#05070a",
-  android: {
-    allowMixedContent: false,
-  },
   ios: {
-    // CSSのsafe-area-insetでノッチを処理するため、WKWebView側の自動余白は重ねない。
+    // safe areaはCSS側（env(safe-area-inset-*)）で管理するため、
+    // WKWebViewの自動contentInsetは無効化して二重に余白が付かないようにする。
     contentInset: "never",
     preferredContentMode: "mobile",
+    // 撮影地点のURL等をタップした際、リンクプレビューでアプリ外へ
+    // 離脱しないようにする。
     allowsLinkPreview: false,
+    backgroundColor: "#05070a",
+  },
+  android: {
+    // HTTPS以外のコンテンツ読み込みを禁止し、Android WebViewをHTTPS限定にする。
+    allowMixedContent: false,
     backgroundColor: "#05070a",
   },
 };

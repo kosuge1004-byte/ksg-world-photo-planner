@@ -94,23 +94,23 @@ const cases = [
     expected: { state: "blocked", message: "建物・3Dデータに隠れています" },
   },
   {
-    name: "DEM complete while Google 3D is pending",
+    name: "DEM complete, no building check pending (feature removed)",
     input: occlusion({
       verificationState: "dem-only",
       verified: false,
       reason: "unverified",
     }),
-    expected: { state: "checking", message: "建物の遮蔽を確認中です" },
+    expected: null,
   },
   {
-    name: "DEM complete but Google 3D unavailable",
+    name: "dem-only with a failureMessage still shows nothing (no pending building check)",
     input: occlusion({
       verificationState: "dem-only",
       verified: false,
       reason: "unverified",
       failureMessage: "mesh unavailable",
     }),
-    expected: { state: "unavailable", message: "建物の遮蔽を確認できません" },
+    expected: null,
   },
   {
     name: "visible result has no constant label",

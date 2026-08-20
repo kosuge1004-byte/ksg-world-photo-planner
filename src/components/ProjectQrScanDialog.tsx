@@ -33,6 +33,9 @@ export function ProjectQrScanDialog({ open, onClose, onScanned }: Props) {
   useEffect(() => {
     if (!open || mode !== "camera") return;
     let disposed = false;
+    // cleanup内でref.currentを直接参照すると、実行時点で別のノードに
+    // 差し替わっている可能性があるため、effect開始時点の値を変数へ複製する。
+    const videoElement = videoRef.current;
 
     function stopScanLoop() {
       if (animationFrameRef.current !== null) {
@@ -98,7 +101,7 @@ export function ProjectQrScanDialog({ open, onClose, onScanned }: Props) {
       stopScanLoop();
       stopCameraStream(streamRef.current);
       streamRef.current = null;
-      if (videoRef.current) videoRef.current.srcObject = null;
+      if (videoElement) videoElement.srcObject = null;
     };
   }, [open, mode, onScanned]);
 

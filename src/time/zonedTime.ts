@@ -187,3 +187,31 @@ export function formatZonedTime(date: Date | null, timeZone: string): string {
   const parts = zonedDateParts(date, timeZone);
   return `${pad2(parts.hour)}:${pad2(parts.minute)}`;
 }
+
+/**
+ * 現地時刻（timeZone基準）で暦月を加算する。末日を超える場合はその月の
+ * 末日へ丸める（例：1/31 + 1か月 → 2/28または2/29）。
+ * スポット検索・天体通過検索の両方でこの一本化した実装を使う
+ * （以前は個別実装で、片方だけ暦月加算・もう片方が日数固定という
+ * 不整合があったため）。
+ */
+export function addLocalMonths(date: Date, months: number, timeZone: string): Date {
+  const local = zonedDateTimeLocalFromDate(date, timeZone);
+  const [dateText, timeText] = local.split("T");
+  const [year, month, day] = dateText.split("-").map(Number);
+  const targetMonthStart = new Date(Date.UTC(year, month - 1 + months, 1));
+  const targetYear = targetMonthStart.getUTCFullYear();
+  const targetMonthIndex = targetMonthStart.getUTCMonth();
+  const lastTargetDay = new Date(
+    Date.UTC(targetYear, targetMonthIndex + 1, 0)
+  ).getUTCDate();
+  const shifted = new Date(
+    Date.UTC(targetYear, targetMonthIndex, Math.min(day, lastTargetDay))
+  );
+  const shiftedDate = [
+    shifted.getUTCFullYear(),
+    String(shifted.getUTCMonth() + 1).padStart(2, "0"),
+    String(shifted.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+  return dateFromZonedDateTimeLocal(`${shiftedDate}T${timeText}`, timeZone);
+}

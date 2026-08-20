@@ -1,6 +1,7 @@
 import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import type { CelestialBodyId, CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
+import { withLensCenterHeight } from "../types/points";
 import type { SpotSearchDisplayCount, SpotSearchPeriod } from "../types/search";
 import {
   angularDistanceFromCameraCenterDegrees,
@@ -16,10 +17,10 @@ import {
   type RefractionWeatherContext,
 } from "./refractionWeatherModel";
 import {
+  addLocalMonths,
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,
   daySerialFromDateText,
-  zonedDateTimeLocalFromDate,
 } from "../time/zonedTime";
 
 export type CelestialTransitSearchMode = "direction-crossing" | "in-frame";
@@ -75,19 +76,32 @@ const BODY_ORDER: Array<Exclude<CelestialBodyId, "polaris">> = ["sun", "moon", "
 const DEG = Math.PI / 180;
 
 export function celestialTransitDateRange(input: Pick<SearchInput, "currentDate" | "timeZone" | "criteria">): { start: Date; end: Date } {
-  const currentLocalDate = zonedDateTimeLocalFromDate(input.currentDate, input.timeZone).slice(0, 10);
-  let startText = currentLocalDate;
-  let endExclusiveText: string;
   if (input.criteria.period === "custom") {
-    startText = input.criteria.customStartDate;
-    endExclusiveText = dateTextFromDaySerial(daySerialFromDateText(input.criteria.customEndDate) + 1);
-  } else {
-    const days = input.criteria.period === "1-month" ? 30 : input.criteria.period === "3-months" ? 90 : input.criteria.period === "6-months" ? 180 : 365;
-    endExclusiveText = dateTextFromDaySerial(daySerialFromDateText(startText) + days);
+    return {
+      start: dateFromZonedDateTimeLocal(`${input.criteria.customStartDate}T00:00`, input.timeZone),
+      end: dateFromZonedDateTimeLocal(
+        `${dateTextFromDaySerial(daySerialFromDateText(input.criteria.customEndDate) + 1)}T00:00`,
+        input.timeZone
+      ),
+    };
   }
+  // スポット検索（spotPresetSearch.ts）と同じ規約に統一する：
+  // - 期間は日数固定ではなく暦月加算（1/3/6/12か月）。以前は30/90/180/365日の
+  //   固定日数だったため、同じ「1か月」でも実際の終了日がスポット検索と
+  //   ズレていた。
+  // - 開始はその瞬間（currentDate）そのもので、現地日の00:00へは切り詰めない。
+  //   以前はここだけ00:00へ切り詰めており、同じ期間指定でも開始境界が
+  //   スポット検索とズレていた。
+  const months = input.criteria.period === "1-month"
+    ? 1
+    : input.criteria.period === "3-months"
+      ? 3
+      : input.criteria.period === "6-months"
+        ? 6
+        : 12;
   return {
-    start: dateFromZonedDateTimeLocal(`${startText}T00:00`, input.timeZone),
-    end: dateFromZonedDateTimeLocal(`${endExclusiveText}T00:00`, input.timeZone),
+    start: input.currentDate,
+    end: addLocalMonths(input.currentDate, months, input.timeZone),
   };
 }
 
@@ -115,10 +129,12 @@ function horizontalCoordinatesForSearch(
 }
 
 function observerAtLens(input: SearchInput): GroundPoint {
-  return {
-    ...input.tripod,
-    height: input.tripod.height + input.cameraSettings.lensCenterHeightMeters,
-  };
+  // withLensCenterHeight()に統一する（cesium/celestial.tsと同じ経路）。
+  // 以前は.height（非推奨フィールド）だけを更新しており、三脚位置が既に
+  // ellipsoidalHeightMeters/orthometricHeightMeters確定済みの場合、
+  // createAstronomyObserver()はそちらを優先して使うため、レンズ中心高が
+  // 天体計算へ一切反映されていなかった。
+  return withLensCenterHeight(input.tripod, input.cameraSettings.lensCenterHeightMeters);
 }
 
 function throwIfAborted(signal: AbortSignal): void {

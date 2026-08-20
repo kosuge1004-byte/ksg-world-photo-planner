@@ -14,6 +14,7 @@ import {
 import type { GroundPoint, ResolvedGroundPoint } from "../types/points";
 import { publishUserNotice } from "../errors/userFeedback";
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "../height/heightResolver";
+import type { HeightMetadata } from "./subjectPin";
 
 const TRIPOD_PIN_ID = "ksg-tripod-pin";
 const TRIPOD_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
@@ -25,7 +26,8 @@ const TRIPOD_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
 
 export function setTripodPin(
   viewer: Viewer,
-  position: Cartesian3
+  position: Cartesian3,
+  heightMetadata?: HeightMetadata
 ): GroundPoint {
   const previous = viewer.entities.getById(TRIPOD_PIN_ID);
 
@@ -52,11 +54,27 @@ export function setTripodPin(
     },
   });
 
-  return {
+  const point: GroundPoint = {
     latitude: (cartographic.latitude * 180) / Math.PI,
     longitude: (cartographic.longitude * 180) / Math.PI,
     height: cartographic.height,
     label: "三脚ピン",
+  };
+  if (
+    !heightMetadata ||
+    !Number.isFinite(heightMetadata.orthometricHeightMeters) ||
+    !Number.isFinite(heightMetadata.geoidHeightMeters) ||
+    !heightMetadata.heightSource ||
+    heightMetadata.heightSource === "legacy"
+  ) {
+    return point;
+  }
+  return {
+    ...point,
+    ellipsoidalHeightMeters: point.height,
+    orthometricHeightMeters: heightMetadata.orthometricHeightMeters,
+    geoidHeightMeters: heightMetadata.geoidHeightMeters,
+    heightSource: heightMetadata.heightSource,
   };
 }
 
@@ -84,7 +102,8 @@ export async function setTripodPinFromCoordinates(
           const resolved = await resolveGroundPointFrom3dSurface(clamped, "三脚ピン");
           return setTripodPin(
             viewer,
-            Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters)
+            Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters),
+            resolved
           );
         }
       } catch (error) {
@@ -98,7 +117,8 @@ export async function setTripodPinFromCoordinates(
     }
     return setTripodPin(
       viewer,
-      Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
+      Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+      point
     );
   } catch (error) {
     console.warn("三脚ピンの高度を確定できないため配置を中止します", error);
@@ -124,7 +144,8 @@ export async function setTripodPinFromExplicit3dPick(
   const resolved = await resolveGroundPointFrom3dSurface(position, "三脚ピン");
   setTripodPin(
     viewer,
-    Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters)
+    Cartesian3.fromDegrees(resolved.longitude, resolved.latitude, resolved.ellipsoidalHeightMeters),
+    resolved
   );
   return resolved;
 }

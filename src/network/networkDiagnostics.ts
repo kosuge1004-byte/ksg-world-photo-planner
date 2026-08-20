@@ -103,36 +103,93 @@ export function recordCacheDiagnostic(
   recordNetworkDiagnostic({ category, endpoint, kind, detail });
 }
 
+// サーバー・外部APIが応答をハングさせた場合、ユーザー操作によるabort
+// （init.signal）以外に、これまで自動的に諦める仕組みが一切なかった。
+// 「数分待っても描画されない」という不具合の主因になっていたため、
+// 全通信の共通入口であるここに自動タイムアウト＋リトライを組み込む。
+// 個別のfetch呼び出しごとに直す必要が無いよう、一箇所へ集約する。
+//
+// タイムアウトを長くして1回だけ待つより、短めのタイムアウトで複数回
+// 試したほうが「一時的な通信の乱れ」からの回復率が高く、かつ最悪時の
+// 合計待ち時間も抑えられる（8秒×最大3回＋短い間隔 ≒ 最悪でも30秒弱）。
+const DEFAULT_FETCH_TIMEOUT_MS = 8_000;
+const MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = [300, 900];
+
+function combinedSignal(
+  timeoutMs: number,
+  externalSignal?: AbortSignal | null
+): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return externalSignal
+    ? AbortSignal.any([externalSignal, timeoutSignal])
+    : timeoutSignal;
+}
+
+function isUserAbort(error: unknown, externalSignal?: AbortSignal | null): boolean {
+  return Boolean(externalSignal?.aborted) && error instanceof DOMException && error.name === "AbortError";
+}
+
+/** タイムアウト・ネットワーク断（fetch自体が例外を投げた場合）は常に
+ * 再試行対象にする。応答が返っているサーバーエラー（5xx）は呼び出し側で
+ * 別途判定する（400/404等のクライアントエラーは再試行しても結果が
+ * 変わらないため、そもそもここへは来ない設計にしている）。 */
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function diagnosticFetch(
   category: string,
   input: string | URL | Request,
-  init?: RequestInit
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   const endpoint = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-  const startedAt = performance.now();
-  try {
-    const response = await fetch(input, init);
-    recordNetworkDiagnostic({
-      kind: "request",
-      category,
-      endpoint,
-      method,
-      status: response.status,
-      durationMs: Math.round(performance.now() - startedAt),
-    });
-    return response;
-  } catch (error) {
-    recordNetworkDiagnostic({
-      kind: "error",
-      category,
-      endpoint,
-      method,
-      durationMs: Math.round(performance.now() - startedAt),
-      detail: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const startedAt = performance.now();
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal: combinedSignal(timeoutMs, init?.signal),
+      });
+      recordNetworkDiagnostic({
+        kind: "request",
+        category,
+        endpoint,
+        method,
+        status: response.status,
+        durationMs: Math.round(performance.now() - startedAt),
+        detail: attempt > 1 ? `${attempt}回目の試行で成功` : undefined,
+      });
+      if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
+        await wait(RETRY_BACKOFF_MS[attempt - 1] ?? RETRY_BACKOFF_MS.at(-1)!);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      recordNetworkDiagnostic({
+        kind: "error",
+        category,
+        endpoint,
+        method,
+        durationMs: Math.round(performance.now() - startedAt),
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      // ユーザー自身によるキャンセル（検索中止等）は再試行しない。
+      if (isUserAbort(error, init?.signal)) throw error;
+      if (attempt < MAX_ATTEMPTS) {
+        await wait(RETRY_BACKOFF_MS[attempt - 1] ?? RETRY_BACKOFF_MS.at(-1)!);
+        continue;
+      }
+      throw error;
+    }
   }
+  throw lastError;
 }
 
 export function resetNetworkDiagnosticSummary(): void {

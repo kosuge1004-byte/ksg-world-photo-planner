@@ -75,11 +75,11 @@ export function toUserFacingErrorMessage(
   }
   if (lower.includes("気象") || lower.includes("天気")) {
     return context === "highest-precision"
-      ? "最高精度に必要な天気データを取得できませんでした。時間をおいて、もう一度お試しください。"
+      ? "Googleタイルモードに必要な天気データを取得できませんでした。時間をおいて、もう一度お試しください。"
       : "天気データを取得できませんでした。標準的な大気条件で計算します。";
   }
   if (context === "highest-precision") {
-    return "高精度データを取得できませんでした。標準精度へは変更していません。通信状態を確認して、もう一度お試しください。";
+    return "Googleタイルモードのデータを取得できませんでした。標準モードへは変更していません。通信状態を確認して、もう一度お試しください。";
   }
   if (
     message.includes("見つかりません") ||

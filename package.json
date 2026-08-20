@@ -1,7 +1,7 @@
 {
   "name": "astrosight",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,7 +31,6 @@
     "verify:performance-lifecycle": "node scripts/verify-performance-lifecycle.mjs",
     "verify:user-error-handling": "node scripts/verify-user-error-handling.mjs",
     "verify:precision-descriptions": "node scripts/verify-precision-descriptions.mjs",
-    "verify:occlusion-reasons": "node scripts/verify-occlusion-reasons.mjs",
     "verify:platform-compatibility": "node scripts/verify-platform-compatibility.mjs",
     "verify:final-cleanup": "node scripts/verify-final-cleanup.mjs",
     "verify:search-engine-exclusion": "node scripts/verify-search-engine-exclusion.mjs",

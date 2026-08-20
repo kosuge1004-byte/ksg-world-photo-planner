@@ -8,6 +8,16 @@ function requireText(source, expected, message) {
   if (!source.includes(expected)) throw new Error(message);
 }
 
+function requireAbsence(source, key, noticeCallName, message) {
+  // 単なる文字列としての出現ではなく、「そのキーが通知呼び出しの一部として
+  // 使われていないこと」を確認する（コメント内の言及等は許容する）。
+  const pattern = new RegExp(
+    `${noticeCallName}\\s*\\(\\s*\\{[^}]*key:\\s*["']${key}["']`,
+    "s"
+  );
+  if (pattern.test(source)) throw new Error(message);
+}
+
 const feedback = read("src/errors/userFeedback.ts");
 const notice = read("src/components/UserNotice.tsx");
 const app = read("src/App.tsx");
@@ -39,14 +49,12 @@ requireText(notice, 'aria-label="通知を閉じる"', "notice cannot be dismiss
 requireText(app, "userNotice.actionLabel ? 20_000", "notice has no automatic dismissal");
 requireText(app, 'actionLabel: "再試行"', "retry action is not exposed");
 requireText(app, 'actionLabel: "検索結果へ戻る"', "highest-precision recovery route is missing");
-requireText(feedback, "標準精度へは変更していません", "highest precision may silently fall back");
+requireText(feedback, "標準モードへは変更していません", "highest precision may silently fall back");
 requireText(styles, "env(safe-area-inset-top)", "notice ignores mobile safe area");
 requireText(styles, "width: min(520px, calc(100% - 20px))", "notice is not viewport bounded");
 
 for (const [source, key, label] of [
   [terrain, "gsi-dem-fallback", "DEM fallback"],
-  [occlusion, "google-3d-occlusion-fallback", "Google 3D occlusion fallback"],
-  [occlusion, "terrain-occlusion-failed", "terrain occlusion failure"],
   [subjectPin, "subject-pin-3d-fallback", "subject pin 3D fallback"],
   [subjectPin, "subject-pin-height-required", "subject pin terrain fallback"],
   [tripodPin, "tripod-pin-3d-fallback", "tripod pin 3D fallback"],
@@ -56,6 +64,12 @@ for (const [source, key, label] of [
 ]) {
   requireText(source, key, `${label} is not communicated to the user`);
 }
+// 天体の遮蔽判定（地形・Google 3D）失敗は、指示によりプレビュー画面へ
+// ポップアップ・エラー表示しない方針にした（判定ロジック自体は維持し、
+// 未検証状態として静かにフォールバックする）。誤って復活しないよう、
+// 通知していないことを明示的に確認する。
+requireAbsence(occlusion, "terrain-occlusion-failed", "showUserNotice", "terrain occlusion failure notice was reintroduced");
+requireAbsence(app, "celestial-occlusion", "showUserNotice", "celestial occlusion notice was reintroduced");
 
 requireText(
   terrain,
@@ -69,7 +83,7 @@ requireText(
 );
 requireText(
   weather,
-  'throw new Error("高精度の気象データを取得できませんでした")',
+  'throw new Error("Googleタイルモードで必要な気象データを取得できませんでした")',
   "highest precision silently accepts weather fallback"
 );
 requireText(

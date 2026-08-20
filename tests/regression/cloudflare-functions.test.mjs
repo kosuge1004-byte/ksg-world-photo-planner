@@ -380,8 +380,36 @@ test("spot search Pages Functions preserve API status while KV stores Cloudflare
   const clientId = "11111111-1111-4111-8111-111111111111";
   const jobId = "22222222-2222-4222-8222-222222222222";
   const input = {
-    criteria: {},
-    subject: {},
+    criteria: {
+      query: "東京タワー",
+      useCurrentSubjectPin: false,
+      celestialId: "moon",
+      sunSearchTiming: "all",
+      moonAgeMinDays: 0,
+      moonAgeMaxDays: 30,
+      focalLengthMm: 50,
+      tripodDistanceMinMeters: 50,
+      tripodDistanceMaxMeters: 500,
+      period: "1-month",
+      customStartDate: "2026-08-01",
+      customEndDate: "2026-08-31",
+      weekdays: [],
+      interval: "30-minutes",
+      displayCount: 10,
+      siteConstraints: {
+        walkingOnly: true,
+        roadsAndPathsOnly: false,
+        excludePrivateAccess: false,
+        elevationDifferenceWithin100m: false,
+        excludeRoads: false,
+      },
+    },
+    subject: {
+      latitude: 35.6586,
+      longitude: 139.7454,
+      height: 350,
+      label: "東京タワー",
+    },
     baseDateIso: "2026-08-03T00:00:00.000Z",
     timeZone: "Asia/Tokyo",
     lensCenterHeightMeters: 1.5,

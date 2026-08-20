@@ -554,9 +554,9 @@ button { cursor: pointer; }
 .map-section:-webkit-full-screen .map-fullscreen-exit { display: flex; }
 /* Celestial overlay and menu */
 .celestial-overlay { position: absolute; z-index: 21; inset: 0; overflow: hidden; pointer-events: none; }
-.celestial-overlay-opacity-wrap { position: absolute; inset: 0; pointer-events: none; }
 .celestial-track-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.celestial-track-line { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: .42; stroke-dasharray: 1.4 1; filter: drop-shadow(0 0 .8px #000); }
+.celestial-track-line-group { filter: drop-shadow(0 0 .8px #000); }
+.celestial-track-line { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: .42; stroke-dasharray: 1.4 1; }
 .track-sun { stroke: rgba(255, 199, 0, .95); }
 .track-moon { stroke: rgba(76, 192, 255, .95); }
 .track-milkyWay { stroke: rgba(199, 109, 255, .9); }
@@ -573,10 +573,9 @@ button { cursor: pointer; }
 .celestial-physical-disc { display: block; width: 100%; height: 100%; overflow: visible; }
 .celestial-physical-marker .celestial-label { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); }
 .celestial-hidden-position { min-width: 18px; min-height: 18px; opacity: .72; filter: none; }
-.celestial-hidden-position.celestial-physical-marker { width: 18px !important; height: 18px !important; }
 .celestial-offscreen-position { opacity: .86; }
 .celestial-offscreen-position .celestial-hidden-dot { border-style: solid; background: rgba(16,29,42,.62); box-shadow: 0 0 0 2px rgba(97,190,255,.2); }
-.celestial-hidden-dot { display: block; width: 18px; height: 18px; border: 1.5px dashed rgba(255,255,255,.92); border-radius: 50%; background: rgba(18,24,32,.24); box-shadow: inset 0 0 0 3px rgba(255,255,255,.08); }
+.celestial-hidden-dot { display: block; width: 100%; height: 100%; border: 1.5px dashed rgba(255,255,255,.92); border-radius: 50%; background: rgba(18,24,32,.24); box-shadow: inset 0 0 0 3px rgba(255,255,255,.08); }
 .celestial-hidden-dot::after { content: ""; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
 .celestial-hidden-position .celestial-label,
 .celestial-hidden-label { color: #dce8f3; border: 1px dashed rgba(210,228,244,.55); background: rgba(5,10,16,.58); font-size: 7px; font-weight: 500; }
@@ -662,21 +661,22 @@ button { cursor: pointer; }
 .milky-way-ribbon-dark-lane { fill: rgba(8, 10, 14, .30); stroke: none; }
 .milky-way-center-highlight { fill: none; stroke: rgba(244, 233, 214, .33); stroke-width: .28; stroke-linecap: round; stroke-linejoin: round; }
 .milky-way-core-glow { opacity: .78; }
-.milky-way-star { fill: #eef4ff; filter: drop-shadow(0 0 .35px rgba(224,238,255,.85)); }
+.milky-way-star-field { filter: drop-shadow(0 0 .35px rgba(224,238,255,.85)); }
+.milky-way-star { fill: #eef4ff; }
 .milky-way-star.warm { fill: #ffe5bc; }
 .celestial-milkyWay { display: none; }
 .celestial-milkyWay.celestial-fast-position { display: none; }
 
 .celestial-menu { position: absolute; z-index: 60; top: 15px; right: 7px; pointer-events: auto; }
-.celestial-menu-button { min-width: 94px; min-height: 27px; padding: 3px 7px; color: #fff; border: 1px solid #343c46; border-radius: 6px; background: rgba(2,5,9,.91); font-size: 8px; }
+.celestial-menu-button { min-width: 94px; min-height: 27px; padding: 3px 7px; color: #fff; border: 1px solid #343c46; border-radius: 6px; background: rgba(2,5,9,.91); font-size: 11px; }
 .celestial-menu-popover { position: absolute; top: 30px; right: 0; width: 98px; max-height: calc(27.3dvh - 127px); padding: 3px; overflow-y: auto; border: 1px solid #333b46; border-radius: 6px; background: rgba(1,4,8,.94); box-shadow: 0 10px 26px rgba(0,0,0,.65); }
 .preview-section:fullscreen .celestial-menu-popover,
 .preview-section:-webkit-full-screen .celestial-menu-popover { max-height: calc(100dvh - 127px); }
 .celestial-checks { display: grid; gap: 1px; }
-.celestial-checks label { display: grid; grid-template-columns: 15px 1fr 14px; align-items: center; gap: 1px; min-height: 20px; padding: 1px; font-size: 7px; }
+.celestial-checks label { display: grid; grid-template-columns: 15px 1fr 14px; align-items: center; gap: 1px; min-height: 20px; padding: 1px; font-size: 9px; }
 .celestial-checks input { width: 12px; height: 12px; margin: 0; accent-color: #547cff; }
 .celestial-symbol { color: #ffe23d; font-size: 10px; }
-.celestial-reset-button { width: 100%; min-height: 20px; padding: 1px; color: #fff; border: 1px solid #3d4652; border-radius: 4px; background: #11161d; font-size: 7px; }
+.celestial-reset-button { width: 100%; min-height: 20px; padding: 1px; color: #fff; border: 1px solid #3d4652; border-radius: 4px; background: #11161d; font-size: 9px; }
 
 /* Timeline */
 .timeline-section {
@@ -697,7 +697,7 @@ button { cursor: pointer; }
 .timeline-main-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; gap: 7px; min-width: 0; }
 .timeline-date-actions { display: flex; align-items: center; justify-content: center; min-width: 0; }
 .timeline-ruler-shell { display: flex; align-items: stretch; gap: 4px; min-width: 0; height: 72px; }
-.timeline-minute-step { flex: 0 0 auto; z-index: 6; display: grid; place-items: center; width: 34px; padding: 0; border: 1px solid rgba(255,255,255,.28); border-radius: 5px; color: #fff; background: rgba(5,7,10,.88); font-size: 9px; font-weight: 600; line-height: 1; cursor: pointer; touch-action: manipulation; }
+.timeline-minute-step { flex: 0 0 auto; z-index: 6; display: grid; place-items: center; width: 34px; padding: 0; border: 1px solid rgba(255,255,255,.28); border-radius: 5px; color: #fff; background: rgba(5,7,10,.88); font-size: 11px; font-weight: 600; line-height: 1; cursor: pointer; touch-action: manipulation; }
 .timeline-minute-step:active { background: rgba(36,93,229,.9); }
 .timeline-minute-step:focus-visible { outline: 1px solid #fff; outline-offset: 1px; }
 .timeline-ruler { position: relative; flex: 1 1 auto; min-width: 0; height: 72px; outline: 0; cursor: grab; touch-action: none; user-select: none; }
@@ -886,7 +886,7 @@ button { cursor: pointer; }
 .map-drawer-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 10px; }
 .map-drawer-heading button { width: 25px; height: 25px; color: #fff; border: 0; background: transparent; font-size: 19px; }
 .map-search-control { position: absolute; z-index: 16; top: 8px; left: 60px; width: 112px; }
-.map-search-toggle { display: flex; align-items: center; gap: 5px; min-height: 34px; padding: 5px 9px; color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; background: rgba(2,6,10,.91); font-size: 9px; white-space: nowrap; }
+.map-search-toggle { display: flex; align-items: center; gap: 5px; min-height: 34px; padding: 5px 9px; color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; background: rgba(2,6,10,.91); font-size: 11px; white-space: nowrap; }
 .map-search-toggle span { font-size: 15px; }
 
 /* メイン画面と同じ20:9幅を使い、PCでも検索画面だけ横へ広がらないようにする。 */
@@ -926,7 +926,7 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 .spot-weekday-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-.spot-weekday-grid label { display: grid; place-items: center; min-width: 0; min-height: 34px; color: #aab6c3; border: 1px solid #35414e; border-radius: 7px; background: #0b1118; font-size: 9px; }
+.spot-weekday-grid label { display: grid; place-items: center; min-width: 0; min-height: 34px; color: #aab6c3; border: 1px solid #35414e; border-radius: 7px; background: #0b1118; font-size: 11px; }
 .spot-weekday-grid label:first-child { color: #ff9b91; }
 .spot-weekday-grid label:last-child { color: #8fbfff; }
 .spot-weekday-grid label.selected { color: #fff8ae; border-color: #d2b92e; background: #2b2708; }
@@ -946,7 +946,7 @@ button { cursor: pointer; }
 .spot-choice-grid.celestial { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .spot-choice-grid.periods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .spot-choice-grid.sun-timing { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.spot-choice-grid label { display: grid; place-content: center; justify-items: center; gap: 2px; min-width: 0; min-height: 44px; padding: 5px; overflow: hidden; color: #cbd3dd; border: 1px solid #394554; border-radius: 7px; background: #10161e; font-size: 9px; text-align: center; }
+.spot-choice-grid label { display: grid; place-content: center; justify-items: center; gap: 2px; min-width: 0; min-height: 44px; padding: 5px; overflow: hidden; color: #cbd3dd; border: 1px solid #394554; border-radius: 7px; background: #10161e; font-size: 11px; text-align: center; }
 .spot-choice-grid label.selected { color: #fff6ad; border-color: #d5b829; background: #39330c; }
 .spot-choice-grid input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .spot-choice-grid b { font-size: 17px; line-height: 1; }
@@ -957,7 +957,7 @@ button { cursor: pointer; }
 .moon-age-range > div > span, .moon-age-range > div > small { padding-bottom: 11px; color: #aeb9c6; font-size: 9px; text-align: center; }
 .moon-age-range > small { display: block; margin-top: 6px; color: #84919f; font-size: 7px; }
 .spot-condition-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; min-width: 0; }
-.spot-condition-grid label { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 40px; padding: 7px; color: #cbd3dd; border: 1px solid #394554; border-radius: 7px; background: #10161e; font-size: 9px; }
+.spot-condition-grid label { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 40px; padding: 7px; color: #cbd3dd; border: 1px solid #394554; border-radius: 7px; background: #10161e; font-size: 11px; }
 .spot-condition-grid label.selected { color: #fff6ad; border-color: #d5b829; background: #39330c; }
 .spot-condition-grid input { flex: 0 0 auto; width: 15px; height: 15px; margin: 0; accent-color: #efd02b; }
 .spot-condition-grid span { min-width: 0; overflow-wrap: anywhere; }
@@ -983,13 +983,9 @@ button { cursor: pointer; }
 .spot-preset-result span { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .spot-preset-result small { color: #aeb9c6; font-size: 8px; overflow-wrap: anywhere; }
 .spot-preset-result .spot-result-landmarks { color: #b8dca8; }
-.spot-preset-result .spot-result-3d-status { width: fit-content; padding: 2px 5px; border: 1px solid currentColor; border-radius: 4px; font-weight: 700; }
-.spot-result-3d-status.status-visible { color: #82e6a0; background: rgba(27, 92, 48, .28); }
-.spot-result-3d-status.status-possibly-obstructed { color: #ffc178; background: rgba(113, 55, 10, .3); }
-.spot-result-3d-status.status-unverified { color: #b7c4d5; background: rgba(60, 72, 88, .3); }
 .spot-search-credit { color: #7f8b99; font-size: 7px; }
 .pin-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 7px; }
-.pin-button, .subject-google-maps-button, .tripod-candidate-pin-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 8px; }
+.pin-button, .subject-google-maps-button, .tripod-candidate-pin-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 10px; }
 .pin-button.subject.active { background: #6d2925; }
 .pin-button.tripod.active { background: #124675; }
 .subject-google-maps-button { width: 100%; margin-top: 5px; border-color: #3f86cf; }

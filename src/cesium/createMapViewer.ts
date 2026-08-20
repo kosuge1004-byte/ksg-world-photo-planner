@@ -50,7 +50,7 @@ export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
 const HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER = Symbol("astrosight-hidden-plateau-height-lookup");
 
 /**
- * 高精度モード（Google Photorealistic 3D Tiles）では、Googleの利用規約により
+ * Googleタイルモード（Google Photorealistic 3D Tiles）では、Googleの利用規約により
  * その形状データを検索・高さ判定に使えないため、被写体ピンを建物の屋根に
  * 合わせる機能（resolvePlateauRoofGroundPoint）専用に、完全に透明な
  * PLATEAU建物タイルセットを別途・追加で読み込む。画面には一切表示されない
@@ -184,7 +184,7 @@ async function createStandardViewer(
 
 /**
  * Google Photorealistic 3D Tilesをタイムアウト＋リトライ付きで読み込む。
- * メイン3Dマップ（高精度モード）とARカメラのオーバーレイの両方から呼ばれる
+ * メイン3Dマップ（Googleタイルモード）とARカメラのオーバーレイの両方から呼ばれる
  * 唯一の場所とし、読み込み挙動（タイムアウト秒数・リトライ回数・調整パラメータ）
  * が両者でズレないようにする。呼び出し側でCesium ionトークンの設定は済ませておくこと。
  */
@@ -216,7 +216,7 @@ async function createHighestPrecisionViewer(
   setStatus: (message: string) => void
 ): Promise<Viewer> {
   if (!token) {
-    throw new Error("高精度3D地図を開始するためのCesium ion設定が不足しています");
+    throw new Error("Googleタイルモードの3D地図を開始するためのCesium ion設定が不足しています");
   }
 
   Ion.defaultAccessToken = token;
@@ -252,7 +252,7 @@ async function createHighestPrecisionViewer(
 
 /**
  * 3Dマップをダブルタップ（ダブルクリック）した地点へ向けて寄る。
- * 標準・高精度モードどちらの3Dビューアもここを通るため、両モードに共通で効く。
+ * 標準・Googleタイルモードどちらの3Dビューアもここを通るため、両モードに共通で効く。
  * Cesiumデフォルトのダブルクリック挙動（ピンの追尾）は、意図せず視点が
  * 固定・追従してしまい紛らわしいため無効化した上で、この拡大操作に差し替える。
  */
@@ -263,7 +263,7 @@ function enableDoubleTapZoom(viewer: Viewer): void {
     if (viewer.isDestroyed()) return;
     const target =
       pickSceneSurfacePosition(viewer, movement.position) ??
-      // 高精度モードはglobeを表示しない（globe: false）ためscene.globeが
+      // Googleタイルモードはglobeを表示しない（globe: false）ためscene.globeが
       // undefinedになりうる。常に存在するWGS84楕円体定数を使う。
       viewer.camera.pickEllipsoid(movement.position, Ellipsoid.WGS84);
     if (!target) return;
@@ -305,7 +305,7 @@ export async function createMapViewer(
 
   setStatus(
     accuracyMode === "highest"
-      ? "高精度：Google Photorealistic 3D Tiles 表示中"
+      ? "Googleタイルモード：Google Photorealistic 3D Tiles 表示中"
       : "標準3D：国土地理院地図＋PLATEAU建物（表示専用）"
   );
   return viewer;

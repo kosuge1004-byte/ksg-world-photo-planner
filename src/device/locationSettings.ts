@@ -5,11 +5,11 @@ import type {
   Position as NativePosition,
 } from "@capacitor/geolocation";
 
-type KsgNativeLocationBridge = {
+type AstroSightNativeLocationBridge = {
   openAppSettings?: () => void | Promise<void>;
 };
 
-type KsgNativeSettingsPlugin = {
+type AstroSightNativeSettingsPlugin = {
   openAppSettings: () => Promise<void>;
   openLocationSettings: () => Promise<void>;
 };
@@ -19,16 +19,16 @@ type WebKitMessageHandler = {
 };
 
 type LocationSettingsWindow = Window & {
-  KSGNative?: KsgNativeLocationBridge;
+  AstroSightNative?: AstroSightNativeLocationBridge;
   webkit?: {
     messageHandlers?: {
-      ksgOpenAppSettings?: WebKitMessageHandler;
+      astroSightOpenAppSettings?: WebKitMessageHandler;
     };
   };
 };
 
-const KsgNativeSettings =
-  registerPlugin<KsgNativeSettingsPlugin>("KsgNativeSettings");
+const AstroSightNativeSettings =
+  registerPlugin<AstroSightNativeSettingsPlugin>("AstroSightNativeSettings");
 
 export type LocationSettingsPlatform = "android" | "ios" | "other";
 export type DeviceLocationFailure =
@@ -216,17 +216,17 @@ export async function getDeviceCurrentPosition(
  */
 export async function openNativeLocationSettings(): Promise<boolean> {
   if (isNativeAndroidApp()) {
-    await KsgNativeSettings.openAppSettings();
+    await AstroSightNativeSettings.openAppSettings();
     return true;
   }
 
   const runtimeWindow = window as LocationSettingsWindow;
-  if (runtimeWindow.KSGNative?.openAppSettings) {
-    await runtimeWindow.KSGNative.openAppSettings();
+  if (runtimeWindow.AstroSightNative?.openAppSettings) {
+    await runtimeWindow.AstroSightNative.openAppSettings();
     return true;
   }
   const iosHandler =
-    runtimeWindow.webkit?.messageHandlers?.ksgOpenAppSettings;
+    runtimeWindow.webkit?.messageHandlers?.astroSightOpenAppSettings;
   if (iosHandler) {
     iosHandler.postMessage({ source: "astrosight" });
     return true;
@@ -236,7 +236,7 @@ export async function openNativeLocationSettings(): Promise<boolean> {
 
 export async function openNativeSystemLocationSettings(): Promise<boolean> {
   if (!isNativeAndroidApp()) return false;
-  await KsgNativeSettings.openLocationSettings();
+  await AstroSightNativeSettings.openLocationSettings();
   return true;
 }
 
@@ -244,8 +244,8 @@ export function canOpenNativeLocationSettings(): boolean {
   if (isNativeAndroidApp()) return true;
   const runtimeWindow = window as LocationSettingsWindow;
   return Boolean(
-    runtimeWindow.KSGNative?.openAppSettings ||
-    runtimeWindow.webkit?.messageHandlers?.ksgOpenAppSettings
+    runtimeWindow.AstroSightNative?.openAppSettings ||
+    runtimeWindow.webkit?.messageHandlers?.astroSightOpenAppSettings
   );
 }
 

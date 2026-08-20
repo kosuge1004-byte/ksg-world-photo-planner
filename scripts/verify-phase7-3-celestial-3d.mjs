@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 const read=(p)=>readFile(new URL(`../${p}`, import.meta.url),'utf8');
 const transit=await read('src/search/celestialTransitSearch.ts');
 const celestial=await read('src/cesium/celestial.ts');
+const cameraModelFactory=await read('src/cesium/cameraModelFactory.ts');
+const adaptiveTerrainProfile=await read('src/geodesy/adaptiveTerrainProfile.ts');
 const viewer=await read('src/cesium/createMapViewer.ts');
 const dialog=await read('src/components/CelestialTransitSearchDialog.tsx');
 const overlay=await read('src/components/CelestialOverlay.tsx');
@@ -13,8 +15,16 @@ assert.match(transit,/createCameraProjection\(/u);
 assert.match(transit,/isCelestialInCameraFrame\(/u);
 assert.match(transit,/refineClosestInFrameTime/u);
 assert.match(transit,/calculateKarneyLineMetrics/u);
-assert.match(celestial,/sensorDimensionsMm\(previewAspectRatio\)/u);
-assert.match(celestial,/calculateElevationAngleDegrees/u);
+// sensorDimensionsMmは、天体投影（celestial.ts）と手動プラン計算の両方で
+// 重複していたセンサーサイズ計算を一本化するため、cameraModelFactory.tsへ
+// 移動済み。celestial.tsのcreateCameraProjectionはcreateCameraModel経由で
+// これを間接的に使う（重複を持たない）。
+assert.match(celestial,/createCameraModel\(/u);
+assert.match(cameraModelFactory,/sensorDimensionsMm\(aspectRatio\)/u);
+// calculateElevationAngleDegrees（旧名）は、クライアント・サーバーで別々に
+// 重複実装されていた地形プロファイル走査ロジックの一本化に伴い、
+// elevationAngleDegreesとしてgeodesy/adaptiveTerrainProfile.tsへ移動済み。
+assert.match(adaptiveTerrainProfile,/export function elevationAngleDegrees/u);
 assert.match(celestial,/Body\.Sun/u);
 assert.match(celestial,/Body\.Moon/u);
 assert.match(celestial,/Body\.Star2/u);

@@ -63,14 +63,85 @@ export function validSearchJobId(value: unknown): value is string {
   return typeof value === "string" && ID_PATTERN.test(value);
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isValidLatitude(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= -180 && value <= 180;
+}
+
+const SUN_SEARCH_TIMINGS = new Set(["all", "sunrise", "sunset", "sunrise-sunset"]);
+const SEARCH_CELESTIAL_IDS = new Set(["sun", "moon", "milkyWay"]);
+const SPOT_SEARCH_PERIODS = new Set(["1-month", "3-months", "6-months", "1-year", "custom"]);
+const SPOT_SEARCH_INTERVALS = new Set([
+  "1-minute", "5-minutes", "10-minutes", "15-minutes", "30-minutes",
+  "1-hour", "1-day", "1-week", "1-month",
+]);
+const SPOT_SEARCH_DISPLAY_COUNTS = new Set([1, 3, 5, 10, 20, 50, 100]);
+// 通常のスポット名・地名は長くても数十〜100文字程度に収まる。
+const MAX_QUERY_LENGTH = 300;
+
+/**
+ * criteria/subjectがobject型であることまでしか見ていなかった検証を、
+ * 実際に使う全フィールドの型・値域チェックへ強化する（B-21）。
+ * 公開API（spot-search-start）へ渡る値のため、想定外のフィールド値が
+ * 下流のCesium/DEM/Overpass処理まで到達しないようここで弾く。
+ */
+function isValidSpotSearchCriteria(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const c = value as Record<string, unknown>;
+  if (typeof c.query !== "string" || c.query.length > MAX_QUERY_LENGTH) return false;
+  if (typeof c.useCurrentSubjectPin !== "boolean") return false;
+  if (!SEARCH_CELESTIAL_IDS.has(c.celestialId as string)) return false;
+  if (!SUN_SEARCH_TIMINGS.has(c.sunSearchTiming as string)) return false;
+  if (!isFiniteNumber(c.moonAgeMinDays) || !isFiniteNumber(c.moonAgeMaxDays)) return false;
+  if (!isFiniteNumber(c.focalLengthMm) || c.focalLengthMm <= 0 || c.focalLengthMm > 5000) return false;
+  if (!isFiniteNumber(c.tripodDistanceMinMeters) || !isFiniteNumber(c.tripodDistanceMaxMeters)) return false;
+  if (!SPOT_SEARCH_PERIODS.has(c.period as string)) return false;
+  if (typeof c.customStartDate !== "string" || typeof c.customEndDate !== "string") return false;
+  if (!Array.isArray(c.weekdays) || !c.weekdays.every((day) => typeof day === "number" && day >= 0 && day <= 6)) {
+    return false;
+  }
+  if (c.startTime !== undefined && typeof c.startTime !== "string") return false;
+  if (c.endTime !== undefined && typeof c.endTime !== "string") return false;
+  if (!SPOT_SEARCH_INTERVALS.has(c.interval as string)) return false;
+  if (!SPOT_SEARCH_DISPLAY_COUNTS.has(c.displayCount as number)) return false;
+  const constraints = c.siteConstraints as Record<string, unknown> | undefined;
+  if (
+    typeof constraints !== "object" || constraints === null ||
+    typeof constraints.walkingOnly !== "boolean" ||
+    typeof constraints.roadsAndPathsOnly !== "boolean" ||
+    typeof constraints.excludePrivateAccess !== "boolean" ||
+    typeof constraints.elevationDifferenceWithin100m !== "boolean" ||
+    typeof constraints.excludeRoads !== "boolean"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isValidSubjectGroundPoint(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const point = value as Record<string, unknown>;
+  return isValidLatitude(point.latitude) &&
+    isValidLongitude(point.longitude) &&
+    isFiniteNumber(point.height) &&
+    typeof point.label === "string";
+}
+
 export function validSpotSearchJobInput(
   value: unknown
 ): value is SpotSearchJobInput {
   if (typeof value !== "object" || value === null) return false;
-  if (!("criteria" in value) || typeof value.criteria !== "object" || value.criteria === null) {
+  if (!("criteria" in value) || !isValidSpotSearchCriteria(value.criteria)) {
     return false;
   }
-  if (!("subject" in value) || typeof value.subject !== "object" || value.subject === null) {
+  if (!("subject" in value) || !isValidSubjectGroundPoint(value.subject)) {
     return false;
   }
   return "baseDateIso" in value && typeof value.baseDateIso === "string" &&

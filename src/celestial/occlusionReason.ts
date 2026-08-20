@@ -52,15 +52,10 @@ export function presentCelestialOcclusionReason(
     };
   }
   if (occlusion.verificationState === "dem-only") {
-    return occlusion.failureMessage
-      ? {
-          state: "unavailable",
-          message: "建物の遮蔽を確認できません",
-        }
-      : {
-          state: "checking",
-          message: "建物の遮蔽を確認中です",
-        };
+    // 建物遮蔽の確認機能は撤去済み（DEM地形のみで判定する）。「確認中」を
+    // 名乗る処理はもう存在しないため、地形に遮られていなければ何も表示
+    // しない（＝通常通り見えている状態として扱う）。
+    return null;
   }
   return null;
 }

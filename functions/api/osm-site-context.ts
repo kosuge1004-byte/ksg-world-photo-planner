@@ -9,6 +9,11 @@ import {
 import { errorMessage, jsonResponse } from "../_shared/http.ts";
 import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
+// クライアント側の実際の最大利用規模（Googleタイルモードの局所再探索候補は
+// 最大49地点）に対して十分な余裕を持たせた上限。これを超える1リクエストは
+// 通常の利用では発生せず、Overpass/DEM等への大量投入だけを弾く。
+const MAX_POINTS_PER_REQUEST = 500;
+
 function requestPoints(body: unknown): OsmContextRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body) || !Array.isArray(body.points)) {
     return null;
@@ -34,6 +39,13 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     const points = requestPoints(body);
     if (!points) {
       return jsonResponse({ error: "候補座標がありません" }, 400, "no-store");
+    }
+    if (points.length > MAX_POINTS_PER_REQUEST) {
+      return jsonResponse(
+        { error: `候補座標は1リクエストあたり最大${MAX_POINTS_PER_REQUEST}件までです` },
+        400,
+        "no-store"
+      );
     }
     const includeDetails = !(typeof body === "object" && body !== null &&
       "includeDetails" in body && body.includeDetails === false);

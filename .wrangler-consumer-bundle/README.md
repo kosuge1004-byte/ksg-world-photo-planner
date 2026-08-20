@@ -1,0 +1,1 @@
+This folder contains the built output assets for the worker "astrosight-spot-search-consumer" generated at 2026-08-02T16:46:27.549Z.

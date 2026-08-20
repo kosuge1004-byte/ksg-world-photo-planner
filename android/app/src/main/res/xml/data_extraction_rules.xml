@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12（API 31）以降のバックアップ／デバイス間転送のルール（B-19）。
+  allowBackup="true"のまま、キャッシュ・一時ファイルは対象から除外し、
+  WebViewに保存された撮影計画・お気に入り地点などは復元できるよう残す
+  （機種変更時にユーザーの保存データが失われないようにするため）。
+  高精度モードのセッションIDはWebView localStorage内の1キーであり、
+  ファイル単位のルールでは個別に除外できないが、サーバー側でセッションは
+  期限（3時間）付きのため、復元後に再利用されても実害は小さい。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="database" path="webview_cache"/>
+        <exclude domain="root" path="cache"/>
+        <exclude domain="root" path="code_cache"/>
+        <exclude domain="file" path="webview_cache"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="database" path="webview_cache"/>
+        <exclude domain="root" path="cache"/>
+        <exclude domain="root" path="code_cache"/>
+        <exclude domain="file" path="webview_cache"/>
+    </device-transfer>
+</data-extraction-rules>

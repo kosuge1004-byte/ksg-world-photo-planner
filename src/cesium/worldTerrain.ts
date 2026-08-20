@@ -22,6 +22,7 @@ const geoidHeightBySample = new WeakMap<Cartographic, number>();
 let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
+const GEOID_FETCH_TIMEOUT_MS = 15_000;
 const geoidHeightCache = new Map<string, Promise<number>>();
 const GEOID_MEMORY_CACHE_MAX_ENTRIES = 4_096;
 const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
@@ -457,9 +458,16 @@ async function fetchGsiGeoidHeightOnce(
   longitude: number,
   signal?: AbortSignal
 ): Promise<number> {
+  // 国土地理院ジオイドCGIは応答が不安定なことがあり、タイムアウトが
+  // 無いとハングして無期限に待ち続けてしまう（実際に発生していた
+  // 「数分待っても描画されない」不具合の主因の1つ）。
+  const timeoutSignal = AbortSignal.timeout(GEOID_FETCH_TIMEOUT_MS);
   const response = await fetch(
     `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
-    { headers: { Accept: "application/json" }, signal }
+    {
+      headers: { Accept: "application/json" },
+      signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+    }
   );
   const data = await response.json() as {
     geoidHeightMeters?: unknown;
@@ -502,7 +510,7 @@ export async function fetchGsiGeoidHeight(
       const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
       void writeGeoidPersistentCache(key, height);
       return height;
-    } catch (error) {
+    } catch {
       abortIfRequested(signal);
       await new Promise((resolve) => setTimeout(resolve, 400));
       abortIfRequested(signal);
@@ -571,7 +579,7 @@ export async function sampleWorldTerrain(
 }
 
 /**
- * 最高精度専用。通常検索の距離別詳細度・地域ジオイドキャッシュを通さず、
+ * Googleタイルモード専用。通常検索の距離別詳細度・地域ジオイドキャッシュを通さず、
  * 各地点で利用可能な最詳細DEMと地点固有ジオイドを取得する。
  * どちらかが欠けた場合は標準データへフォールバックせず失敗させる。
  */
@@ -625,7 +633,7 @@ export async function sampleWorldTerrainHighestPrecision(
       typeof elevation.heightMeters !== "number" ||
       !Number.isFinite(elevation.heightMeters)
     ) {
-      throw new Error("利用可能な高精度DEMがありません");
+      throw new Error("利用可能なGoogleタイルモードDEMがありません");
     }
     point.height = elevation.heightMeters + geoidHeights[index];
     terrainSourceBySample.set(point, GSI_SOURCE_NAMES[elevation.source]);
@@ -644,7 +652,7 @@ export async function sampleWorldTerrainHighestPrecision(
 export function geoidHeightMetersForHighestPrecisionSample(sample: Cartographic): number {
   const value = geoidHeightBySample.get(sample);
   if (value === undefined) {
-    throw new Error("この地点の高精度ジオイド高は取得されていません");
+    throw new Error("この地点のGoogleタイルモードジオイド高は取得されていません");
   }
   return value;
 }
@@ -742,9 +750,26 @@ export async function groundPointFromCoordinates(
   if (!Number.isFinite(sampled.height)) {
     throw new Error("地形高度を取得できませんでした");
   }
-  const geoidHeightMeters = await fetchGsiGeoidHeight(sampled);
   const ellipsoidalHeight = sampled.height;
-  const orthometricHeight = ellipsoidalHeight - geoidHeightMeters;
+  const baseHeightSource: GroundPoint["heightSource"] =
+    (terrainDataSource(sampled) === "CESIUM_WORLD_TERRAIN" ? "terrain" : "dem") as GroundPoint["heightSource"];
+  let geoidHeightMeters: number;
+  let orthometricHeight: number;
+  let heightSource = baseHeightSource;
+  try {
+    geoidHeightMeters = await fetchGsiGeoidHeight(sampled);
+    orthometricHeight = ellipsoidalHeight - geoidHeightMeters;
+  } catch (error) {
+    // ジオイド高は標高（orthometric）表示の精緻化にのみ使う値であり、
+    // 地形の位置・高さそのもの（ellipsoidalHeight）は既に取得できている。
+    // ジオイドAPIが再試行しても失敗する場合に処理全体を止めてしまわず、
+    // 楕円体高をそのまま標高として扱う既存のフォールバック規約
+    // （heightSource: "legacy"）で処理を完了させる（0m代替等は行わない）。
+    console.warn(`${label}のジオイド高を取得できなかったため、楕円体高を暫定の標高として使用します`, error);
+    geoidHeightMeters = 0;
+    orthometricHeight = ellipsoidalHeight;
+    heightSource = "legacy";
+  }
   return {
     latitude: CesiumMath.toDegrees(sampled.latitude),
     longitude: CesiumMath.toDegrees(sampled.longitude),
@@ -752,7 +777,7 @@ export async function groundPointFromCoordinates(
     ellipsoidalHeightMeters: ellipsoidalHeight,
     orthometricHeightMeters: orthometricHeight,
     geoidHeightMeters,
-    heightSource: terrainDataSource(sampled) === "CESIUM_WORLD_TERRAIN" ? "terrain" : "dem",
+    heightSource,
     label,
   };
 }

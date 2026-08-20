@@ -23,7 +23,6 @@ import {
 } from "../time/zonedTime";
 import type { SiteConstraintFlags } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
-import type { PrecisionSettings } from "../types/precision";
 import type { SubjectRecord } from "../subjectStorage";
 import {
   DisplayCountSelect,
@@ -45,7 +44,6 @@ type Props = {
   initialFocalLengthMm: number;
   initialDate: Date;
   initialTimeZone: string;
-  precisionSettings: PrecisionSettings;
   onBack: () => void;
   onSearch: (
     criteria: SpotSearchCriteria,
@@ -181,26 +179,6 @@ function saveRetainedResults(results: SpotPresetResult[]): void {
   }
 }
 
-function candidate3dStatusLabel(
-  status: SpotCandidate3dStatus,
-  obstructedFractionPercent?: number,
-  accuracyMode?: "standard" | "highest"
-): string {
-  const sourceLabel = accuracyMode === "highest" ? "Google 3D" : "PLATEAU（DEM検証つき）";
-  if (status === "visible") {
-    return typeof obstructedFractionPercent === "number"
-      ? `被写体までの建物3D（${sourceLabel}）：見通し確認済み（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
-      : `被写体までの建物3D（${sourceLabel}）：見通し確認済み`;
-  }
-  if (status === "possibly-obstructed") {
-    return typeof obstructedFractionPercent === "number"
-      ? `被写体までの3D（${sourceLabel}）：遮蔽物あり（縁の遮蔽 ${Math.round(obstructedFractionPercent)}%）`
-      : `被写体までの3D（${sourceLabel}）：遮蔽物あり`;
-  }
-  if (status === "disabled") return "被写体までの3D：確認OFF";
-  return "被写体までの3D：未確認";
-}
-
 function clampTripodDistance(value: number): number {
   return Math.min(
     TRIPOD_DISTANCE_MAX_METERS,
@@ -263,7 +241,6 @@ export function SpotSearchScreen({
   initialFocalLengthMm,
   initialDate,
   initialTimeZone,
-  precisionSettings,
   onBack,
   onSearch,
   onResumeSearch,
@@ -627,10 +604,6 @@ ${diagnostic}` : ""}`
               <div><dt>焦点距離</dt><dd>{selectedResult.focalLengthMm}mm</dd></div>
               <div><dt>カメラ方位</dt><dd>{selectedResult.cameraAzimuthDegrees.toFixed(2)}°</dd></div>
               <div><dt>カメラ仰角</dt><dd>{selectedResult.cameraAltitudeDegrees.toFixed(2)}°</dd></div>
-              <div>
-                <dt>3D確認状態</dt>
-                <dd>{candidate3dStatusLabel(selectedResult.candidate3dStatus, selectedResult.buildingObstructedFractionPercent, precisionSettings.accuracyMode)}</dd>
-              </div>
               <div><dt>三脚位置</dt><dd>{selectedResult.tripod.latitude.toFixed(6)}, {selectedResult.tripod.longitude.toFixed(6)}</dd></div>
               <div><dt>被写体位置</dt><dd>{selectedResult.subject.latitude.toFixed(6)}, {selectedResult.subject.longitude.toFixed(6)}</dd></div>
             </dl>
@@ -1180,9 +1153,6 @@ ${diagnostic}` : ""}`
               <small>被写体まで {formatResultDistance(resultDistanceMeters(result))}</small>
               <small>
                 {result.focalLengthMm}mm　方位{result.cameraAzimuthDegrees.toFixed(1)}°　仰角{result.cameraAltitudeDegrees.toFixed(1)}°
-              </small>
-              <small className={`spot-result-3d-status status-${result.candidate3dStatus}`}>
-                {candidate3dStatusLabel(result.candidate3dStatus, result.buildingObstructedFractionPercent, precisionSettings.accuracyMode)}
               </small>
               {result.nearbyLandmarks.length > 0 && (
                 <small className="spot-result-landmarks">

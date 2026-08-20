@@ -72,10 +72,10 @@ export type ThirdDimensionSource = "google-3d" | "plateau-verified" | "none";
 
 /**
  * 精度モードから3D遮蔽情報源への対応を一本化する。
- * 高精度モードのGoogle Photorealistic 3D Tilesは形状データを遮蔽判定に使わず
+ * Googleタイルモードの Google Photorealistic 3D Tilesは形状データを遮蔽判定に使わず
  * （Googleの利用規約が禁止しているため）、PLATEAU建物による遮蔽判定も
  * 検証ロジックが信頼できないため使わない（DEM地形のみで判定する）。
- * 標準・高精度どちらのモードでも遮蔽判定の情報源は常に同じ（DEM地形のみ）にする。
+ * 標準・Googleタイルモードどちらでも遮蔽判定の情報源は常に同じ（DEM地形のみ）にする。
  * この対応関係を各呼び出し元で個別に判断させない。
  */
 export function thirdDimensionSourceForAccuracyMode(
@@ -399,7 +399,7 @@ async function calculateCelestialLineOfSightObserver(
   const preciseGround = await groundPointFromCoordinates(
     tripod.latitude,
     tripod.longitude,
-    "三脚位置の高精度地表"
+    "三脚位置のGoogleタイルモード地表"
   );
   const terrainOrigin = Cartesian3.fromDegrees(
     tripod.longitude,
@@ -513,11 +513,7 @@ export async function evaluateCelestialLineOfSight(
     );
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    publishUserNotice({
-      key: "terrain-occlusion-failed",
-      tone: "warning",
-      message: "地形データを取得できないため、遮蔽物を確認できませんでした。天体は未確認として表示しています。",
-    });
+    console.warn("地形データを取得できず、遮蔽物を確認できませんでした", error);
     return failedCelestialOcclusion(
       error instanceof Error ? error.message : "DEM遮蔽判定に失敗しました"
     );

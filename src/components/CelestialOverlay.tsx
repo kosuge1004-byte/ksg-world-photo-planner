@@ -14,8 +14,10 @@ type Props = {
   milkyWayPath: MilkyWayPathPoint[];
   visibility: CelestialVisibility;
   occlusion: CelestialOcclusionMap;
-  /** trueの間、太陽・月の実写的な円盤は描画しない（3D静止画側へ深度合成済みのため）。 */
-  physicalDiscsBakedIntoScene?: boolean;
+  /** 実際に見えている天体の円盤・ドットにだけ適用する透明度（0-1）。
+   * 画面外インジケーター（点線の丸）や、地形等で隠れていることを示す表示は
+   * 常に完全な不透明度のまま維持する（薄くすると視認できなくなるため）。 */
+  discOpacity?: number;
 };
 
 const MOON_MARIA = [
@@ -165,6 +167,37 @@ function deterministicFraction(value: number): number {
   return x - Math.floor(x);
 }
 
+type StarSeed = {
+  across: number;
+  alongJitter: number;
+  radiusFraction: number;
+  opacityFraction: number;
+  warm: boolean;
+};
+
+// 星の「散らばり方」（銀経・インデックスだけで決まり、カメラ位置には依存しない
+// 疑似乱数由来の値）をキャッシュする。ドラッグ中に同じ銀経値が毎フレーム
+// 再登場するため、Math.sinベースの計算をフレームごとに繰り返さずに済む。
+// 実際の画面位置（帯の形・カメラ投影に依存する部分）は毎フレーム計算し直す
+// ため、精度・見た目には一切影響しない。
+const starSeedCache = new Map<string, StarSeed>();
+
+function starSeedFor(galacticLongitudeDegrees: number, index: number): StarSeed {
+  const key = `${galacticLongitudeDegrees}:${index}`;
+  const cached = starSeedCache.get(key);
+  if (cached) return cached;
+  const seed = galacticLongitudeDegrees * 11 + index * 37;
+  const computed: StarSeed = {
+    across: 0.16 + deterministicFraction(seed + 1) * 0.68,
+    alongJitter: (deterministicFraction(seed + 2) - 0.5) * 1.8,
+    radiusFraction: deterministicFraction(seed + 3),
+    opacityFraction: deterministicFraction(seed + 4),
+    warm: deterministicFraction(seed + 5) > 0.72,
+  };
+  starSeedCache.set(key, computed);
+  return computed;
+}
+
 function milkyWayStars(points: MilkyWayPathPoint[]): MilkyWayStar[] {
   const stars: MilkyWayStar[] = [];
   for (const point of points) {
@@ -176,9 +209,8 @@ function milkyWayStars(points: MilkyWayPathPoint[]): MilkyWayStar[] {
     const coreBoost = Math.exp(-((coreDistance / 42) ** 2));
     const count = coreBoost > 0.45 ? 6 : 3;
     for (let index = 0; index < count; index += 1) {
-      const seed = point.galacticLongitudeDegrees * 11 + index * 37;
-      const across = 0.16 + deterministicFraction(seed + 1) * 0.68;
-      const alongJitter = (deterministicFraction(seed + 2) - 0.5) * 1.8;
+      const { across, alongJitter, radiusFraction, opacityFraction, warm } =
+        starSeedFor(point.galacticLongitudeDegrees, index);
       const cross = milkyWayCrossPoint(point, across);
       const edgeDx = point.northEdgeXPercent - point.southEdgeXPercent;
       const edgeDy = point.northEdgeYPercent - point.southEdgeYPercent;
@@ -188,9 +220,9 @@ function milkyWayStars(points: MilkyWayPathPoint[]): MilkyWayStar[] {
       stars.push({
         x: cross.x + tangentX * alongJitter,
         y: cross.y + tangentY * alongJitter,
-        radius: 0.07 + deterministicFraction(seed + 3) * (0.12 + coreBoost * 0.08),
-        opacity: 0.34 + deterministicFraction(seed + 4) * (0.38 + coreBoost * 0.18),
-        warm: deterministicFraction(seed + 5) > 0.72,
+        radius: 0.07 + radiusFraction * (0.12 + coreBoost * 0.08),
+        opacity: 0.34 + opacityFraction * (0.38 + coreBoost * 0.18),
+        warm,
       });
     }
   }
@@ -291,7 +323,7 @@ function CelestialOverlayComponent({
   milkyWayPath,
   visibility,
   occlusion,
-  physicalDiscsBakedIntoScene = false,
+  discOpacity = 1,
 }: Props) {
   const milkyWaySegments = milkyWayBandSegments(milkyWayPath, true);
   const hiddenMilkyWaySegments = milkyWayBandSegments(milkyWayPath, false);
@@ -319,16 +351,18 @@ function CelestialOverlayComponent({
       data-occlusion-milky-way-state={occlusion.milkyWay?.verificationState ?? "checking"}
     >
       <svg className="celestial-track-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {tracks.map((track) => {
-          if (!visibility[track.id]) return null;
-          return trackSegments(track).map((segment, index) => (
-            <polyline
-              key={`${track.id}-${index}`}
-              className={`celestial-track-line track-${track.id}`}
-              points={segment}
-            />
-          ));
-        })}
+        <g className="celestial-track-line-group">
+          {tracks.map((track) => {
+            if (!visibility[track.id]) return null;
+            return trackSegments(track).map((segment, index) => (
+              <polyline
+                key={`${track.id}-${index}`}
+                className={`celestial-track-line track-${track.id}`}
+                points={segment}
+              />
+            ));
+          })}
+        </g>
       </svg>
 
       {tracks.flatMap((track) => {
@@ -387,16 +421,18 @@ function CelestialOverlayComponent({
               />
             );
           })()}
-          {milkyWayStarField.map((star, index) => (
-            <circle
-              key={`mw-star-${index}`}
-              className={star.warm ? "milky-way-star warm" : "milky-way-star"}
-              cx={star.x}
-              cy={star.y}
-              r={star.radius}
-              opacity={star.opacity}
-            />
-          ))}
+          <g className="milky-way-star-field">
+            {milkyWayStarField.map((star, index) => (
+              <circle
+                key={`mw-star-${index}`}
+                className={star.warm ? "milky-way-star warm" : "milky-way-star"}
+                cx={star.x}
+                cy={star.y}
+                r={star.radius}
+                opacity={star.opacity}
+              />
+            ))}
+          </g>
         </svg>
       )}
 
@@ -419,15 +455,26 @@ function CelestialOverlayComponent({
           occlusion[point.id]
         );
         const positionOnly = hiddenByScene || offscreenPosition;
-        // 太陽・月は、静止画側（プレビューCanvas）に深度合成済みの実写的な円盤が
-        // 焼き込まれているため、このSVG円盤は二重に描かない（ラベルだけ残す）。
-        const bakedElsewhere =
-          physicalDiscsBakedIntoScene && physicalDisc && !positionOnly;
-        const markerStyle = offscreenPosition
-          ? offscreenPositionStyle(point)
+        // 画面外インジケーターの位置は表示枠内へ寄せるが、太陽・月であれば
+        // 大きさは実際の視直径をそのまま使う（北極星は点光源のため対象外）。
+        const markerStyle: React.CSSProperties = offscreenPosition
+          ? {
+              ...offscreenPositionStyle(point),
+              ...(physicalDisc
+                ? {
+                    width: `${Math.max(0, point.diameterWidthPercent ?? 0)}%`,
+                    height: `${Math.max(0, point.diameterHeightPercent ?? 0)}%`,
+                  }
+                : {}),
+            }
           : physicalDisc
             ? discStyle(point)
             : { left: `${point.xPercent}%`, top: `${point.yPercent}%` };
+        // 透明度は「実際に見えている円盤・ドット」にだけ効かせる。画面外
+        // インジケーターや隠れ表示は、薄くすると見えなくなるため対象外にする。
+        if (!positionOnly) {
+          markerStyle.opacity = discOpacity;
+        }
 
         return (
           <div
@@ -436,10 +483,10 @@ function CelestialOverlayComponent({
               physicalDisc ? " celestial-physical-marker" : ""
             }${positionOnly ? " celestial-hidden-position" : ""}${
               offscreenPosition ? " celestial-offscreen-position" : ""
-            }${bakedElsewhere ? " celestial-baked-elsewhere" : ""}`}
+            }`}
             style={markerStyle}
           >
-            {bakedElsewhere ? null : positionOnly ? (
+            {positionOnly ? (
               <span className="celestial-hidden-dot" />
             ) : point.id === "moon" ? (
               <svg className="celestial-physical-disc moon-disc" viewBox="0 0 100 100" preserveAspectRatio="none">

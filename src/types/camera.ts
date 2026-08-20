@@ -17,7 +17,7 @@ export const DEFAULT_CAMERA_VIEW_CORRECTION: CameraViewCorrection = {
 
 /**
  * 天体・被写体の屈折計算方式。現行UIでは常にproを使用し、
- * 標準／高精度の差は従量制3Dデータの利用有無だけに限定する。
+ * 標準／Googleタイルの差は従量制3Dデータの利用有無だけに限定する。
  */
 export type CalculationMode = "standard" | "pro";
 

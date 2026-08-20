@@ -13,10 +13,10 @@ function assert(condition, message) {
 
 const manifest = read("android/app/src/main/AndroidManifest.xml");
 const mainActivity = read(
-  "android/app/src/main/java/jp/ksg/worldphotoplanner/MainActivity.java"
+  "android/app/src/main/java/jp/astrosight/app/MainActivity.java"
 );
 const settingsPlugin = read(
-  "android/app/src/main/java/jp/ksg/worldphotoplanner/KsgNativeSettingsPlugin.java"
+  "android/app/src/main/java/jp/astrosight/app/AstroSightNativeSettingsPlugin.java"
 );
 const locationSource = read("src/device/locationSettings.ts");
 const capacitorConfig = read("capacitor.config.ts");
@@ -38,17 +38,17 @@ assert(
 
 // ローカルプラグインはBridge生成前に登録しないとJavaScriptから呼び出せない。
 const registration = mainActivity.indexOf(
-  "registerPlugin(KsgNativeSettingsPlugin.class)"
+  "registerPlugin(AstroSightNativeSettingsPlugin.class)"
 );
 const bridgeCreation = mainActivity.indexOf("super.onCreate(savedInstanceState)");
 assert(
   registration >= 0 && bridgeCreation >= 0 && registration < bridgeCreation,
-  "KsgNativeSettingsPluginがBridge生成前に登録されていません"
+  "AstroSightNativeSettingsPluginがBridge生成前に登録されていません"
 );
 assert(
-  settingsPlugin.includes('@CapacitorPlugin(name = "KsgNativeSettings")') &&
+  settingsPlugin.includes('@CapacitorPlugin(name = "AstroSightNativeSettings")') &&
     settingsPlugin.includes("Settings.ACTION_APPLICATION_DETAILS_SETTINGS"),
-  "KSGアプリ固有の設定画面を開くネイティブプラグインが不完全です"
+  "AstroSightアプリ固有の設定画面を開くネイティブプラグインが不完全です"
 );
 assert(
   settingsPlugin.includes("Settings.ACTION_LOCATION_SOURCE_SETTINGS"),
@@ -69,7 +69,7 @@ assert(
   "Androidネイティブ版とPWA版の分岐がありません"
 );
 assert(
-  capacitorConfig.includes('appId: "jp.ksg.worldphotoplanner"') &&
+  capacitorConfig.includes('appId: "jp.astrosight.app"') &&
     existsSync(
       resolve(
         root,

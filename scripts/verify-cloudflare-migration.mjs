@@ -49,8 +49,15 @@ for (const dependency of [
 
 const pagesConfig = read("wrangler.jsonc");
 const consumerConfig = read("wrangler.spot-search.jsonc");
-const pagesConfigJson = JSON.parse(pagesConfig);
-const consumerConfigJson = JSON.parse(consumerConfig);
+// JSONC（行コメント付き）のため、素のJSON.parse前にコメントを取り除く。
+const stripJsonComments = (text) =>
+  text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/(^|[^:"])\/\/.*$/, (match, prefix) => prefix))
+    .join("\n");
+const pagesConfigJson = JSON.parse(stripJsonComments(pagesConfig));
+const consumerConfigJson = JSON.parse(stripJsonComments(consumerConfig));
 const expectedKvNamespaceId = "92197c38d81d48489ef4fdd25b1b9a58";
 const expectedKvBinding = "SPOT_SEARCH_JOBS";
 const expectedQueue = "astrosight-spot-search";

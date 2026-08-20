@@ -31,7 +31,6 @@ const GSI_STANDARD_TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/
 const PLATEAU_BUILDINGS_TILESET_URL =
   "https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/all-bldg-maxlod2-latest/tileset.json";
 const PLATEAU_TERRAIN_URL = "https://tile.plateauview.mlit.go.jp/terrain/";
-const CAMERA_EYE_HEIGHT_METERS = 1.6;
 
 const SUBJECT_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" width="34" height="48" viewBox="0 0 34 48">
@@ -131,11 +130,15 @@ function applyCameraFov(viewer: Viewer, projection: ArCameraProjection | null): 
   frustum.fov = CesiumMath.toRadians(vertical);
 }
 
-function resolveObserverAltitude(viewer: Viewer, location: ArDeviceLocation): number {
+function resolveObserverAltitude(
+  viewer: Viewer,
+  location: ArDeviceLocation,
+  eyeHeightMeters: number
+): number {
   if (location.altitudeMeters !== null && Number.isFinite(location.altitudeMeters)) {
-    return location.altitudeMeters + CAMERA_EYE_HEIGHT_METERS;
+    return location.altitudeMeters + eyeHeightMeters;
   }
-  // 高精度（Google）モードはglobeを表示しない（globe: false）ため、
+  // Googleタイルモードはglobeを表示しない（globe: false）ため、
   // viewer.scene.globeがundefinedになる。GSI/PLATEAU側の地表高を使った
   // フォールバックはglobeがある場合のみ試みる。
   const globe = viewer.scene.globe;
@@ -146,7 +149,7 @@ function resolveObserverAltitude(viewer: Viewer, location: ArDeviceLocation): nu
     if (cartographic) {
       const terrainHeight = globe.getHeight(cartographic);
       if (terrainHeight !== undefined && Number.isFinite(terrainHeight)) {
-        return terrainHeight + CAMERA_EYE_HEIGHT_METERS;
+        return terrainHeight + eyeHeightMeters;
       }
     }
   }
@@ -210,11 +213,18 @@ function splitVisibleTrackSegments(
   return result;
 }
 
-function observerPointFromArLocation(location: ArDeviceLocation): GroundPoint {
+function observerPointFromArLocation(
+  viewer: Viewer,
+  location: ArDeviceLocation,
+  eyeHeightMeters: number
+): GroundPoint {
   return {
     latitude: location.latitude,
     longitude: location.longitude,
-    height: (location.altitudeMeters ?? 0) + CAMERA_EYE_HEIGHT_METERS,
+    // resolveObserverAltitudeと同じ計算に統一する（GPS高度→地形高→安全な
+    // 既定値30mの順でフォールバックする）。以前はここだけ0mへ単純フォール
+    // バックしており、GPS高度欠測時にAR系の中で基準がバラついていた。
+    height: resolveObserverAltitude(viewer, location, eyeHeightMeters),
     label: "AR現在地",
   };
 }
@@ -233,6 +243,7 @@ type Props = {
   opacity: number;
   accuracyMode: AccuracyMode;
   cesiumIonToken: string | undefined;
+  lensCenterHeightMeters: number;
   onStatusChange?: (message: string) => void;
 };
 
@@ -250,6 +261,7 @@ export function ArCesiumOverlay({
   opacity,
   accuracyMode,
   cesiumIonToken,
+  lensCenterHeightMeters,
   onStatusChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -294,7 +306,7 @@ export function ArCesiumOverlay({
       },
     } as const;
 
-    // メインの3Dマップ（標準＝国土地理院＋PLATEAU／高精度＝Google Photorealistic
+    // メインの3Dマップ（標準＝国土地理院＋PLATEAU／Googleタイル＝Google Photorealistic
     // 3D Tiles）と同じソースをAR側でも表示する。GSI/PLATEAUは地表判定（高度の
     // フォールバック等）にも使うためglobeを維持するが、Googleタイルは
     // メインマップと同様globe非表示でタイルセットのみを描画する。
@@ -360,7 +372,7 @@ export function ArCesiumOverlay({
 
     async function createGoogleViewer(container: HTMLDivElement): Promise<Viewer> {
       if (!cesiumIonToken) {
-        throw new Error("高精度3D表示に必要なCesium ion設定が不足しています");
+        throw new Error("Googleタイルモードの3D表示に必要なCesium ion設定が不足しています");
       }
 
       // メイン3Dマップと同じセッションID・上限カウントの仕組みを流用するため、
@@ -448,6 +460,10 @@ export function ArCesiumOverlay({
       viewerRef.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
     };
+    // projectionは意図的に依存配列へ含めない。ここでは新規Viewer作成時の
+    // 初期FOV設定にのみ使う。ズーム操作等でのprojection変化への追従は、
+    // 下のuseEffect（[projection, ready]）がViewerを再生成せずに行う。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, accuracyMode, cesiumIonToken, onStatusChange]);
 
   useEffect(() => {
@@ -463,7 +479,7 @@ export function ArCesiumOverlay({
     const pose = orientationToCesiumPose(orientation);
     if (!pose) return;
 
-    const altitude = resolveObserverAltitude(viewer, location);
+    const altitude = resolveObserverAltitude(viewer, location, lensCenterHeightMeters);
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(location.longitude, location.latitude, altitude),
       orientation: {
@@ -473,7 +489,7 @@ export function ArCesiumOverlay({
       },
     });
     viewer.scene.requestRender();
-  }, [location, orientation, ready]);
+  }, [location, orientation, ready, lensCenterHeightMeters]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -513,7 +529,7 @@ export function ArCesiumOverlay({
       return;
     }
 
-    const observerPoint = observerPointFromArLocation(location);
+    const observerPoint = observerPointFromArLocation(viewer, location, lensCenterHeightMeters);
     const observerCartesian = Cartesian3.fromDegrees(
       observerPoint.longitude,
       observerPoint.latitude,
@@ -639,6 +655,7 @@ export function ArCesiumOverlay({
     refractionWeather,
     timeZone,
     visibility,
+    lensCenterHeightMeters,
   ]);
 
   return (

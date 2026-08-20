@@ -9,11 +9,11 @@ type AndroidRearCamera = {
   activeArrayHeightPx: number | null;
 };
 
-type KsgCameraInfoPlugin = {
+type AstroSightCameraInfoPlugin = {
   getRearCameras(): Promise<{ cameras: AndroidRearCamera[] }>;
 };
 
-const NativeCameraInfo = registerPlugin<KsgCameraInfoPlugin>("KsgCameraInfo");
+const NativeCameraInfo = registerPlugin<AstroSightCameraInfoPlugin>("AstroSightCameraInfo");
 
 export async function getAndroidRearCameraInfo(): Promise<AndroidRearCamera[]> {
   if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") return [];

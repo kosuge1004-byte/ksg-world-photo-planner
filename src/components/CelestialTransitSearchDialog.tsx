@@ -40,10 +40,10 @@ import {
 } from "../search/searchProgress";
 
 const PERIODS: Array<{ value: SpotSearchPeriod; label: string }> = [
-  { value: "1-month", label: "30日" },
-  { value: "3-months", label: "90日" },
-  { value: "6-months", label: "180日" },
-  { value: "1-year", label: "365日" },
+  { value: "1-month", label: "1か月" },
+  { value: "3-months", label: "3か月" },
+  { value: "6-months", label: "6か月" },
+  { value: "1-year", label: "12か月" },
   { value: "custom", label: "指定期間" },
 ];
 
@@ -183,7 +183,7 @@ export function CelestialTransitSearchDialog({
         precisionSettings.refractionCorrectionMode === "auto" &&
         refractionWeather.effectiveMode !== "weather"
       ) {
-        throw new Error("高精度の気象データを取得できませんでした");
+        throw new Error("Googleタイルモードで必要な気象データを取得できませんでした");
       }
       if (
         precisionSettings.refractionCorrectionMode === "auto" &&

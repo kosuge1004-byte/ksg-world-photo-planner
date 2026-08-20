@@ -261,6 +261,14 @@ const OPEN_PUBLIC_LAND_TAGS: ReadonlyArray<readonly [string, string]> = [
   ["landuse", "riverbank"],
   ["natural", "beach"],
   ["leisure", "park"],
+  // 駐車場（amenity=parking）。私有地扱いのもの（access/footが制限値）は
+  // 下のチェックで除外される。
+  ["amenity", "parking"],
+  // 運動場・競技場・グラウンド等の公共スポーツ施設用地。
+  ["leisure", "pitch"],
+  ["leisure", "sports_centre"],
+  ["leisure", "stadium"],
+  ["leisure", "track"],
 ];
 
 /**
@@ -526,6 +534,13 @@ function queryForPoints(
       `way${aroundAccess}["landuse"="riverbank"]`,
       `way${aroundAccess}["natural"="beach"]`,
       `way${aroundAccess}["leisure"="park"]`,
+      // 駐車場・運動場等（landuse=riverbank等と同じく、歩道が無くても
+      // 面の内側であれば歩行可能とみなす対象）。
+      `way${aroundAccess}["amenity"="parking"]`,
+      `way${aroundAccess}["leisure"="pitch"]`,
+      `way${aroundAccess}["leisure"="sports_centre"]`,
+      `way${aroundAccess}["leisure"="stadium"]`,
+      `way${aroundAccess}["leisure"="track"]`,
     ];
     const detailStatements = [
       `nwr${aroundLandmark}["amenity"="place_of_worship"]`,

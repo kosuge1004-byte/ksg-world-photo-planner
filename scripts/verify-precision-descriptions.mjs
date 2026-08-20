@@ -16,7 +16,7 @@ for (const [expected, label] of [
   ["Google Photorealistic 3D Tilesを使用しません", "standard mode"],
   ["遮蔽判定・最終確認は標準モードと同じくDEM地形のみ", "highest mode"],
   ["DEM（地形の高さデータ）", "DEM"],
-  ["Google 3D（建物を含む立体データ）", "Google 3D"],
+  ["PLATEAU（建物を含む立体データ、オープンデータ）", "PLATEAU height"],
   ["利用できる天気データで空気による光の曲がりを補正します", "automatic refraction"],
   ["一般的な気温・気圧を使って補正します", "standard refraction"],
   ["天文学上の位置を表示します", "no refraction"],

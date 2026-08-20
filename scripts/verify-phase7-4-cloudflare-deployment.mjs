@@ -6,10 +6,22 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 const exists = (p) => fs.existsSync(path.join(root, p));
 const fail = (message) => { throw new Error(message); };
+// wrangler.jsonc / wrangler.spot-search.jsonc はJSONC（行コメント付き）で
+// 書かれているため、素のJSON.parseでは構文エラーになる。パース前に
+// 行コメント（// ...）だけを取り除く。文字列内の "//" は対象にしない
+// よう、行頭からの空白＋//で始まる行、または末尾の // コメントのみを除去する。
+const parseJsonc = (text) =>
+  JSON.parse(
+    text
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.replace(/(^|[^:"])\/\/.*$/, (match, prefix) => prefix))
+      .join("\n")
+  );
 
 const packageJson = JSON.parse(read("package.json"));
-const pages = JSON.parse(read("wrangler.jsonc"));
-const consumer = JSON.parse(read("wrangler.spot-search.jsonc"));
+const pages = parseJsonc(read("wrangler.jsonc"));
+const consumer = parseJsonc(read("wrangler.spot-search.jsonc"));
 const envSource = read("functions/_shared/env.ts");
 const headers = read("public/_headers");
 const redirects = read("public/_redirects");

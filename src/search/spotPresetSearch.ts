@@ -25,6 +25,7 @@ import type {
   SunSearchTiming,
 } from "../types/search";
 import {
+  addLocalMonths,
   dateFromZonedDateTimeLocal,
   dateTextFromDaySerial,
   daySerialFromDateText,
@@ -237,7 +238,10 @@ export async function resolveSpotLocation(
   });
   const directResponse = await fetch(
     `https://nominatim.openstreetmap.org/search?${parameters}`,
-    { headers: { Accept: "application/json" }, signal }
+    {
+      headers: { Accept: "application/json" },
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    }
   );
   if (!directResponse.ok) {
     throw new Error(`地名検索通信エラー：${directResponse.status}`);
@@ -265,27 +269,6 @@ export async function resolveSpotTimeZone(
     }
     return fallback;
   }
-}
-
-function addLocalMonths(date: Date, months: number, timeZone: string): Date {
-  const local = zonedDateTimeLocalFromDate(date, timeZone);
-  const [dateText, timeText] = local.split("T");
-  const [year, month, day] = dateText.split("-").map(Number);
-  const targetMonthStart = new Date(Date.UTC(year, month - 1 + months, 1));
-  const targetYear = targetMonthStart.getUTCFullYear();
-  const targetMonthIndex = targetMonthStart.getUTCMonth();
-  const lastTargetDay = new Date(
-    Date.UTC(targetYear, targetMonthIndex + 1, 0)
-  ).getUTCDate();
-  const shifted = new Date(
-    Date.UTC(targetYear, targetMonthIndex, Math.min(day, lastTargetDay))
-  );
-  const shiftedDate = [
-    shifted.getUTCFullYear(),
-    String(shifted.getUTCMonth() + 1).padStart(2, "0"),
-    String(shifted.getUTCDate()).padStart(2, "0"),
-  ].join("-");
-  return dateFromZonedDateTimeLocal(`${shiftedDate}T${timeText}`, timeZone);
 }
 
 function addLocalDays(date: Date, days: number, timeZone: string): Date {

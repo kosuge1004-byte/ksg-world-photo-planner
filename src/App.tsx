@@ -22,7 +22,6 @@ import "./App.css";
 import { CelestialMenu } from "./components/CelestialMenu";
 import { LightPollutionTileOverlay } from "./components/LightPollutionTileOverlay";
 import { CelestialOverlay } from "./components/CelestialOverlay";
-import { CelestialOcclusionStatus } from "./components/CelestialOcclusionStatus";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { Map2DOverlay } from "./components/Map2DOverlay";
 import { Map2DInteractionLayer } from "./components/Map2DInteractionLayer";
@@ -122,7 +121,8 @@ import {
   setTripodPinFromExplicit3dPick,
   updateTripodDistanceLabel,
 } from "./cesium/tripodPin";
-import { resolveGroundPoint } from "./height/heightResolver";
+import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
+import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
 import { cartesianToForegroundCoordinates, enableForegroundObjectDrag, updateForegroundObjectEntity } from "./cesium/foregroundObject";
 
@@ -396,7 +396,7 @@ function App() {
   const [userNotice, setUserNotice] = useState<AppNotice | null>(null);
   const [mapInitializationAttempt, setMapInitializationAttempt] = useState(0);
   const [tripodCandidateRetrySequence, setTripodCandidateRetrySequence] = useState(0);
-  const [occlusionRetrySequence, setOcclusionRetrySequence] = useState(0);
+  const [occlusionRetrySequence] = useState(0);
   const [previewRetrySequence, setPreviewRetrySequence] = useState(0);
   const [highestPrecisionProgress, setHighestPrecisionProgress] =
     useState<HighestPrecisionProgress | null>(null);
@@ -477,6 +477,7 @@ function App() {
   const plannedForegroundHeightCmRef = useRef(DEFAULT_FOREGROUND_HEIGHT_CM);
   const foregroundTerrainTimerRef = useRef<number | null>(null);
   const foregroundTerrainRequestRef = useRef(0);
+  const geoidBackfillRequestRef = useRef(0);
   const currentLocationRequestRef = useRef(0);
   const currentLocationMessageTimerRef = useRef<number | null>(null);
   const [currentLocationPending, setCurrentLocationPending] = useState(false);
@@ -1127,7 +1128,7 @@ function App() {
     const accuracyMode = precisionSettings.accuracyMode;
 
     if (accuracyMode === "highest" && !token) {
-      const message = "高精度3D地図を開始するためのアプリ設定が不足しています。標準モードは利用できます。";
+      const message = "Googleタイルモードの3D地図を開始するためのアプリ設定が不足しています。標準モードは利用できます。";
       console.warn("Cesium Ion token is not configured; highest precision map is unavailable");
       setStatus(message);
       showUserNotice({
@@ -1238,7 +1239,7 @@ function App() {
 
   useEffect(() => {
     // Google Photorealistic 3D Tilesには外部WMTSを直接ドレープできないため、
-    // 高精度3D中に光害マップを有効化した場合は、位置が正確に一致する2D表示へ切り替える。
+    // Googleタイルモードの3D中に光害マップを有効化した場合は、位置が正確に一致する2D表示へ切り替える。
     if (
       lightPollutionEnabled &&
       precisionSettings.accuracyMode === "highest" &&
@@ -1395,7 +1396,7 @@ function App() {
       return;
     }
     if (timelineInteracting) {
-      // スクロール中は座標描画を優先し、地形・建物の高精度判定は停止後に行う。
+      // スクロール中は座標描画を優先し、地形・建物の詳細判定は停止後に行う。
       setCelestialOcclusion({});
       return;
     }
@@ -1450,13 +1451,10 @@ function App() {
               failedCelestialOcclusion(message),
             ])
           ));
-          showUserNotice({
-            key: "celestial-occlusion",
-            tone: "warning",
-            message: "地形・建物の遮蔽物確認を完了できませんでした。天体は未確認として表示しています。",
-            actionLabel: "再試行",
-            onAction: () => setOcclusionRetrySequence((current) => current + 1),
-          });
+          // プレビュー画面へのポップアップ表示は行わない。判定が完了しな
+          // かった天体は、未検証（失敗）状態として円盤を通常表示のまま
+          // 扱う（isCelestialOcclusionConfirmedHiddenがfailed状態を隠れ
+          // 確定としないため、静かにフォールバックする）。
         }
       });
     }, 150);
@@ -1594,7 +1592,8 @@ function App() {
           subjectPoint.latitude,
           subjectPoint.height
         ),
-        subjectPoint.label
+        subjectPoint.label,
+        subjectPoint
       );
     }
     if (tripodPoint) {
@@ -1604,7 +1603,8 @@ function App() {
           tripodPoint.longitude,
           tripodPoint.latitude,
           tripodPoint.height
-        )
+        ),
+        tripodPoint
       );
     }
   }, [mapReady, subjectPoint, tripodPoint]);
@@ -1768,8 +1768,7 @@ function App() {
             subjectPoint,
             cameraSettings,
             calculationMode,
-            previewViewCorrection,
-            celestialPoints
+            previewViewCorrection
           );
 
           if (!cancelled && jobId === previewJobRef.current) {
@@ -1829,7 +1828,6 @@ function App() {
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
-    celestialPoints,
   ]);
 
   function stopPlacementMode() {
@@ -1903,10 +1901,12 @@ function App() {
     // 検索・URL・座標入力ではまずDEM（地面）で確定する。
     const groundPoint = await resolveGroundPoint(latitude, longitude, label);
     // その上で、その地点に建物があれば屋根面へ合わせる。標準モードは表示用に
-    // 読み込まれているPLATEAU建物へ垂直レイを通す。高精度モードはGoogleタイルの
-    // 形状データを規約上読み取れないため、この判定専用に完全透明なPLATEAU建物を
-    // 別途読み込んでから同じ判定を行う（画面の見た目はGoogleタイルのまま）。
-    // 建物が無い・接地点を検証できない場合は、DEM地面の値のまま変更しない。
+    // 読み込まれているPLATEAU建物へclampToHeightMostDetailed
+    // （Cesium標準の表面クランプAPI。手動3Dタップと同じ方式）を1回のバッチ
+    // 呼び出しで通す。Googleタイルモードはその形状データを規約上
+    // 読み取れないため、この判定専用に完全透明なPLATEAU建物を別途読み込んで
+    // から同じ判定を行う（画面の見た目はGoogleタイルのまま）。建物が無い・
+    // 検証できない場合は、DEM地面の値のまま変更しない。
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) return groundPoint;
     try {
@@ -2149,7 +2149,8 @@ ${diagnosticMessage}
             subject.latitude,
             subject.height
           ),
-          subject.label
+          subject.label,
+          subject
         )
       : subject;
     const center = {
@@ -2174,7 +2175,8 @@ ${diagnosticMessage}
     const pinned = setSubjectPinFromPosition(
       viewer,
       Cartesian3.fromDegrees(record.longitude, record.latitude, record.height),
-      record.label
+      record.label,
+      record
     );
     const center = { latitude: pinned.latitude, longitude: pinned.longitude };
     setSubjectPoint(pinned);
@@ -2211,7 +2213,7 @@ ${diagnosticMessage}
     if (precisionSettings.accuracyMode === "highest") {      setSpotSearchOpen(false);
       setHighestPrecisionProgress({
         percent: 2,
-        message: "三脚位置を高精度計算中",
+        message: "三脚位置をGoogleタイルモードで計算中",
       });
       try {
         const refined = await refineSpotPresetHighestPrecision(
@@ -2232,7 +2234,7 @@ ${diagnosticMessage}
           tripod: refined.tripod,
         };
       } catch (error) {
-        console.warn("最高精度処理を完了できませんでした", error);
+        console.warn("Googleタイルモード処理を完了できませんでした", error);
         setHighestPrecisionProgress(null);
         const message = toUserFacingErrorMessage(error, "highest-precision");
         setSearchMessage(message);
@@ -2246,9 +2248,10 @@ ${diagnosticMessage}
         return;
       }
     }
-    // 標準モード：高精度モードのGoogle 3Dクランプに相当する処理として、
-    // PLATEAU建物をGSI DEMで地点ごとに検証した上で被写体を屋根面へ合わせる
-    // （建物が無い・検証できない場合はDEM地面のまま変更しない）。
+    // 標準モード：GoogleタイルモードのGoogle 3Dクランプに相当する処理として、
+    // PLATEAU建物をclampToHeightMostDetailedで1回のバッチ呼び出しにより
+    // 屋根面へ合わせる（建物が無い・検証できない場合はDEM地面のまま変更
+    // しない）。
     if (precisionSettings.accuracyMode !== "highest") {
       try {
         const roofPoint = await resolvePlateauRoofGroundPoint(
@@ -2268,11 +2271,13 @@ ${diagnosticMessage}
     const subject = setSubjectPinFromPosition(
       viewer,
       Cartesian3.fromDegrees(appliedResult.subject.longitude, appliedResult.subject.latitude, appliedResult.subject.height),
-      appliedResult.subject.label
+      appliedResult.subject.label,
+      appliedResult.subject
     );
     const tripod = setTripodPin(
       viewer,
-      Cartesian3.fromDegrees(appliedResult.tripod.longitude, appliedResult.tripod.latitude, appliedResult.tripod.height)
+      Cartesian3.fromDegrees(appliedResult.tripod.longitude, appliedResult.tripod.latitude, appliedResult.tripod.height),
+      appliedResult.tripod
     );
     const localizedDate = zonedDateTimeLocalFromDate(appliedResult.date, appliedResult.timeZone);
     setSubjectPoint(subject);
@@ -2299,7 +2304,7 @@ ${diagnosticMessage}
     setHighestPrecisionProgress(null);
     setSearchMessage(
       precisionSettings.accuracyMode === "highest"
-        ? `${appliedResult.celestialLabel}の高精度構図を適用しました`
+        ? `${appliedResult.celestialLabel}のGoogleタイルモード構図を適用しました`
         : `${appliedResult.celestialLabel}の構図を適用しました`
     );
   }
@@ -2313,7 +2318,7 @@ ${diagnosticMessage}
     setProjectSaveOpen(true);
   }
 
-  function saveCurrentCompositionFromAr(): void {
+  async function saveCurrentCompositionFromAr(): Promise<void> {
     if (!subjectPoint) {
       setSearchMessage("保存するには被写体を設定してください");
       return;
@@ -2323,10 +2328,18 @@ ${diagnosticMessage}
       setSearchMessage("現在地を取得してから保存してください");
       return;
     }
+    // GPSが高度を取得できない場合はDEM（地形データ）へフォールバックする。
+    // 0mへ単純フォールバックすると、保存した撮影計画へ実際の地表と大きく
+    // 異なる高度が恒久的に入ってしまうため。
+    const height = location.altitudeMeters ?? (
+      await resolveGroundPoint(location.latitude, location.longitude, "AR現在地")
+        .then((point) => point.height)
+        .catch(() => 0)
+    );
     setProjectSaveTripodOverride({
       latitude: location.latitude,
       longitude: location.longitude,
-      height: location.altitudeMeters ?? 0,
+      height,
       label: "AR現在地",
     });
     setProjectSaveOpen(true);
@@ -2364,9 +2377,44 @@ ${diagnosticMessage}
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) { setSearchMessage("マップの読込完了後にプロジェクトを読み込んでください"); return; }
     stopAllEditModes();
-    const subject = setSubjectPinFromPosition(viewer, Cartesian3.fromDegrees(project.subject.longitude, project.subject.latitude, project.subject.height), project.subject.label);
-    const tripod = setTripodPin(viewer, Cartesian3.fromDegrees(project.tripod.longitude, project.tripod.latitude, project.tripod.height));
+    const subject = setSubjectPinFromPosition(viewer, Cartesian3.fromDegrees(project.subject.longitude, project.subject.latitude, project.subject.height), project.subject.label, project.subject);
+    const tripod = setTripodPin(viewer, Cartesian3.fromDegrees(project.tripod.longitude, project.tripod.latitude, project.tripod.height), project.tripod);
     setSubjectPoint(subject); setTripodPoint(tripod);
+    // 旧形式（ジオイド高・標高フィールド未保存）のプロジェクトは、標高が
+    // 楕円体高のまま扱われ、日本国内で約30〜40mの系統誤差になりうる。
+    // 楕円体高（3D位置）自体は保存済みの値のまま変更せず、ジオイド高だけを
+    // 取得し直して標高を補正する。
+    const geoidBackfillRequestId = ++geoidBackfillRequestRef.current;
+    if (!isResolvedGroundPoint(subject)) {
+      void resolveGroundPointFrom3dSurface(
+        Cartesian3.fromDegrees(subject.longitude, subject.latitude, subject.height),
+        subject.label
+      ).then((resolved) => {
+        if (geoidBackfillRequestId !== geoidBackfillRequestRef.current) return;
+        setSubjectPoint((current) =>
+          current && current.latitude === subject.latitude && current.longitude === subject.longitude
+            ? resolved
+            : current
+        );
+      }).catch((error: unknown) => {
+        console.warn("旧形式プロジェクトの被写体標高を補正できませんでした", error);
+      });
+    }
+    if (!isResolvedGroundPoint(tripod)) {
+      void resolveGroundPointFrom3dSurface(
+        Cartesian3.fromDegrees(tripod.longitude, tripod.latitude, tripod.height),
+        tripod.label
+      ).then((resolved) => {
+        if (geoidBackfillRequestId !== geoidBackfillRequestRef.current) return;
+        setTripodPoint((current) =>
+          current && current.latitude === tripod.latitude && current.longitude === tripod.longitude
+            ? resolved
+            : current
+        );
+      }).catch((error: unknown) => {
+        console.warn("旧形式プロジェクトの三脚標高を補正できませんでした", error);
+      });
+    }
     const loadedForegroundObjects = (project.foregroundObjects ?? []).map((object) => ({
       ...object,
       type: "person" as const,
@@ -2512,11 +2560,13 @@ ${diagnosticMessage}
       const subjectPin = setSubjectPinFromPosition(
         viewer,
         Cartesian3.fromDegrees(subject.longitude, subject.latitude, subject.height),
-        subject.label
+        subject.label,
+        subject
       );
       const tripodPin = setTripodPin(
         viewer,
-        Cartesian3.fromDegrees(tripod.longitude, tripod.latitude, tripod.height)
+        Cartesian3.fromDegrees(tripod.longitude, tripod.latitude, tripod.height),
+        tripod
       );
       setSubjectPoint(subjectPin);
       setTripodPoint(tripodPin);
@@ -2654,7 +2704,8 @@ ${diagnosticMessage}
             setSubjectPinFromPosition(
               viewer,
               Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-              point.label
+              point.label,
+              point
             );
           }
           setSubjectPoint(point);
@@ -2880,7 +2931,8 @@ ${diagnosticMessage}
           if (offsetMeters !== 0) {
             setTripodPin(
               viewer,
-              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
+              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+              point
             );
           }
           setTripodPoint(point);
@@ -2964,7 +3016,8 @@ ${diagnosticMessage}
           setSubjectPinFromPosition(
             viewer,
             Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-            point.label
+            point.label,
+            point
           );
         }
         setSubjectPoint(point);
@@ -2992,7 +3045,8 @@ ${diagnosticMessage}
         if (offsetMeters !== 0 && viewer && !viewer.isDestroyed()) {
           setTripodPin(
             viewer,
-            Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
+            Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+            point
           );
         }
         setTripodPoint(point);
@@ -3038,7 +3092,8 @@ ${diagnosticMessage}
         setSubjectPinFromPosition(
           viewer,
           Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-          point.label
+          point.label,
+          point
         );
       }
       setSubjectPoint(point);
@@ -3383,7 +3438,7 @@ ${diagnosticMessage}
     setCameraSettings((current) => ({ ...current, focalLengthMm }));
   }
 
-  const openArTransitSearch = useCallback(() => {
+  const openArTransitSearch = useCallback(async () => {
     if (!subjectPoint) {
       setSearchMessage("被写体を設定してください");
       return;
@@ -3394,11 +3449,19 @@ ${diagnosticMessage}
       setSearchMessage("現在地を取得してから検索してください");
       return;
     }
+    // GPSが高度を取得できない端末・状況では、地形データ（DEM）から
+    // その地点の標高を求める。0mへ単純フォールバックすると、山地等で
+    // 検索基準の高度が実際の地表から大きくズレるため。
+    const height = location.altitudeMeters ?? (
+      await resolveGroundPoint(location.latitude, location.longitude, "AR検索開始位置")
+        .then((point) => point.height)
+        .catch(() => 0)
+    );
     // GPSの揺れで検索基準が動かないよう、検索ボタンを押した瞬間の現在地を固定する。
     setArSearchTripod({
       latitude: location.latitude,
       longitude: location.longitude,
-      height: location.altitudeMeters ?? 0,
+      height,
       label: "AR検索開始位置",
     });
 
@@ -3464,6 +3527,28 @@ ${diagnosticMessage}
       ? `${candidate.label}の方位上にある三脚確認地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。プレビューと現地の見通しを確認してください`
       : `${candidate.label}と被写体が画角内で重なる三脚候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）`
     );
+    // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
+    // ここで確定後に正式なDEM/ジオイド解決へ差し替える
+    // （loadPlannerProjectの旧形式データ補正と同じ考え方）。
+    // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
+    // ここで確定後に正式なDEM/ジオイド解決へ差し替える
+    // （loadPlannerProjectの旧形式データ補正と同じ考え方）。
+    // candidate.heightをそのまま信用しない：方位のみ候補はDEM取得に失敗
+    // した場合「仮の0m」のまま返ってくることがある（B-09）ため、位置・
+    // 高さの両方をここで正式に再解決する。
+    const requestId = ++geoidBackfillRequestRef.current;
+    void resolveGroundPoint(candidate.latitude, candidate.longitude, candidate.label)
+      .then((resolved) => {
+        if (requestId !== geoidBackfillRequestRef.current) return;
+        setTripodPoint((current) =>
+          current && current.latitude === point.latitude && current.longitude === point.longitude
+            ? resolved
+            : current
+        );
+      })
+      .catch((error: unknown) => {
+        console.warn("三脚候補の標高を確定できませんでした", error);
+      });
   }
 
 
@@ -3501,6 +3586,7 @@ ${diagnosticMessage}
         subjectPoint={subjectPoint}
         accuracyMode={precisionSettings.accuracyMode}
         cesiumIonToken={import.meta.env.VITE_CESIUM_ION_TOKEN}
+        lensCenterHeightMeters={cameraSettings.lensCenterHeightMeters}
         onClose={() => setArCameraOpen(false)}
         onSaveCurrentPlan={saveCurrentCompositionFromAr}
         onChangeDateTime={setDateTimeLocal}
@@ -3549,25 +3635,13 @@ ${diagnosticMessage}
             distanceMeters={previewMeasureDistanceMeters}
           />
 
-          <div
-            className="celestial-overlay-opacity-wrap"
-            style={{ opacity: timelineInteracting ? celestialDragOpacity : 1 }}
-          >
-            <CelestialOverlay
-              points={celestialPoints}
-              tracks={celestialTracks}
-              milkyWayPath={visibleMilkyWayPath}
-              visibility={celestialVisibility}
-              occlusion={celestialOcclusion}
-              physicalDiscsBakedIntoScene={!timelineInteracting}
-            />
-          </div>
-
-          <CelestialOcclusionStatus
+          <CelestialOverlay
+            points={celestialPoints}
+            tracks={celestialTracks}
+            milkyWayPath={visibleMilkyWayPath}
             visibility={celestialVisibility}
             occlusion={celestialOcclusion}
-            points={celestialPoints}
-            refractionWeather={previewRefractionWeather}
+            discOpacity={celestialDragOpacity}
           />
 
           <ForegroundPreviewOverlay
@@ -3995,9 +4069,9 @@ ${diagnosticMessage}
           className="highest-precision-progress"
           role="dialog"
           aria-modal="true"
-          aria-label="三脚位置を高精度計算中"
+          aria-label="三脚位置をGoogleタイルモードで計算中"
         >
-          <strong>三脚位置を高精度計算中</strong>
+          <strong>三脚位置をGoogleタイルモードで計算中</strong>
           <span>{highestPrecisionProgress.message}</span>
           <progress max={100} value={highestPrecisionProgress.percent} />
           <small>{highestPrecisionProgress.percent}%</small>
@@ -4093,7 +4167,6 @@ ${diagnosticMessage}
         initialFocalLengthMm={cameraSettings.focalLengthMm}
         initialDate={selectedDate}
         initialTimeZone={timeZone}
-        precisionSettings={precisionSettings}
         onBack={() => setSpotSearchOpen(false)}
         onSearch={searchFromSpotScreen}
         onResumeSearch={resumeSpotSearch}

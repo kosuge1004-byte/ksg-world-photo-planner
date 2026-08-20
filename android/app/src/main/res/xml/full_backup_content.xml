@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11（API 30）以前向けのバックアップルール（B-19）。
+  data_extraction_rules.xmlと同じ方針：キャッシュ・一時ファイルは除外し、
+  WebViewに保存された撮影計画・お気に入り地点は復元対象として残す。
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="."/>
+    <exclude domain="database" path="webview_cache"/>
+    <exclude domain="root" path="cache"/>
+    <exclude domain="root" path="code_cache"/>
+    <exclude domain="file" path="webview_cache"/>
+</full-backup-content>

@@ -9,6 +9,12 @@ import {
 import { errorMessage, jsonResponse } from "../_shared/http.ts";
 import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
+// クライアント側の実際の最大利用規模（地形稜線の粗走査1方位あたり最大112点、
+// 複数天体を同時判定してもマイクロタスク単位でまとめて数百点程度）に対して
+// 十分な余裕を持たせた上限。これを超える1リクエストは通常の利用では発生
+// せず、大量投入による負荷（CPU・外部通信・R2キャッシュ）だけを弾く。
+const MAX_POINTS_PER_REQUEST = 2000;
+
 function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body)) return null;
   if (!Array.isArray(body.points)) return null;
@@ -36,6 +42,13 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     const points = requestPoints(await context.request.json());
     if (!points) {
       return jsonResponse({ error: "座標の配列がありません" }, 400, "no-store");
+    }
+    if (points.length > MAX_POINTS_PER_REQUEST) {
+      return jsonResponse(
+        { error: `座標は1リクエストあたり最大${MAX_POINTS_PER_REQUEST}件までです` },
+        400,
+        "no-store"
+      );
     }
     const cacheKeyInput = points.map((point) => ({
       latitude: Number(point.latitude.toFixed(5)),

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { resolveGroundPoint } from "../height/heightResolver";
 import type { CalculationMode } from "../types/camera";
 import type { CelestialVisibility } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
@@ -42,6 +43,7 @@ type Props = {
   subjectPoint: GroundPoint | null;
   accuracyMode: AccuracyMode;
   cesiumIonToken: string | undefined;
+  lensCenterHeightMeters: number;
   onClose: () => void;
   onSaveCurrentPlan: () => void;
   onChangeDateTime: (value: string) => void;
@@ -68,6 +70,7 @@ export function ArCameraScreen({
   subjectPoint,
   accuracyMode,
   cesiumIonToken,
+  lensCenterHeightMeters,
   onClose,
   onSaveCurrentPlan,
   onChangeDateTime,
@@ -89,6 +92,11 @@ export function ArCameraScreen({
   const [mapOpacity, setMapOpacity] = useState(0.42);
   const [arMapStatus, setArMapStatus] = useState("AR 3D地図を準備しています…");
   const [arLocation, setArLocation] = useState<ArDeviceLocation | null>(null);
+  // GPSが高度を取得できない端末・状況でのフォールバック用DEM標高。
+  // arLocationは位置情報の更新のたびに変わるため、更新ごとにDEMへ問い合わせる
+  // のは避け、セッション中に一度だけ取得してキャッシュする
+  // （同一セッション内で地表の標高が大きく変わることは想定しない）。
+  const [demFallbackAltitudeMeters, setDemFallbackAltitudeMeters] = useState<number | null>(null);
   const [arOrientation, setArOrientation] = useState<ArDeviceOrientation | null>(null);
   const [trackingMessage, setTrackingMessage] = useState("現在地・方位を準備しています…");
   const locationRef = useRef<ArDeviceLocation | null>(null);
@@ -106,6 +114,9 @@ export function ArCameraScreen({
     }
 
     const generation = ++generationRef.current;
+    // cleanup内でref.currentを直接参照すると、実行時点で別のノードに
+    // 差し替わっている可能性があるため、effect開始時点の値を変数へ複製する。
+    const videoElement = videoRef.current;
     let disposed = false;
 
     async function start() {
@@ -184,7 +195,7 @@ export function ArCameraScreen({
       generationRef.current += 1;
       stopCameraStream(streamRef.current);
       streamRef.current = null;
-      const video = videoRef.current;
+      const video = videoElement;
       if (video) video.srcObject = null;
       setCameraProjection(null);
       onCameraProjectionChange?.(null);
@@ -252,8 +263,33 @@ export function ArCameraScreen({
     };
   }, [open, onTrackingChange]);
 
+  useEffect(() => {
+    setDemFallbackAltitudeMeters(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!arLocation || arLocation.altitudeMeters !== null) return;
+    if (demFallbackAltitudeMeters !== null) return;
+    let cancelled = false;
+    void resolveGroundPoint(arLocation.latitude, arLocation.longitude, "AR現在地")
+      .then((point) => {
+        if (!cancelled) setDemFallbackAltitudeMeters(point.height);
+      })
+      .catch(() => {
+        // 取得できなければ0mのまま（従来どおり）。再試行は次回のGPS更新を待つ。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [arLocation, demFallbackAltitudeMeters]);
+
   const liveTimelineLocation: GroundPoint | null = arLocation
-    ? { latitude: arLocation.latitude, longitude: arLocation.longitude, height: arLocation.altitudeMeters ?? 0, label: "AR現在地" }
+    ? {
+        latitude: arLocation.latitude,
+        longitude: arLocation.longitude,
+        height: arLocation.altitudeMeters ?? demFallbackAltitudeMeters ?? 0,
+        label: "AR現在地",
+      }
     : timelineLocation;
 
   if (!open) return null;
@@ -277,6 +313,7 @@ export function ArCameraScreen({
           subjectPoint={subjectPoint}
           accuracyMode={accuracyMode}
           cesiumIonToken={cesiumIonToken}
+          lensCenterHeightMeters={lensCenterHeightMeters}
           dateTimeLocal={dateTimeLocal}
           timeZone={timeZone}
           calculationMode={calculationMode}

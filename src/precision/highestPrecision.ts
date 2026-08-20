@@ -54,7 +54,7 @@ function verifyComposition(
   // withLensCenterHeight()で楕円体高・標高の両方を一貫して更新する
   // （.heightだけを更新するとellipsoidalHeightMeters/orthometricHeightMeters
   // が古い値のまま残り、標高と楕円体高が混在する）。
-  const lens = withLensCenterHeight(candidate, cameraSettings.lensCenterHeightMeters, "高精度三脚レンズ中心");
+  const lens = withLensCenterHeight(candidate, cameraSettings.lensCenterHeightMeters, "Googleタイルモード三脚レンズ中心");
   const celestial = calculateCelestialHorizontalCoordinates(
     result.celestialId,
     result.date,
@@ -127,10 +127,13 @@ function groundPoint(sample: Cartographic, label: string): ResolvedGroundPoint {
 
 function localCandidates(origin: GroundPoint): GroundPoint[] {
   const points: GroundPoint[] = [origin];
-  for (const radius of [5, 10, 15, 20]) {
+  // 「歩行できる場所だけ探す」の判定（isWalkable）は候補地点の周囲25m以内に
+  // 道があるかで判定しているため、この再探索範囲の最大値もそこに合わせる
+  // （最大20mだと25m判定の対象内でも再探索側が届かないケースがあった）。
+  for (const radius of [5, 10, 20, 30]) {
     for (let bearing = 0; bearing < 360; bearing += 30) {
       const coordinate = calculateKarneyDestinationPoint(origin, bearing, radius);
-      points.push({ ...coordinate, height: origin.height, label: "高精度三脚候補" });
+      points.push({ ...coordinate, height: origin.height, label: "Googleタイルモード三脚候補" });
     }
   }
   return points;
@@ -211,7 +214,7 @@ export async function refineSpotPresetHighestPrecision(
     const context = contexts[index];
     return context.walkingAccessible && !context.restrictedAccess && !context.onMotorRoad;
   });
-  if (walkable.length === 0) throw new Error("歩行可能な高精度候補地点がありません");
+  if (walkable.length === 0) throw new Error("歩行可能なGoogleタイルモード候補地点がありません");
 
   reportProgress(38, "最詳細DEMと地点別ジオイドを取得しています");
   const terrainInputs = [result.subject, ...walkable].map((point) =>
@@ -219,7 +222,7 @@ export async function refineSpotPresetHighestPrecision(
   );
   const terrain = await sampleWorldTerrainHighestPrecision(terrainInputs, signal);
   const terrainSubject = groundPoint(terrain[0], result.subject.label);
-  const terrainCandidates = terrain.slice(1).map((sample) => groundPoint(sample, "高精度三脚位置"));
+  const terrainCandidates = terrain.slice(1).map((sample) => groundPoint(sample, "Googleタイルモード三脚位置"));
 
   reportProgress(58, "Google 3D Tiles の最詳細LODを読み込んでいます");
   const [meshSubject, ...meshCandidates] = await clampMostDetailed(
@@ -259,7 +262,7 @@ export async function refineSpotPresetHighestPrecision(
     );
   }
   if (verified.length === 0) {
-    throw new Error("高精度データでは構図の条件を満たす三脚地点を確認できません");
+    throw new Error("Googleタイルモードでは構図の条件を満たす三脚地点を確認できません");
   }
 
   const tripod = verified.reduce((best, candidate) => {
@@ -272,6 +275,6 @@ export async function refineSpotPresetHighestPrecision(
     const candidateOffset = calculateKarneyLineMetrics(result.tripod, candidate.point).distanceMeters;
     return candidateOffset < bestOffset ? candidate : best;
   }).point;
-  reportProgress(100, "高精度座標を確定しました");
+  reportProgress(100, "Googleタイルモードの座標を確定しました");
   return { subject: meshSubject, tripod };
 }

@@ -52,10 +52,6 @@ const cases = [
     arguments: ["./scripts/verify-occlusion-state.mjs"],
   },
   {
-    name: "occlusion reason presentation",
-    arguments: ["./scripts/verify-occlusion-reasons.mjs"],
-  },
-  {
     name: "user-visible errors and fallbacks",
     arguments: ["./scripts/verify-user-error-handling.mjs"],
   },

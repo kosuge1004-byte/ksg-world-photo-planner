@@ -184,7 +184,7 @@ export function TopSettingsBar({
             </>
           )}
           <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
-            <b>精度設定</b><small>屈折補正・遮蔽の詳細設定</small>
+            <b>精度設定</b><small>屈折補正の設定</small>
           </button>
           <button type="button" onClick={() => setThreeDSourceMenuOpen((current) => !current)} aria-expanded={threeDSourceMenuOpen}>
             <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
@@ -305,7 +305,10 @@ export function TopSettingsBar({
                   <b>DEM（地形の高さデータ）</b>、ジオイド、気象補正、天体計算はどちらの表示でも共通です。
                 </small>
                 <small>
-                  <b>Google 3D（建物を含む立体データ）</b>は三脚・被写体の高さと建物の遮蔽確認に使います。詳しいデータほど読込時間と通信量が増える場合があります。
+                  <b>PLATEAU（建物を含む立体データ、オープンデータ）</b>は三脚・被写体の高さ（屋根への合わせ込み）に使います。遮蔽判定には使いません（DEM地形のみで判定します）。
+                </small>
+                <small>
+                  <b>Google Photorealistic 3D Tiles</b>はGoogleタイルモードの3Dマップの見た目にのみ使います（規約により、高さの判定・遮蔽判定には使用しません）。詳しいデータほど読込時間と通信量が増える場合があります。
                 </small>
                 <small>
                   樹木、工事、仮設物など、データに収録されていない障害物は確認できません。

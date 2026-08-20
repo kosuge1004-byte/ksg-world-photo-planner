@@ -14,7 +14,7 @@ type HighPrecisionSessionResponse = {
 };
 
 /**
- * 高精度モード（Google Photorealistic 3D Tiles）のセッション許可を取得する。
+ * Googleタイルモード（Google Photorealistic 3D Tiles）のセッション許可を取得する。
  *
  * localStorageにキャッシュしたsessionIdを使い回すことで、同一セッション内で
  * メイン3DマップとARカメラの両方から呼び出しても、サーバー側の月間利用件数
@@ -42,15 +42,19 @@ export async function authorizeHighPrecisionSession(): Promise<void> {
     sessionId = crypto.randomUUID().replaceAll("-", "");
   }
 
+  // サーバー応答がハングした場合に無期限で待ち続けないよう、タイムアウトを
+  // 設ける（Googleタイルモードへの切替自体が固まって見える不具合の原因の
+  // 1つだった）。
   const response = await fetch("/api/high-precision-session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId }),
+    signal: AbortSignal.timeout(15_000),
   });
   const result = (await response.json()) as HighPrecisionSessionResponse;
   if (!response.ok || !result.allowed) {
     throw new Error(
-      `今月の高精度モード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードをご利用ください。`
+      `今月のGoogleタイルモード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードをご利用ください。`
     );
   }
 

@@ -1,24 +1,12 @@
 import {
   Cartesian3,
-  Color,
-  Matrix4,
   PerspectiveFrustum,
-  Transforms,
   Viewer,
 } from "cesium";
 
 import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
-import type { CelestialScreenPoint } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import { createCameraModel } from "./cameraModelFactory";
 import { setPreviewFromTripodToSubject } from "./camera";
-import { horizontalDirectionToVec3 } from "../projection/projectionService";
-
-const BAKED_CELESTIAL_RAY_METERS = 1_000_000;
-const BAKED_CELESTIAL_ENTITY_PREFIX = "astrosight-preview-baked-celestial-";
-/** このプレビュー静止画には、視覚的な奥行き合成（建物への隠れ方）だけを目的として
- * 太陽・月を焼き込む。判定・計算には一切使わない（あくまで見た目のみ）。 */
-const BAKED_CELESTIAL_IDS: ReadonlyArray<"sun" | "moon"> = ["sun", "moon"];
 
 type CameraState = {
   position: Cartesian3;
@@ -72,50 +60,10 @@ function restoreCamera(
 }
 
 /**
- * 太陽・月を、実際の方位・高度方向へ十分遠方の点として3Dシーンへ一時的に追加する。
- * 深度テストは無効化しない（＝手前に建物があれば自然にその建物へ隠れる）。
- * これは撮影する静止画の「見た目」だけの効果であり、遮蔽の判定・計算には使わない
- * （Google/PLATEAUいずれの3D形状データも読み取らない。通常の描画合成と同じ）。
+ * 太陽・月の3D合成焼き込みは、平面オーバーレイの透明度スライダーと二重表示に
+ * なり、常時オンだと見た目が複雑になりすぎるため撤去した。天体は
+ * CelestialOverlay（平面オーバーレイ）のみで表示する。
  */
-function addBakedCelestialEntities(
-  viewer: Viewer,
-  observerEcef: Cartesian3,
-  points: CelestialScreenPoint[]
-): void {
-  for (const id of BAKED_CELESTIAL_IDS) {
-    const point = points.find((candidate) => candidate.id === id && candidate.visibleInFrame);
-    if (!point) continue;
-    const vec = horizontalDirectionToVec3(point.azimuthDegrees, point.altitudeDegrees);
-    const localDirection = new Cartesian3(vec.x, vec.y, vec.z);
-    const localFrame = Transforms.eastNorthUpToFixedFrame(observerEcef);
-    const worldDirection = Cartesian3.normalize(
-      Matrix4.multiplyByPointAsVector(localFrame, localDirection, new Cartesian3()),
-      new Cartesian3()
-    );
-    const position = Cartesian3.add(
-      observerEcef,
-      Cartesian3.multiplyByScalar(worldDirection, BAKED_CELESTIAL_RAY_METERS, new Cartesian3()),
-      new Cartesian3()
-    );
-    viewer.entities.add({
-      id: `${BAKED_CELESTIAL_ENTITY_PREFIX}${id}`,
-      position,
-      point: {
-        pixelSize: id === "sun" ? 26 : 20,
-        color: id === "sun" ? Color.fromCssColorString("#fff3c4") : Color.fromCssColorString("#e9edf2"),
-        // disableDepthTestDistanceを指定しない＝通常の深度テストのまま。
-        // 手前に建物（PLATEAU／Googleタイル、いずれも表示のみ）があれば隠れる。
-      },
-    });
-  }
-}
-
-function removeBakedCelestialEntities(viewer: Viewer): void {
-  for (const id of BAKED_CELESTIAL_IDS) {
-    const entity = viewer.entities.getById(`${BAKED_CELESTIAL_ENTITY_PREFIX}${id}`);
-    if (entity) viewer.entities.remove(entity);
-  }
-}
 
 export async function captureTripodPreview(
   viewer: Viewer,
@@ -124,8 +72,7 @@ export async function captureTripodPreview(
   subject: GroundPoint,
   settings: CameraSettings,
   calculationMode: CalculationMode,
-  viewCorrection?: CameraViewCorrection,
-  celestialPoints?: CelestialScreenPoint[]
+  viewCorrection?: CameraViewCorrection
 ): Promise<void> {
   if (viewer.isDestroyed()) {
     return;
@@ -166,13 +113,6 @@ export async function captureTripodPreview(
       viewCorrection
     );
 
-    if (celestialPoints && celestialPoints.length > 0) {
-      const { apparent } = createCameraModel(
-        tripod, subject, settings, aspectRatio, calculationMode, viewCorrection
-      );
-      addBakedCelestialEntities(viewer, apparent.observerEcef, celestialPoints);
-    }
-
     // メイン3Dカメラをフレーム間で占有すると、ユーザー操作後に古い姿勢へ
     // 復元されてピンが動いたように見える。撮影と復元を同一タスク内で完了する。
     viewer.scene.render();
@@ -196,7 +136,6 @@ export async function captureTripodPreview(
       previewCanvas.height
     );
   } finally {
-    removeBakedCelestialEntities(viewer);
     for (const item of entityVisibility) {
       item.entity.show = item.show;
     }

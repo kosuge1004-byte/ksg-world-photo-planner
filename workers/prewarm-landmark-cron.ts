@@ -28,6 +28,16 @@ export default {
     env: PrewarmEnv,
     context: ExecutionContext
   ): Promise<void> {
+    if (!env.NETWORK_CACHE) {
+      // R2バインディングが無いと、この実行はDEMを取得するだけで
+      // キャッシュへ何も保存できず、先読みの効果がゼロになる
+      // （B-17）。実際のR2バケット作成はこのWorkerからはできないため、
+      // せめて「今日は無効な状態で実行された」ことをログへ明示する。
+      console.warn(
+        "[prewarm-cron] NETWORK_CACHE（R2）が未設定のため、今回の実行はキャッシュへ保存されません。" +
+          "wrangler.prewarm.jsoncのr2_bucketsを有効化してください。"
+      );
+    }
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
       persistentCache: persistentCacheFromR2(env.NETWORK_CACHE),
@@ -59,6 +69,12 @@ export default {
 
     const targets = selectDailyChunk(PREWARM_LANDMARKS, CHUNK_SIZE);
     const logs: string[] = [`本日の担当分: ${targets.length}件 (${targets.map((t) => t.name).join(", ")})`];
+    if (!env.NETWORK_CACHE) {
+      logs.push(
+        "警告: NETWORK_CACHE（R2）が未設定のため、今回の実行はキャッシュへ保存されません。" +
+          "wrangler.prewarm.jsoncのr2_bucketsを有効化してください。"
+      );
+    }
 
     const { totalAttempts, totalCandidates } = await prewarmMany(targets, (message) => logs.push(message));
 

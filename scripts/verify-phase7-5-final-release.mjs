@@ -10,12 +10,12 @@ const check = (name, fn) => { try { fn(); checks.push({name,status:'PASS'}); } c
 
 check('Capacitor app identity', () => {
   const c = read('capacitor.config.ts');
-  assert(c.includes('appId: "jp.ksg.worldphotoplanner"'), 'appId mismatch');
+  assert(c.includes('appId: "jp.astrosight.app"'), 'appId mismatch');
   assert(c.includes('appName: "AstroSight"'), 'appName mismatch');
   assert(c.includes('webDir: "dist"'), 'webDir mismatch');
 });
 check('Android project structure', () => {
-  for (const p of ['android/gradlew','android/app/build.gradle','android/app/src/main/AndroidManifest.xml','android/app/src/main/java/jp/ksg/worldphotoplanner/MainActivity.java']) assert(existsSync(resolve(root,p)), `${p} missing`);
+  for (const p of ['android/gradlew','android/app/build.gradle','android/app/src/main/AndroidManifest.xml','android/app/src/main/java/jp/astrosight/app/MainActivity.java']) assert(existsSync(resolve(root,p)), `${p} missing`);
 });
 check('Android permissions and orientation', () => {
   const m = read('android/app/src/main/AndroidManifest.xml');

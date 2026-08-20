@@ -39,6 +39,36 @@ const SUBJECT_PIN_IMAGE = `data:image/svg+xml;charset=utf-8,${encodeURIComponent
   </svg>
 `)}`;
 
+/** 呼び出し元が既に確定させている標高基準（ジオイド高等）。
+ * ピン設置時に位置（緯度経度・楕円体高）だけを流用し、この確定済みの
+ * メタデータを保つことで、標高の再計算・楕円体高との取り違えを防ぐ。
+ * GroundPoint/SubjectRecord等、フィールドが省略されうる型もそのまま
+ * 渡せるよう任意項目にしている（揃っていない場合は何も適用しない）。 */
+export type HeightMetadata = {
+  orthometricHeightMeters?: number;
+  geoidHeightMeters?: number;
+  heightSource?: GroundPoint["heightSource"];
+};
+
+function withHeightMetadata(point: GroundPoint, metadata?: HeightMetadata): GroundPoint {
+  if (
+    !metadata ||
+    !Number.isFinite(metadata.orthometricHeightMeters) ||
+    !Number.isFinite(metadata.geoidHeightMeters) ||
+    !metadata.heightSource ||
+    metadata.heightSource === "legacy"
+  ) {
+    return point;
+  }
+  return {
+    ...point,
+    ellipsoidalHeightMeters: point.height,
+    orthometricHeightMeters: metadata.orthometricHeightMeters,
+    geoidHeightMeters: metadata.geoidHeightMeters,
+    heightSource: metadata.heightSource,
+  };
+}
+
 function addVisibleSubjectPin(
   viewer: Viewer,
   groundPosition: Cartesian3,
@@ -112,10 +142,13 @@ export async function setSubjectPinFromCoordinates(
 
   try {
     const groundPoint = await resolveGroundPoint(latitude, longitude, label);
-    return addVisibleSubjectPin(
-      viewer,
-      Cartesian3.fromDegrees(groundPoint.longitude, groundPoint.latitude, groundPoint.height),
-      label
+    return withHeightMetadata(
+      addVisibleSubjectPin(
+        viewer,
+        Cartesian3.fromDegrees(groundPoint.longitude, groundPoint.latitude, groundPoint.height),
+        label
+      ),
+      groundPoint
     );
   } catch (terrainError) {
     console.warn("被写体ピンの高度を確定できないため配置を中止します", terrainError);
@@ -150,9 +183,10 @@ export async function setSubjectPinFromExplicit3dPick(
 export function setSubjectPinFromPosition(
   viewer: Viewer,
   position: Cartesian3,
-  label = "3D指定地点"
+  label = "3D指定地点",
+  heightMetadata?: HeightMetadata
 ): GroundPoint {
-  return addVisibleSubjectPin(viewer, position, label);
+  return withHeightMetadata(addVisibleSubjectPin(viewer, position, label), heightMetadata);
 }
 
 export function getSubjectPinPoint(viewer: Viewer): GroundPoint | null {

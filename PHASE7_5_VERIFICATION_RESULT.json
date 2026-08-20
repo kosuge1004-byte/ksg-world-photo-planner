@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-05T13:27:20.607Z",
+  "generatedAt": "2026-08-19T09:33:13.260Z",
   "staticChecks": [
     {
       "name": "Capacitor app identity",
@@ -34,8 +34,8 @@
     },
     {
       "suite": "verify:phase7-1",
-      "status": "BLOCKED_DEPENDENCY",
-      "output": "> astrosight@0.0.0 verify:phase7-1\n> node scripts/verify-phase7-1-foundation.mjs\n\n[Phase7-1] Dependency installation is incomplete.\n  missing: node_modules/typescript/package.json\n  missing: node_modules/vite/package.json\n  missing: node_modules/oxlint/package.json\n  missing: node_modules/@types/node/package.json\n  missing: node_modules/@cloudflare/workers-types/package.json\n  missing: node_modules/geo-tz/package.json\nRun `npm ci` with access to the npm packages referenced by package-lock.json, then retry."
+      "status": "PASS",
+      "output": " include HTTP and redirect diagnostics\n  ---\n  duration_ms: 1.305978\n  type: 'test'\n  ...\n# Subtest: Google Maps Pages Function returns structured error logs\nok 10 - Google Maps Pages Function returns structured error logs\n  ---\n  duration_ms: 3.14039\n  type: 'test'\n  ...\n# Subtest: Google Maps postal-address place URLs retain a landmark fallback\nok 11 - Google Maps postal-address place URLs retain a landmark fallback\n  ---\n  duration_ms: 0.354337\n  type: 'test'\n  ...\n# Subtest: spot search Pages Functions preserve API status while KV stores Cloudflare metadata\nok 12 - spot search Pages Functions preserve API status while KV stores Cloudflare metadata\n  ---\n  duration_ms: 4.718984\n  type: 'test'\n  ...\n1..12\n# tests 12\n# suites 0\n# pass 12\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1750.345155\n\nRegression suite: PASS (27 groups)\n\n[Phase7-1] Production build\n\n> astrosight@0.0.0 prebuild\n> node scripts/prepare-cloudflare-geo-tz-assets.mjs\n\n{\"geoTzAssets\":\"/home/claude/astro/public/__astro_internal_geo_tz\",\"dataBytes\":26229853,\"partCount\":7}\n\n> astrosight@0.0.0 build\n> tsc -b && vite build\n\nvite v8.1.4 building client environment for production...\n\u001b[2K\rtransforming...✓ 168 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   1.15 kB │ gzip:   0.59 kB\ndist/assets/index-C_UVeJ17.css  108.04 kB │ gzip:  21.74 kB\ndist/assets/web-DuBiiccJ.js       2.08 kB │ gzip:   0.85 kB\ndist/assets/index-CRgoon56.js   781.04 kB │ gzip: 259.87 kB\n\n✓ built in 1.83s\n\n[Phase7-1] All foundation checks passed.\nNative Google Maps resolver test skipped: dependencies are not installed.\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit."
     },
     {
       "suite": "verify:phase7-2",
@@ -69,9 +69,9 @@
     }
   ],
   "build": {
-    "status": "BLOCKED_DEPENDENCY",
-    "detail": "> astrosight@0.0.0 prebuild\n> node scripts/prepare-cloudflare-geo-tz-assets.mjs\n\nnode:internal/modules/esm/resolve:204\n  const resolvedOption = FSLegacyMainResolve(pkgPath, packageConfig.main, baseStringified);\n                         ^\n\nError: Cannot find package '/mnt/data/astrosight_p7_5/phase6_5_work/node_modules/geo-tz/index.js' imported from /mnt/data/astrosight_p7_5/phase6_5_work/scripts/prepare-cloudflare-geo-tz-assets.mjs\n    at legacyMainResolve (node:internal/modules/esm/resolve:204:26)\n    at packageResolve (node:internal/modules/esm/resolve:778:12)\n    at moduleResolve (node:internal/modules/esm/resolve:854:18)\n    at defaultResolve (node:internal/modules/esm/resolve:984:11)\n    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:739:38)\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:762:52)\n    at Object.resolve (node:internal/modules/esm/initialize_import_meta:35:25)\n    at file:///mnt/data/astrosight_p7_5/phase6_5_work/scripts/prepare-cloudflare-geo-tz-assets.mjs:7:46 {\n  code: 'ERR_MODULE_NOT_FOUND'\n}\n\nNode.js v22.16.0"
+    "status": "PASS",
+    "detail": "> astrosight@0.0.0 prebuild\n> node scripts/prepare-cloudflare-geo-tz-assets.mjs\n\n{\"geoTzAssets\":\"/home/claude/astro/public/__astro_internal_geo_tz\",\"dataBytes\":26229853,\"partCount\":7}\n\n> astrosight@0.0.0 build\n> tsc -b && vite build\n\nvite v8.1.4 building client environment for production...\n\u001b[2K\rtransforming...✓ 168 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   1.15 kB │ gzip:   0.59 kB\ndist/assets/index-C_UVeJ17.css  108.04 kB │ gzip:  21.74 kB\ndist/assets/web-DuBiiccJ.js       2.08 kB │ gzip:   0.85 kB\ndist/assets/index-CRgoon56.js   781.04 kB │ gzip: 259.87 kB\n\n✓ built in 1.03s\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit."
   },
-  "androidWebAssetsPresent": false,
+  "androidWebAssetsPresent": true,
   "iosProjectPresent": false
 }

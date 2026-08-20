@@ -121,7 +121,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
       {
         id: "celestial-light-pollution",
         title: "光害マップ（天の川ONのときだけ表示）",
-        body: "NASA VIIRS Black Marbleの夜間光データを地図に重ねます。天の川がOFFだとこのチェックボックス自体が表示されません。3D最高精度（Google Photorealistic 3D Tiles）中はONにすると自動的に2D表示へ切り替わります。",
+        body: "NASA VIIRS Black Marbleの夜間光データを地図に重ねます。天の川がOFFだとこのチェックボックス自体が表示されません。3DのGoogleタイルモード（Google Photorealistic 3D Tiles）中はONにすると自動的に2D表示へ切り替わります。",
         targetSelector: ".light-pollution-toggle",
         liveCheck: (state) => state.lightPollutionEnabled,
       },

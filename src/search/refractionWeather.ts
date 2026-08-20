@@ -232,7 +232,7 @@ export async function prepareRefractionWeatherContext(options: {
 }): Promise<RefractionWeatherContext> {
   // 精度モードは従量制サービスの利用可否だけを切り替える。
   // 予報・平年気象データによる屈折補正は従量制ではないため、
-  // 標準／高精度の両モードで同じ処理を使用する。
+  // 標準／Googleタイルの両モードで同じ処理を使用する。
   void options.accuracyMode;
   if (options.mode === "none") {
     return { requestedMode: "none", effectiveMode: "none", source: "none", samples: [] };
