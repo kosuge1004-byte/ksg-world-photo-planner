@@ -23,6 +23,8 @@ let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
 const GEOID_FETCH_TIMEOUT_MS = 15_000;
+const WORLD_TERRAIN_MAX_ATTEMPTS = 3;
+const WORLD_TERRAIN_RETRY_DELAYS_MS = [250, 700] as const;
 const geoidHeightCache = new Map<string, Promise<number>>();
 const GEOID_MEMORY_CACHE_MAX_ENTRIES = 4_096;
 const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
@@ -657,6 +659,69 @@ export function geoidHeightMetersForHighestPrecisionSample(sample: Cartographic)
   return value;
 }
 
+async function waitForTerrainRetry(
+  milliseconds: number,
+  signal?: AbortSignal
+): Promise<void> {
+  abortIfRequested(signal);
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(resolve, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(createAbortError("地形取得を中止しました"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal) {
+      setTimeout(() => signal.removeEventListener("abort", onAbort), milliseconds);
+    }
+  });
+  abortIfRequested(signal);
+}
+
+async function getWorldTerrainProviderWithRecovery(
+  signal?: AbortSignal
+): Promise<Awaited<ReturnType<typeof createWorldTerrainAsync>>> {
+  for (let attempt = 0; attempt < WORLD_TERRAIN_MAX_ATTEMPTS; attempt += 1) {
+    abortIfRequested(signal);
+    try {
+      terrainPromise ??= createWorldTerrainAsync({
+        requestVertexNormals: false,
+        requestWaterMask: false,
+      });
+      return await terrainPromise;
+    } catch (error) {
+      // reject済みPromiseを保持すると以降の全候補が永久に同じ失敗になるため破棄する。
+      terrainPromise = null;
+      if (isAbortError(error) || signal?.aborted) throw error;
+      if (attempt >= WORLD_TERRAIN_MAX_ATTEMPTS - 1) throw error;
+      await waitForTerrainRetry(WORLD_TERRAIN_RETRY_DELAYS_MS[attempt] ?? 700, signal);
+    }
+  }
+  throw new Error("World Terrain providerを取得できませんでした");
+}
+
+async function sampleWorldTerrainFallbackWithRecovery(
+  points: Cartographic[],
+  signal?: AbortSignal
+): Promise<Cartographic[]> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < WORLD_TERRAIN_MAX_ATTEMPTS; attempt += 1) {
+    abortIfRequested(signal);
+    try {
+      const provider = await getWorldTerrainProviderWithRecovery(signal);
+      return await sampleTerrainMostDetailed(provider, points);
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) throw error;
+      lastError = error;
+      if (attempt >= WORLD_TERRAIN_MAX_ATTEMPTS - 1) break;
+      await waitForTerrainRetry(WORLD_TERRAIN_RETRY_DELAYS_MS[attempt] ?? 700, signal);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("World Terrainの取得に失敗しました");
+}
+
 async function sampleTerrainWithGsiPriority(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
@@ -705,14 +770,10 @@ async function sampleTerrainWithGsiPriority(
 
   abortIfRequested(signal);
 
-  terrainPromise ??= createWorldTerrainAsync({
-    requestVertexNormals: false,
-    requestWaterMask: false,
-  });
-  const fallback = await sampleTerrainMostDetailed(
-    await terrainPromise,
-    unresolvedIndexes.map((index) => result[index])
-  );
+  const fallbackPoints = unresolvedIndexes.map((index) => result[index]);
+  // GSIで解決できなかった地点だけWorld Terrainへ回す。最大3回、同じ座標・
+  // 同じ最詳細取得を再試行するだけで、低精度データへの置換は行わない。
+  const fallback = await sampleWorldTerrainFallbackWithRecovery(fallbackPoints, signal);
   abortIfRequested(signal);
   fallback.forEach((sample, fallbackIndex) => {
     const resultIndex = unresolvedIndexes[fallbackIndex];

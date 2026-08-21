@@ -2690,3 +2690,48 @@ body.pseudo-fullscreen-active {
     bottom: 24px;
   }
 }
+
+/* Map pin entry button: keep the existing rail footprint, use the AstroSight app icon
+   as a circular badge, and overlay a small location pin inside the upper centre. */
+.map-tool-rail .map-pin-tool-icon {
+  position: relative;
+  display: block;
+  width: clamp(30px, 4.8vw, 34px);
+  height: clamp(30px, 4.8vw, 34px);
+  overflow: hidden;
+  border-radius: 50%;
+  font-size: 0;
+  line-height: 0;
+}
+.map-tool-rail .map-pin-tool-icon > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.map-tool-rail .map-pin-tool-marker {
+  position: absolute;
+  top: 9%;
+  left: 50%;
+  width: 27%;
+  height: 36%;
+  overflow: visible;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.72));
+  pointer-events: none;
+}
+.map-tool-rail .map-pin-tool-marker path {
+  fill: #ef4444;
+  stroke: #fff;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+.map-tool-rail .map-pin-tool-marker circle {
+  fill: #fff;
+  stroke: none;
+}
+.map-tool-rail .map-pin-tool-button small {
+  font-weight: 700;
+  line-height: 1.05;
+  white-space: nowrap;
+}

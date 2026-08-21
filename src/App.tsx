@@ -152,7 +152,7 @@ import {
   isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
-import { withLensCenterHeight } from "./types/points";
+import { withLensCenterHeight, withVerticalOffset } from "./types/points";
 import {
   DEFAULT_FOREGROUND_HEIGHT_CM,
   normalizeForegroundHeightCm,
@@ -921,9 +921,10 @@ function App() {
   useEffect(() => {
     const controller = new AbortController();
 
+    const weatherReferencePoint = tripodPoint ?? subjectPoint;
     if (
       precisionSettings.refractionCorrectionMode !== "auto"
-      || !tripodPoint
+      || !weatherReferencePoint
       || Number.isNaN(selectedDayStart.getTime())
       || Number.isNaN(selectedDayEnd.getTime())
     ) {
@@ -932,11 +933,13 @@ function App() {
     }
 
     // Phase4-4: プレビュー、軌跡、遮蔽計算は同じ気象コンテキストを共有する。
+    // 三脚ピン未設置時は被写体地点を初期気象地点として使い、三脚候補確定後は
+    // calculateTripodCandidates() 内で候補地点の気象へ再解決して再収束する。
     // 選択日時そのものを「現在時刻」と誤認せず、実時刻を基準に予報/平年値を選ぶ。
     void prepareRefractionWeatherContext({
       accuracyMode: precisionSettings.accuracyMode,
       mode: precisionSettings.refractionCorrectionMode,
-      point: tripodPoint,
+      point: weatherReferencePoint,
       searchStart: selectedDayStart,
       searchEnd: selectedDayEnd,
       now: new Date(),
@@ -969,9 +972,37 @@ function App() {
     precisionSettings.accuracyMode,
     precisionSettings.refractionCorrectionMode,
     tripodPoint,
+    subjectPoint,
     selectedDayStart,
     selectedDayEnd,
   ]);
+
+  const resolveTripodCandidateRefractionWeather = useCallback(
+    async (point: GroundPoint, signal?: AbortSignal): Promise<RefractionWeatherContext | undefined> => {
+      if (precisionSettings.refractionCorrectionMode !== "auto") {
+        return previewRefractionWeather;
+      }
+      const localController = signal ? undefined : new AbortController();
+      const resolvedSignal = signal ?? localController!.signal;
+      const context = await prepareRefractionWeatherContext({
+        accuracyMode: precisionSettings.accuracyMode,
+        mode: precisionSettings.refractionCorrectionMode,
+        point,
+        searchStart: selectedDayStart,
+        searchEnd: selectedDayEnd,
+        now: new Date(),
+        signal: resolvedSignal,
+      });
+      return context;
+    },
+    [
+      precisionSettings.accuracyMode,
+      precisionSettings.refractionCorrectionMode,
+      previewRefractionWeather,
+      selectedDayStart,
+      selectedDayEnd,
+    ]
+  );
 
   const tripodSearchLines = useMemo(
     () => buildTripodSearchBaseLines(
@@ -1070,7 +1101,8 @@ function App() {
         undefined,
         undefined,
         previewRefractionWeather,
-        preferredDistancesById
+        preferredDistancesById,
+        resolveTripodCandidateRefractionWeather
       )
         .then((candidates) => {
           if (!cancelled) {
@@ -1113,6 +1145,7 @@ function App() {
     calculationMode,
     previewAspectRatio,
     previewRefractionWeather,
+    resolveTripodCandidateRefractionWeather,
     timelineInteracting,
     precisionSettings.accuracyMode,
     tripodCandidateRetrySequence,
@@ -2924,10 +2957,22 @@ ${diagnosticMessage}
         // 橋面などDEMに存在しない歩行可能な3D表面も、HeightResolver
         // （resolveGroundPointFrom3dSurface）を経由してそのまま採用する。
         openPlacementConfirm("tripod", async (offsetMeters) => {
-          const rawPoint = await setTripodPinFromExplicit3dPick(viewer, position);
+          const pickedSurfacePoint = await setTripodPinFromExplicit3dPick(viewer, position);
+          // 0m is an explicit 3D-surface placement (roof/bridge/etc.).
+          // A non-zero "上空" value is defined relative to the ground at the
+          // selected latitude/longitude. This prevents a tower facade or other
+          // photogrammetry mesh picked by scene.pickPosition() from becoming the
+          // accidental +offset baseline (e.g. Tokyo Skytree +640m).
+          const groundPoint = offsetMeters !== 0
+            ? await resolveGroundPoint(
+                pickedSurfacePoint.latitude,
+                pickedSurfacePoint.longitude,
+                "三脚位置（上空オフセット基準地表）"
+              )
+            : pickedSurfacePoint;
           const point = offsetMeters !== 0
-            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
-            : rawPoint;
+            ? withVerticalOffset(groundPoint, offsetMeters, "三脚ピン")
+            : pickedSurfacePoint;
           if (offsetMeters !== 0) {
             setTripodPin(
               viewer,
@@ -3040,7 +3085,7 @@ ${diagnosticMessage}
               "三脚位置"
             );
         const point = offsetMeters !== 0
-          ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+          ? withVerticalOffset(rawPoint, offsetMeters, "三脚ピン")
           : rawPoint;
         if (offsetMeters !== 0 && viewer && !viewer.isDestroyed()) {
           setTripodPin(
@@ -3841,14 +3886,22 @@ ${diagnosticMessage}
                 <button
                   type="button"
                   ref={pinToolButtonRef}
-                  className={mapTool === "pin" ? "active" : ""}
+                  className={`map-pin-tool-button${mapTool === "pin" ? " active" : ""}`}
+                  aria-label="ピン配置"
                   onClick={() => {
                     setSpotSearchOpen(false);
                     stopAllEditModes();
                     setMapTool((current) => current === "pin" ? "none" : "pin");
                   }}
                 >
-                  <span>⌖</span><small>ピン</small>
+                  <span className="map-pin-tool-icon" aria-hidden="true">
+                    <img src="/app-icon.svg" alt="" />
+                    <svg className="map-pin-tool-marker" viewBox="0 0 24 32" focusable="false" aria-hidden="true">
+                      <path d="M12 1.5C6.75 1.5 2.5 5.75 2.5 11c0 7.1 9.5 19.5 9.5 19.5S21.5 18.1 21.5 11C21.5 5.75 17.25 1.5 12 1.5Z" />
+                      <circle cx="12" cy="11" r="3.6" />
+                    </svg>
+                  </span>
+                  <small>ピン配置</small>
                 </button>
               </div>
 

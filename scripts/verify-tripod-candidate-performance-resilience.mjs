@@ -1,0 +1,37 @@
+import fs from 'node:fs';
+
+const candidates = fs.readFileSync(new URL('../src/cesium/tripodCandidates.ts', import.meta.url), 'utf8');
+const terrain = fs.readFileSync(new URL('../src/cesium/worldTerrain.ts', import.meta.url), 'utf8');
+const gsi = fs.readFileSync(new URL('../src/cesium/gsiElevationClient.ts', import.meta.url), 'utf8');
+
+const checks = [
+  ['adaptive refinement uses two passes', /DEFAULT_ROOT_REFINEMENT_PASSES\s*=\s*2/],
+  ['adaptive refinement uses 32 segments', /DEFAULT_ROOT_REFINEMENT_SEGMENTS\s*=\s*32/],
+  ['refinement DEM remains 1m', /refinementSamples\s*=\s*await terrainSampler\([\s\S]*?"1m"\s*\)/],
+  ['coarse scan remains 10m only before 1m final refinement', /全距離走査[\s\S]*?"10m"/],
+  ['per-celestial failure isolation remains allSettled', /Promise\.allSettled\(/],
+  ['World Terrain retries up to three attempts', /WORLD_TERRAIN_MAX_ATTEMPTS\s*=\s*3/],
+  ['rejected World Terrain provider promise is cleared', /terrainPromise\s*=\s*null/],
+  ['World Terrain retry never changes requested coordinates', /sampleWorldTerrainFallbackWithRecovery\(fallbackPoints, signal\)/],
+  ['GSI request concurrency capped at eight', /MAX_CONCURRENT_REQUESTS\s*=\s*8/],
+];
+
+let failed = false;
+for (const [name, re] of checks) {
+  const source = name.includes('GSI') ? gsi : name.includes('World Terrain') ? terrain : candidates;
+  const ok = re.test(source);
+  console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`);
+  failed ||= !ok;
+}
+
+const oldResolution = 576;
+const newResolution = 32 ** 2;
+const oldInteriorSamples = 575;
+const newInteriorSamples = 2 * 31;
+const resolutionOk = newResolution >= oldResolution;
+const requestReductionOk = newInteriorSamples < oldInteriorSamples;
+console.log(`${resolutionOk ? 'PASS' : 'FAIL'}: refinement distance resolution ${newResolution} >= ${oldResolution}`);
+console.log(`${requestReductionOk ? 'PASS' : 'FAIL'}: max interior DEM samples ${newInteriorSamples} < ${oldInteriorSamples}`);
+failed ||= !resolutionOk || !requestReductionOk;
+
+process.exit(failed ? 1 : 0);

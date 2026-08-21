@@ -59,6 +59,31 @@ export function withLensCenterHeight(point: GroundPoint, lensCenterHeightMeters:
   };
 }
 
+/**
+ * Applies a user-requested vertical offset to a resolved point.
+ * This is intentionally separate from lens-center height so placement offsets
+ * cannot be confused with camera geometry.
+ */
+export function withVerticalOffset(
+  point: GroundPoint,
+  offsetMeters: number,
+  label?: string
+): GroundPoint {
+  if (!Number.isFinite(offsetMeters)) {
+    throw new Error("上空オフセットが不正です");
+  }
+  const ellipsoidal = ellipsoidalHeightMeters(point) + offsetMeters;
+  const orthometric = orthometricHeightMeters(point) + offsetMeters;
+  return {
+    ...point,
+    height: ellipsoidal,
+    ellipsoidalHeightMeters: ellipsoidal,
+    orthometricHeightMeters: orthometric,
+    heightSource: "manual",
+    label: label ?? point.label,
+  };
+}
+
 export type LineMetrics = {
   distanceMeters: number;
   bearingDegrees: number;

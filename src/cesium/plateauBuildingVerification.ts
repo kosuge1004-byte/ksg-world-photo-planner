@@ -48,14 +48,17 @@ type ClampHeightScene = Scene & {
 
 /** 接地高さの許容誤差。地下部分・DEM解像度による差を吸収する。
  * 遮蔽判定の検証（verifyPlateauBuildingBaseHeight）にのみ使う値で、
- * 被写体の屋根合わせ（resolvePlateauRoofGroundPoint）には使わない
- * （後述のGROSS_MISALIGNMENT_TOLERANCE_METERSを参照）。 */
+ * 被写体の屋根合わせ（resolvePlateauRoofGroundPoint）には使わない。 */
 const BASE_HEIGHT_TOLERANCE_METERS = 5;
 /**
- * 被写体を建物の屋根に合わせる際の粗大な異常値だけを弾くための緩い上限。
- * タイルセットの地域的な位置ズレ等、非現実的な値だけを弾く。
+ * 被写体を建物・塔の頂上に合わせる際に許容する構造物高の上限。
+ * 旧実装の120m固定上限では東京スカイツリー（634m）など正規の高塔まで
+ * 異常値として除外していた。ここでは検索座標近傍（最大50m）のPLATEAU表面
+ * だけを候補にしているため、水平距離で無関係な構造物を制限したうえで、
+ * 日本の超高層建築・塔を十分包含する1000mまでを有効な構造物高として扱う。
+ * 1000m超は高さ基準ずれ・破損タイル等の粗大異常として除外する。
  */
-const GROSS_MISALIGNMENT_TOLERANCE_METERS = 120;
+const MAX_PLAUSIBLE_STRUCTURE_HEIGHT_METERS = 1000;
 const VERTICAL_SEARCH_ALTITUDE_METERS = 3000;
 // Stage 2（局所探索）の範囲。一般的な建物の輪郭に収まる規模とし、
 // 隣接する別の建物・山など無関係に高い構造物へ誤って飛び移らないようにする。
@@ -259,10 +262,16 @@ async function clampAndValidate(
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-    // 屋根が地面（DEM）より低い、または非現実的に高い場合だけ「このタイル
-    // セットはこの地点で位置ズレしている」とみなして候補から除外する。
+    // 表面が地面（DEM）より低い、または構造物として非現実的に高い場合だけ
+    // 「このタイルセットはこの地点で高さ基準が破綻している」とみなして除外する。
+    // 候補自体は検索座標から最大50m以内に限定されているため、高さだけを120mで
+    // 打ち切らない。これにより東京タワーや東京スカイツリー等の高塔も頂上候補に残る。
     const roofAboveGroundMeters = cartographic.height - demGroundPoint.height;
-    if (roofAboveGroundMeters < 0 || roofAboveGroundMeters > GROSS_MISALIGNMENT_TOLERANCE_METERS) {
+    if (
+      !Number.isFinite(roofAboveGroundMeters) ||
+      roofAboveGroundMeters < 0 ||
+      roofAboveGroundMeters > MAX_PLAUSIBLE_STRUCTURE_HEIGHT_METERS
+    ) {
       continue;
     }
     results.push({ point: candidate, cartographic });

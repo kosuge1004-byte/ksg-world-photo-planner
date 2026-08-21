@@ -50,7 +50,7 @@ export function PlacementConfirmDialog({
           </span>
         </label>
         <p className="project-dialog-note">
-          地形・建物の高さを取得した上で、その高さから入力した分だけ上空にピンを置きます（未入力時は0m＝地表面）。
+          三脚で高さを入力した場合は、選択した緯度経度の地表面を基準に、その高さから入力した分だけ上空へ配置します。0mでは選択した3D表面（地面・屋上・橋面など）へ配置します。
         </p>
         {errorMessage && <p className="project-dialog-error" role="alert">{errorMessage}</p>}
         <div>
