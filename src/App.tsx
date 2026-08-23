@@ -1121,7 +1121,18 @@ function App() {
         previewRefractionWeather,
         preferredDistancesById,
         resolveTripodCandidateRefractionWeather,
-        precisionSettings.tripodCandidateDoubleCheckEnabled
+        precisionSettings.tripodCandidateDoubleCheckEnabled,
+        tripodPoint
+          ? {
+              ...tripodPoint,
+              height: tripodPoint.height + cameraSettings.lensCenterHeightMeters,
+              ellipsoidalHeightMeters: (tripodPoint.ellipsoidalHeightMeters ?? tripodPoint.height) + cameraSettings.lensCenterHeightMeters,
+              orthometricHeightMeters: tripodPoint.orthometricHeightMeters !== undefined
+                ? tripodPoint.orthometricHeightMeters + cameraSettings.lensCenterHeightMeters
+                : undefined,
+              label: "三脚候補初期方向観測点",
+            }
+          : undefined
       )
         .then((candidates) => {
           if (!cancelled) {
@@ -1165,6 +1176,7 @@ function App() {
     };
   }, [
     subjectPoint,
+    tripodPoint,
     tripodCandidateSourcePoints,
     celestialVisibility,
     cameraSettings,
@@ -1830,6 +1842,16 @@ function App() {
     let cancelled = false;
     const timers: number[] = [];
 
+    type CameraSignature = { position: Cartesian3; direction: Cartesian3 };
+    const cameraSignature = (): CameraSignature => ({
+      position: Cartesian3.clone(viewer.camera.positionWC),
+      direction: Cartesian3.clone(viewer.camera.directionWC),
+    });
+    const sameCamera = (a: CameraSignature, b: CameraSignature): boolean =>
+      Cartesian3.distanceSquared(a.position, b.position) < 0.0001 &&
+      Cartesian3.distanceSquared(a.direction, b.direction) < 1e-12;
+    const mapCameraAtSchedule = cameraSignature();
+
     const updatePreview = (label: string) => {
       const render = async () => {
         if (cancelled || jobId !== previewJobRef.current) return;
@@ -1880,7 +1902,29 @@ function App() {
     // 3.2秒時点で必ず置き換えられるため、最終画質・座標計算を変えずに省略する。
     timers.push(
       window.setTimeout(() => {
-        void updatePreview("プレビュー最終更新中…");
+        if (cancelled || jobId !== previewJobRef.current) return;
+        const current = cameraSignature();
+        if (sameCamera(current, mapCameraAtSchedule)) {
+          // 予約後にメイン3Dカメラが動いていなければ従来どおり3.2秒で最終更新。
+          void updatePreview("プレビュー最終更新中…");
+          return;
+        }
+
+        // 3.2秒の待機中にユーザーがパン/ズームした場合、操作中へ強制描画を
+        // 割り込ませない。カメラが700ms連続で静止してから最終高精細更新を
+        // 1回だけ実施するので、最終画質は維持したまま操作時のカクつきを避ける。
+        let previous = current;
+        const waitForCameraIdle = () => {
+          if (cancelled || jobId !== previewJobRef.current) return;
+          const next = cameraSignature();
+          if (sameCamera(previous, next)) {
+            void updatePreview("プレビュー最終更新中…");
+            return;
+          }
+          previous = next;
+          timers.push(window.setTimeout(waitForCameraIdle, 700));
+        };
+        timers.push(window.setTimeout(waitForCameraIdle, 700));
       }, 3200)
     );
 

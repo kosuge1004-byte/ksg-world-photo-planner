@@ -75,39 +75,37 @@ function abortIfRequested(signal?: AbortSignal): void {
 /**
  * 「天体中心 → 被写体 → 後方」の3Dレイ（ECEF直線）。
  *
- * 天体は被写体近傍のどの地点から見てもほぼ同一方向にある（太陽・月とも
- * 視差は無視できるほど遠い）。したがって、被写体を通り天体方向を指す
- * 単位ベクトルは、被写体位置のENU基底で一度だけ組み立てれば、以降の
- * 探索区間（数百m〜数km）全域で有効な固定方向として扱える。
+ * 重要: 方位角・高度はローカル水平座標（ENU）の値なので、異なる地点へ
+ * 数値のまま移してはいけない。まず「その方位角・高度を実際に計算した
+ * 観測地点」のENU基底でECEF天体方向へ変換し、そのワールド方向ベクトルを
+ * 被写体位置へ平行移動して後方レイを作る。これにより、地点間でローカル
+ * Up/Northが回転する地球曲率を二重に混入させない。
  *
- * origin/directionはECEF実座標（メートル単位）。tがそのまま被写体からの
- * 直線距離（メートル）になる。
+ * origin/directionはECEF実座標（メートル単位）。directionは天体と反対側を
+ * 指す単位ベクトルなので、tがそのまま被写体からの直線距離（メートル）になる。
  */
 export type CelestialSubjectRay = {
   origin: Cartesian3;
   direction: Cartesian3;
 };
 
-export function buildCelestialBackwardRay(
-  subject: GroundPoint,
-  celestialAzimuthDegrees: number,
-  apparentAltitudeDegrees: number
-): CelestialSubjectRay | null {
+function horizontalToEcefUnitDirection(
+  observer: GroundPoint,
+  azimuthDegrees: number,
+  altitudeDegrees: number
+): Cartesian3 | null {
   if (
-    !Number.isFinite(subject.latitude) ||
-    !Number.isFinite(subject.longitude) ||
-    !Number.isFinite(ellipsoidalHeightMeters(subject)) ||
-    !Number.isFinite(celestialAzimuthDegrees) ||
-    !Number.isFinite(apparentAltitudeDegrees)
+    !Number.isFinite(observer.latitude) ||
+    !Number.isFinite(observer.longitude) ||
+    !Number.isFinite(azimuthDegrees) ||
+    !Number.isFinite(altitudeDegrees)
   ) return null;
 
-  const lat = CesiumMath.toRadians(subject.latitude);
-  const lon = CesiumMath.toRadians(subject.longitude);
-  // 三脚は天体と反対側（被写体を挟んで反対の方位・下向きの仰角）に立つ。
-  const bearing = CesiumMath.toRadians((celestialAzimuthDegrees + 180) % 360);
-  const elevation = CesiumMath.toRadians(-apparentAltitudeDegrees);
+  const lat = CesiumMath.toRadians(observer.latitude);
+  const lon = CesiumMath.toRadians(observer.longitude);
+  const azimuth = CesiumMath.toRadians(azimuthDegrees);
+  const altitude = CesiumMath.toRadians(altitudeDegrees);
 
-  // ENU基底。ECEFで直線を作るため、地球の丸みはWGS84楕円体そのものとして扱う。
   const east = new Cartesian3(-Math.sin(lon), Math.cos(lon), 0);
   const north = new Cartesian3(
     -Math.sin(lat) * Math.cos(lon),
@@ -119,18 +117,44 @@ export function buildCelestialBackwardRay(
     Math.cos(lat) * Math.sin(lon),
     Math.sin(lat)
   );
-  const horizontalScale = Math.cos(elevation);
+  const horizontalScale = Math.cos(altitude);
   const direction = new Cartesian3(
-    east.x * Math.sin(bearing) * horizontalScale +
-      north.x * Math.cos(bearing) * horizontalScale +
-      up.x * Math.sin(elevation),
-    east.y * Math.sin(bearing) * horizontalScale +
-      north.y * Math.cos(bearing) * horizontalScale +
-      up.y * Math.sin(elevation),
-    east.z * Math.sin(bearing) * horizontalScale +
-      north.z * Math.cos(bearing) * horizontalScale +
-      up.z * Math.sin(elevation)
+    east.x * Math.sin(azimuth) * horizontalScale +
+      north.x * Math.cos(azimuth) * horizontalScale +
+      up.x * Math.sin(altitude),
+    east.y * Math.sin(azimuth) * horizontalScale +
+      north.y * Math.cos(azimuth) * horizontalScale +
+      up.y * Math.sin(altitude),
+    east.z * Math.sin(azimuth) * horizontalScale +
+      north.z * Math.cos(azimuth) * horizontalScale +
+      up.z * Math.sin(altitude)
   );
+  if (!(Cartesian3.magnitudeSquared(direction) > 0)) return null;
+  return Cartesian3.normalize(direction, direction);
+}
+
+export function buildCelestialBackwardRay(
+  subject: GroundPoint,
+  celestialAzimuthDegrees: number,
+  apparentAltitudeDegrees: number,
+  directionObserver: GroundPoint = subject
+): CelestialSubjectRay | null {
+  if (
+    !Number.isFinite(subject.latitude) ||
+    !Number.isFinite(subject.longitude) ||
+    !Number.isFinite(ellipsoidalHeightMeters(subject))
+  ) return null;
+
+  const celestialDirection = horizontalToEcefUnitDirection(
+    directionObserver,
+    celestialAzimuthDegrees,
+    apparentAltitudeDegrees
+  );
+  if (!celestialDirection) return null;
+
+  // 三脚は天体方向の反対側にある。ローカルaz/altを被写体ENUで再構成せず、
+  // 観測地点でECEF化したワールド方向をそのまま反転する。
+  const direction = Cartesian3.negate(celestialDirection, new Cartesian3());
   Cartesian3.normalize(direction, direction);
 
   const origin = Cartesian3.fromDegrees(
@@ -171,10 +195,16 @@ export function rayCartographicAtDistance(
 function directSightlineSeedDistanceMeters(
   subject: GroundPoint,
   celestialAzimuthDegrees: number,
-  apparentAltitudeDegrees: number
+  apparentAltitudeDegrees: number,
+  directionObserver: GroundPoint = subject
 ): number | null {
   if (apparentAltitudeDegrees <= 0) return null;
-  const ray = buildCelestialBackwardRay(subject, celestialAzimuthDegrees, apparentAltitudeDegrees);
+  const ray = buildCelestialBackwardRay(
+    subject,
+    celestialAzimuthDegrees,
+    apparentAltitudeDegrees,
+    directionObserver
+  );
   if (!ray) return null;
 
   const radii = Ellipsoid.WGS84.radii;
@@ -976,7 +1006,8 @@ async function calculateOneCandidates(
   searchProfile?: TripodSearchProfile,
   refractionWeather?: RefractionWeatherContext,
   refractionWeatherResolver?: RefractionWeatherResolver,
-  doubleCheckEnabled = false
+  doubleCheckEnabled = false,
+  initialDirectionObserver?: GroundPoint
 ): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
   if (point.altitudeDegrees <= 0.25) return [];
@@ -999,13 +1030,44 @@ async function calculateOneCandidates(
   const initialBearing = (point.azimuthDegrees + 180) % 360;
 
   // 仕様3-C: 主計算は「天体中心→被写体→後方」のECEF 3Dレイと地形表面の
-  // 交点として求める。Karney測地線bearing走査は本計算の座標生成器にしない。
-  const initialRay = buildCelestialBackwardRay(subject, point.azimuthDegrees, point.altitudeDegrees);
+  // 交点として求める。pointのaz/altを計算した観測地点のENUでECEF化してから
+  // 被写体へ平行移動する。観測地点が不明な検索経路だけ被写体地点を使う。
+  const rayDirectionObserver = initialDirectionObserver ?? {
+    ...subject,
+    height: subject.height + lensCenterHeightMeters,
+    ellipsoidalHeightMeters: ellipsoidalHeightMeters(subject) + lensCenterHeightMeters,
+    orthometricHeightMeters: subject.orthometricHeightMeters !== undefined
+      ? subject.orthometricHeightMeters + lensCenterHeightMeters
+      : undefined,
+    label: `${point.label}初期方向観測点`,
+  };
+  // プレビューの天体高度は「見かけ高度」。一方、被写体→三脚のECEF直線は
+  // 幾何直線なので、地表屈折による被写体の apparent-geometric 差だけを戻して
+  // レイ高度へ使う。これをしないと、ENU基底を直しても屈折分だけレイと
+  // CameraModel(Apparent)が系統的にずれる。
+  const initialSubjectElevation = computeApparentElevation(
+    rayDirectionObserver,
+    subject,
+    calculationMode
+  );
+  const initialGroundRefractionDegrees =
+    initialSubjectElevation.apparentAltitudeDegrees -
+    initialSubjectElevation.geometricAltitudeDegrees;
+  const initialGeometricRayAltitudeDegrees =
+    point.altitudeDegrees - initialGroundRefractionDegrees;
+
+  const initialRay = buildCelestialBackwardRay(
+    subject,
+    point.azimuthDegrees,
+    initialGeometricRayAltitudeDegrees,
+    rayDirectionObserver
+  );
   if (!initialRay) return [];
   const directSeedDistance = directSightlineSeedDistanceMeters(
     subject,
     point.azimuthDegrees,
-    point.altitudeDegrees
+    initialGeometricRayAltitudeDegrees,
+    rayDirectionObserver
   );
   const initialSolutions = await scanInitialRayTerrainIntersections(
     initialRay,
@@ -1025,10 +1087,9 @@ async function calculateOneCandidates(
     let solution = initialSolution;
 
     // 各交点は独立に、候補地点で再計算した天体方位・高度へ最大3回だけ収束させる。
-    // 全距離旧探索へは戻らず、被写体を通る同じ3Dレイ（方向だけ更新）だけを
-    // 再評価する。太陽・月は近距離の観測点間で視差が無視できるため、
-    // 候補地点で再計算した方位・高度を「被写体からのレイの向き」として
-    // 再利用しても物理的な誤差は生じない。
+    // 全距離旧探索へは戻らない。重要なのは、候補地点のaz/altを被写体地点の
+    // ENUへ数値のまま移さず、候補地点自身のENUでECEF方向へ変換した後に
+    // 被写体を通る平行レイとして再評価すること。
     //
     // 過去に反復回数・サンプル数・探索窓を増やす変更を試したが、自作の
     // 回帰テストで効果が確認できず（同じ結果しか出なかった）、その上で
@@ -1040,30 +1101,31 @@ async function calculateOneCandidates(
         subject,
         `${point.label}三脚候補`
       );
+      const candidateLensObserver: GroundPoint = {
+        ...candidatePoint,
+        height: candidatePoint.height + lensCenterHeightMeters,
+        ellipsoidalHeightMeters: (candidatePoint.ellipsoidalHeightMeters ?? candidatePoint.height) + lensCenterHeightMeters,
+        orthometricHeightMeters: candidatePoint.orthometricHeightMeters !== undefined
+          ? candidatePoint.orthometricHeightMeters + lensCenterHeightMeters
+          : undefined,
+        label: `${point.label}三脚候補レンズ中心`,
+      };
       const horizontal = calculateCelestialHorizontalCoordinates(
         point.id,
         date,
-        {
-          ...candidatePoint,
-          height: candidatePoint.height + lensCenterHeightMeters,
-          ellipsoidalHeightMeters: (candidatePoint.ellipsoidalHeightMeters ?? candidatePoint.height) + lensCenterHeightMeters,
-          orthometricHeightMeters: candidatePoint.orthometricHeightMeters !== undefined
-            ? candidatePoint.orthometricHeightMeters + lensCenterHeightMeters
-            : undefined,
-          label: `${point.label}三脚候補レンズ中心`,
-        },
+        candidateLensObserver,
         calculationMode,
         activeRefractionWeather
       );
       if (horizontal.altitudeDegrees <= 0.25) break;
 
+      const candidateSubjectElevation = computeApparentElevation(
+        candidateLensObserver,
+        subject,
+        calculationMode
+      );
       const currentAltitudeError = Math.abs(
-        elevationAngleDegrees(
-          solution.cartographic,
-          subject,
-          lensCenterHeightMeters,
-          calculationMode
-        ) - horizontal.altitudeDegrees
+        candidateSubjectElevation.apparentAltitudeDegrees - horizontal.altitudeDegrees
       );
       const subjectBearing = calculateKarneyLineMetrics(candidatePoint, subject).bearingDegrees;
       const currentAzimuthError = angularDifferenceDegrees(subjectBearing, horizontal.azimuthDegrees);
@@ -1074,7 +1136,17 @@ async function calculateOneCandidates(
 
       // 被写体を起点に、候補地点で再計算した最新の天体方位・高度でレイを
       // 引き直し、現在交点周辺だけを再探索する（全距離走査には戻らない）。
-      const refinedRay = buildCelestialBackwardRay(subject, horizontal.azimuthDegrees, horizontal.altitudeDegrees);
+      const groundRefractionDegrees =
+        candidateSubjectElevation.apparentAltitudeDegrees -
+        candidateSubjectElevation.geometricAltitudeDegrees;
+      const geometricRayAltitudeDegrees =
+        horizontal.altitudeDegrees - groundRefractionDegrees;
+      const refinedRay = buildCelestialBackwardRay(
+        subject,
+        horizontal.azimuthDegrees,
+        geometricRayAltitudeDegrees,
+        candidateLensObserver
+      );
       if (!refinedRay) break;
       const span = Math.max(80, solution.distanceMeters * 0.18);
       const localRange: TripodDistanceRange = {
@@ -1273,7 +1345,8 @@ export async function calculateTripodCandidates(
   // 通常どおりsearchProfile.preferredDistanceMetersにフォールバックする。）
   preferredDistancesById?: Partial<Record<CelestialScreenPoint["id"], number>>,
   refractionWeatherResolver?: RefractionWeatherResolver,
-  doubleCheckEnabled = false
+  doubleCheckEnabled = false,
+  initialDirectionObserver?: GroundPoint
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -1312,7 +1385,8 @@ export async function calculateTripodCandidates(
         pointSearchProfile,
         refractionWeather,
         refractionWeatherResolver,
-        doubleCheckEnabled
+        doubleCheckEnabled,
+        initialDirectionObserver
       );
     })
   );

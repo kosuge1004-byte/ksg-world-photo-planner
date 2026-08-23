@@ -1,0 +1,41 @@
+AstroSight 3D map smoothness fix — 2026-08-23
+
+Goal
+- Reduce intermittent 3D-map stutter without lowering 3D tile / terrain / preview image quality.
+
+Confirmed heavy path
+1. captureTripodPreview() uses the same Cesium Viewer as the visible 3D map.
+2. Each preview capture temporarily moves that Viewer camera to the tripod/subject view,
+   calls scene.render(), captures the canvas, restores the map camera, and renders again.
+3. A second final preview capture is scheduled 3.2 seconds later so higher-detail tiles can be used.
+4. If the user pans/zooms the 3D map during that 3.2-second window, the old code could run the
+   final capture in the middle of map interaction, forcing camera/LOD/GPU work into the same frame window.
+5. The old preview capture also toggled every Entity.show individually off and on, producing unnecessary
+   entity change notifications when many celestial/track/candidate entities existed.
+
+Changes
+A. src/App.tsx
+- Keep the 3.2-second final high-detail preview pass.
+- Record the visible 3D-map camera at scheduling time.
+- If the map camera has not moved, final capture still runs at 3.2 s as before.
+- If the map camera has moved, do not interrupt the interaction. Wait until the map camera is unchanged
+  for 700 ms, then execute the final preview once.
+- This preserves the final high-detail preview instead of dropping it.
+
+B. src/cesium/previewSnapshot.ts
+- Replace per-Entity hide/restore loops with one DefaultDataSource.show toggle.
+- Camera save/restore, preview FOV/aspect, device-pixel-ratio limit, scene.render(), and canvas capture remain unchanged.
+
+Quality settings intentionally unchanged
+- Google Photorealistic 3D Tiles maximumScreenSpaceError = 24.
+- Standard PLATEAU buildings maximumScreenSpaceError = 8.
+- PLATEAU terrain requestVertexNormals = true.
+- Preview pixel ratio remains min(devicePixelRatio, 2).
+- Existing requestRenderMode and hidden-3D suspension in 2D mode remain enabled.
+
+Verification
+- scripts/verify-3d-map-smoothness-20260823.mjs: 9/9 PASS.
+- scripts/verify-performance-lifecycle.mjs: PASS.
+- tripod ECEF direction-frame regression checks: PASS.
+- Full npm build could not be completed in this environment because npm dependency installation timed out;
+  the partial node_modules tree lacked geo-tz. This is an environment/dependency-install limitation, not a build error found in the modified source.

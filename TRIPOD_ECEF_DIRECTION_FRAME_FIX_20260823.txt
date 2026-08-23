@@ -1,0 +1,34 @@
+AstroSight 三脚候補 ECEF方向座標系 修正
+2026-08-23
+
+対象:
+- src/cesium/tripodCandidates.ts
+- src/App.tsx
+- scripts/verify-tripod-ecef-direction-frame.mjs
+
+原因:
+候補地点で計算した天体のローカル方位角/高度を、被写体地点のENU基底へ数値のまま適用していた。
+地点が変わるとENU基底（特にUp/North）は地球曲率により回転するため、実証ケース約968mでは
+ローカル基底差が約0.008685°となり、最終収束閾値0.002°を上回り得た。
+その結果 aligned 候補が0件となり、direction-only 500m候補へフォールバックしていた。
+
+修正:
+1. 方位角/高度を、その角度を計算した観測地点自身のENU基底でECEF単位方向へ変換する。
+2. ECEF天体方向を反転し、被写体ECEF位置を通る後方レイへ平行移動する。
+3. 初回計算では、プレビューの三脚レンズ中心を方向観測点として calculateTripodCandidates へ渡す。
+4. 再収束では、各候補地点のレンズ中心を方向観測点としてECEF方向を再生成する。
+5. プレビュー天体高度は見かけ高度、ECEFレイは幾何直線なので、地表屈折の
+   apparent-geometric差を天体高度から戻して幾何レイ高度を生成する。
+6. 0.002°の最終方位/仰角収束条件、1m DEM精密化、CameraModel/Projection Round-trip検証は維持。
+7. 直前の三脚候補描画復旧、seed優先DEM探索最適化も維持。
+
+検証:
+- verify-tripod-ecef-direction-frame.mjs: 7項目 PASS
+- verify-tripod-candidate-rendering.mjs: 5項目 PASS
+- verify-tripod-candidate-performance-resilience.mjs: 10項目 PASS
+- verify-tripod-adaptive-synthetic.mjs: PASS
+- TypeScript transpile syntax check: tripodCandidates.ts / App.tsx ともに PASS
+
+制限:
+完全な tsc -b / npm build は、この作業環境の依存型定義（vite/client, node,
+@cloudflare/workers-types）が揃っていないため未完了。ソース構文検査と対象回帰検査は実施済み。

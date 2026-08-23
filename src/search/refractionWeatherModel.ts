@@ -10,7 +10,7 @@ export type WeatherSample = {
 export type RefractionWeatherContext = {
   requestedMode: RefractionCorrectionMode;
   effectiveMode: "standard" | "weather";
-  source: "standard" | "forecast" | "climatology" | "fallback";
+  source: "standard" | "forecast" | "historical" | "climatology" | "fallback";
   samples: WeatherSample[];
   climatologyByMonthHour?: Record<string, Omit<WeatherSample, "time">>;
 };
@@ -19,7 +19,7 @@ export function weatherForDate(
   context: RefractionWeatherContext,
   date: Date
 ): Omit<WeatherSample, "time"> | null {
-  if (context.source === "forecast" && context.samples.length > 0) {
+  if ((context.source === "forecast" || context.source === "historical") && context.samples.length > 0) {
     const target = date.getTime();
     let low = 0;
     let high = context.samples.length;

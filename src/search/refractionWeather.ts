@@ -29,23 +29,36 @@ const inFlightRequests = new Map<string, Promise<RefractionWeatherContext>>();
 
 const CACHE_PREFIX = "ksg-refraction-weather-v1:";
 const FORECAST_CACHE_MS = DEVICE_CACHE_POLICIES.weatherForecast.ttlMs;
+const HISTORICAL_CACHE_MS = DEVICE_CACHE_POLICIES.weatherHistorical.ttlMs;
 const CLIMATOLOGY_CACHE_MS = DEVICE_CACHE_POLICIES.weatherClimatology.ttlMs;
 
 function roundedCoordinate(value: number): string {
   return (Math.round(value * 20) / 20).toFixed(2);
 }
 
-function cacheKey(point: GroundPoint, source: "forecast" | "climatology"): string {
-  return `${CACHE_PREFIX}${source}:${roundedCoordinate(point.latitude)}:${roundedCoordinate(point.longitude)}`;
+function utcDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function cacheKey(
+  point: GroundPoint,
+  source: "forecast" | "historical" | "climatology",
+  range?: { start: Date; end: Date }
+): string {
+  const base = `${CACHE_PREFIX}${source}:${roundedCoordinate(point.latitude)}:${roundedCoordinate(point.longitude)}`;
+  if (source !== "historical" || !range) return base;
+  return `${base}:${utcDateKey(range.start)}:${utcDateKey(range.end)}`;
 }
 
 async function readCache(
   key: string,
-  source: "forecast" | "climatology"
+  source: "forecast" | "historical" | "climatology"
 ): Promise<RefractionWeatherContext | null> {
   const policy = source === "forecast"
     ? DEVICE_CACHE_POLICIES.weatherForecast
-    : DEVICE_CACHE_POLICIES.weatherClimatology;
+    : source === "historical"
+      ? DEVICE_CACHE_POLICIES.weatherHistorical
+      : DEVICE_CACHE_POLICIES.weatherClimatology;
   const persistentKey = key.slice(CACHE_PREFIX.length);
   return migrateLegacyLocalStorage<RefractionWeatherContext>({
     policy,
@@ -65,13 +78,15 @@ async function readCache(
 
 async function writeCache(
   key: string,
-  source: "forecast" | "climatology",
+  source: "forecast" | "historical" | "climatology",
   context: RefractionWeatherContext,
   ttlMs: number
 ): Promise<void> {
   const policy = source === "forecast"
     ? DEVICE_CACHE_POLICIES.weatherForecast
-    : DEVICE_CACHE_POLICIES.weatherClimatology;
+    : source === "historical"
+      ? DEVICE_CACHE_POLICIES.weatherHistorical
+      : DEVICE_CACHE_POLICIES.weatherClimatology;
   await setDeviceCache(policy, key.slice(CACHE_PREFIX.length), context, ttlMs);
 }
 
@@ -142,6 +157,64 @@ async function loadForecast(point: GroundPoint, signal: AbortSignal): Promise<Re
       samples,
     };
     await writeCache(key, "forecast", context, FORECAST_CACHE_MS);
+    return context;
+  })();
+  inFlightRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (inFlightRequests.get(key) === request) inFlightRequests.delete(key);
+  }
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function endOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+}
+
+async function loadHistorical(
+  point: GroundPoint,
+  searchStart: Date,
+  searchEnd: Date,
+  signal: AbortSignal
+): Promise<RefractionWeatherContext> {
+  // timezone=GMT の時系列から検索対象時刻を確実に内包するため、UTC日単位に丸める。
+  const range = { start: startOfUtcDay(searchStart), end: endOfUtcDay(searchEnd) };
+  const key = cacheKey(point, "historical", range);
+  const cached = await readCache(key, "historical");
+  if (cached) {
+    recordCacheDiagnostic("weather", key, "cache-hit");
+    return cached;
+  }
+  recordCacheDiagnostic("weather", key, "cache-miss");
+  const existing = inFlightRequests.get(key);
+  if (existing) {
+    recordCacheDiagnostic("weather", key, "deduplicated");
+    return existing;
+  }
+
+  const request = (async () => {
+    const url = new URL("https://archive-api.open-meteo.com/v1/archive");
+    url.searchParams.set("latitude", String(point.latitude));
+    url.searchParams.set("longitude", String(point.longitude));
+    url.searchParams.set("start_date", utcDateKey(range.start));
+    url.searchParams.set("end_date", utcDateKey(range.end));
+    url.searchParams.set("hourly", "temperature_2m,relative_humidity_2m,surface_pressure");
+    url.searchParams.set("timeformat", "iso8601");
+    url.searchParams.set("timezone", "GMT");
+    const json = await fetchJson(url, signal);
+    const samples = parseSamples(json.hourly).sort((a, b) => a.time - b.time);
+    if (samples.length === 0) throw new Error("過去実績気象データが空です");
+    const context: RefractionWeatherContext = {
+      requestedMode: "auto",
+      effectiveMode: "weather",
+      source: "historical",
+      samples,
+    };
+    await writeCache(key, "historical", context, HISTORICAL_CACHE_MS);
     return context;
   })();
   inFlightRequests.set(key, request);
@@ -238,10 +311,21 @@ export async function prepareRefractionWeatherContext(options: {
     return { requestedMode: "standard", effectiveMode: "standard", source: "standard", samples: [] };
   }
 
-  const sevenDaysAfterNow = options.now.getTime() + 7 * 24 * 60 * 60_000;
-  const useForecast = options.searchStart.getTime() >= options.now.getTime() - 60_000
-    && options.searchEnd.getTime() <= sevenDaysAfterNow;
+  const nowMs = options.now.getTime();
+  const sevenDaysAfterNow = nowMs + 7 * 24 * 60 * 60_000;
+  const rangeIsPast = options.searchEnd.getTime() < nowMs - 60_000;
+  // 「過去の日付」は平年値ではなく、その日時の過去気象（再解析）を使う。
+  // 当日～7日先は従来の予報、7日より先だけ平年値を使用する。
+  const useForecast = !rangeIsPast && options.searchEnd.getTime() <= sevenDaysAfterNow;
   try {
+    if (rangeIsPast) {
+      return await loadHistorical(
+        options.point,
+        options.searchStart,
+        options.searchEnd,
+        options.signal
+      );
+    }
     return useForecast
       ? await loadForecast(options.point, options.signal)
       : await loadClimatology(options.point, options.now, options.signal);

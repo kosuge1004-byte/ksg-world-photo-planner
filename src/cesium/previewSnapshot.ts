@@ -94,15 +94,16 @@ export async function captureTripodPreview(
 
   const cameraState = saveCamera(viewer);
   const aspectRatio = cssWidth / cssHeight;
-  const entityVisibility = viewer.entities.values.map((entity) => ({
-    entity,
-    show: entity.show,
-  }));
+
+  // プレビュー撮影時に全Entityのshowを1件ずつ切り替えると、Entityごとの
+  // definitionChanged通知が大量に発生し、メイン3Dマップの描画とタイル更新を
+  // 不要に刺激する。DefaultDataSource全体を1回だけ非表示にすれば、見た目は
+  // 従来と同じままイベント量を大幅に減らせる。
+  const defaultDataSource = viewer.dataSourceDisplay.defaultDataSource;
+  const defaultDataSourceWasVisible = defaultDataSource.show;
 
   try {
-    for (const item of entityVisibility) {
-      item.entity.show = false;
-    }
+    defaultDataSource.show = false;
 
     setPreviewFromTripodToSubject(
       viewer,
@@ -137,9 +138,7 @@ export async function captureTripodPreview(
       previewCanvas.height
     );
   } finally {
-    for (const item of entityVisibility) {
-      item.entity.show = item.show;
-    }
+    defaultDataSource.show = defaultDataSourceWasVisible;
 
     restoreCamera(viewer, cameraState);
     // 3Dマップが実際に表示されている時だけ復元フレームを即描画する。
