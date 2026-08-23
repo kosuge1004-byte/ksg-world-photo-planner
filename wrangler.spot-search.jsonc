@@ -10,21 +10,20 @@
       "id": "92197c38d81d48489ef4fdd25b1b9a58"
     }
   ],
-  // Pages Functions側のNETWORK_CACHE（PHASE5_4_CLOUDFLARE_R2_CACHE.md参照）と
-  // 同じR2バケットをここにも束縛すると、DEMタイルキャッシュ（空判定含む）を
-  // 対話的な三脚候補探索とバックグラウンドのスポット検索ジョブの両方で
-  // 共有できる。未設定のままでも従来どおり動作する（persistentCacheFromR2が
-  // undefinedを安全に許容するため、キャッシュへの保存だけがスキップされ、
-  // 通信自体はそのまま成功する）。
+  // Pages Functions側のNETWORK_CACHEと同じR2バケットをここにも束縛すると、
+  // DEMタイルキャッシュ（空判定含む）を対話的な三脚候補探索とバックグラウンドの
+  // スポット検索ジョブの両方で共有できる。未設定のままでも従来どおり動作する
+  // （persistentCacheFromR2がundefinedを安全に許容するため、キャッシュへの
+  // 保存だけがスキップされ、通信自体はそのまま成功する）。
   //
-  // 後でキャッシュの効果を得たくなったら、以下のコメントを外して
-  // bucket_nameを実際に作成したR2バケット名に置き換えるだけでよい。
-  // "r2_buckets": [
-  //   {
-  //     "binding": "NETWORK_CACHE",
-  //     "bucket_name": "ここに実際のR2バケット名"
-  //   }
-  // ],
+  // 2026-08-23: wrangler.jsonc（Pages側）にNETWORK_CACHEを設定したのに
+  // 合わせて、同じバケットをこちらにも設定した。
+  "r2_buckets": [
+    {
+      "binding": "NETWORK_CACHE",
+      "bucket_name": "astrosight-network-cache"
+    }
+  ],
   "queues": {
     "consumers": [
       {

@@ -190,6 +190,46 @@ test("multiple terrain intersections: both crossings are kept as separate candid
   );
 });
 
+test("rocky/bumpy real-world terrain: convergence succeeds within the iteration budget without loosening the angular tolerance", async () => {
+  const sun = realSunHorizontal();
+  const point = { id: "sun", label: "太陽", azimuthDegrees: sun.azimuthDegrees, altitudeDegrees: sun.altitudeDegrees };
+
+  // 実際に不具合が報告された岩場のような地形を模した合成地形。
+  // 真の交点(968m)への滑らかな傾斜に、岩1つ分程度のスケール（振幅0.35m、
+  // 周期6m）の細かい起伏を重ねる。この振幅は968mでの収束角度しきい値
+  // （CONVERGED_HORIZONTAL_DEGREES=0.002度 ≒ 968m地点で約3.4cm相当）を
+  // 優に超えるため、反復1回あたりの局所再探索が起伏に振り回され、
+  // 数回の反復では収束しきらないことがある——これが実機で報告された
+  // 「現在の条件では確定できる三脚候補がありません」を再現する条件。
+  const trueDistance = 968;
+  const terrainSampler = makeMockTerrainSampler(
+    SUBJECT,
+    CAMERA.lensCenterHeightMeters,
+    (d) => (d - trueDistance) + 0.35 * Math.sin(d / 6)
+  );
+
+  const candidates = await calculateTripodCandidates(
+    SUBJECT,
+    [point],
+    CAMERA,
+    DATE,
+    CALCULATION_MODE,
+    terrainSampler,
+    undefined,
+    3 / 2,
+    { minMeters: 100, maxMeters: 1500 }
+  );
+
+  assert.ok(
+    candidates.length >= 1,
+    "岩場相当の起伏があっても、十分な反復回数のうちに収束条件を満たす候補が見つかるべき"
+  );
+  assert.ok(
+    Math.abs(candidates[0].distanceMeters - trueDistance) < 5,
+    `真の交点(${trueDistance}m)付近に収束するべき（実際: ${candidates[0].distanceMeters}）`
+  );
+});
+
 test("no FOV rejection: candidate distances are unaffected by focal length / aspect ratio (composition is a user decision, not a filter)", async () => {
   const sun = realSunHorizontal();
   const point = { id: "sun", label: "太陽", azimuthDegrees: sun.azimuthDegrees, altitudeDegrees: sun.altitudeDegrees };

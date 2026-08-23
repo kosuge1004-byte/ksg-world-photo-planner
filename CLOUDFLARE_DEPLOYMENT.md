@@ -7,6 +7,7 @@
 - Workers KV `SPOT_SEARCH_JOBS`: 検索要求、進捗、途中結果、最終結果を7日間保存
 - Cloudflare Queue `astrosight-spot-search`: 長時間検索をPagesのHTTPリクエストから分離
 - Consumer Worker `astrosight-spot-search-consumer`: 既存の検索・計算ロジックを実行
+- R2バケット `NETWORK_CACHE`: 国土地理院DEMタイル・気象データ等のサーバー側キャッシュ（下記4-1参照）
 
 Pages FunctionsのHTTP応答後処理には実行時間の上限があるため、スポット検索本体だけはQueue Consumer Workerで実行します。公開APIパス、リクエスト、レスポンスおよびブラウザー側の状態名は従来どおりです。
 
@@ -72,12 +73,25 @@ GitHubリポジトリ`kosuge1004-byte/ksg-world-photo-planner`をPagesへ接続�
 - Build output directory: `dist`
 - Root directory: `/`
 
+### 4-1. R2バケット（NETWORK_CACHE）を作成
+
+`wrangler.jsonc`の`r2_buckets`が参照するR2バケットは、事前にCloudflare側へ実体を作成しておく必要があります（存在しないバケット名を`wrangler.jsonc`に書くだけでは動きません）。
+
+```powershell
+npx.cmd wrangler r2 bucket create astrosight-network-cache
+```
+
+このバケットは`functions/api/gsi-elevation.ts`・`server/gsiElevation.ts`が国土地理院DEMタイル等をキャッシュするために使います。**これが無い（または名前が一致しない）と、キャッシュが常にバイパスされて毎回国土地理院サーバーへ生で問い合わせることになり、三脚候補計算が著しく遅くなったり、Pages Functionsの実行時間上限に達して500エラーになったりします**（2026-08-23: 実機で確認済みの不具合）。
+
+このプロジェクトはBindingsを`wrangler.jsonc`で管理しており、Cloudflareダッシュボードの「Settings > Functions > Bindings」からは追加できません（「Bindings for this project are being managed through wrangler.toml」と表示されます）。バケット名を変える場合は、`wrangler.jsonc`の`r2_buckets[].bucket_name`も同じ名前に書き換えてください。
+
 `wrangler.jsonc`により、Pagesへ次のBindingsが設定されます。
 
 - KV: `SPOT_SEARCH_JOBS`
 - Queue producer: `SPOT_SEARCH_QUEUE` → `astrosight-spot-search`
+- R2 bucket: `NETWORK_CACHE` → `astrosight-network-cache`
 
-ダッシュボードから設定する場合もBinding名を完全に一致させてください。Binding変更後は再デプロイが必要です。
+Binding名を完全に一致させてください。Binding変更後（このR2追加を含む）は必ず再デプロイが必要です。
 
 SPAルーティングはCloudflare Pagesの標準動作を使用します。ルート直下に`404.html`が無い場合、Pagesは未一致パスを自動的に`/`へフォールバックします。`public/_redirects`は確認済みで、循環する`/* /index.html 200`ルールは設定していません。
 

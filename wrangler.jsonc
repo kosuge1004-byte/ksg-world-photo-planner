@@ -13,6 +13,21 @@
       "id": "92197c38d81d48489ef4fdd25b1b9a58"
     }
   ],
+  // 地形標高（GSI DEMタイル）・気象等のサーバー側キャッシュ。
+  // functions/_shared/env.ts の CloudflareEnv.NETWORK_CACHE、
+  // functions/api/gsi-elevation.ts、server/gsiElevation.ts から参照する。
+  // この設定が無いとキャッシュが常にバイパスされ、三脚候補計算のたびに
+  // 国土地理院サーバーへ生で問い合わせることになり、著しく遅くなる
+  // （2026-08-23: 実機で「計算中のまま止まる」「gsi-elevationへのPOSTが
+  // 500エラー」の直接原因として特定）。
+  // Cloudflareダッシュボードで先にR2バケットを作成してから
+  // デプロイすること（バケット名はここと一致させる必要がある）。
+  "r2_buckets": [
+    {
+      "binding": "NETWORK_CACHE",
+      "bucket_name": "astrosight-network-cache"
+    }
+  ],
   "queues": {
     "producers": [
       {

@@ -941,6 +941,11 @@ async function calculateOneCandidates(
     // 再評価する。太陽・月は近距離の観測点間で視差が無視できるため、
     // 候補地点で再計算した方位・高度を「被写体からのレイの向き」として
     // 再利用しても物理的な誤差は生じない。
+    //
+    // 過去に反復回数・サンプル数・探索窓を増やす変更を試したが、自作の
+    // 回帰テストで効果が確認できず（同じ結果しか出なかった）、その上で
+    // 実機では地形サーバーへのリクエストが増えて処理が固まる問題を
+    // 引き起こしたため、根拠のない変更として撤回し元の値へ戻した。
     for (let iteration = 0; iteration < 3; iteration += 1) {
       const candidatePoint = buildCandidateGroundPoint(
         solution.cartographic,
