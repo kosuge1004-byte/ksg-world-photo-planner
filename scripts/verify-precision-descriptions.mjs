@@ -19,9 +19,15 @@ for (const [expected, label] of [
   ["PLATEAU（建物を含む立体データ、オープンデータ）", "PLATEAU height"],
   ["利用できる天気データで空気による光の曲がりを補正します", "automatic refraction"],
   ["一般的な気温・気圧を使って補正します", "standard refraction"],
-  ["天文学上の位置を表示します", "no refraction"],
 ]) {
   requireText(settings, expected, `${label} explanation is missing`);
+}
+
+// 「補正なし」は、pro固定のメイン計算経路では実際には屈折を無効化できて
+// いなかった（標準大気差へ無条件フォールバックしていた）ため廃止した。
+// 表示と実計算が食い違う設定を復活させないためのガード。
+if (settings.includes('"none"') && /RefractionCorrectionMode/.test(settings)) {
+  throw new Error("removed 'no refraction' option must not be reintroduced into RefractionCorrectionMode");
 }
 
 requireText(styles, "max-height: calc(100dvh", "precision menu is not height bounded");

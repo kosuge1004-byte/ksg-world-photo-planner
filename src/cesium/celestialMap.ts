@@ -29,7 +29,16 @@ import { celestialWorldDirection } from "./celestialOcclusion";
 const PREFIX = "ksg-celestial-map-";
 const CELESTIAL_RAY_DISTANCE_METERS = 1_000_000;
 const entityCache = new WeakMap<Viewer, {
-  trackKey: string;
+  tracks: CelestialTrack[];
+  mapViewMode: "2d" | "3d";
+  tripodLatitude: number | null;
+  tripodLongitude: number | null;
+  tripodHeight: number | null;
+  lensCenterHeightMeters: number;
+  visibilitySun: boolean;
+  visibilityMoon: boolean;
+  visibilityMilkyWay: boolean;
+  visibilityPolaris: boolean;
 }>();
 
 type SharedGroundLineState = { positions: Cartesian3[] };
@@ -127,7 +136,8 @@ function updateTripodCandidateEntities(
   if (subject) {
     for (const candidate of candidates) {
       if (!visibility[candidate.id]) continue;
-      const id = `${PREFIX}${candidate.id}-tripod-candidate`;
+      const candidateIndex = candidate.intersectionIndex ?? 1;
+      const id = `${PREFIX}${candidate.id}-tripod-candidate-${candidateIndex}`;
       activeIds.add(id);
       const position = Cartesian3.fromDegrees(
         candidate.longitude,
@@ -138,8 +148,11 @@ function updateTripodCandidateEntities(
         candidate.solutionType === "direction-only"
           ? "三脚方位候補（要確認）"
           : "三脚候補";
+      const candidateNumber = candidate.intersectionCount && candidate.intersectionCount > 1
+        ? ` ${candidateIndex}/${candidate.intersectionCount}`
+        : "";
       const text =
-        `${candidate.label} ${candidateKind}\n${Math.round(candidate.distanceMeters)}m`;
+        `${candidate.label} ${candidateKind}${candidateNumber}\n${Math.round(candidate.distanceMeters)}m`;
       const existing = states.get(id);
       if (existing) {
         // 時間軸ドラッグ中はEntityを作り直さず、参照中の座標だけを更新する。
@@ -295,23 +308,33 @@ export function updateCelestialMapEntities(
   mapViewMode: "2d" | "3d",
   lensCenterHeightMeters: number
 ): void {
-  const trackKey = JSON.stringify({
-    mapViewMode,
-    tripod: tripod && [tripod.latitude, tripod.longitude, tripod.height],
-    lensCenterHeightMeters,
-    visibility,
-    tracks: tracks.map((track) => [
-      track.id,
-      track.points.map((point) => [
-        point.timestampMilliseconds,
-        point.xPercent,
-        point.yPercent,
-        point.inFront,
-      ]),
-    ]),
-  });
+  // tracksは呼び出し側useMemoで内容変更時だけ参照が変わる。
+  // 数千点の軌道配列を毎更新JSON.stringifyするのをやめ、参照と小さな
+  // プリミティブ値だけで再生成要否を判定する。描画内容は変えない。
   const previousCache = entityCache.get(viewer);
-  const replaceTracks = previousCache?.trackKey !== trackKey;
+  const replaceTracks = !previousCache ||
+    previousCache.tracks !== tracks ||
+    previousCache.mapViewMode !== mapViewMode ||
+    previousCache.tripodLatitude !== (tripod?.latitude ?? null) ||
+    previousCache.tripodLongitude !== (tripod?.longitude ?? null) ||
+    previousCache.tripodHeight !== (tripod?.height ?? null) ||
+    previousCache.lensCenterHeightMeters !== lensCenterHeightMeters ||
+    previousCache.visibilitySun !== visibility.sun ||
+    previousCache.visibilityMoon !== visibility.moon ||
+    previousCache.visibilityMilkyWay !== visibility.milkyWay ||
+    previousCache.visibilityPolaris !== visibility.polaris;
+  const nextCache = {
+    tracks,
+    mapViewMode,
+    tripodLatitude: tripod?.latitude ?? null,
+    tripodLongitude: tripod?.longitude ?? null,
+    tripodHeight: tripod?.height ?? null,
+    lensCenterHeightMeters,
+    visibilitySun: visibility.sun,
+    visibilityMoon: visibility.moon,
+    visibilityMilkyWay: visibility.milkyWay,
+    visibilityPolaris: visibility.polaris,
+  };
 
   for (const entity of [...viewer.entities.values]) {
     if (typeof entity.id === "string" && entity.id.startsWith(PREFIX)) {
@@ -340,10 +363,10 @@ export function updateCelestialMapEntities(
   );
 
   if (!tripod) {
-    entityCache.set(viewer, { trackKey });
+    entityCache.set(viewer, nextCache);
     return;
   }
-  entityCache.set(viewer, { trackKey });
+  entityCache.set(viewer, nextCache);
 
   const origin = Cartesian3.fromDegrees(
     tripod.longitude,

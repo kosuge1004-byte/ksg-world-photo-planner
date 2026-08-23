@@ -127,12 +127,25 @@ async function createStandardViewer(
     maximumLevel: 18,
   }));
 
+  // 地形（Viewer構築に必須）とPLATEAU建物タイルセット（表示専用、地形とは
+  // 別エンドポイントで地形の結果に依存しない）を並行して取得開始する。
+  // 建物を実際にシーンへ追加するかどうかは従来どおり地形の取得成功に
+  // 依存させる（両者とも楕円体高基準で、垂直方向の整合を前提としている
+  // ため）が、取得そのものを直列に待つ理由はない。読み込み内容・精度・
+  // 表示条件は変更しない。
+  setStatus("標準3D：PLATEAU地形を読み込み中…");
+  const terrainProviderPromise = CesiumTerrainProvider.fromUrl(PLATEAU_TERRAIN_URL, {
+    requestVertexNormals: true,
+  });
+  const plateauBuildingsPromise = loadPlateauBuildingsTileset();
+  // 先行取得中のPLATEAU建物リクエストの失敗を、地形の結果を待つ間に
+  // 未処理のPromise rejectionとして表面化させない（実際のハンドリングは
+  // 下の使用箇所で行う）。
+  plateauBuildingsPromise.catch(() => undefined);
+
   let terrainProvider: CesiumTerrainProvider | undefined;
   try {
-    setStatus("標準3D：PLATEAU地形を読み込み中…");
-    terrainProvider = await CesiumTerrainProvider.fromUrl(PLATEAU_TERRAIN_URL, {
-      requestVertexNormals: true,
-    });
+    terrainProvider = await terrainProviderPromise;
   } catch (error) {
     console.warn("PLATEAU terrain could not be loaded; PLATEAU buildings will be disabled.", error);
     setStatus("標準：PLATEAU地形未取得のため国土地理院地図で表示中");
@@ -164,12 +177,18 @@ async function createStandardViewer(
   // enabled only when PLATEAU-Terrain loaded successfully, because both use
   // ellipsoidal heights and are designed to align vertically.
   if (!terrainProvider) {
+    // 地形が取得できなかった場合、先行取得していた建物タイルセットは
+    // 使わずに破棄する（垂直方向の整合が取れないため表示しない方針は
+    // 従来どおり変更しない）。
+    void plateauBuildingsPromise
+      .then((tileset) => tileset.destroy())
+      .catch(() => undefined);
     return viewer;
   }
 
   try {
     setStatus("標準3D：PLATEAU建物を読み込み中…");
-    const plateauBuildings = await loadPlateauBuildingsTileset();
+    const plateauBuildings = await plateauBuildingsPromise;
 
     viewer.scene.primitives.add(plateauBuildings);
     setStatus("標準3D：PLATEAU建物表示中（利用可能な最高LOD・テクスチャ優先）");

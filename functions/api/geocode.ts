@@ -19,7 +19,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }
     const query = body.query.trim().replace(/\s+/g, " ");
     const result = await getOrCreateR2Json(env.NETWORK_CACHE, { query }, {
-      namespace: "geocode", version: "v1", ttlSeconds: 30 * 86400,
+      namespace: "geocode", version: "v3", ttlSeconds: 30 * 86400,
     }, () => resolveJapanesePlaceName(query, request.signal), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
   } catch (error) {

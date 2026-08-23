@@ -105,6 +105,7 @@ type KsgIdbDatabase = {
   createObjectStore: (name: string, options: { keyPath: string }) => KsgIdbObjectStore;
   transaction: (name: string, mode: "readonly" | "readwrite") => KsgIdbTransaction;
   close: () => void;
+  onversionchange?: (() => void) | null;
 };
 
 type KsgIndexedDbFactory = {
@@ -127,10 +128,14 @@ function terrainCacheKey(
   ].join(",");
 }
 
+let terrainCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
+
 function openTerrainCache(): Promise<KsgIdbDatabase | null> {
   const indexedDb = getIndexedDbFactory();
   if (!indexedDb) return Promise.resolve(null);
-  return new Promise((resolve) => {
+  // 地形キャッシュもジオイドと同様にDB接続を共有する。read/writeのキー、
+  // 高度値、有効期限、DEM詳細度は一切変更せず、接続確立コストだけを削減する。
+  terrainCacheDatabasePromise ??= new Promise((resolve) => {
     const request = indexedDb.open(TERRAIN_CACHE_DB, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -138,9 +143,20 @@ function openTerrainCache(): Promise<KsgIdbDatabase | null> {
         database.createObjectStore(TERRAIN_CACHE_STORE, { keyPath: "key" });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onversionchange = () => {
+        database.close();
+        terrainCacheDatabasePromise = null;
+      };
+      resolve(database);
+    };
+    request.onerror = () => {
+      terrainCacheDatabasePromise = null;
+      resolve(null);
+    };
   });
+  return terrainCacheDatabasePromise;
 }
 
 async function readTerrainCache(
@@ -157,10 +173,15 @@ async function readTerrainCache(
   if (missing.length === 0) return values;
   const database = await openTerrainCache();
   if (!database) return values;
+  // 1地点ごとにIndexedDB transactionを作ると、LOSや三脚候補のような
+  // 多点取得で数十～数百個のtransaction完了イベントが発生し、スマホの
+  // メインスレッドを圧迫する。同一バッチは1つのreadonly transaction/storeを
+  // 共有し、結果・キャッシュ精度を一切変えずにI/Oオーバーヘッドだけ削減する。
+  const transaction = database.transaction(TERRAIN_CACHE_STORE, "readonly");
+  const store = transaction.objectStore(TERRAIN_CACHE_STORE);
   await Promise.all(missing.map((index) => new Promise<void>((resolve) => {
     const key = terrainCacheKey(points[index], maximumDetails?.[index]);
-    const request = database.transaction(TERRAIN_CACHE_STORE, "readonly")
-      .objectStore(TERRAIN_CACHE_STORE).get(key);
+    const request = store.get(key);
     request.onsuccess = () => {
       const record = request.result as TerrainCacheRecord | undefined;
       if (record && Date.now() - record.updatedAt <= TERRAIN_CACHE_MAX_AGE_MS && Number.isFinite(record.height)) {
@@ -176,7 +197,6 @@ async function readTerrainCache(
     };
     request.onerror = () => resolve();
   })));
-  database.close();
   return values;
 }
 
@@ -207,7 +227,6 @@ async function writeTerrainCache(
     transaction.onerror = () => resolve();
     transaction.onabort = () => resolve();
   });
-  database.close();
 }
 
 async function sampleTerrainCached(
@@ -402,10 +421,15 @@ function geoidRegionKey(point: Cartographic): string {
   return `${latitude.toFixed(GEOID_REGION_DECIMALS)},${longitude.toFixed(GEOID_REGION_DECIMALS)}`;
 }
 
+let geoidCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
+
 function openGeoidCache(): Promise<KsgIdbDatabase | null> {
   const indexedDb = getIndexedDbFactory();
   if (!indexedDb) return Promise.resolve(null);
-  return new Promise((resolve) => {
+  // 同じ計算中に地域ごとにDBをopen/closeすると、IndexedDBの接続確立イベントが
+  // メインスレッドへ大量に戻る。DB接続だけを共有し、保存値・キー・有効期限は
+  // 従来のまま維持するため、地形/ジオイド精度には影響しない。
+  geoidCacheDatabasePromise ??= new Promise((resolve) => {
     const request = indexedDb.open(GEOID_CACHE_DB, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -413,9 +437,20 @@ function openGeoidCache(): Promise<KsgIdbDatabase | null> {
         database.createObjectStore(GEOID_CACHE_STORE, { keyPath: "key" });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onversionchange = () => {
+        database.close();
+        geoidCacheDatabasePromise = null;
+      };
+      resolve(database);
+    };
+    request.onerror = () => {
+      geoidCacheDatabasePromise = null;
+      resolve(null);
+    };
   });
+  return geoidCacheDatabasePromise;
 }
 
 async function readGeoidPersistentCache(key: string): Promise<number | null> {
@@ -438,7 +473,6 @@ async function readGeoidPersistentCache(key: string): Promise<number | null> {
     };
     request.onerror = () => resolve(null);
   });
-  database.close();
   return value;
 }
 
@@ -452,7 +486,6 @@ async function writeGeoidPersistentCache(key: string, height: number): Promise<v
     transaction.onerror = () => resolve();
     transaction.onabort = () => resolve();
   });
-  database.close();
 }
 
 async function fetchGsiGeoidHeightOnce(
@@ -785,7 +818,8 @@ async function sampleTerrainWithGsiPriority(
 
 export async function sampleTerrainLineOfSightProfile(
   points: Cartographic[],
-  distancesMeters: number[]
+  distancesMeters: number[],
+  signal?: AbortSignal
 ): Promise<Cartographic[]> {
   if (points.length !== distancesMeters.length) {
     throw new Error("地形断面の座標数と距離数が一致しません");
@@ -794,7 +828,7 @@ export async function sampleTerrainLineOfSightProfile(
   const details = distancesMeters.map((distance) =>
     distance <= 2_000 ? "1m" as const : distance <= 20_000 ? "5m" as const : "10m" as const
   );
-  return sampleTerrainCached(points, details);
+  return sampleTerrainCached(points, details, signal);
 }
 
 export function terrainDataSource(sample: Cartographic): TerrainDataSource {

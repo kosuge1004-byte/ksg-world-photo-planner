@@ -11,6 +11,15 @@ const cases = [
     ],
   },
   {
+    name: "tripod candidate round-trip / multi-intersection / height-basis regression",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/tripod-candidate-round-trip.test.mjs",
+    ],
+  },
+  {
     name: "surface obstruction (building + vegetation) line-of-sight geometry (Phase2-3)",
     arguments: [
       "--import",

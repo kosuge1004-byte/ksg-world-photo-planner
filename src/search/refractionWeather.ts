@@ -234,9 +234,6 @@ export async function prepareRefractionWeatherContext(options: {
   // 予報・平年気象データによる屈折補正は従量制ではないため、
   // 標準／Googleタイルの両モードで同じ処理を使用する。
   void options.accuracyMode;
-  if (options.mode === "none") {
-    return { requestedMode: "none", effectiveMode: "none", source: "none", samples: [] };
-  }
   if (options.mode === "standard") {
     return { requestedMode: "standard", effectiveMode: "standard", source: "standard", samples: [] };
   }

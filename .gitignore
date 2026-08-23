@@ -33,3 +33,6 @@ npm-debug.log*
 
 # Test / coverage output
 coverage/
+
+# Generated at prebuild
+public/__astro_internal_geo_tz/

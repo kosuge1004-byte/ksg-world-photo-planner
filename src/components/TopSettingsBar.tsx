@@ -11,7 +11,6 @@ import { REFRACTION_MODE_LABELS } from "../types/precision";
 const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
   auto: "利用できる天気データで空気による光の曲がりを補正します。地平線付近ほど効果が大きく、取得時は通信と待ち時間が増えます。",
   standard: "一般的な気温・気圧を使って補正します。追加通信なしで安定して計算できます。",
-  none: "空気による光の曲がりを加えず、天文学上の位置を表示します。追加通信はありません。",
 };
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import { parseFocalLengthInput } from "../utils/focalLengthInput";
@@ -25,7 +24,6 @@ type Props = {
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
   onOpenArCamera: () => void;
-  onOpenUsageGuide: () => void;
   precisionSettings: PrecisionSettings;
   onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
 };
@@ -38,7 +36,6 @@ export function TopSettingsBar({
   onOpenCalendar,
   onOpenMoonAgeCalendar,
   onOpenArCamera,
-  onOpenUsageGuide,
   precisionSettings,
   onPrecisionSettingsChange,
 }: Props) {
@@ -59,6 +56,26 @@ export function TopSettingsBar({
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
   const [lightPollutionGuideOpen, setLightPollutionGuideOpen] = useState(false);
+
+  const closeDetailPanels = () => {
+    setPrecisionMenuOpen(false);
+    setThreeDSourceMenuOpen(false);
+    setMapSourcesOpen(false);
+    setLightPollutionGuideOpen(false);
+  };
+
+  const toggleDetailPanel = (panel: "precision" | "3d" | "light" | "sources") => {
+    const next = {
+      precision: panel === "precision" ? !precisionMenuOpen : false,
+      threeD: panel === "3d" ? !threeDSourceMenuOpen : false,
+      light: panel === "light" ? !lightPollutionGuideOpen : false,
+      sources: panel === "sources" ? !mapSourcesOpen : false,
+    };
+    setPrecisionMenuOpen(next.precision);
+    setThreeDSourceMenuOpen(next.threeD);
+    setLightPollutionGuideOpen(next.light);
+    setMapSourcesOpen(next.sources);
+  };
   const [focalLengthInput, setFocalLengthInput] = useState(
     String(settings.focalLengthMm)
   );
@@ -122,7 +139,10 @@ export function TopSettingsBar({
         className="hamburger-button"
         aria-label="メニュー"
         aria-expanded={modeMenuOpen}
-        onClick={() => setModeMenuOpen((current) => !current)}
+        onClick={() => {
+          if (modeMenuOpen) closeDetailPanels();
+          setModeMenuOpen((current) => !current);
+        }}
       >
         <span aria-hidden="true">☰</span>
       </button>
@@ -134,7 +154,10 @@ export function TopSettingsBar({
           role="dialog"
           aria-label="メニュー"
         >
-          <strong>メニュー</strong>
+          <div className="menu-dialog-header">
+            <strong>メニュー</strong>
+            <button type="button" className="menu-close-button" onClick={() => { closeDetailPanels(); setModeMenuOpen(false); }} aria-label="メニューを閉じる">閉じる</button>
+          </div>
           <button type="button" onClick={() => {
             setModeMenuOpen(false);
             onOpenCalendar();
@@ -152,15 +175,6 @@ export function TopSettingsBar({
             onOpenArCamera();
           }}>
             <b>ARカメラ</b><small>実景と3D・天体を重ねて確認</small>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setModeMenuOpen(false);
-              onOpenUsageGuide();
-            }}
-          >
-            <b>使い方</b><small>実画面をハイライトしながら、どこに何があるか確認</small>
           </button>
           {pwaInstall.supported && !pwaInstall.installed && (
             <>
@@ -183,22 +197,22 @@ export function TopSettingsBar({
               )}
             </>
           )}
-          <button type="button" onClick={() => setPrecisionMenuOpen((current) => !current)} aria-expanded={precisionMenuOpen}>
-            <b>精度設定</b><small>屈折補正の設定</small>
+          <button type="button" onClick={() => toggleDetailPanel("precision")} aria-expanded={precisionMenuOpen}>
+            <b>精度設定</b><small>三脚候補の検算・屈折補正</small>
           </button>
-          <button type="button" onClick={() => setThreeDSourceMenuOpen((current) => !current)} aria-expanded={threeDSourceMenuOpen}>
+          <button type="button" onClick={() => toggleDetailPanel("3d")} aria-expanded={threeDSourceMenuOpen}>
             <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
           </button>
           <button
             type="button"
-            onClick={() => setLightPollutionGuideOpen((current) => !current)}
+            onClick={() => toggleDetailPanel("light")}
             aria-expanded={lightPollutionGuideOpen}
           >
             <b>光害マップの見方</b><small>明るさと天の川撮影の目安</small>
           </button>
           {lightPollutionGuideOpen && (
             <section className="light-pollution-guide" aria-label="光害マップの見方">
-              <strong>光害マップの見方</strong>
+              <div className="menu-panel-header"><strong>光害マップの見方</strong><button type="button" onClick={() => setLightPollutionGuideOpen(false)}>閉じる</button></div>
               <div className="light-pollution-guide-row">
                 <b>暗い地域</b>
                 <span>人工の夜間光が少ない</span>
@@ -220,14 +234,14 @@ export function TopSettingsBar({
           )}
           <button
             type="button"
-            onClick={() => setMapSourcesOpen((current) => !current)}
+            onClick={() => toggleDetailPanel("sources")}
             aria-expanded={mapSourcesOpen}
           >
             <b>地図出典</b><small>使用中の地図・標高データ</small>
           </button>
           {mapSourcesOpen && (
             <section className="map-data-sources" aria-label="地図データ出典元">
-              <strong>地図データ出典元</strong>
+              <div className="menu-panel-header"><strong>地図データ出典元</strong><button type="button" onClick={() => setMapSourcesOpen(false)}>閉じる</button></div>
               <dl>
                 <div>
                   <dt>2D地図・地点共有</dt>
@@ -235,7 +249,7 @@ export function TopSettingsBar({
                 </div>
                 <div>
                   <dt>3D地図・建物・地表形状</dt>
-                  <dd>Google Photorealistic 3D Tiles</dd>
+                  <dd>{precisionSettings.accuracyMode === "highest" ? "Google Photorealistic 3D Tiles" : "国土地理院地図＋PLATEAU建物"}</dd>
                 </div>
                 <div>
                   <dt>日本国内の標高・地形</dt>
@@ -263,6 +277,7 @@ export function TopSettingsBar({
           {threeDSourceMenuOpen && (
             <fieldset className="precision-settings-panel">
               <legend>3D表示選択</legend>
+              <div className="menu-panel-header"><strong>表示データ</strong><button type="button" onClick={() => setThreeDSourceMenuOpen(false)}>閉じる</button></div>
               <label className="precision-choice">
                 <input
                   type="radio"
@@ -318,8 +333,28 @@ export function TopSettingsBar({
           )}
           {precisionMenuOpen && (
             <fieldset className="precision-settings-panel">
-              <legend>地表屈折補正</legend>
-              {(["auto", "standard", "none"] as RefractionCorrectionMode[]).map((mode) => (
+              <legend>精度設定</legend>
+              <div className="menu-panel-header"><strong>三脚候補・補正</strong><button type="button" onClick={() => setPrecisionMenuOpen(false)}>閉じる</button></div>
+              <div className="precision-subsection">
+                <strong>三脚候補ダブルチェック</strong>
+                <label className="precision-choice">
+                  <input
+                    type="checkbox"
+                    checked={precisionSettings.tripodCandidateDoubleCheckEnabled}
+                    onChange={(event) => onPrecisionSettingsChange({
+                      ...precisionSettings,
+                      tripodCandidateDoubleCheckEnabled: event.target.checked,
+                    })}
+                  />
+                  <span className="precision-choice-copy">
+                    <span className="precision-choice-title"><b>旧方式による独立検算</b>{!precisionSettings.tripodCandidateDoubleCheckEnabled && <small>初期値OFF</small>}</span>
+                    <small>本計算後に旧来の全距離探索でも確認します。候補点の採否は変更せず、追加計算のため処理時間とDEM通信量が増えます。</small>
+                  </span>
+                </label>
+              </div>
+              <div className="precision-subsection">
+                <strong>地表屈折補正</strong>
+              {(["auto", "standard"] as RefractionCorrectionMode[]).map((mode) => (
                 <label key={mode} className="precision-choice">
                   <input
                     type="radio"
@@ -340,6 +375,7 @@ export function TopSettingsBar({
                   </span>
                 </label>
               ))}
+              </div>
             </fieldset>
           )}
         </div>

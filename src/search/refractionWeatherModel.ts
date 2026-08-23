@@ -9,8 +9,8 @@ export type WeatherSample = {
 
 export type RefractionWeatherContext = {
   requestedMode: RefractionCorrectionMode;
-  effectiveMode: "standard" | "none" | "weather";
-  source: "none" | "standard" | "forecast" | "climatology" | "fallback";
+  effectiveMode: "standard" | "weather";
+  source: "standard" | "forecast" | "climatology" | "fallback";
   samples: WeatherSample[];
   climatologyByMonthHour?: Record<string, Omit<WeatherSample, "time">>;
 };

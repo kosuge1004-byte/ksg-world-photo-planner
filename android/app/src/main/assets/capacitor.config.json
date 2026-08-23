@@ -1,0 +1,16 @@
+{
+	"appId": "jp.astrosight.app",
+	"appName": "AstroSight",
+	"webDir": "dist",
+	"backgroundColor": "#05070a",
+	"ios": {
+		"contentInset": "never",
+		"preferredContentMode": "mobile",
+		"allowsLinkPreview": false,
+		"backgroundColor": "#05070a"
+	},
+	"android": {
+		"allowMixedContent": false,
+		"backgroundColor": "#05070a"
+	}
+}

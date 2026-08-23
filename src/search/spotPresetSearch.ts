@@ -92,6 +92,84 @@ export type ResolvedSpotLocation = {
   label: string;
 };
 
+const LOCATION_CACHE_STORAGE_KEY = "astrosight-place-search-cache-v1";
+const LOCATION_CACHE_TTL_MS = 7 * DAY_MS;
+const LOCATION_CACHE_MAX_ENTRIES = 80;
+const locationMemoryCache = new Map<string, { value: ResolvedSpotLocation; expiresAt: number }>();
+
+// このファイルはサーバー/ワーカー向けビルド（DOM libなし）からもimportされる
+// ため、グローバルの `window` 型に直接依存しない。ブラウザ実行時だけ
+// localStorageへアクセスし、それ以外の環境ではメモリキャッシュのみを使う。
+type BrowserStorageLike = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+function browserLocalStorage(): BrowserStorageLike | undefined {
+  const globalWindow = (globalThis as { window?: { localStorage?: BrowserStorageLike } }).window;
+  return globalWindow?.localStorage;
+}
+
+function normalizedLocationQuery(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("ja");
+}
+
+function readCachedSpotLocation(query: string): ResolvedSpotLocation | null {
+  const key = normalizedLocationQuery(query);
+  if (!key) return null;
+  const now = Date.now();
+  const memory = locationMemoryCache.get(key);
+  if (memory) {
+    if (memory.expiresAt > now) return memory.value;
+    locationMemoryCache.delete(key);
+  }
+  const storage = browserLocalStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(LOCATION_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, { value?: ResolvedSpotLocation; expiresAt?: number }>;
+    const entry = parsed[key];
+    if (!entry || typeof entry.expiresAt !== "number" || entry.expiresAt <= now || !entry.value) {
+      return null;
+    }
+    const latitude = Number(entry.value.latitude);
+    const longitude = Number(entry.value.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || typeof entry.value.label !== "string") {
+      return null;
+    }
+    const value = { latitude, longitude, label: entry.value.label };
+    locationMemoryCache.set(key, { value, expiresAt: entry.expiresAt });
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedSpotLocation(query: string, value: ResolvedSpotLocation): void {
+  const key = normalizedLocationQuery(query);
+  if (!key) return;
+  const expiresAt = Date.now() + LOCATION_CACHE_TTL_MS;
+  locationMemoryCache.set(key, { value, expiresAt });
+  if (locationMemoryCache.size > LOCATION_CACHE_MAX_ENTRIES) {
+    const firstKey = locationMemoryCache.keys().next().value;
+    if (typeof firstKey === "string") locationMemoryCache.delete(firstKey);
+  }
+  const storage = browserLocalStorage();
+  if (!storage) return;
+  try {
+    const raw = storage.getItem(LOCATION_CACHE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, { value: ResolvedSpotLocation; expiresAt: number }> : {};
+    parsed[key] = { value, expiresAt };
+    const entries = Object.entries(parsed)
+      .filter(([, entry]) => entry && typeof entry.expiresAt === "number" && entry.expiresAt > Date.now())
+      .sort((left, right) => right[1].expiresAt - left[1].expiresAt)
+      .slice(0, LOCATION_CACHE_MAX_ENTRIES);
+    storage.setItem(LOCATION_CACHE_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // localStorage が利用できない環境でも検索自体は継続する。
+  }
+}
+
 type SearchSample = {
   date: Date;
   horizontal: HorizontalCoordinates;
@@ -135,29 +213,51 @@ function abortIfRequested(signal?: AbortSignal): void {
   }
 }
 
+export async function prefetchSpotLocation(
+  query: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return;
+  try {
+    await resolveSpotLocation(normalizedQuery, signal);
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) return;
+    // 先読みはUX最適化であり、本検索のエラー表示には影響させない。
+  }
+}
+
 export async function resolveSpotLocation(
   query: string,
   signal?: AbortSignal
 ): Promise<ResolvedSpotLocation> {
-  const googleMapsUrl = extractGoogleMapsSharedUrl(query);
+  const normalizedQuery = query.trim();
+  const cached = readCachedSpotLocation(normalizedQuery);
+  if (cached) return cached;
+
+  const googleMapsUrl = extractGoogleMapsSharedUrl(normalizedQuery);
   if (googleMapsUrl) {
     const direct = extractGoogleMapsCoordinates(googleMapsUrl);
     if (direct) {
-      return {
+      const resolved = {
         ...direct,
         label: "Googleマップ共有地点",
       };
+      writeCachedSpotLocation(normalizedQuery, resolved);
+      return resolved;
     }
     if (canResolveGoogleMapsNatively()) {
       const nativeLocation = await resolveGoogleMapsSharedUrlNatively(
         googleMapsUrl,
         signal
       );
-      return {
+      const resolved = {
         latitude: nativeLocation.latitude,
         longitude: nativeLocation.longitude,
         label: "Googleマップ共有地点",
       };
+      writeCachedSpotLocation(normalizedQuery, resolved);
+      return resolved;
     }
     const response = await diagnosticFetch("google-maps-resolver", "/api/resolve-google-maps", {
       method: "POST",
@@ -176,7 +276,7 @@ export async function resolveSpotLocation(
     ) {
       throw new Error(data.error ?? "Googleマップ共有URLを解析できませんでした");
     }
-    return {
+    const resolved = {
       latitude: data.latitude,
       longitude: data.longitude,
       label:
@@ -185,6 +285,8 @@ export async function resolveSpotLocation(
         data.label ??
         "Googleマップ共有地点",
     };
+    writeCachedSpotLocation(normalizedQuery, resolved);
+    return resolved;
   }
 
   let result: SearchResult | undefined;
@@ -194,7 +296,7 @@ export async function resolveSpotLocation(
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query: normalizedQuery }),
     signal,
   });
   const apiIsJson = (apiResponse.headers.get("content-type") ?? "")
@@ -212,7 +314,9 @@ export async function resolveSpotLocation(
       Number.isFinite(longitude) &&
       typeof location.label === "string"
     ) {
-      return { latitude, longitude, label: location.label };
+      const resolved = { latitude, longitude, label: location.label };
+      writeCachedSpotLocation(normalizedQuery, resolved);
+      return resolved;
     }
     throw new Error("地名検索APIの応答座標が不正です");
   }
@@ -228,7 +332,7 @@ export async function resolveSpotLocation(
   // バックグラウンドAPIを伴わない静的プレビューでだけ従来の直接検索へ戻す。
   // 本番・npm run devでは同一オリジンAPIを使い、ブラウザCORSや429の影響を避ける。
   const parameters = new URLSearchParams({
-    q: query,
+    q: normalizedQuery,
     format: "jsonv2",
     limit: "1",
     addressdetails: "1",
@@ -253,7 +357,9 @@ export async function resolveSpotLocation(
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     throw new Error("検索地点の座標が不正です");
   }
-  return { latitude, longitude, label: result.display_name };
+  const resolved = { latitude, longitude, label: result.display_name };
+  writeCachedSpotLocation(normalizedQuery, resolved);
+  return resolved;
 }
 
 export async function resolveSpotTimeZone(

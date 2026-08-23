@@ -204,7 +204,7 @@ export function CelestialTransitSearchDialog({
         tripod,
         subject,
         visibility,
-        calculationMode: refractionWeather.effectiveMode === "none" ? "standard" : "pro",
+        calculationMode: "pro",
         cameraSettings: searchCameraSettings,
         previewAspectRatio,
         criteria,

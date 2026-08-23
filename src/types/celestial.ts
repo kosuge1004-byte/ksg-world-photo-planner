@@ -156,4 +156,8 @@ export type TripodCandidate = {
    * direction-onlyは精密解が存在しない場合にも表示する天体方位上の確認地点。
    */
   solutionType?: "aligned" | "direction-only";
+  /** 同一天体で複数の地形交点がある場合の、遠い順の候補番号。 */
+  intersectionIndex?: number;
+  /** 同一天体で検出された有効地形交点の総数。 */
+  intersectionCount?: number;
 };

@@ -13,13 +13,16 @@ import type {
 import type { GroundPoint } from "../types/points";
 import { ellipsoidalHeightMeters } from "../types/points";
 import type { CalculationMode, CameraSettings } from "../types/camera";
-import { calculateCelestialHorizontalCoordinates } from "./celestial";
-import { sensorDimensionsMm } from "./camera";
+import {
+  calculateCelestialHorizontalCoordinates,
+  createCameraProjection,
+  projectHorizontalToPreview,
+} from "./celestial";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
 } from "../geodesy/karneyGeodesic";
-import { sampleWorldTerrain } from "./worldTerrain";
+import { sampleWorldTerrain, terrainDataSource } from "./worldTerrain";
 import { computeApparentElevation } from "../apparent/apparentElevation";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
@@ -27,13 +30,18 @@ const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
 const DEFAULT_SAMPLE_COUNT = 32;
+// 交点取りこぼし防止用の補助走査。初期32点は維持しつつ、広すぎる区間だけを
+// 10m DEMで一括補間する。全域を1m化しないため、精度向上と通信量抑制を両立する。
+const ADAPTIVE_COARSE_MAX_SPAN_METERS = 500;
+const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
+const ADAPTIVE_NEAR_RAY_ERROR_DEGREES = 0.12;
+const ADAPTIVE_MAX_TOTAL_SAMPLES = 640;
 // 精密化は固定575点取得ではなく、交差区間だけを32分割して2段階で絞る。
 // 32^2=1024分割相当となるため、従来の576分割より最終距離分解能は高い。
 // 各段階で使うDEMは従来どおり1m指定のままなので、高さ精度も落とさない。
 // 取得点数は最大575点→62点程度となり、通信負荷と一時失敗率を大幅に下げる。
 const DEFAULT_ROOT_REFINEMENT_PASSES = 2;
 const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 32;
-const CONVERGED_POSITION_METERS = 0.05;
 // 収束判定の角度は、探索エンジン自身がどこでも「収束」と扱っている許容誤差
 // （0.002度）に揃える。従来の0.0001度（0.36秒角）は1mメッシュDEMの実測精度
 // より20倍以上厳しく、データの精度を超えた桁を追いかけて3回目の反復（＝
@@ -41,6 +49,12 @@ const CONVERGED_POSITION_METERS = 0.05;
 // 最終的な角度誤差の許容値自体は変えていないため、得られる位置の精度は
 // 従来と変わらない。
 const CONVERGED_HORIZONTAL_DEGREES = 0.002;
+// Round-trip検証（仕様3-G）: 候補地点を既存プレビューと同じCameraModel/Projection
+// 経路へ逆投入し、天体中心と被写体中心のスクリーン座標差（画面幅・高さに対する
+// 割合）を確認する。角度収束条件（CONVERGED_HORIZONTAL_DEGREES）を満たしていれば
+// 通常はこの範囲に収まるが、投影の非線形性（望遠レンズでの接線補正等）による
+// 残差を別経路で二重に検出するための独立したしきい値。
+const ROUND_TRIP_SCREEN_TOLERANCE_PERCENT = 0.5;
 export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;
 
 export type TerrainSampler = (
@@ -59,29 +73,37 @@ function abortIfRequested(signal?: AbortSignal): void {
 }
 
 /**
- * 新方式の主計算: 天体→被写体を通る見かけ視線を被写体の反対側へ延長し、
- * WGS84楕円体との交点から三脚距離の第一候補を直接求める。
+ * 「天体中心 → 被写体 → 後方」の3Dレイ（ECEF直線）。
  *
- * ここで得る値はあくまで「第一候補距離」。実地形、レンズ中心高、地上屈折、
- * 気象連動大気差は後段の既存1m DEM/ECEF/Apparent計算で必ず再検証する。
- * したがって楕円体近似を最終解として採用することはない。
+ * 天体は被写体近傍のどの地点から見てもほぼ同一方向にある（太陽・月とも
+ * 視差は無視できるほど遠い）。したがって、被写体を通り天体方向を指す
+ * 単位ベクトルは、被写体位置のENU基底で一度だけ組み立てれば、以降の
+ * 探索区間（数百m〜数km）全域で有効な固定方向として扱える。
+ *
+ * origin/directionはECEF実座標（メートル単位）。tがそのまま被写体からの
+ * 直線距離（メートル）になる。
  */
-function directSightlineSeedDistanceMeters(
+export type CelestialSubjectRay = {
+  origin: Cartesian3;
+  direction: Cartesian3;
+};
+
+export function buildCelestialBackwardRay(
   subject: GroundPoint,
   celestialAzimuthDegrees: number,
   apparentAltitudeDegrees: number
-): number | null {
+): CelestialSubjectRay | null {
   if (
     !Number.isFinite(subject.latitude) ||
     !Number.isFinite(subject.longitude) ||
     !Number.isFinite(ellipsoidalHeightMeters(subject)) ||
     !Number.isFinite(celestialAzimuthDegrees) ||
-    !Number.isFinite(apparentAltitudeDegrees) ||
-    apparentAltitudeDegrees <= 0
+    !Number.isFinite(apparentAltitudeDegrees)
   ) return null;
 
   const lat = CesiumMath.toRadians(subject.latitude);
   const lon = CesiumMath.toRadians(subject.longitude);
+  // 三脚は天体と反対側（被写体を挟んで反対の方位・下向きの仰角）に立つ。
   const bearing = CesiumMath.toRadians((celestialAzimuthDegrees + 180) % 360);
   const elevation = CesiumMath.toRadians(-apparentAltitudeDegrees);
 
@@ -117,13 +139,51 @@ function directSightlineSeedDistanceMeters(
     ellipsoidalHeightMeters(subject),
     Ellipsoid.WGS84
   );
+  return { origin, direction };
+}
+
+/**
+ * レイ上の距離tにおける地点（緯度経度・楕円体高）。tは被写体からのECEF
+ * 直線距離（メートル）。高さは楕円体高（レイがWGS84楕円体上でどの高さに
+ * あるか）で、地形高ではない。地形との交差判定は呼び出し側でDEM高との
+ * 差として行う。
+ */
+export function rayCartographicAtDistance(
+  ray: CelestialSubjectRay,
+  distanceMeters: number
+): Cartographic | null {
+  const position = Cartesian3.add(
+    ray.origin,
+    Cartesian3.multiplyByScalar(ray.direction, distanceMeters, new Cartesian3()),
+    new Cartesian3()
+  );
+  return Ellipsoid.WGS84.cartesianToCartographic(position);
+}
+
+/**
+ * 新方式の主計算: 天体→被写体を通る見かけ視線を被写体の反対側へ延長し、
+ * WGS84楕円体との交点から三脚距離の第一候補を直接求める。
+ *
+ * ここで得る値はあくまで「第一候補距離」。実地形、レンズ中心高、地上屈折、
+ * 気象連動大気差は後段の既存1m DEM/ECEF/Apparent計算で必ず再検証する。
+ * したがって楕円体近似を最終解として採用することはない。
+ */
+function directSightlineSeedDistanceMeters(
+  subject: GroundPoint,
+  celestialAzimuthDegrees: number,
+  apparentAltitudeDegrees: number
+): number | null {
+  if (apparentAltitudeDegrees <= 0) return null;
+  const ray = buildCelestialBackwardRay(subject, celestialAzimuthDegrees, apparentAltitudeDegrees);
+  if (!ray) return null;
+
   const radii = Ellipsoid.WGS84.radii;
-  const ox = origin.x / radii.x;
-  const oy = origin.y / radii.y;
-  const oz = origin.z / radii.z;
-  const dx = direction.x / radii.x;
-  const dy = direction.y / radii.y;
-  const dz = direction.z / radii.z;
+  const ox = ray.origin.x / radii.x;
+  const oy = ray.origin.y / radii.y;
+  const oz = ray.origin.z / radii.z;
+  const dx = ray.direction.x / radii.x;
+  const dy = ray.direction.y / radii.y;
+  const dz = ray.direction.z / radii.z;
   const a = dx * dx + dy * dy + dz * dz;
   const b = 2 * (ox * dx + oy * dy + oz * dz);
   const c = ox * ox + oy * oy + oz * oz - 1;
@@ -135,12 +195,7 @@ function directSightlineSeedDistanceMeters(
   const t = [t1, t2].filter((value) => Number.isFinite(value) && value > 0).sort((x, y) => x - y)[0];
   if (!Number.isFinite(t)) return null;
 
-  const intersection = Cartesian3.add(
-    origin,
-    Cartesian3.multiplyByScalar(direction, t, new Cartesian3()),
-    new Cartesian3()
-  );
-  const cartographic = Ellipsoid.WGS84.cartesianToCartographic(intersection);
+  const cartographic = rayCartographicAtDistance(ray, t);
   if (!cartographic) return null;
   const intersectionPoint: GroundPoint = {
     latitude: CesiumMath.toDegrees(cartographic.latitude),
@@ -152,6 +207,37 @@ function directSightlineSeedDistanceMeters(
   return Number.isFinite(distance) && distance >= ABSOLUTE_MIN_DISTANCE_METERS
     ? Math.min(ABSOLUTE_MAX_DISTANCE_METERS, distance)
     : null;
+}
+
+/**
+ * 高さ基準を混同しないための候補地点GroundPoint生成。
+ *
+ * DEM（sampleWorldTerrain）は楕円体高だけを返し、地点別ジオイド高は
+ * 取得しない。ジオイド分離量は数kmの範囲では極めて滑らかに変化するため、
+ * 被写体側で既に解決済みのジオイド高（resolveGroundPoint等で取得済みの
+ * 場合）を候補地点へそのまま流用する。被写体側にジオイド情報がない場合は
+ * 明示的なorthometric/geoidを設定せず、`orthometricHeightMeters()`の
+ * 通常フォールバック（≒楕円体高）へ委ねる。ここで「楕円体高をlegacy
+ * heightとして代用する」新たな混同を発生させないことが目的。
+ */
+export function buildCandidateGroundPoint(
+  cartographic: Cartographic,
+  subject: GroundPoint,
+  label: string
+): GroundPoint {
+  const ellipsoidal = cartographic.height;
+  const geoid = subject.geoidHeightMeters;
+  const hasGeoid = Number.isFinite(geoid);
+  return {
+    latitude: CesiumMath.toDegrees(cartographic.latitude),
+    longitude: CesiumMath.toDegrees(cartographic.longitude),
+    height: ellipsoidal,
+    ellipsoidalHeightMeters: ellipsoidal,
+    orthometricHeightMeters: hasGeoid ? ellipsoidal - (geoid as number) : undefined,
+    geoidHeightMeters: hasGeoid ? (geoid as number) : undefined,
+    heightSource: "dem",
+    label,
+  };
 }
 
 function destinationCartographic(
@@ -226,27 +312,81 @@ function angularDifferenceDegrees(a: number, b: number): number {
   return Math.abs(difference);
 }
 
-function cameraHalfFieldOfViewDegrees(
-  settings: CameraSettings,
-  aspectRatio: number
-): { horizontal: number; vertical: number } {
-  const sensor = sensorDimensionsMm(aspectRatio);
-  return {
-    horizontal: CesiumMath.toDegrees(
-      Math.atan(sensor.width / (2 * settings.focalLengthMm))
-    ),
-    vertical: CesiumMath.toDegrees(
-      Math.atan(sensor.height / (2 * settings.focalLengthMm))
-    ),
-  };
+function uniqueSortedDistances(values: number[]): number[] {
+  return values
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+    .filter((value, index, all) => index === 0 || Math.abs(value - all[index - 1]) >= 0.01);
 }
 
-function celestialDiscRadiusDegrees(id: CelestialScreenPoint["id"]): number | null {
-  // 画角内に円盤全体が収まるかを判定するのは太陽・月だけ。
-  // 天の川・北極星は従来どおり候補計算を行い、この円盤判定の対象外とする。
-  if (id === "moon") return 0.285;
-  if (id === "sun") return 0.272;
-  return null;
+function densifyDistanceIntervals(
+  distances: number[],
+  maximumSpanMeters: number,
+  maximumTotalSamples = ADAPTIVE_MAX_TOTAL_SAMPLES
+): number[] {
+  if (distances.length < 2 || !(maximumSpanMeters > 0)) return distances;
+  const output: number[] = [distances[0]];
+  for (let index = 1; index < distances.length; index += 1) {
+    const low = distances[index - 1];
+    const high = distances[index];
+    const span = high - low;
+    const segments = Math.max(1, Math.ceil(span / maximumSpanMeters));
+    for (let segment = 1; segment <= segments; segment += 1) {
+      if (output.length >= maximumTotalSamples && segment < segments) continue;
+      output.push(low + span * (segment / segments));
+    }
+  }
+  return uniqueSortedDistances(output).slice(0, maximumTotalSamples);
+}
+
+
+// 注意（仕様3-D）: 画角/FOV/焦点距離や天体の視円盤半径を理由に候補を
+// 除外する処理はここには置かない。円盤半径は表示専用（celestial.ts側の
+// apparentDisc）であり、三脚候補の位置決定に混ぜてはならない。
+
+/**
+ * レイ方式の主計算用サンプリング。
+ *
+ * 「天体中心→被写体→後方」の3Dレイは、レンズ中心（三脚+レンズ中心高）が
+ * 通る線である（レンズ中心が被写体・天体と一直線に並ぶ、というのが
+ * そもそもの構図条件のため）。したがって、レイ上の点の高さから
+ * レンズ中心高を引いた値が「その距離に三脚を置いたときの地面の高さ」に
+ * 一致する地点こそが、地形との交点（＝三脚候補）である。
+ * レンズ中心高を引かずに地形高と直接比較すると、レンズ中心高の分だけ
+ * 系統的にずれた地点を交点として検出してしまう
+ * （例: レンズ高1.6m・距離500mでは約0.18度に相当するずれ）。
+ *
+ * 仰角一致（旧方式のelevationAngleDegrees比較）ではなく、レイそのものの
+ * 高さと地形高の差を直接比較するため、仕様3-Cが求める
+ * 「3Dレイと地形表面の交点」を文字通り計算する。
+ */
+async function sampleRayTerrainErrors(
+  ray: CelestialSubjectRay,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal: AbortSignal | undefined,
+  distances: number[],
+  maximumDetail: "1m" | "5m" | "10m"
+): Promise<{ rayPoints: Cartographic[]; samples: Cartographic[]; errors: number[] }> {
+  const rayPoints = distances.map((distance) => {
+    const point = rayCartographicAtDistance(ray, distance);
+    // レイがWGS84楕円体の裏側などに回り込み計算不能な場合は、地形問い合わせを
+    // スキップできるよう明らかに無効な値（NaN高さ）を持つダミー点にする。
+    return point ?? Cartographic.fromRadians(0, 0, Number.NaN);
+  });
+  const samples = await terrainSampler(
+    rayPoints.map((point) => Cartographic.clone(point)),
+    signal,
+    maximumDetail
+  );
+  abortIfRequested(signal);
+  const errors = samples.map((sample, index) => {
+    const rayPoint = rayPoints[index];
+    return sample && Number.isFinite(sample.height) && Number.isFinite(rayPoint.height)
+      ? (rayPoint.height - lensCenterHeightMeters) - sample.height
+      : Number.NaN;
+  });
+  return { rayPoints, samples, errors };
 }
 
 type TerrainSolution = {
@@ -393,6 +533,219 @@ async function scanTerrainDistanceRange(
   return best;
 }
 
+
+/**
+ * 新方式（本計算）: 「天体中心→被写体→後方」のECEF3Dレイと地形表面の
+ * 交点をすべて求める。仕様3-Cの通り、Karney測地線上のbearing走査ではなく、
+ * レイの楕円体高と実地形高（DEM）の差の符号変化から交点を検出する。
+ *
+ * 探索の刻み方・適応細分化・複数交点の一括精密化バッチは、既存の
+ * scanAllTerrainIntersections（旧方式・ダブルチェック専用）と同じロジック
+ * を流用し、通信量・速度特性を変えない（仕様5）。誤差の意味だけが
+ * 「仰角差（度）」から「レイ高と地形高の差（m）」へ変わる。
+ */
+async function scanRayTerrainIntersections(
+  ray: CelestialSubjectRay,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal: AbortSignal | undefined,
+  distanceRange: TripodDistanceRange | undefined,
+  searchProfile: TripodSearchProfile | undefined,
+  preferredDistanceMeters?: number
+): Promise<TerrainSolution[]> {
+  let baseDistances = logarithmicDistances(
+    distanceRange,
+    searchProfile?.sampleCount ?? DEFAULT_SAMPLE_COUNT
+  );
+  if (Number.isFinite(preferredDistanceMeters)) {
+    const minimum = distanceRange?.minMeters ?? ABSOLUTE_MIN_DISTANCE_METERS;
+    const maximum = distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS;
+    if (preferredDistanceMeters! >= minimum && preferredDistanceMeters! <= maximum) {
+      baseDistances.push(preferredDistanceMeters!);
+    }
+  }
+  baseDistances = uniqueSortedDistances(baseDistances);
+  if (baseDistances.length < 2) return [];
+
+  // 第1段階: 遠距離側で対数サンプル間隔が大きくなりすぎないよう500m上限で一括補完。
+  let distances = densifyDistanceIntervals(baseDistances, ADAPTIVE_COARSE_MAX_SPAN_METERS);
+  let { samples: sampled, errors } = await sampleRayTerrainErrors(
+    ray,
+    lensCenterHeightMeters,
+    terrainSampler,
+    signal,
+    distances,
+    "10m"
+  );
+
+  // 第2段階: 同符号でもレイ（高さ差ゼロ）へ接近している区間だけ追加細分化。
+  const additionalDistances: number[] = [];
+  for (let index = 1; index < distances.length; index += 1) {
+    const previous = errors[index - 1];
+    const current = errors[index];
+    if (!Number.isFinite(previous) || !Number.isFinite(current)) continue;
+    if (previous * current <= 0) continue;
+    const span = distances[index] - distances[index - 1];
+    if (span <= ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS) continue;
+    // 高さ差（m）ベースの近接判定。地表付近では傾斜次第で角度しきい値を
+    // そのままメートルへ流用できないため、区間内の最小距離に対する見かけの
+    // 勾配（前後点の高さ差 / 区間長）が緩やかな場合を「レイに接近」とみなす。
+    const nearRay = Math.min(Math.abs(previous), Math.abs(current)) <= ADAPTIVE_NEAR_RAY_ERROR_DEGREES * distances[index] * 0.05;
+    const left = index >= 2 ? errors[index - 2] : Number.NaN;
+    const right = index + 1 < errors.length ? errors[index + 1] : Number.NaN;
+    const localApproach =
+      (Number.isFinite(left) && Math.abs(previous) < Math.abs(left)) ||
+      (Number.isFinite(right) && Math.abs(current) < Math.abs(right));
+    if (!nearRay && !localApproach) continue;
+    const segments = Math.max(2, Math.ceil(span / ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS));
+    for (let segment = 1; segment < segments; segment += 1) {
+      additionalDistances.push(distances[index - 1] + span * (segment / segments));
+    }
+  }
+
+  if (additionalDistances.length > 0) {
+    const remainingCapacity = Math.max(0, ADAPTIVE_MAX_TOTAL_SAMPLES - distances.length);
+    const additions = uniqueSortedDistances(additionalDistances).slice(0, remainingCapacity);
+    if (additions.length > 0) {
+      const { samples: addedSamples, errors: addedErrors } = await sampleRayTerrainErrors(
+        ray,
+        lensCenterHeightMeters,
+        terrainSampler,
+        signal,
+        additions,
+        "10m"
+      );
+      const merged = [
+        ...distances.map((distance, index) => ({ distance, sample: sampled[index], error: errors[index] })),
+        ...additions.map((distance, index) => ({ distance, sample: addedSamples[index], error: addedErrors[index] })),
+      ].sort((a, b) => a.distance - b.distance);
+      distances = merged.map((item) => item.distance);
+      sampled = merged.map((item) => item.sample);
+      errors = merged.map((item) => item.error);
+    }
+  }
+
+  const brackets: Array<{ lowIndex: number; highIndex: number }> = [];
+  for (let index = 1; index < errors.length; index += 1) {
+    const previous = errors[index - 1];
+    const current = errors[index];
+    if (!Number.isFinite(previous) || !Number.isFinite(current)) continue;
+    if (previous === 0 || current === 0 || previous * current < 0) {
+      brackets.push({ lowIndex: index - 1, highIndex: index });
+    }
+  }
+  if (brackets.length === 0) return [];
+
+  const refinementPasses = Math.max(0, Math.floor(
+    searchProfile?.refinementPasses ?? DEFAULT_ROOT_REFINEMENT_PASSES
+  ));
+  const refinementSegments = Math.max(2, Math.floor(
+    searchProfile?.refinementSegments ?? DEFAULT_ROOT_REFINEMENT_SEGMENTS
+  ));
+  // 高さ差（m）の収束しきい値。DEMの実測精度（1mメッシュ）に対して十分小さく、
+  // かつ最終的な合否は仕様3-Gのround-trip検証（角度・スクリーン座標）が
+  // 別途下すため、ここでは交点位置を十分絞り込む役割に留める。
+  const CONVERGED_HEIGHT_METERS = 0.01;
+
+  type RefinementState = {
+    lowDistance: number;
+    highDistance: number;
+    lowError: number;
+    highError: number;
+    best: TerrainSolution;
+    done: boolean;
+  };
+  const states: RefinementState[] = brackets.map((bracket) => {
+    const lowDistance = distances[bracket.lowIndex];
+    const highDistance = distances[bracket.highIndex];
+    const lowError = errors[bracket.lowIndex];
+    const highError = errors[bracket.highIndex];
+    const best = Math.abs(lowError) <= Math.abs(highError)
+      ? { cartographic: sampled[bracket.lowIndex], distanceMeters: lowDistance, altitudeErrorDegrees: lowError }
+      : { cartographic: sampled[bracket.highIndex], distanceMeters: highDistance, altitudeErrorDegrees: highError };
+    return { lowDistance, highDistance, lowError, highError, best, done: false };
+  });
+
+  for (let pass = 0; pass < refinementPasses; pass += 1) {
+    abortIfRequested(signal);
+    const pending = states
+      .map((state, stateIndex) => ({ state, stateIndex }))
+      .filter(({ state }) => !state.done);
+    if (pending.length === 0) break;
+
+    const requests: Array<{ stateIndex: number; distance: number }> = [];
+    for (const { state, stateIndex } of pending) {
+      const step = (state.highDistance - state.lowDistance) / refinementSegments;
+      for (let index = 1; index < refinementSegments; index += 1) {
+        requests.push({ stateIndex, distance: state.lowDistance + step * index });
+      }
+    }
+    const refinementDistances = requests.map((request) => request.distance);
+    const { samples: refinementSamples, errors: refinementErrors } = await sampleRayTerrainErrors(
+      ray,
+      lensCenterHeightMeters,
+      terrainSampler,
+      signal,
+      refinementDistances,
+      "1m"
+    );
+
+    for (const { state, stateIndex } of pending) {
+      const indices = requests
+        .map((request, requestIndex) => ({ request, requestIndex }))
+        .filter(({ request }) => request.stateIndex === stateIndex);
+      const localDistances = indices.map(({ request }) => request.distance);
+      const localSamples = indices.map(({ requestIndex }) => refinementSamples[requestIndex]);
+      const localErrors = indices.map(({ requestIndex }) => refinementErrors[requestIndex]);
+
+      for (let index = 0; index < localErrors.length; index += 1) {
+        const error = localErrors[index];
+        if (Number.isFinite(error) && Math.abs(error) < Math.abs(state.best.altitudeErrorDegrees)) {
+          state.best = {
+            cartographic: localSamples[index],
+            distanceMeters: localDistances[index],
+            altitudeErrorDegrees: error,
+          };
+        }
+      }
+      if (Math.abs(state.best.altitudeErrorDegrees) <= CONVERGED_HEIGHT_METERS) {
+        state.done = true;
+        continue;
+      }
+
+      const sectionDistances = [state.lowDistance, ...localDistances, state.highDistance];
+      const sectionErrors = [state.lowError, ...localErrors, state.highError];
+      let nextSection = -1;
+      for (let index = 1; index < sectionErrors.length; index += 1) {
+        const previous = sectionErrors[index - 1];
+        const current = sectionErrors[index];
+        if (Number.isFinite(previous) && Number.isFinite(current) && previous * current <= 0) {
+          nextSection = index;
+          break;
+        }
+      }
+      if (nextSection < 1) {
+        state.done = true;
+        continue;
+      }
+      state.lowDistance = sectionDistances[nextSection - 1];
+      state.highDistance = sectionDistances[nextSection];
+      state.lowError = sectionErrors[nextSection - 1];
+      state.highError = sectionErrors[nextSection];
+    }
+  }
+
+  const solutions: TerrainSolution[] = [];
+  for (const state of states) {
+    if (!Number.isFinite(state.best.cartographic.height)) continue;
+    const duplicate = solutions.some((solution) => Math.abs(solution.distanceMeters - state.best.distanceMeters) < 0.5);
+    if (!duplicate) solutions.push(state.best);
+  }
+
+  // ユーザーが遠い候補から確認できるよう距離降順。候補は自動除外しない（仕様3-D）。
+  return solutions.sort((a, b) => b.distanceMeters - a.distanceMeters);
+}
+
 async function solveTerrainDistance(
   subject: GroundPoint,
   bearingDegrees: number,
@@ -475,7 +828,55 @@ async function solveTerrainDistance(
   );
 }
 
-async function calculateOneCandidate(
+/**
+ * 仕様3-G Round-trip検証: 候補地点を既存プレビューと同じCameraModel/
+ * Projection経路（createCameraProjection → projectHorizontalToPreview、
+ * celestial.ts経由でcameraModelFactory.tsを使用）へ逆投入し、天体中心と
+ * 被写体中心のスクリーン座標差を測る。
+ *
+ * viewCorrection（現地校正用の手動視線補正）は意図的に渡さない。
+ * viewCorrectionはプレビュー全体（天体・被写体の投影基底そのもの）へ
+ * 均等に加算されるため、天体中心と被写体中心の「相対」位置には現れない
+ * （両者が同じだけシフトし打ち消し合う）。したがってここへ混ぜると、
+ * 物理的に正しい三脚座標を歪めるリスクだけが生じ、round-trip判定の
+ * 意味を変えない。UI表示だけの補正と物理座標を分離するという仕様3-2の
+ * 要請に従い、ここでは常にviewCorrectionなしで検証する。
+ */
+function verifyRoundTripProjection(
+  candidatePoint: GroundPoint,
+  subject: GroundPoint,
+  cameraSettings: CameraSettings,
+  previewAspectRatio: number,
+  calculationMode: CalculationMode,
+  finalHorizontal: { azimuthDegrees: number; altitudeDegrees: number }
+): { dxPercent: number; dyPercent: number; inFront: boolean } | null {
+  try {
+    const projection = createCameraProjection(
+      candidatePoint,
+      subject,
+      cameraSettings,
+      previewAspectRatio,
+      calculationMode
+    );
+    const screen = projectHorizontalToPreview(
+      { azimuthDegrees: finalHorizontal.azimuthDegrees, altitudeDegrees: finalHorizontal.altitudeDegrees, geometricAltitudeDegrees: finalHorizontal.altitudeDegrees },
+      projection
+    );
+    // createCameraProjectionのforwardは常に被写体方向（viewCorrectionなし）を
+    // 向くよう構成されるため、被写体自身は常に画面中央(50%,50%)に投影される。
+    // よって天体のスクリーン座標と中央との差が、そのまま両者のずれになる。
+    return {
+      dxPercent: screen.xPercent - 50,
+      dyPercent: screen.yPercent - 50,
+      inFront: screen.inFront,
+    };
+  } catch (error) {
+    console.warn("[tripod-candidate] round-trip投影を計算できませんでした", error);
+    return null;
+  }
+}
+
+async function calculateOneCandidates(
   subject: GroundPoint,
   point: CelestialScreenPoint,
   cameraSettings: CameraSettings,
@@ -487,172 +888,277 @@ async function calculateOneCandidate(
   distanceRange?: TripodDistanceRange,
   searchProfile?: TripodSearchProfile,
   refractionWeather?: RefractionWeatherContext,
-  refractionWeatherResolver?: RefractionWeatherResolver
-): Promise<TripodCandidate | null> {
+  refractionWeatherResolver?: RefractionWeatherResolver,
+  doubleCheckEnabled = false
+): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
-  let horizontal = {
-    azimuthDegrees: point.azimuthDegrees,
-    altitudeDegrees: point.altitudeDegrees,
-  };
-  let solved: TripodCandidate | null = null;
-  let iterationSearchProfile = searchProfile;
+  if (point.altitudeDegrees <= 0.25) return [];
+
+  // 気象連動屈折（自動モード）は約0.05度（≈5.5km）格子でキャッシュされており、
+  // 三脚候補の探索範囲（通常は被写体から数百m〜数km）はほぼ必ず同じ格子内に
+  // 収まる。そのため、解が収束するたびに候補地点で再取得しても得られる値は
+  // 事実上変わらない。ここで被写体地点を代表点として一度だけ解決し、以降の
+  // 全交点・全反復で使い回すことで、同じキャッシュ値への冗長な非同期呼び出し
+  // （IndexedDB読み出し）を削減する。天体方位・高度そのものは従来どおり
+  // 各反復で候補地点ごとに再計算するため、精度への影響はない。
   let activeRefractionWeather = refractionWeather;
-
-  // 観測地点が動くと方位・高度も変わるため、候補地点のレンズ中心で収束するまで再計算する。
-  for (let iteration = 0; iteration < 3; iteration += 1) {
+  if (refractionWeatherResolver) {
+    const resolvedWeather = await refractionWeatherResolver(subject, signal);
     abortIfRequested(signal);
-    if (horizontal.altitudeDegrees <= 0.25) return null;
+    if (resolvedWeather) activeRefractionWeather = resolvedWeather;
+  }
 
-    const bearing = (horizontal.azimuthDegrees + 180) % 360;
+  // ダブルチェック（旧方式）専用の基準bearing。本計算のレイ探索には使わない。
+  const initialBearing = (point.azimuthDegrees + 180) % 360;
 
-    // 新方式を主軸にする。天体→被写体のECEF/WGS84視線から直接得た距離を
-    // 最初に1m DEMで検証し、外れた場合だけ周辺探索→現行全探索へ戻る。
-    // 天体高度 horizontal.altitudeDegrees は calculateCelestialHorizontalCoordinates()
-    // 由来なので、pro時の標準大気差または気温・気圧・湿度連動補正を既に含む。
-    const directSeedDistance = directSightlineSeedDistanceMeters(
+  // 仕様3-C: 主計算は「天体中心→被写体→後方」のECEF 3Dレイと地形表面の
+  // 交点として求める。Karney測地線bearing走査は本計算の座標生成器にしない。
+  const initialRay = buildCelestialBackwardRay(subject, point.azimuthDegrees, point.altitudeDegrees);
+  if (!initialRay) return [];
+  const directSeedDistance = directSightlineSeedDistanceMeters(
+    subject,
+    point.azimuthDegrees,
+    point.altitudeDegrees
+  );
+  const initialSolutions = await scanRayTerrainIntersections(
+    initialRay,
+    lensCenterHeightMeters,
+    terrainSampler,
+    signal,
+    distanceRange,
+    searchProfile,
+    directSeedDistance ?? searchProfile?.preferredDistanceMeters
+  );
+  if (initialSolutions.length === 0) return [];
+
+  const converged: TripodCandidate[] = [];
+  for (const initialSolution of initialSolutions) {
+    abortIfRequested(signal);
+    let solution = initialSolution;
+
+    // 各交点は独立に、候補地点で再計算した天体方位・高度へ最大3回だけ収束させる。
+    // 全距離旧探索へは戻らず、被写体を通る同じ3Dレイ（方向だけ更新）だけを
+    // 再評価する。太陽・月は近距離の観測点間で視差が無視できるため、
+    // 候補地点で再計算した方位・高度を「被写体からのレイの向き」として
+    // 再利用しても物理的な誤差は生じない。
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      const candidatePoint = buildCandidateGroundPoint(
+        solution.cartographic,
+        subject,
+        `${point.label}三脚候補`
+      );
+      const horizontal = calculateCelestialHorizontalCoordinates(
+        point.id,
+        date,
+        {
+          ...candidatePoint,
+          height: candidatePoint.height + lensCenterHeightMeters,
+          ellipsoidalHeightMeters: (candidatePoint.ellipsoidalHeightMeters ?? candidatePoint.height) + lensCenterHeightMeters,
+          orthometricHeightMeters: candidatePoint.orthometricHeightMeters !== undefined
+            ? candidatePoint.orthometricHeightMeters + lensCenterHeightMeters
+            : undefined,
+          label: `${point.label}三脚候補レンズ中心`,
+        },
+        calculationMode,
+        activeRefractionWeather
+      );
+      if (horizontal.altitudeDegrees <= 0.25) break;
+
+      const currentAltitudeError = Math.abs(
+        elevationAngleDegrees(
+          solution.cartographic,
+          subject,
+          lensCenterHeightMeters,
+          calculationMode
+        ) - horizontal.altitudeDegrees
+      );
+      const subjectBearing = calculateKarneyLineMetrics(candidatePoint, subject).bearingDegrees;
+      const currentAzimuthError = angularDifferenceDegrees(subjectBearing, horizontal.azimuthDegrees);
+      if (
+        currentAltitudeError <= CONVERGED_HORIZONTAL_DEGREES &&
+        currentAzimuthError <= CONVERGED_HORIZONTAL_DEGREES
+      ) break;
+
+      // 被写体を起点に、候補地点で再計算した最新の天体方位・高度でレイを
+      // 引き直し、現在交点周辺だけを再探索する（全距離走査には戻らない）。
+      const refinedRay = buildCelestialBackwardRay(subject, horizontal.azimuthDegrees, horizontal.altitudeDegrees);
+      if (!refinedRay) break;
+      const span = Math.max(80, solution.distanceMeters * 0.18);
+      const localRange: TripodDistanceRange = {
+        minMeters: Math.max(ABSOLUTE_MIN_DISTANCE_METERS, solution.distanceMeters - span),
+        maxMeters: Math.min(ABSOLUTE_MAX_DISTANCE_METERS, solution.distanceMeters + span),
+      };
+      const localSolutions = await scanRayTerrainIntersections(
+        refinedRay,
+        lensCenterHeightMeters,
+        terrainSampler,
+        signal,
+        localRange,
+        {
+          ...searchProfile,
+          sampleCount: Math.min(20, searchProfile?.sampleCount ?? 20),
+        },
+        solution.distanceMeters
+      );
+      if (localSolutions.length === 0) break;
+      solution = localSolutions.reduce((nearest, candidate) =>
+        Math.abs(candidate.distanceMeters - solution.distanceMeters) <
+        Math.abs(nearest.distanceMeters - solution.distanceMeters)
+          ? candidate
+          : nearest
+      );
+    }
+
+    if (!Number.isFinite(solution.cartographic.height)) continue;
+
+    // 画角ではなく、三脚候補の幾何学成立条件だけを最終確認する。
+    // 追加DEM取得は行わず、最後に採用した候補座標で天体方位・仰角を再計算するだけ。
+    const finalCandidatePoint = buildCandidateGroundPoint(
+      solution.cartographic,
       subject,
-      horizontal.azimuthDegrees,
-      horizontal.altitudeDegrees
+      `${point.label}三脚候補最終確認`
     );
-    const hybridSearchProfile: TripodSearchProfile | undefined = {
-      ...iterationSearchProfile,
-      preferredDistanceMeters:
-        directSeedDistance ?? iterationSearchProfile?.preferredDistanceMeters,
-    };
-    const solution = await solveTerrainDistance(
+    const finalHorizontal = calculateCelestialHorizontalCoordinates(
+      point.id,
+      date,
+      {
+        ...finalCandidatePoint,
+        height: finalCandidatePoint.height + lensCenterHeightMeters,
+        ellipsoidalHeightMeters: (finalCandidatePoint.ellipsoidalHeightMeters ?? finalCandidatePoint.height) + lensCenterHeightMeters,
+        orthometricHeightMeters: finalCandidatePoint.orthometricHeightMeters !== undefined
+          ? finalCandidatePoint.orthometricHeightMeters + lensCenterHeightMeters
+          : undefined,
+        label: `${point.label}三脚候補レンズ中心最終確認`,
+      },
+      calculationMode,
+      activeRefractionWeather
+    );
+    const finalAltitudeError = Math.abs(
+      elevationAngleDegrees(
+        solution.cartographic,
+        subject,
+        lensCenterHeightMeters,
+        calculationMode
+      ) - finalHorizontal.altitudeDegrees
+    );
+    const finalSubjectBearing = calculateKarneyLineMetrics(finalCandidatePoint, subject).bearingDegrees;
+    const finalAzimuthError = angularDifferenceDegrees(finalSubjectBearing, finalHorizontal.azimuthDegrees);
+
+    // 仕様3-G: 確定前に、既存プレビューと同じCameraModel/Projection経路へ
+    // 候補地点を逆投入し、天体中心と被写体中心のスクリーン座標差を測る。
+    const roundTrip = verifyRoundTripProjection(
+      finalCandidatePoint,
       subject,
-      bearing,
-      horizontal.altitudeDegrees,
+      cameraSettings,
+      previewAspectRatio,
+      calculationMode,
+      finalHorizontal
+    );
+
+    // 仕様7: 診断ログ（候補座標・高さ基準・天体/被写体方位仰角・誤差・
+    // スクリーンdx/dy・地形データソース）。合否に関わらず出力する。
+    const diagnostics = {
+      candidateLatitude: CesiumMath.toDegrees(solution.cartographic.latitude),
+      candidateLongitude: CesiumMath.toDegrees(solution.cartographic.longitude),
+      ellipsoidalHeightMeters: finalCandidatePoint.ellipsoidalHeightMeters,
+      orthometricHeightMeters: finalCandidatePoint.orthometricHeightMeters,
+      geoidHeightMeters: finalCandidatePoint.geoidHeightMeters,
+      celestialAzimuthDegrees: finalHorizontal.azimuthDegrees,
+      celestialAltitudeDegrees: finalHorizontal.altitudeDegrees,
+      subjectAzimuthDegrees: finalSubjectBearing,
+      subjectElevationDegrees: elevationAngleDegrees(
+        solution.cartographic,
+        subject,
+        lensCenterHeightMeters,
+        calculationMode
+      ),
+      azimuthErrorDegrees: finalAzimuthError,
+      altitudeErrorDegrees: finalAltitudeError,
+      previewScreenDxPercent: roundTrip?.dxPercent,
+      previewScreenDyPercent: roundTrip?.dyPercent,
+      terrainSource: terrainDataSource(solution.cartographic),
+    };
+
+    const roundTripFailed =
+      !roundTrip ||
+      !roundTrip.inFront ||
+      Math.abs(roundTrip.dxPercent) > ROUND_TRIP_SCREEN_TOLERANCE_PERCENT ||
+      Math.abs(roundTrip.dyPercent) > ROUND_TRIP_SCREEN_TOLERANCE_PERCENT;
+
+    if (
+      !Number.isFinite(finalHorizontal.altitudeDegrees) ||
+      finalHorizontal.altitudeDegrees <= 0.25 ||
+      !Number.isFinite(finalAltitudeError) ||
+      !Number.isFinite(finalAzimuthError) ||
+      finalAltitudeError > CONVERGED_HORIZONTAL_DEGREES ||
+      finalAzimuthError > CONVERGED_HORIZONTAL_DEGREES ||
+      roundTripFailed
+    ) {
+      console.warn(`[tripod-candidate] ${point.label}: 最終幾何収束条件（round-trip含む）を満たさない候補を除外`, {
+        distanceMeters: solution.distanceMeters,
+        ...diagnostics,
+      });
+      continue;
+    }
+
+    console.debug(`[tripod-candidate] ${point.label}: 候補確定`, {
+      distanceMeters: solution.distanceMeters,
+      ...diagnostics,
+    });
+
+    converged.push({
+      id: point.id,
+      label: point.label,
+      latitude: CesiumMath.toDegrees(solution.cartographic.latitude),
+      longitude: CesiumMath.toDegrees(solution.cartographic.longitude),
+      height: solution.cartographic.height,
+      distanceMeters: solution.distanceMeters,
+      solutionType: "aligned",
+    });
+  }
+
+  const unique = converged
+    .filter((candidate, index, all) => all.findIndex((other) =>
+      Math.abs(other.distanceMeters - candidate.distanceMeters) < 0.5
+    ) === index)
+    .sort((a, b) => b.distanceMeters - a.distanceMeters)
+    .map((candidate, index, all) => ({
+      ...candidate,
+      intersectionIndex: index + 1,
+      intersectionCount: all.length,
+    }));
+
+  // 旧方式はユーザーがONにした時だけ独立検算として1回実行する。
+  // 本計算の候補を置換・除外しない（仕様3-H）。
+  if (doubleCheckEnabled && unique.length > 0) {
+    const verification = await solveTerrainDistance(
+      subject,
+      initialBearing,
+      point.altitudeDegrees,
       lensCenterHeightMeters,
       calculationMode,
       terrainSampler,
       signal,
       distanceRange,
-      hybridSearchProfile
+      undefined
     );
-    if (!solution || !Number.isFinite(solution.cartographic.height)) return null;
-    const candidate = solution.cartographic;
-    const previousSolved = solved;
-
-    solved = {
-      id: point.id,
-      label: point.label,
-      latitude: CesiumMath.toDegrees(candidate.latitude),
-      longitude: CesiumMath.toDegrees(candidate.longitude),
-      height: candidate.height,
-      distanceMeters: solution.distanceMeters,
-      solutionType: "aligned",
-    };
-    // 2回目以降は直前の精密解を最初に検証する。判定許容値を満たさない場合は
-    // solveTerrainDistance内で局所探索・全探索へ戻るため、精度を維持したまま高速化できる。
-    iterationSearchProfile = {
-      ...searchProfile,
-      preferredDistanceMeters: solution.distanceMeters,
-    };
-    if (refractionWeatherResolver) {
-      const resolvedWeather = await refractionWeatherResolver(
-        {
-          latitude: solved.latitude,
-          longitude: solved.longitude,
-          height: solved.height,
-          label: `${point.label}三脚候補気象地点`,
-        },
-        signal
-      );
-      abortIfRequested(signal);
-      if (resolvedWeather) activeRefractionWeather = resolvedWeather;
-    }
-    const nextHorizontal = calculateCelestialHorizontalCoordinates(
-      point.id,
-      date,
-      {
-        ...solved,
-        height: solved.height + lensCenterHeightMeters,
-        label: `${point.label}三脚候補レンズ中心`,
-      },
-      calculationMode,
-      activeRefractionWeather
-    );
-    const positionChangeMeters = previousSolved
-      ? Cartesian3.distance(
-          Cartesian3.fromDegrees(
-            previousSolved.longitude,
-            previousSolved.latitude,
-            previousSolved.height
-          ),
-          Cartesian3.fromDegrees(solved.longitude, solved.latitude, solved.height)
-        )
-      : Number.POSITIVE_INFINITY;
-    const horizontalChangeDegrees = Math.hypot(
-      angularDifferenceDegrees(
-        nextHorizontal.azimuthDegrees,
-        horizontal.azimuthDegrees
-      ),
-      nextHorizontal.altitudeDegrees - horizontal.altitudeDegrees
-    );
-    horizontal = nextHorizontal;
-
-    // 同一解へ収束した後の重いDEM再走査だけを省く。
-    if (
-      positionChangeMeters <= CONVERGED_POSITION_METERS &&
-      horizontalChangeDegrees <= CONVERGED_HORIZONTAL_DEGREES
-    ) {
-      break;
+    abortIfRequested(signal);
+    if (!verification) {
+      console.warn(`[tripod-double-check] ${point.label}: 旧方式で検算解を取得できませんでした`);
+    } else {
+      const nearestDifference = Math.min(...unique.map((candidate) =>
+        Math.abs(candidate.distanceMeters - verification.distanceMeters)
+      ));
+      if (nearestDifference > 1) {
+        console.warn(`[tripod-double-check] ${point.label}: 本計算の最寄候補との差 ${nearestDifference.toFixed(2)}m`, {
+          primary: unique.map((candidate) => candidate.distanceMeters),
+          verification: verification.distanceMeters,
+        });
+      }
     }
   }
 
-  if (!solved) return null;
-  const candidatePoint: GroundPoint = {
-    latitude: solved.latitude,
-    longitude: solved.longitude,
-    height: solved.height,
-    label: `${point.label}三脚候補`,
-  };
-  const finalHorizontal = calculateCelestialHorizontalCoordinates(
-    point.id,
-    date,
-    {
-      ...candidatePoint,
-      height: candidatePoint.height + lensCenterHeightMeters,
-    },
-    calculationMode,
-    activeRefractionWeather
-  );
-  const subjectBearing = calculateKarneyLineMetrics(
-    candidatePoint,
-    subject
-  ).bearingDegrees;
-  const candidateCartographic = Cartographic.fromDegrees(
-    solved.longitude,
-    solved.latitude,
-    solved.height
-  );
-  const altitudeError = Math.abs(
-    elevationAngleDegrees(
-      candidateCartographic,
-      subject,
-      lensCenterHeightMeters,
-      calculationMode
-    ) - finalHorizontal.altitudeDegrees
-  );
-  const azimuthError = angularDifferenceDegrees(
-    subjectBearing,
-    finalHorizontal.azimuthDegrees
-  );
-  const halfFov = cameraHalfFieldOfViewDegrees(
-    cameraSettings,
-    previewAspectRatio
-  );
-  const celestialRadius = celestialDiscRadiusDegrees(point.id) ?? 0;
-
-  // 一致度や順位は算出せず、フルサイズの指定焦点距離で天体が画角内に入るかだけを判定する。
-  if (
-    azimuthError + celestialRadius > halfFov.horizontal ||
-    altitudeError + celestialRadius > halfFov.vertical
-  ) {
-    return null;
-  }
-  return solved;
+  return unique;
 }
 
 export async function calculateTripodCandidates(
@@ -673,7 +1179,8 @@ export async function calculateTripodCandidates(
   // （spotPresetSearch.tsの前回距離再利用と同じ考え方。id未登録の天体は
   // 通常どおりsearchProfile.preferredDistanceMetersにフォールバックする。）
   preferredDistancesById?: Partial<Record<CelestialScreenPoint["id"], number>>,
-  refractionWeatherResolver?: RefractionWeatherResolver
+  refractionWeatherResolver?: RefractionWeatherResolver,
+  doubleCheckEnabled = false
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -699,7 +1206,7 @@ export async function calculateTripodCandidates(
         preferredDistanceMeters !== undefined
           ? { ...searchProfile, preferredDistanceMeters }
           : searchProfile;
-      return calculateOneCandidate(
+      return calculateOneCandidates(
         subject,
         point,
         cameraSettings,
@@ -711,7 +1218,8 @@ export async function calculateTripodCandidates(
         distanceRange,
         pointSearchProfile,
         refractionWeather,
-        refractionWeatherResolver
+        refractionWeatherResolver,
+        doubleCheckEnabled
       );
     })
   );
@@ -724,7 +1232,7 @@ export async function calculateTripodCandidates(
   if (aborted) throw aborted.reason;
 
   const candidates = results.flatMap((result) =>
-    result.status === "fulfilled" && result.value ? [result.value] : []
+    result.status === "fulfilled" ? result.value : []
   );
 
   if (rejected.length > 0) {

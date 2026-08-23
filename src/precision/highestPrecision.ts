@@ -236,12 +236,13 @@ export async function refineSpotPresetHighestPrecision(
   for (let index = 0; index < meshCandidates.length; index += 1) {
     const candidate = meshCandidates[index];
     // 建物3D遮蔽チェック（旧evaluatePhotorealisticMeshSegmentLineOfSight／
-    // evaluatePhotorealisticMeshLineOfSight）は撤去した。検証ロジックが
-    // 実際には機能していない疑いがあり（垂直レイが屋根にしか当たらず
-    // 接地高さを正しく取得できないケースがある）、常に「未確認」を返して
-    // このステップ自体が候補を全滅させてしまっていたため。遮蔽判定は
-    // 検索時点のDEM地形判定（サーバー側）にのみ依存する。局所再探索の
-    // 範囲（半径20m以内）では地形遮蔽の状況は実質的に変わらない。
+    // evaluatePhotorealisticMeshLineOfSight。検証ロジックが実際には機能
+    // していない疑いがあり〔垂直レイが屋根にしか当たらず接地高さを正しく
+    // 取得できないケースがある〕、常に「未確認」を返してこのステップ自体が
+    // 候補を全滅させてしまっていたため撤去し、関連する未使用コード・設定
+    // 〔buildingOcclusionDetailSettings等〕も削除した）は使用しない。
+    // 遮蔽判定は検索時点のDEM地形判定（サーバー側）にのみ依存する。
+    // 局所再探索の範囲（半径20m以内）では地形遮蔽の状況は実質的に変わらない。
     const composition = verifyComposition(
       candidate,
       meshSubject,

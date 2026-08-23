@@ -1,7 +1,6 @@
 import {
   Cartesian3,
   Cartographic,
-  Ellipsoid,
   Math as CesiumMath,
   Matrix4,
   Ray,
@@ -21,12 +20,11 @@ import { publishUserNotice } from "../errors/userFeedback";
 import {
   failedCelestialOcclusion,
 } from "../types/celestial";
-import type { BuildingOcclusionDetailSettings } from "../types/precision";
 import type { TerrainDataSource } from "../types/geospatial";
 import type { GroundPoint } from "../types/points";
 import { classifyTerrainOcclusion } from "../celestial/terrainOcclusionPolicy";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
-import { directionToHorizontalDegrees, horizontalDirectionToVec3 } from "../projection/projectionService";
+import { horizontalDirectionToVec3 } from "../projection/projectionService";
 import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
 import { verifyPlateauBuildingBaseHeight } from "./plateauBuildingVerification";
 import {
@@ -167,7 +165,8 @@ async function calculateTerrainHorizon(
   );
   const coarseSamples = await sampleTerrainLineOfSightProfile(
     coarseCoordinates,
-    coarseDistances
+    coarseDistances,
+    signal
   );
   abortIfRequested(signal);
   const coarseMaximum = profileMaximumWithDataSource(observer, coarseDistances, coarseSamples);
@@ -177,7 +176,8 @@ async function calculateTerrainHorizon(
   );
   const refinedSamples = await sampleTerrainLineOfSightProfile(
     refinedCoordinates,
-    refinedDistances
+    refinedDistances,
+    signal
   );
   abortIfRequested(signal);
   const refinedMaximum = profileMaximumWithDataSource(observer, refinedDistances, refinedSamples);
@@ -391,7 +391,7 @@ async function photorealisticMeshIntersection(
 }
 
 async function calculateCelestialLineOfSightObserver(
-  viewer: Viewer,
+  _viewer: Viewer,
   tripod: GroundPoint,
   lensCenterHeightMeters: number,
 ): Promise<CelestialLineOfSightObserver> {
@@ -406,43 +406,17 @@ async function calculateCelestialLineOfSightObserver(
     tripod.latitude,
     preciseGround.height + lensCenterHeightMeters
   );
-  const approximateSurface = Cartesian3.fromDegrees(
-    tripod.longitude,
-    tripod.latitude,
-    tripod.height
-  );
-  let meshSurface = approximateSurface;
-  let meshSurfaceVerified = false;
-  try {
-    const clamped = (
-      await viewer.scene.clampToHeightMostDetailed(
-        [approximateSurface],
-        [...viewer.entities.values],
-        0.2
-      )
-    )[0];
-    if (clamped) {
-      meshSurface = clamped;
-      meshSurfaceVerified = true;
-    }
-  } catch (error) {
-    console.warn("Google実景メッシュの三脚地表を取得できませんでした", error);
-  }
-  const meshUp = Ellipsoid.WGS84.geodeticSurfaceNormal(
-    meshSurface,
-    new Cartesian3()
-  );
-  const meshOrigin = Cartesian3.add(
-    meshSurface,
-    Cartesian3.multiplyByScalar(meshUp, lensCenterHeightMeters, new Cartesian3()),
-    new Cartesian3()
-  );
+  // 現行仕様ではthirdDimensionSourceForAccuracyMode()が標準/Googleとも
+  // 常に"none"で、3Dメッシュを遮蔽判定へ使用しない。にもかかわらず
+  // clampToHeightMostDetailed()を呼ぶと、表示専用3Dタイルの最高詳細LODを
+  // 不要に要求してマップ操作と競合する。DEM地形だけを使う現仕様に合わせ、
+  // 観測点もDEM由来terrainOriginをそのまま共有する。
   return {
     tripod: { ...tripod, height: preciseGround.height },
     lensCenterHeightMeters,
     terrainOrigin,
-    meshOrigin,
-    meshSurfaceVerified,
+    meshOrigin: terrainOrigin,
+    meshSurfaceVerified: false,
   };
 }
 
@@ -601,180 +575,3 @@ export async function evaluateCelestialLineOfSight(
   };
 }
 
-/** 天体の円盤を中心＋縁の複数点でサンプリングする方位・高度の配列を作る。 */
-function buildDiscSamplePoints(
-  center: HorizontalCoordinates,
-  discDetail?: {
-    angularDiameterDegrees: number;
-    detailSettings: BuildingOcclusionDetailSettings;
-  }
-): HorizontalCoordinates[] {
-  if (
-    !discDetail ||
-    !discDetail.detailSettings.detailedEdgeCheckEnabled ||
-    discDetail.angularDiameterDegrees <= 0 ||
-    discDetail.detailSettings.edgeSampleCount <= 0
-  ) {
-    return [center];
-  }
-  const radiusDegrees = discDetail.angularDiameterDegrees / 2;
-  // 高緯度（高仰角）ほど方位1度あたりの実角距離が縮むため、方位方向のオフセットを
-  // cos(仰角)で割って円盤が真円に見えるよう補正する。
-  const cosAltitude = Math.max(
-    0.05,
-    Math.cos((center.altitudeDegrees * Math.PI) / 180)
-  );
-  const sampleCount = discDetail.detailSettings.edgeSampleCount;
-  const points: HorizontalCoordinates[] = [center];
-  for (let index = 0; index < sampleCount; index += 1) {
-    const angle = (2 * Math.PI * index) / sampleCount;
-    points.push({
-      azimuthDegrees:
-        center.azimuthDegrees + (radiusDegrees * Math.sin(angle)) / cosAltitude,
-      altitudeDegrees: center.altitudeDegrees + radiusDegrees * Math.cos(angle),
-    });
-  }
-  return points;
-}
-
-
-/** 三脚レンズ中心から指定した被写体位置までの有限線分について、Google実景メッシュとの交差を確認する。
- * 天体用の地平線判定や視直径サンプリングは使用しない。
- */
-export async function evaluatePhotorealisticMeshSegmentLineOfSight(
-  viewer: Viewer,
-  observer: CelestialLineOfSightObserver,
-  target: Cartesian3,
-  signal?: AbortSignal,
-  maximumDistanceMeters?: number,
-  thirdDimensionSource: ThirdDimensionSource = "plateau-verified",
-): Promise<CelestialOcclusion> {
-  abortIfRequested(signal);
-  const worldDirection = Cartesian3.subtract(
-    target,
-    observer.meshOrigin,
-    new Cartesian3()
-  );
-  if (Cartesian3.magnitudeSquared(worldDirection) < 1e-6) {
-    return {
-      verificationState: "dem-and-google-3d",
-      visible: true,
-      verified: true,
-      terrainObstructed: false,
-      photorealisticMeshObstructed: false,
-      reason: "visible",
-    };
-  }
-  Cartesian3.normalize(worldDirection, worldDirection);
-
-  const localFrame = Transforms.eastNorthUpToFixedFrame(observer.meshOrigin);
-  const inverseLocalFrame = Matrix4.inverseTransformation(
-    localFrame,
-    new Matrix4()
-  );
-  const localDirection = Matrix4.multiplyByPointAsVector(
-    inverseLocalFrame,
-    worldDirection,
-    new Cartesian3()
-  );
-  Cartesian3.normalize(localDirection, localDirection);
-  // ProjectionServiceの唯一の方向→方位/仰角変換を経由する（LOSと天体投影で
-  // 同じ変換を共有し、計算経路の分岐を防ぐ）。
-  const horizontal: HorizontalCoordinates = {
-    ...directionToHorizontalDegrees(localDirection),
-  };
-
-  const sample = await photorealisticMeshIntersection(
-    viewer,
-    observer,
-    horizontal,
-    signal,
-    maximumDistanceMeters,
-    thirdDimensionSource
-  );
-  const obstructed = sample.distanceMeters !== null;
-  return {
-    verificationState: sample.verified
-      ? "dem-and-google-3d"
-      : "dem-only",
-    visible: sample.verified && !obstructed,
-    verified: sample.verified,
-    terrainObstructed: false,
-    photorealisticMeshObstructed: obstructed,
-    reason: !sample.verified
-      ? "unverified"
-      : obstructed
-        ? "building-or-surface"
-        : "visible",
-    obstructionDistanceMeters: sample.distanceMeters ?? undefined,
-  };
-}
-
-/** サーバーでDEM可視判定済みの候補に、端末上のGoogle 3D表面判定だけを追加する。 */
-export async function evaluatePhotorealisticMeshLineOfSight(
-  viewer: Viewer,
-  observer: CelestialLineOfSightObserver,
-  horizontal: HorizontalCoordinates,
-  signal?: AbortSignal,
-  maximumDistanceMeters?: number,
-  discDetail?: {
-    angularDiameterDegrees: number;
-    detailSettings: BuildingOcclusionDetailSettings;
-  }
-): Promise<CelestialOcclusion> {
-  if (horizontal.altitudeDegrees <= 0) {
-    return {
-      verificationState: "dem-and-google-3d",
-      visible: false,
-      verified: true,
-      terrainObstructed: false,
-      photorealisticMeshObstructed: false,
-      reason: "below-horizon",
-    };
-  }
-  const samplePoints = buildDiscSamplePoints(horizontal, discDetail);
-  const samples = await Promise.all(
-    samplePoints.map((point) =>
-      photorealisticMeshIntersection(
-        viewer,
-        observer,
-        point,
-        signal,
-        maximumDistanceMeters
-      )
-    )
-  );
-  const verified = samples.every((sample) => sample.verified);
-  const obstructedSamples = samples.filter(
-    (sample) => sample.distanceMeters !== null
-  );
-  const obstructedFractionPercent =
-    (obstructedSamples.length / samples.length) * 100;
-  // 中心1点しか見ていない従来モードでは、これまでどおり1点でも遮蔽なら遮蔽扱いにする。
-  const photorealisticMeshObstructed = samples.length > 1
-    ? obstructedFractionPercent >= discDetail!.detailSettings.obstructedThresholdPercent
-    : obstructedSamples.length > 0;
-  const nearestObstructionDistanceMeters = obstructedSamples.reduce<number | null>(
-    (nearest, sample) => {
-      if (sample.distanceMeters === null) return nearest;
-      return nearest === null ? sample.distanceMeters : Math.min(nearest, sample.distanceMeters);
-    },
-    null
-  );
-  return {
-    verificationState: verified
-      ? "dem-and-google-3d"
-      : "dem-only",
-    visible: verified && !photorealisticMeshObstructed,
-    verified,
-    terrainObstructed: false,
-    photorealisticMeshObstructed,
-    reason: !verified
-      ? "unverified"
-      : photorealisticMeshObstructed
-        ? "building-or-surface"
-        : "visible",
-    obstructionDistanceMeters: nearestObstructionDistanceMeters ?? undefined,
-    obstructedFractionPercent: samples.length > 1 ? obstructedFractionPercent : undefined,
-  };
-}

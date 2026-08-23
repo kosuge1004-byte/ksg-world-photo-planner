@@ -37,6 +37,7 @@ import {
   type SearchProgressEstimator,
 } from "../search/searchProgress";
 import { toUserFacingErrorMessage } from "../errors/userFeedback";
+import { prefetchSpotLocation } from "../search/spotPresetSearch";
 
 type Props = {
   open: boolean;
@@ -322,6 +323,7 @@ export function SpotSearchScreen({
   const searchGenerationRef = useRef(0);
   const progressEstimatorRef = useRef<SearchProgressEstimator | null>(null);
   const lastProgressMessageRef = useRef("");
+  const prefetchControllerRef = useRef<AbortController | null>(null);
   const resumeSearchRef = useRef(onResumeSearch);
   resumeSearchRef.current = onResumeSearch;
 
@@ -449,11 +451,37 @@ export function SpotSearchScreen({
     };
   }, [open, searchDateTime]);
 
+  useEffect(() => {
+    prefetchControllerRef.current?.abort();
+    prefetchControllerRef.current = null;
+    if (!open || (searchDateTime && useCurrentSubjectPin)) return;
+    const value = query.trim();
+    if (!value) return;
+    const looksLikeUrl = /^https?:\/\//i.test(value);
+    if (!looksLikeUrl && value.normalize("NFKC").replace(/\s+/gu, "").length < 2) return;
+
+    const controller = new AbortController();
+    prefetchControllerRef.current = controller;
+    const timer = window.setTimeout(() => {
+      void prefetchSpotLocation(value, controller.signal);
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+      if (prefetchControllerRef.current === controller) {
+        prefetchControllerRef.current = null;
+      }
+    };
+  }, [open, query, searchDateTime, useCurrentSubjectPin]);
+
   function closeScreen() {
     searchGenerationRef.current += 1;
     progressEstimatorRef.current = null;
     controllerRef.current?.abort();
     controllerRef.current = null;
+    prefetchControllerRef.current?.abort();
+    prefetchControllerRef.current = null;
     setIsSearching(false);
     setProgressPercent(0);
     setEstimatedRemainingSeconds(null);
@@ -1163,7 +1191,7 @@ ${diagnostic}` : ""}`
               )}
             </button>
           ))}
-          <small className="spot-search-credit">地名検索：© OpenStreetMap contributors</small>
+          <small className="spot-search-credit">地名検索：© OpenStreetMap contributors / 国土地理院</small>
         </section>}
       </form>
     </section>

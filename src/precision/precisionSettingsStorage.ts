@@ -1,64 +1,25 @@
 import {
-  DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS,
   DEFAULT_PRECISION_SETTINGS,
-  DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS,
   type PrecisionSettings,
 } from "../types/precision";
 
 export const PRECISION_SETTINGS_STORAGE_KEY = "ksg-precision-settings";
 
-function clamp(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  const parsedValue = Number(value);
-  return Number.isFinite(parsedValue)
-    ? Math.min(maximum, Math.max(minimum, parsedValue))
-    : fallback;
-}
-
 export function normalizePrecisionSettings(value: unknown): PrecisionSettings {
   if (!value || typeof value !== "object") return DEFAULT_PRECISION_SETTINGS;
   const parsed = value as Partial<PrecisionSettings>;
-  const refractionCorrectionMode = parsed.refractionCorrectionMode;
-  if (
-    refractionCorrectionMode !== "auto" &&
-    refractionCorrectionMode !== "standard" &&
-    refractionCorrectionMode !== "none"
-  ) {
-    return DEFAULT_PRECISION_SETTINGS;
-  }
-
-  const storedExclusion = parsed.subjectObstructionExclusionMeters;
-  const legacyValue = typeof storedExclusion === "number" ? storedExclusion : undefined;
-  const storedObject = storedExclusion && typeof storedExclusion === "object"
-    ? storedExclusion as Partial<typeof DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS>
-    : {};
-
-  const storedBuildingDetail = parsed.buildingOcclusionDetailSettings;
-  const storedBuildingDetailObject = storedBuildingDetail && typeof storedBuildingDetail === "object"
-    ? storedBuildingDetail as Partial<typeof DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS>
-    : {};
-  const edgeSampleCount = storedBuildingDetailObject.edgeSampleCount;
+  // 「補正なし」は誤解を招く上、pro固定のメイン計算経路では実際には
+  // 屈折を無効化できていなかったため廃止した。過去に保存された
+  // "none"（旧設定）は、設定全体を初期化するのではなく、この項目だけ
+  // 既定値（自動）へ静かに移行する。
+  const refractionCorrectionMode = parsed.refractionCorrectionMode === "standard"
+    ? "standard"
+    : DEFAULT_PRECISION_SETTINGS.refractionCorrectionMode;
 
   return {
     accuracyMode: parsed.accuracyMode === "highest" ? "highest" : "standard",
     refractionCorrectionMode,
-    subjectObstructionExclusionMeters: {
-      under100m: clamp(storedObject.under100m ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.under100m, 0, 500),
-      from100mTo500m: clamp(storedObject.from100mTo500m ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.from100mTo500m, 0, 500),
-      from500mTo2km: clamp(storedObject.from500mTo2km ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.from500mTo2km, 0, 500),
-      over2km: clamp(storedObject.over2km ?? legacyValue, DEFAULT_SUBJECT_OBSTRUCTION_EXCLUSION_METERS.over2km, 0, 500),
-    },
-    buildingOcclusionDetailSettings: {
-      detailedEdgeCheckEnabled: storedBuildingDetailObject.detailedEdgeCheckEnabled === true,
-      edgeSampleCount: edgeSampleCount === 4 || edgeSampleCount === 8 || edgeSampleCount === 12
-        ? edgeSampleCount
-        : DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.edgeSampleCount,
-      obstructedThresholdPercent: clamp(
-        storedBuildingDetailObject.obstructedThresholdPercent,
-        DEFAULT_BUILDING_OCCLUSION_DETAIL_SETTINGS.obstructedThresholdPercent,
-        0,
-        100
-      ),
-    },
+    tripodCandidateDoubleCheckEnabled: parsed.tripodCandidateDoubleCheckEnabled === true,
   };
 }
 

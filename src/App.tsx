@@ -100,7 +100,6 @@ import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
 import { authorizeHighPrecisionSession } from "./precision/highPrecisionSession";
 import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
-import { TutorialOverlay, type TutorialOverlayMode } from "./components/TutorialOverlay";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
@@ -510,7 +509,6 @@ function App() {
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
   const [celestialMenuOpen, setCelestialMenuOpen] = useState(true);
-  const [tutorialMode, setTutorialMode] = useState<TutorialOverlayMode | null>(null);
   const initialMapStateRef = useRef<LastMapState>(loadLastMapState());
   const [mapViewMode, setMapViewMode] = useState<"2d" | "3d">(
     initialMapStateRef.current.viewMode
@@ -1015,26 +1013,30 @@ function App() {
 
   const displayedTripodCandidates = useMemo(() => {
     if (!timelineInteracting || !subjectPoint) return tripodCandidates;
-    const previousById = new Map(
-      tripodCandidatesRef.current.map((candidate) => [candidate.id, candidate])
-    );
-    // ドラッグ中は通信を伴うDEM探索を行わず、直前の精密距離を現在時刻の
-    // 天体方位へ再投影する。これにより候補点をフレーム単位で滑らかに動かす。
+    const previousById = new Map<TripodCandidate["id"], TripodCandidate[]>();
+    for (const candidate of tripodCandidatesRef.current) {
+      const list = previousById.get(candidate.id) ?? [];
+      list.push(candidate);
+      previousById.set(candidate.id, list);
+    }
+    // ドラッグ中は通信を伴うDEM探索を行わず、直前に確定した全交点の距離を
+    // 現在時刻の天体方位へ再投影する。複数候補を1件へ潰さない。
     return tripodCandidateSourcePoints.flatMap((point) => {
       if (!celestialVisibility[point.id] || point.altitudeDegrees <= 0.25) return [];
-      const previous = previousById.get(point.id);
-      if (!previous) return [];
-      const destination = calculateKarneyDestinationPoint(
-        subjectPoint,
-        (point.azimuthDegrees + 180) % 360,
-        previous.distanceMeters
-      );
-      return [{
-        ...previous,
-        label: point.label,
-        latitude: destination.latitude,
-        longitude: destination.longitude,
-      }];
+      const previousCandidates = previousById.get(point.id) ?? [];
+      return previousCandidates.map((previous) => {
+        const destination = calculateKarneyDestinationPoint(
+          subjectPoint,
+          (point.azimuthDegrees + 180) % 360,
+          previous.distanceMeters
+        );
+        return {
+          ...previous,
+          label: point.label,
+          latitude: destination.latitude,
+          longitude: destination.longitude,
+        };
+      });
     });
   }, [
     celestialVisibility,
@@ -1044,15 +1046,10 @@ function App() {
     tripodCandidates,
   ]);
 
-  const selectableDisplayedTripodCandidates = useMemo(() => {
-    const byCelestialBody = new Map<TripodCandidate["id"], TripodCandidate>();
-    for (const candidate of displayedTripodCandidates) {
-      if (!byCelestialBody.has(candidate.id)) {
-        byCelestialBody.set(candidate.id, candidate);
-      }
-    }
-    return Array.from(byCelestialBody.values());
-  }, [displayedTripodCandidates]);
+  const selectableDisplayedTripodCandidates = useMemo(
+    () => displayedTripodCandidates,
+    [displayedTripodCandidates]
+  );
 
   useEffect(() => {
     const enabledPoints = tripodCandidateSourcePoints.filter(
@@ -1076,9 +1073,16 @@ function App() {
     // 避けて1点確認または近傍のみの狭い走査で済むことが多い
     // （spotPresetSearch.tsの前回距離再利用と同じ仕組み）。
     // 外れていた場合は自動的に従来どおりの全距離走査へフォールバックする。
-    const preferredDistancesById = Object.fromEntries(
-      tripodCandidatesRef.current.map((candidate) => [candidate.id, candidate.distanceMeters])
-    ) as Partial<Record<TripodCandidate["id"], number>>;
+    const preferredDistancesById = tripodCandidatesRef.current.reduce(
+      (result, candidate) => {
+        const current = result[candidate.id];
+        if (current === undefined || candidate.distanceMeters > current) {
+          result[candidate.id] = candidate.distanceMeters;
+        }
+        return result;
+      },
+      {} as Partial<Record<TripodCandidate["id"], number>>
+    );
 
     // 精密計算が完了するまでは候補点を地図へ表示しない。
     // 粗探索の方位候補（既定距離500m）を一時表示すると、確定候補と誤認されるため。
@@ -1102,7 +1106,8 @@ function App() {
         undefined,
         previewRefractionWeather,
         preferredDistancesById,
-        resolveTripodCandidateRefractionWeather
+        resolveTripodCandidateRefractionWeather,
+        precisionSettings.tripodCandidateDoubleCheckEnabled
       )
         .then((candidates) => {
           if (!cancelled) {
@@ -1148,6 +1153,7 @@ function App() {
     resolveTripodCandidateRefractionWeather,
     timelineInteracting,
     precisionSettings.accuracyMode,
+    precisionSettings.tripodCandidateDoubleCheckEnabled,
     tripodCandidateRetrySequence,
     showUserNotice,
   ]);
@@ -1236,6 +1242,19 @@ function App() {
       }
     };
   }, [mapInitializationAttempt, precisionSettings.accuracyMode, setSearchMessage, showUserNotice]);
+
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed() || !mapReady) return;
+    // 2D表示中はCesiumのデフォルト描画ループを完全停止し、非表示3Dの
+    // タイル処理・描画がGoogle Maps iframeと競合しないようにする。
+    // 3Dへ戻す時は同じViewerを再開し、画質・カメラ・キャッシュを維持する。
+    viewer.useDefaultRenderLoop = mapViewMode === "3d";
+    if (mapViewMode === "3d") viewer.scene.requestRender();
+    return () => {
+      if (!viewer.isDestroyed()) viewer.useDefaultRenderLoop = true;
+    };
+  }, [mapReady, mapViewMode]);
 
   useEffect(() => {
     const viewer = mapViewerRef.current;
@@ -1801,7 +1820,8 @@ function App() {
             subjectPoint,
             cameraSettings,
             calculationMode,
-            previewViewCorrection
+            previewViewCorrection,
+            mapViewMode === "3d"
           );
 
           if (!cancelled && jobId === previewJobRef.current) {
@@ -1833,13 +1853,9 @@ function App() {
 
     void updatePreview("プレビュー生成中…");
 
-    // Preview視点で追加タイルが読み込まれた後に再描画します。
-    timers.push(
-      window.setTimeout(() => {
-        void updatePreview("プレビュー高精細化中…");
-      }, 1200)
-    );
-
+    // Preview視点で追加タイルが読み込まれた後に最終高精細描画を1回だけ行う。
+    // 従来は1.2秒/3.2秒の2回再撮影していたが、1.2秒時点の中間画像は
+    // 3.2秒時点で必ず置き換えられるため、最終画質・座標計算を変えずに省略する。
     timers.push(
       window.setTimeout(() => {
         void updatePreview("プレビュー最終更新中…");
@@ -1858,6 +1874,7 @@ function App() {
     previewFrameMode,
     previewViewCorrection,
     calculationMode,
+    mapViewMode,
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
@@ -1931,33 +1948,33 @@ function App() {
     longitude: number,
     label: string
   ): Promise<GroundPoint> {
-    // 検索・URL・座標入力ではまずDEM（地面）で確定する。
-    const groundPoint = await resolveGroundPoint(latitude, longitude, label);
-    // その上で、その地点に建物があれば屋根面へ合わせる。標準モードは表示用に
-    // 読み込まれているPLATEAU建物へclampToHeightMostDetailed
-    // （Cesium標準の表面クランプAPI。手動3Dタップと同じ方式）を1回のバッチ
-    // 呼び出しで通す。Googleタイルモードはその形状データを規約上
-    // 読み取れないため、この判定専用に完全透明なPLATEAU建物を別途読み込んで
-    // から同じ判定を行う（画面の見た目はGoogleタイルのまま）。建物が無い・
-    // 検証できない場合は、DEM地面の値のまま変更しない。
+    // 検索・URL・座標入力では、DEM（地面）確定と建物屋根面への合わせ込み判定を
+    // 並行して行う。屋根判定はDEM値そのものを使わず、両者とも入力の緯度経度
+    // だけから独立に求まるため、直列に待つ必要がない（結果の使い分けだけ
+    // 両方が揃ってから行う）。標準モードは表示用に読み込まれているPLATEAU
+    // 建物へclampToHeightMostDetailed（Cesium標準の表面クランプAPI。手動3D
+    // タップと同じ方式）を1回のバッチ呼び出しで通す。Googleタイルモードは
+    // その形状データを規約上読み取れないため、この判定専用に完全透明な
+    // PLATEAU建物を別途読み込んでから同じ判定を行う（画面の見た目はGoogle
+    // タイルのまま）。建物が無い・検証できない場合は、DEM地面の値のまま
+    // 変更しない。
     const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return groundPoint;
-    try {
-      if (precisionSettings.accuracyMode === "highest") {
-        await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
-        if (viewer.isDestroyed()) return groundPoint;
+    const groundPointPromise = resolveGroundPoint(latitude, longitude, label);
+    const roofPointPromise: Promise<GroundPoint | null> = (async () => {
+      if (!viewer || viewer.isDestroyed()) return null;
+      try {
+        if (precisionSettings.accuracyMode === "highest") {
+          await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
+          if (viewer.isDestroyed()) return null;
+        }
+        return await resolvePlateauRoofGroundPoint(viewer, latitude, longitude, label);
+      } catch (error) {
+        console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
+        return null;
       }
-      const roofPoint = await resolvePlateauRoofGroundPoint(
-        viewer,
-        latitude,
-        longitude,
-        label
-      );
-      return roofPoint ?? groundPoint;
-    } catch (error) {
-      console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
-      return groundPoint;
-    }
+    })();
+    const [groundPoint, roofPoint] = await Promise.all([groundPointPromise, roofPointPromise]);
+    return roofPoint ?? groundPoint;
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -3570,7 +3587,7 @@ ${diagnosticMessage}
     setMapCenter({ latitude: point.latitude, longitude: point.longitude });
     setSearchMessage(candidate.solutionType === "direction-only"
       ? `${candidate.label}の方位上にある三脚確認地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。プレビューと現地の見通しを確認してください`
-      : `${candidate.label}と被写体が画角内で重なる三脚候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）`
+      : `${candidate.label}の地形交点候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。構図はプレビューで確認してください`
     );
     // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
     // ここで確定後に正式なDEM/ジオイド解決へ差し替える
@@ -3613,7 +3630,6 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
-        onOpenUsageGuide={() => setTutorialMode("guide")}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
       />
@@ -3777,21 +3793,23 @@ ${diagnosticMessage}
           ref={map2dStageRef}
           className={mapViewMode === "2d" ? "map-2d-stage active" : "map-2d-stage"}
         >
-          <iframe
-            className="google-map-2d"
-            src={googleMapUrl}
-            title="Googleマップ 2D表示"
-            loading="eager"
-            referrerPolicy="no-referrer-when-downgrade"
-            allowFullScreen
-            onLoad={() => {
-              const stage = map2dStageRef.current;
-              if (!stage) return;
-              stage.style.transform = "";
-              stage.style.transformOrigin = "";
-              stage.classList.remove("dragging");
-            }}
-          />
+          {mapViewMode === "2d" && (
+            <iframe
+              className="google-map-2d"
+              src={googleMapUrl}
+              title="Googleマップ 2D表示"
+              loading="eager"
+              referrerPolicy="no-referrer-when-downgrade"
+              allowFullScreen
+              onLoad={() => {
+                const stage = map2dStageRef.current;
+                if (!stage) return;
+                stage.style.transform = "";
+                stage.style.transformOrigin = "";
+                stage.classList.remove("dragging");
+              }}
+            />
+          )}
           {mapViewMode === "2d" && lightPollutionEnabled && celestialVisibility.milkyWay && (
             <LightPollutionTileOverlay
               center={mapCenter}
@@ -4159,11 +4177,16 @@ ${diagnosticMessage}
             <div className="tripod-candidate-selection-list">
               {selectableDisplayedTripodCandidates.map((candidate) => (
                 <button
-                  key={candidate.id}
+                  key={`${candidate.id}-${candidate.intersectionIndex ?? 1}-${candidate.distanceMeters.toFixed(1)}`}
                   type="button"
                   onClick={() => selectTripodCandidate(candidate)}
                 >
-                  <strong>{candidate.label}</strong>
+                  <strong>
+                    {candidate.label}
+                    {candidate.intersectionCount && candidate.intersectionCount > 1
+                      ? ` 候補${candidate.intersectionIndex}/${candidate.intersectionCount}`
+                      : ""}
+                  </strong>
                   <small>被写体まで約{Math.round(candidate.distanceMeters)}m</small>
                 </button>
               ))}
@@ -4295,20 +4318,6 @@ ${diagnosticMessage}
         errorMessage={pendingPlacementError}
         onConfirm={() => void confirmPendingPlacement()}
         onCancel={cancelPendingPlacement}
-      />
-      <TutorialOverlay
-        mode={tutorialMode}
-        onClose={() => setTutorialMode(null)}
-        liveState={{
-          hasSubjectPoint: Boolean(subjectPoint),
-          hasTripodPoint: Boolean(tripodPoint),
-          tripodCandidateCount: tripodCandidates.length,
-          mapViewMode,
-          spotSearchOpen,
-          celestialMenuOpen,
-          lightPollutionEnabled,
-          accuracyMode: precisionSettings.accuracyMode,
-        }}
       />
     </main>
   );

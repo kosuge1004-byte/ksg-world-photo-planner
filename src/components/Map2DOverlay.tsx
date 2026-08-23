@@ -467,7 +467,7 @@ export function Map2DOverlay({
         return (
           <button
             type="button"
-            key={`${candidate.id}-tripod-candidate`}
+            key={`${candidate.id}-tripod-candidate-${candidate.intersectionIndex ?? 1}-${candidate.distanceMeters.toFixed(1)}`}
             className={`map-tripod-candidate-label map-candidate-label-${candidate.id}`}
             style={{ left: pixel.x, top: pixel.y }}
             onClick={() => onSelectCandidate(candidate)}
@@ -481,7 +481,10 @@ export function Map2DOverlay({
             {candidate.label}{" "}
             {candidate.solutionType === "direction-only"
               ? "三脚方位候補"
-              : "三脚候補"}{" "}
+              : "三脚候補"}
+            {candidate.intersectionCount && candidate.intersectionCount > 1
+              ? ` ${candidate.intersectionIndex}/${candidate.intersectionCount}`
+              : ""}{" "}
             {Math.round(candidate.distanceMeters)}m
           </button>
         );

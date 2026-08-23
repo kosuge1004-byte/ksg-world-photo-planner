@@ -144,19 +144,49 @@ test("place geocoder uses the best GSI candidate when Nominatim returns no resul
   assert.equal(calls.length, 2);
 });
 
-test("place geocoder keeps Nominatim as the primary provider", async () => {
-  let callCount = 0;
-  const result = await resolveJapanesePlaceName("東京駅", undefined, async () => {
-    callCount += 1;
+test("place geocoder queries Nominatim and GSI in parallel and ranks by text match", async () => {
+  const calls = [];
+  const result = await resolveJapanesePlaceName("東京駅", undefined, async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.startsWith("https://nominatim.openstreetmap.org/")) {
+      return Response.json([{
+        lat: "35.681236",
+        lon: "139.767125",
+        display_name: "東京駅, 千代田区, 東京都",
+        importance: 0.9,
+      }]);
+    }
+    assert.match(url, /^https:\/\/msearch\.gsi\.go\.jp\/address-search\/AddressSearch\?/u);
     return Response.json([{
-      lat: "35.681236",
-      lon: "139.767125",
-      display_name: "東京駅, 千代田区, 東京都",
+      geometry: { type: "Point", coordinates: [139.767125, 35.681236] },
+      properties: { title: "東京駅" },
     }]);
   });
 
-  assert.equal(result.label, "東京駅, 千代田区, 東京都");
-  assert.equal(callCount, 1);
+  assert.equal(result.label, "東京駅");
+  assert.equal(calls.length, 2);
+  assert.ok(calls.some((url) => url.startsWith("https://nominatim.openstreetmap.org/")));
+  assert.ok(calls.some((url) => url.startsWith("https://msearch.gsi.go.jp/")));
+});
+
+test("place geocoder still returns a valid provider result when the other provider fails", async () => {
+  const result = await resolveJapanesePlaceName("東京駅", undefined, async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://nominatim.openstreetmap.org/")) {
+      throw new TypeError("network unavailable");
+    }
+    return Response.json([{
+      geometry: { type: "Point", coordinates: [139.767125, 35.681236] },
+      properties: { title: "東京駅" },
+    }]);
+  });
+
+  assert.deepEqual(result, {
+    latitude: 35.681236,
+    longitude: 139.767125,
+    label: "東京駅",
+  });
 });
 
 test("Google Maps Pages Function parses direct supported URLs", async () => {

@@ -72,7 +72,8 @@ export async function captureTripodPreview(
   subject: GroundPoint,
   settings: CameraSettings,
   calculationMode: CalculationMode,
-  viewCorrection?: CameraViewCorrection
+  viewCorrection?: CameraViewCorrection,
+  restoreVisibleScene = true
 ): Promise<void> {
   if (viewer.isDestroyed()) {
     return;
@@ -141,7 +142,8 @@ export async function captureTripodPreview(
     }
 
     restoreCamera(viewer, cameraState);
-    // 表示中の3Dマップも同じタスク内で元のカメラへ描き戻し、ちらつきを防ぐ。
-    viewer.scene.render();
+    // 3Dマップが実際に表示されている時だけ復元フレームを即描画する。
+    // 2D表示中はCesium自体を休止しているため、不可視の1フレームを描く必要はない。
+    if (restoreVisibleScene) viewer.scene.render();
   }
 }
