@@ -29,6 +29,9 @@ function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
         (value.maximumDetail === "1m" || value.maximumDetail === "5m" || value.maximumDetail === "10m")
         ? value.maximumDetail
         : undefined,
+      interpolationMode: "interpolationMode" in value && value.interpolationMode === "neutral"
+        ? "neutral"
+        : "los-safe",
     };
   });
 }
@@ -54,9 +57,10 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       latitude: Number(point.latitude.toFixed(5)),
       longitude: Number(point.longitude.toFixed(5)),
       maximumDetail: point.maximumDetail ?? "10m",
+      interpolationMode: point.interpolationMode ?? "los-safe",
     }));
     const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, cacheKeyInput, {
-      namespace: "gsi-elevation", version: "v1", ttlSeconds: 30 * 86400,
+      namespace: "gsi-elevation", version: "v2", ttlSeconds: 30 * 86400,
     }, async () => ({ samples: await lookupGsiElevations(points, context.request.signal) }), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=3600");
   } catch (error) {

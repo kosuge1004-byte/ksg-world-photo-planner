@@ -5,6 +5,7 @@ export type GsiElevationClientPoint = {
   latitude: number;
   longitude: number;
   maximumDetail?: "1m" | "5m" | "10m";
+  interpolationMode?: "los-safe" | "neutral";
 };
 
 export type GsiElevationClientResult = {

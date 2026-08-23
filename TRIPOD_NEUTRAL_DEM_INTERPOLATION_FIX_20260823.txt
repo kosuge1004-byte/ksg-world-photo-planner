@@ -1,0 +1,18 @@
+AstroSight 三脚候補DEM補間分離修正 2026-08-23
+
+原因:
+GSI 1m DEMのConstrained Bicubic補間がLOS（遮蔽判定）向けに
+max(Bilinear, Bicubic)で安全側（高い側）へバイアスされており、
+三脚候補の「レイと地表の交点」位置計算にも同じ値が流用されていた。
+
+修正:
+- GSI標高APIに interpolationMode = los-safe / neutral を追加。
+- 既定値は los-safe とし、既存LOS/遮蔽判定の安全側挙動を維持。
+- 三脚候補専用 sampleWorldTerrainNeutral() を追加。
+- 三脚候補では1m DEM時にConstrained Bicubicの中立値を使用し、max()上方バイアスを禁止。
+- GSI欠測時のCesium World Terrainフォールバック、ジオイド→楕円体高変換は従来と同じ。
+- 任意カメラ高、ECEF geometricAltitudeDegrees、最終CameraModel Round-trip検証は変更なし。
+- API/R2キャッシュは補間モードをキーへ含め、旧v1キャッシュとの混同を避けるためv2へ更新。
+
+重要:
+この修正はLOS精度を落とさない。LOSは従来どおり安全側補間、三脚位置決定だけ中立補間を使用する。

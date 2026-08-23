@@ -22,7 +22,7 @@ import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
 } from "../geodesy/karneyGeodesic";
-import { sampleWorldTerrain, terrainDataSource } from "./worldTerrain";
+import { sampleWorldTerrainNeutral, terrainDataSource } from "./worldTerrain";
 import { computeApparentElevation } from "../apparent/apparentElevation";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
@@ -1314,7 +1314,7 @@ export async function calculateTripodCandidates(
   cameraSettingsOrLensHeight: CameraSettings | number,
   date: Date,
   calculationMode: CalculationMode,
-  terrainSampler: TerrainSampler = sampleWorldTerrain,
+  terrainSampler: TerrainSampler = sampleWorldTerrainNeutral,
   signal?: AbortSignal,
   previewAspectRatio = 3 / 2,
   distanceRange?: TripodDistanceRange,
@@ -1441,7 +1441,7 @@ export function buildDirectionalTripodCandidates(
 export async function sampleDirectionalTripodCandidates(
   subject: GroundPoint,
   points: CelestialScreenPoint[],
-  terrainSampler: TerrainSampler = sampleWorldTerrain,
+  terrainSampler: TerrainSampler = sampleWorldTerrainNeutral,
   signal?: AbortSignal,
   distanceMeters = DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS
 ): Promise<TripodCandidate[]> {

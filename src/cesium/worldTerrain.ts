@@ -618,6 +618,78 @@ export async function sampleWorldTerrain(
  * 各地点で利用可能な最詳細DEMと地点固有ジオイドを取得する。
  * どちらかが欠けた場合は標準データへフォールバックせず失敗させる。
  */
+
+/**
+ * 三脚候補など、地形との交点そのものを位置として解く用途専用。
+ * GSI 1m DEMの補間でLOS用の上方バイアス(max(bilinear,bicubic))を使わず、
+ * 制約付きBicubicの中立補間値を使用する。GSI欠測時のWorld Terrain
+ * フォールバック、ジオイド→楕円体高変換は通常sampleWorldTerrainと同一。
+ */
+export async function sampleWorldTerrainNeutral(
+  points: Cartographic[],
+  signal?: AbortSignal,
+  maximumDetail?: GsiMaximumDetail
+): Promise<Cartographic[]> {
+  if (points.length === 0) return [];
+  abortIfRequested(signal);
+
+  const result = points.map((point) => Cartographic.clone(point));
+  const details = maximumDetail ? points.map(() => maximumDetail) : undefined;
+  let elevations: GsiElevationApiSample[];
+  try {
+    const response = await fetchGsiElevationSamples(
+      result.map((point, index) => ({
+        latitude: CesiumMath.toDegrees(point.latitude),
+        longitude: CesiumMath.toDegrees(point.longitude),
+        maximumDetail: details?.[index],
+        interpolationMode: "neutral" as const,
+      })),
+      signal
+    );
+    elevations = response.samples;
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    elevations = result.map(() => ({ heightMeters: null, source: null }));
+  }
+
+  const eligibleIndexes = elevations.map((sample, index) =>
+    sample.source !== null && typeof sample.heightMeters === "number" && Number.isFinite(sample.heightMeters)
+      ? index
+      : -1
+  ).filter((index) => index >= 0);
+  const geoidHeightByRegion = await fetchRegionalGeoidHeights(result, eligibleIndexes, signal);
+
+  const unresolvedIndexes: number[] = [];
+  for (let index = 0; index < result.length; index += 1) {
+    const sample = elevations[index];
+    const geoidHeightMeters = geoidHeightByRegion.get(geoidRegionKey(result[index]));
+    if (
+      sample?.source &&
+      typeof sample.heightMeters === "number" &&
+      Number.isFinite(sample.heightMeters) &&
+      typeof geoidHeightMeters === "number"
+    ) {
+      result[index].height = sample.heightMeters + geoidHeightMeters;
+      terrainSourceBySample.set(result[index], GSI_SOURCE_NAMES[sample.source]);
+    } else {
+      unresolvedIndexes.push(index);
+    }
+  }
+
+  if (unresolvedIndexes.length > 0) {
+    const fallback = await sampleWorldTerrainFallbackWithRecovery(
+      unresolvedIndexes.map((index) => result[index]),
+      signal
+    );
+    fallback.forEach((sample, fallbackIndex) => {
+      const resultIndex = unresolvedIndexes[fallbackIndex];
+      result[resultIndex] = sample;
+      terrainSourceBySample.set(sample, "CESIUM_WORLD_TERRAIN");
+    });
+  }
+  return result;
+}
+
 export async function sampleWorldTerrainHighestPrecision(
   points: Cartographic[],
   signal?: AbortSignal

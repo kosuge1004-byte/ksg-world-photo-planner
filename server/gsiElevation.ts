@@ -15,6 +15,12 @@ export type GsiElevationRequestPoint = {
   latitude: number;
   longitude: number;
   maximumDetail?: "1m" | "5m" | "10m";
+  /**
+   * 補間用途。
+   * - los-safe: LOS/遮蔽判定用。BilinearとConstrained Bicubicの高い方を採用。
+   * - neutral: 三脚候補など位置決定用。上方バイアスを掛けずConstrained Bicubicを採用。
+   */
+  interpolationMode?: "los-safe" | "neutral";
 };
 
 export type GsiElevationSample = {
@@ -565,7 +571,8 @@ export function heightFromNeighborhood(
   pixelX: number,
   pixelY: number,
   fracX: number,
-  fracY: number
+  fracY: number,
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): number | null {
   const sample = (offsetX: number, offsetY: number): number | null =>
     sampleNeighborhoodHeight(tiles, baseX, baseY, pixelX, pixelY, offsetX, offsetY);
@@ -606,8 +613,12 @@ export function heightFromNeighborhood(
   }
   const bicubicHeight = constrainedBicubicInterpolate(rows as unknown as BicubicGrid4x4, fracX, fracY);
 
-  // 安全側判定：より遮蔽的（高い）方を採用する。
-  return Math.max(bilinearHeight, bicubicHeight);
+  // LOSでは偽の視界良好を避けるため高い方を採用する。
+  // 三脚候補など「位置を解く」用途では上方バイアスを入れず、
+  // 近傍実測値内へ制約済みのConstrained Bicubicをそのまま採用する。
+  return interpolationMode === "neutral"
+    ? bicubicHeight
+    : Math.max(bilinearHeight, bicubicHeight);
 }
 
 function sourceIsAllowedForPoint(
@@ -725,7 +736,8 @@ export async function lookupGsiElevations(
             request.coordinate.pixelX,
             request.coordinate.pixelY,
             request.coordinate.fracX,
-            request.coordinate.fracY
+            request.coordinate.fracY,
+            points[request.index].interpolationMode ?? "los-safe"
           )
         : heightFromTile(
             tile,
