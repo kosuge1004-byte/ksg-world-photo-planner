@@ -13,21 +13,21 @@
       "id": "92197c38d81d48489ef4fdd25b1b9a58"
     }
   ],
-  // 地形標高（GSI DEMタイル）・気象等のサーバー側キャッシュ。
-  // functions/_shared/env.ts の CloudflareEnv.NETWORK_CACHE、
-  // functions/api/gsi-elevation.ts、server/gsiElevation.ts から参照する。
-  // この設定が無いとキャッシュが常にバイパスされ、三脚候補計算のたびに
-  // 国土地理院サーバーへ生で問い合わせることになり、著しく遅くなる
-  // （2026-08-23: 実機で「計算中のまま止まる」「gsi-elevationへのPOSTが
-  // 500エラー」の直接原因として特定）。
-  // Cloudflareダッシュボードで先にR2バケットを作成してから
-  // デプロイすること（バケット名はここと一致させる必要がある）。
-  "r2_buckets": [
-    {
-      "binding": "NETWORK_CACHE",
-      "bucket_name": "astrosight-network-cache"
-    }
-  ],
+  // 地形標高（GSI DEMタイル）・気象等のサーバー側キャッシュにR2を使う
+  // 選択肢もあるが、R2の有効化にはCloudflareアカウントへの支払い方法
+  // 登録が必要（無料枠内でも登録自体は必須）なため、2026-08-23に
+  // カード登録なしで運用する方針へ戻した。NETWORK_CACHEバインディング
+  // が無くても、functions/_shared/r2Cache.ts・server/gsiElevation.ts側は
+  // bucket=undefinedを安全に許容し、キャッシュをバイパスして毎回
+  // 国土地理院サーバーへ直接問い合わせるだけで正常に動作する
+  // （速度面のメリットが無くなるだけで、機能上の問題は無い）。
+  // 将来カード登録済みでR2を使いたくなったら、以下を有効にする：
+  // "r2_buckets": [
+  //   {
+  //     "binding": "NETWORK_CACHE",
+  //     "bucket_name": "実際に作成したR2バケット名"
+  //   }
+  // ],
   "queues": {
     "producers": [
       {

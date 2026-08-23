@@ -16,14 +16,16 @@
   // （persistentCacheFromR2がundefinedを安全に許容するため、キャッシュへの
   // 保存だけがスキップされ、通信自体はそのまま成功する）。
   //
-  // 2026-08-23: wrangler.jsonc（Pages側）にNETWORK_CACHEを設定したのに
-  // 合わせて、同じバケットをこちらにも設定した。
-  "r2_buckets": [
-    {
-      "binding": "NETWORK_CACHE",
-      "bucket_name": "astrosight-network-cache"
-    }
-  ],
+  // R2の有効化にはCloudflareアカウントへの支払い方法登録が必要（無料枠内でも
+  // 登録自体は必須）なため、2026-08-23にカード登録なしで運用する方針へ戻した。
+  // 将来カード登録済みでR2を使いたくなったら、以下のコメントを外して
+  // bucket_nameを実際に作成したR2バケット名に置き換えるだけでよい。
+  // "r2_buckets": [
+  //   {
+  //     "binding": "NETWORK_CACHE",
+  //     "bucket_name": "ここに実際のR2バケット名"
+  //   }
+  // ],
   "queues": {
     "consumers": [
       {
