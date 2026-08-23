@@ -1,0 +1,27 @@
+AstroSight 三脚候補点描画修正 2026-08-23
+
+原因
+- src/App.tsx で精密三脚候補計算開始時に tripodCandidates を必ず空配列へ変更していた。
+- 精密解が0件の場合も空配列のままとなり、既に型・描画側に用意されている solutionType="direction-only" の確認用候補が一切使われていなかった。
+- 3D Cesium は requestRenderMode=true だが、既存の候補Entityは CallbackProperty 内の座標・ラベル参照だけを書き換えるため、更新時に明示的 requestRender() が無かった。
+
+修正
+1. src/App.tsx
+- buildDirectionalTripodCandidates() を再利用。
+- 精密計算中は direction-only 候補を表示。
+- 精密解が得られたら aligned 候補だけへ置換。
+- 精密解0件の場合は direction-only 候補を残す。
+- 地形取得エラー時も direction-only 候補を残し、ステータスは error のまま明示。
+
+2. src/cesium/celestialMap.ts
+- 三脚候補Entityの追加・位置更新・削除後に viewer.scene.requestRender() を実行。
+- 共有三脚探索ライン更新後にも requestRender() を追加。
+
+3. scripts/verify-tripod-candidate-rendering.mjs
+- 上記回帰を静的検証するテストを追加。
+- 実行結果: 5項目すべてPASS。
+
+注意
+- direction-only は「精密解」ではなく、天体方位上の確認用候補。UIでは既存仕様どおり「三脚方位候補（要確認）」として区別される。
+- 精密解が存在する場合は direction-only と混在させず aligned 候補のみ表示する。
+- npm依存取得が実行環境で時間切れとなったため、この環境では最終 npm build までは完了確認できていない。

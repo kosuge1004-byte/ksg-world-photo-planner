@@ -195,17 +195,11 @@ function directSightlineSeedDistanceMeters(
   const t = [t1, t2].filter((value) => Number.isFinite(value) && value > 0).sort((x, y) => x - y)[0];
   if (!Number.isFinite(t)) return null;
 
-  const cartographic = rayCartographicAtDistance(ray, t);
-  if (!cartographic) return null;
-  const intersectionPoint: GroundPoint = {
-    latitude: CesiumMath.toDegrees(cartographic.latitude),
-    longitude: CesiumMath.toDegrees(cartographic.longitude),
-    height: 0,
-    label: "視線楕円体交点",
-  };
-  const distance = calculateKarneyLineMetrics(subject, intersectionPoint).distanceMeters;
-  return Number.isFinite(distance) && distance >= ABSOLUTE_MIN_DISTANCE_METERS
-    ? Math.min(ABSOLUTE_MAX_DISTANCE_METERS, distance)
+  // scanRayTerrainIntersections の距離軸はECEFレイ上の t（直線距離）。
+  // ここでKarney地表距離へ変換すると距離軸が混在し、特に高仰角でseedが
+  // 不必要に手前へずれる。二次的な測地線計算も不要なので、求めたtをそのまま使う。
+  return t >= ABSOLUTE_MIN_DISTANCE_METERS
+    ? Math.min(ABSOLUTE_MAX_DISTANCE_METERS, t)
     : null;
 }
 
@@ -540,9 +534,10 @@ async function scanTerrainDistanceRange(
  * レイの楕円体高と実地形高（DEM）の差の符号変化から交点を検出する。
  *
  * 探索の刻み方・適応細分化・複数交点の一括精密化バッチは、既存の
- * scanAllTerrainIntersections（旧方式・ダブルチェック専用）と同じロジック
- * を流用し、通信量・速度特性を変えない（仕様5）。誤差の意味だけが
- * 「仰角差（度）」から「レイ高と地形高の差（m）」へ変わる。
+ * scanAllTerrainIntersections（旧方式・ダブルチェック専用）と同系統のロジックを
+ * 使用する。初回の探索範囲だけは directSightlineSeedDistanceMeters のseedを使って
+ * 必要範囲へ絞り、解が無い場合に限って残りを拡張する。誤差の意味は
+ * 「仰角差（度）」ではなく「レイ高と地形高の差（m）」。
  */
 async function scanRayTerrainIntersections(
   ray: CelestialSubjectRay,
@@ -746,6 +741,98 @@ async function scanRayTerrainIntersections(
   return solutions.sort((a, b) => b.distanceMeters - a.distanceMeters);
 }
 
+
+/**
+ * 初回レイ探索の高速経路。
+ *
+ * 直線計算ですでにWGS84楕円体との第一候補距離が得られている場合、
+ * まず被写体からその距離+安全余裕までだけを10m DEMで探索する。
+ * そこで交点が得られなかった場合だけ、残りの距離を段階拡張する。
+ *
+ * 明示的なdistanceRange指定時と最高精度のダブルチェック時は、呼び出し側の
+ * 「指定範囲をすべて調べる」という意味を変えないため従来の全範囲探索を維持する。
+ * したがって最終1m精密化・round-trip検証の精度条件は一切変更しない。
+ */
+async function scanInitialRayTerrainIntersections(
+  ray: CelestialSubjectRay,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal: AbortSignal | undefined,
+  distanceRange: TripodDistanceRange | undefined,
+  searchProfile: TripodSearchProfile | undefined,
+  preferredDistanceMeters: number | undefined,
+  exhaustive: boolean
+): Promise<TerrainSolution[]> {
+  if (
+    exhaustive ||
+    distanceRange !== undefined ||
+    !Number.isFinite(preferredDistanceMeters)
+  ) {
+    return scanRayTerrainIntersections(
+      ray,
+      lensCenterHeightMeters,
+      terrainSampler,
+      signal,
+      distanceRange,
+      searchProfile,
+      preferredDistanceMeters
+    );
+  }
+
+  const preferred = Math.min(
+    ABSOLUTE_MAX_DISTANCE_METERS,
+    Math.max(ABSOLUTE_MIN_DISTANCE_METERS, preferredDistanceMeters!)
+  );
+
+  // 近距離では最低1km、遠距離では第一候補の35%を余裕として持たせる。
+  // ただし余裕だけで5kmを超えて広がらないよう制限する。
+  // この範囲内では従来どおり全交点を返すため、途中の山稜交点も保持される。
+  const safetyMarginMeters = Math.max(
+    1_000,
+    Math.min(5_000, preferred * 0.35)
+  );
+  const primaryMax = Math.min(
+    ABSOLUTE_MAX_DISTANCE_METERS,
+    preferred + safetyMarginMeters
+  );
+  const primaryRange: TripodDistanceRange = {
+    minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
+    maxMeters: primaryMax,
+  };
+
+  const primarySolutions = await scanRayTerrainIntersections(
+    ray,
+    lensCenterHeightMeters,
+    terrainSampler,
+    signal,
+    primaryRange,
+    searchProfile,
+    preferred
+  );
+  if (primarySolutions.length > 0 || primaryMax >= ABSOLUTE_MAX_DISTANCE_METERS) {
+    return primarySolutions;
+  }
+
+  // 第一候補周辺で解が無かったときだけ残りを探索する。境界直上の交点を
+  // 取りこぼさないよう500m重複させるが、先頭8mからの全再走査は行わない。
+  const fallbackRange: TripodDistanceRange = {
+    minMeters: Math.max(
+      ABSOLUTE_MIN_DISTANCE_METERS,
+      primaryMax - ADAPTIVE_COARSE_MAX_SPAN_METERS
+    ),
+    maxMeters: ABSOLUTE_MAX_DISTANCE_METERS,
+  };
+  return scanRayTerrainIntersections(
+    ray,
+    lensCenterHeightMeters,
+    terrainSampler,
+    signal,
+    fallbackRange,
+    searchProfile,
+    preferred
+  );
+}
+
 async function solveTerrainDistance(
   subject: GroundPoint,
   bearingDegrees: number,
@@ -920,14 +1007,15 @@ async function calculateOneCandidates(
     point.azimuthDegrees,
     point.altitudeDegrees
   );
-  const initialSolutions = await scanRayTerrainIntersections(
+  const initialSolutions = await scanInitialRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
     terrainSampler,
     signal,
     distanceRange,
     searchProfile,
-    directSeedDistance ?? searchProfile?.preferredDistanceMeters
+    directSeedDistance ?? searchProfile?.preferredDistanceMeters,
+    doubleCheckEnabled
   );
   if (initialSolutions.length === 0) return [];
 

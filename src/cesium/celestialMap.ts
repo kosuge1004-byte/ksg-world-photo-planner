@@ -102,6 +102,11 @@ function updateSharedGroundLines(
     viewer.entities.removeById(id);
     states.delete(id);
   }
+
+  // ViewerはrequestRenderMode=true。既存EntityはCallbackPropertyの参照値だけを
+  // 更新するため、Cesium側が変更を自動検知せず画面が更新されない場合がある。
+  // 候補の追加・移動・削除後は明示的に1フレーム要求して描画を確実にする。
+  viewer.scene.requestRender();
 }
 
 const COLORS = {
@@ -197,6 +202,10 @@ function updateTripodCandidateEntities(
     viewer.entities.removeById(id);
     states.delete(id);
   }
+
+  // ViewerはrequestRenderMode=true。既存EntityはCallbackPropertyの参照値だけを
+  // 更新するため、候補位置・ラベル更新後は明示的に1フレーム描画する。
+  viewer.scene.requestRender();
 }
 
 function destinationPoint(

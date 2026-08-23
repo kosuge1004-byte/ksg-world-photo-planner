@@ -1,0 +1,24 @@
+AstroSight 三脚候補点探索 最適化修正 2026-08-23
+
+対象:
+  src/cesium/tripodCandidates.ts
+
+修正内容:
+1. 主幾何は従来どおり「天体中心 → 被写体 → 後方」のECEF 3Dレイ。
+2. WGS84楕円体との交点で既に得られるECEFレイ距離 t を、初期seedとしてそのまま使用。
+   - 旧実装の「交点を緯度経度へ戻す → Karney地表距離を再計算」を削除。
+   - scanRayTerrainIntersections と同じ距離軸に統一。
+3. 標準の初回DEM探索をseed優先へ変更。
+   - 8mから seed + safety margin までを先に探索。
+   - safety margin = max(1000m, min(5000m, seed*35%))。
+   - この範囲で地形交点が得られた場合は不要な50km走査を行わない。
+   - 解が得られなかった場合のみ、境界500mを重複させて残りを50km上限まで探索。
+4. 明示的distanceRangeがある検索は従来どおり指定全範囲を探索。
+5. 三脚候補ダブルチェック有効時は従来どおり全範囲を探索。
+6. 地形交点の1m DEM精密化、候補地点での天体再計算、Karney方位検証、
+   ECEF/Apparent仰角検証、CameraModel round-trip検証は削除・緩和していない。
+7. 前回の三脚候補描画修正（direction-only保持 + Cesium requestRender）も維持。
+
+確認:
+- Node --experimental-strip-types --check: PASS
+- 依存node_modulesがZIPに含まれていないため、npm buildはこの環境では未実行。
