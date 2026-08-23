@@ -4,12 +4,14 @@ const tripodSource = fs.readFileSync('src/cesium/tripodCandidates.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 
 const checks = [
-  ['horizontal angles are converted in their own observer ENU frame', /horizontalToEcefUnitDirection\(\s*directionObserver,\s*celestialAzimuthDegrees,\s*apparentAltitudeDegrees\s*\)/s.test(tripodSource)],
+  ['horizontal angles are converted in their own observer ENU frame', /horizontalToEcefUnitDirection\(\s*directionObserver,\s*celestialAzimuthDegrees,\s*geometricAltitudeDegrees\s*\)/s.test(tripodSource)],
   ['backward ray accepts an explicit direction observer', /buildCelestialBackwardRay\([\s\S]*?directionObserver: GroundPoint = subject/s.test(tripodSource)],
   ['candidate reconvergence rebuilds ECEF direction at candidate lens observer', /buildCelestialBackwardRay\(\s*subject,\s*horizontal\.azimuthDegrees,\s*geometricRayAltitudeDegrees,\s*candidateLensObserver\s*\)/s.test(tripodSource)],
-  ['preview tripod lens observer is forwarded into candidate calculation', /precisionSettings\.tripodCandidateDoubleCheckEnabled,\s*tripodPoint\s*\?\s*\{/s.test(appSource)],
+  ['preview tripod lens observer is forwarded with shared lens-height helper', /withLensCenterHeight\(\s*tripodPoint,\s*cameraSettings\.lensCenterHeightMeters,\s*"三脚候補初期方向観測点"\s*\)/s.test(appSource)],
   ['old candidate az-alt to subject ENU shortcut is absent', !/buildCelestialBackwardRay\(subject, horizontal\.azimuthDegrees, horizontal\.altitudeDegrees\)/.test(tripodSource)],
-  ['apparent ground refraction is removed before rebuilding the geometric ECEF ray', /geometricRayAltitudeDegrees\s*=\s*horizontal\.altitudeDegrees - groundRefractionDegrees/s.test(tripodSource)],
+  ['initial ECEF ray uses celestial geometric altitude directly', /initialGeometricRayAltitudeDegrees\s*=\s*Number\.isFinite\(point\.geometricAltitudeDegrees\)/s.test(tripodSource)],
+  ['reconverged ECEF ray uses celestial geometric altitude directly', /geometricRayAltitudeDegrees\s*=\s*Number\.isFinite\(horizontal\.geometricAltitudeDegrees\)/s.test(tripodSource)],
+  ['terrestrial refraction is not subtracted from celestial altitude', !/horizontal\.altitudeDegrees\s*-\s*groundRefractionDegrees/.test(tripodSource)],
 ];
 
 let failed = false;
@@ -18,7 +20,6 @@ for (const [name, ok] of checks) {
   if (!ok) failed = true;
 }
 
-// Field-reproduced coordinate pair retained in the project evidence/tests.
 const subject = { lat: 35.35768320944909, lon: 136.8090747234574 };
 const tripod = { lat: 35.35556780866144, lon: 136.8194024751617 };
 const rad = Math.PI / 180;

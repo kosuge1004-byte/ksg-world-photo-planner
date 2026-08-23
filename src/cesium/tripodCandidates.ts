@@ -11,7 +11,7 @@ import type {
   TripodCandidate,
 } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import { ellipsoidalHeightMeters } from "../types/points";
+import { ellipsoidalHeightMeters, withLensCenterHeight } from "../types/points";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import {
   calculateCelestialHorizontalCoordinates,
@@ -136,7 +136,7 @@ function horizontalToEcefUnitDirection(
 export function buildCelestialBackwardRay(
   subject: GroundPoint,
   celestialAzimuthDegrees: number,
-  apparentAltitudeDegrees: number,
+  geometricAltitudeDegrees: number,
   directionObserver: GroundPoint = subject
 ): CelestialSubjectRay | null {
   if (
@@ -148,7 +148,7 @@ export function buildCelestialBackwardRay(
   const celestialDirection = horizontalToEcefUnitDirection(
     directionObserver,
     celestialAzimuthDegrees,
-    apparentAltitudeDegrees
+    geometricAltitudeDegrees
   );
   if (!celestialDirection) return null;
 
@@ -195,14 +195,14 @@ export function rayCartographicAtDistance(
 function directSightlineSeedDistanceMeters(
   subject: GroundPoint,
   celestialAzimuthDegrees: number,
-  apparentAltitudeDegrees: number,
+  geometricAltitudeDegrees: number,
   directionObserver: GroundPoint = subject
 ): number | null {
-  if (apparentAltitudeDegrees <= 0) return null;
+  if (geometricAltitudeDegrees <= 0) return null;
   const ray = buildCelestialBackwardRay(
     subject,
     celestialAzimuthDegrees,
-    apparentAltitudeDegrees,
+    geometricAltitudeDegrees,
     directionObserver
   );
   if (!ray) return null;
@@ -1032,29 +1032,19 @@ async function calculateOneCandidates(
   // 仕様3-C: 主計算は「天体中心→被写体→後方」のECEF 3Dレイと地形表面の
   // 交点として求める。pointのaz/altを計算した観測地点のENUでECEF化してから
   // 被写体へ平行移動する。観測地点が不明な検索経路だけ被写体地点を使う。
-  const rayDirectionObserver = initialDirectionObserver ?? {
-    ...subject,
-    height: subject.height + lensCenterHeightMeters,
-    ellipsoidalHeightMeters: ellipsoidalHeightMeters(subject) + lensCenterHeightMeters,
-    orthometricHeightMeters: subject.orthometricHeightMeters !== undefined
-      ? subject.orthometricHeightMeters + lensCenterHeightMeters
-      : undefined,
-    label: `${point.label}初期方向観測点`,
-  };
-  // プレビューの天体高度は「見かけ高度」。一方、被写体→三脚のECEF直線は
-  // 幾何直線なので、地表屈折による被写体の apparent-geometric 差だけを戻して
-  // レイ高度へ使う。これをしないと、ENU基底を直しても屈折分だけレイと
-  // CameraModel(Apparent)が系統的にずれる。
-  const initialSubjectElevation = computeApparentElevation(
-    rayDirectionObserver,
+  const rayDirectionObserver = initialDirectionObserver ?? withLensCenterHeight(
     subject,
-    calculationMode
+    lensCenterHeightMeters,
+    `${point.label}初期方向観測点`
   );
-  const initialGroundRefractionDegrees =
-    initialSubjectElevation.apparentAltitudeDegrees -
-    initialSubjectElevation.geometricAltitudeDegrees;
+  // ECEFレイは幾何直線なので、天体計算が既に返している幾何高度を直接使う。
+  // 見かけ天体高度から「地上物体の屈折量」を差し引くのは物理的に別の補正を
+  // 混同するため禁止する。geometricAltitudeDegrees が無い互換入力だけ apparent を
+  // 使用し、通常の太陽/月/天の川計算では必ず幾何高度が使われる。
   const initialGeometricRayAltitudeDegrees =
-    point.altitudeDegrees - initialGroundRefractionDegrees;
+    Number.isFinite(point.geometricAltitudeDegrees)
+      ? (point.geometricAltitudeDegrees as number)
+      : point.altitudeDegrees;
 
   const initialRay = buildCelestialBackwardRay(
     subject,
@@ -1101,15 +1091,11 @@ async function calculateOneCandidates(
         subject,
         `${point.label}三脚候補`
       );
-      const candidateLensObserver: GroundPoint = {
-        ...candidatePoint,
-        height: candidatePoint.height + lensCenterHeightMeters,
-        ellipsoidalHeightMeters: (candidatePoint.ellipsoidalHeightMeters ?? candidatePoint.height) + lensCenterHeightMeters,
-        orthometricHeightMeters: candidatePoint.orthometricHeightMeters !== undefined
-          ? candidatePoint.orthometricHeightMeters + lensCenterHeightMeters
-          : undefined,
-        label: `${point.label}三脚候補レンズ中心`,
-      };
+      const candidateLensObserver = withLensCenterHeight(
+        candidatePoint,
+        lensCenterHeightMeters,
+        `${point.label}三脚候補レンズ中心`
+      );
       const horizontal = calculateCelestialHorizontalCoordinates(
         point.id,
         date,
@@ -1134,13 +1120,12 @@ async function calculateOneCandidates(
         currentAzimuthError <= CONVERGED_HORIZONTAL_DEGREES
       ) break;
 
-      // 被写体を起点に、候補地点で再計算した最新の天体方位・高度でレイを
-      // 引き直し、現在交点周辺だけを再探索する（全距離走査には戻らない）。
-      const groundRefractionDegrees =
-        candidateSubjectElevation.apparentAltitudeDegrees -
-        candidateSubjectElevation.geometricAltitudeDegrees;
+      // 被写体を起点に、候補地点自身のENUで求めた最新の天体ECEF方向へ
+      // レイを引き直す。ECEFレイは幾何直線なので天体の幾何高度を直接使用する。
       const geometricRayAltitudeDegrees =
-        horizontal.altitudeDegrees - groundRefractionDegrees;
+        Number.isFinite(horizontal.geometricAltitudeDegrees)
+          ? (horizontal.geometricAltitudeDegrees as number)
+          : horizontal.altitudeDegrees;
       const refinedRay = buildCelestialBackwardRay(
         subject,
         horizontal.azimuthDegrees,
@@ -1183,18 +1168,15 @@ async function calculateOneCandidates(
       subject,
       `${point.label}三脚候補最終確認`
     );
+    const finalLensObserver = withLensCenterHeight(
+      finalCandidatePoint,
+      lensCenterHeightMeters,
+      `${point.label}三脚候補レンズ中心最終確認`
+    );
     const finalHorizontal = calculateCelestialHorizontalCoordinates(
       point.id,
       date,
-      {
-        ...finalCandidatePoint,
-        height: finalCandidatePoint.height + lensCenterHeightMeters,
-        ellipsoidalHeightMeters: (finalCandidatePoint.ellipsoidalHeightMeters ?? finalCandidatePoint.height) + lensCenterHeightMeters,
-        orthometricHeightMeters: finalCandidatePoint.orthometricHeightMeters !== undefined
-          ? finalCandidatePoint.orthometricHeightMeters + lensCenterHeightMeters
-          : undefined,
-        label: `${point.label}三脚候補レンズ中心最終確認`,
-      },
+      finalLensObserver,
       calculationMode,
       activeRefractionWeather
     );

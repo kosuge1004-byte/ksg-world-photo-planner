@@ -1,0 +1,29 @@
+AstroSight 三脚候補・カメラ高整合修正 2026-08-23
+
+目的
+- UIの「カメラ高」でユーザーが任意設定した値を、プレビュー・天体計算・三脚候補ECEFレイ・DEM交点・最終Round-tripで同一のレンズ中心高として使用する。
+- 固定1.6mを候補計算へ埋め込まない。
+- 天体の見かけ高度と地上物体の屈折補正を混同しない。
+
+主な修正
+1. App.tsx の三脚未設置時初期観測点を withLensCenterHeight() に統一。
+   以前は height だけを加算し、ellipsoidalHeightMeters / orthometricHeightMeters が地表値のまま残り得た。
+2. 既存三脚ピンを候補計算の初期方向観測点に使う場合も withLensCenterHeight() に統一。
+3. 候補地点の反復観測点・最終確認観測点も withLensCenterHeight() に統一。
+4. ECEFレイ生成には celestial の geometricAltitudeDegrees を直接使用。
+   apparent altitude から地上物体の屈折量を引く旧処理を削除。
+5. DEM交点判定は従来どおり rayPoint.height - lensCenterHeightMeters と地形高を比較。
+   よってUIで1.2m/1.6m/2.0m等に変更すると、その値で候補位置が再計算される。
+6. プレビュー側も同じ withLensCenterHeight(tripod, settings.lensCenterHeightMeters) を使用するため、高さ基準を一本化。
+
+検査
+- verify-tripod-ecef-direction-frame.mjs: PASS
+- verify-tripod-camera-height-20260823.mjs: PASS 8/8
+- verify-tripod-candidate-rendering.mjs: PASS 5/5
+- verify-performance-lifecycle.mjs: PASS
+- verify-3d-map-smoothness-20260823.mjs: PASS 9/9
+- verify-historical-weather-refraction.mjs: PASS
+- verify-tripod-candidate-performance-resilience.mjs: PASS
+
+未確認
+- npm build はこの作業環境に vite/client 型定義が無いため実行完了できない。対象ソースの専用回帰検査は上記の通りPASS。

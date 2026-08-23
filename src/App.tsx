@@ -890,10 +890,14 @@ function App() {
       { id: "milkyWay" as const, label: "天の川" },
       { id: "polaris" as const, label: "北極星" },
     ];
-    const initialObserver = {
-      ...subjectPoint,
-      height: subjectPoint.height + cameraSettings.lensCenterHeightMeters,
-    };
+    // カメラ高はUIの任意設定値を唯一の基準にする。heightだけを加算すると
+    // ellipsoidal/orthometricHeightMeters が古い地表高のまま残り、天体計算と
+    // ECEF/DEM計算で観測点高が分裂するため、共通helperで全高さ基準を同時更新する。
+    const initialObserver = withLensCenterHeight(
+      subjectPoint,
+      cameraSettings.lensCenterHeightMeters,
+      "三脚候補初期天体観測点"
+    );
 
     return definitions.map(({ id, label }) => ({
       id,
@@ -1123,15 +1127,11 @@ function App() {
         resolveTripodCandidateRefractionWeather,
         precisionSettings.tripodCandidateDoubleCheckEnabled,
         tripodPoint
-          ? {
-              ...tripodPoint,
-              height: tripodPoint.height + cameraSettings.lensCenterHeightMeters,
-              ellipsoidalHeightMeters: (tripodPoint.ellipsoidalHeightMeters ?? tripodPoint.height) + cameraSettings.lensCenterHeightMeters,
-              orthometricHeightMeters: tripodPoint.orthometricHeightMeters !== undefined
-                ? tripodPoint.orthometricHeightMeters + cameraSettings.lensCenterHeightMeters
-                : undefined,
-              label: "三脚候補初期方向観測点",
-            }
+          ? withLensCenterHeight(
+              tripodPoint,
+              cameraSettings.lensCenterHeightMeters,
+              "三脚候補初期方向観測点"
+            )
           : undefined
       )
         .then((candidates) => {
