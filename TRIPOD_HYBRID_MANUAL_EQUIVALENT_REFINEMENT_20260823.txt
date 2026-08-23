@@ -1,0 +1,32 @@
+AstroSight 2026-08-23
+Tripod candidate hybrid refinement
+
+Purpose
+- Keep the existing ECEF + DEM calculation as the fast coarse search.
+- Use the same final preview evaluation path as a manually placed tripod pin only near each coarse solution.
+
+Implementation
+1. Existing ECEF + DEM search finds coarse terrain intersections.
+2. Around each coarse result, run an adaptive 1D local search along the subject-to-coarse bearing.
+3. Each pass evaluates at most 9 points; maximum 3 passes (27 terrain samples per coarse solution).
+4. Each detailed point is evaluated as:
+   terrain ground point -> user lensCenterHeightMeters -> celestial horizontal coordinates -> createCameraProjection -> projectHorizontalToPreview.
+5. The objective is the actual preview screen-center error hypot(dxPercent, dyPercent).
+6. The old 0.002 degree azimuth/elevation values remain diagnostic values but are no longer a hard rejection gate after manual-equivalent refinement.
+7. Final acceptance still requires the celestial point to be in front and within the existing CameraModel round-trip tolerance (0.5%).
+8. The final best point is rebuilt using its point-specific GSI geoid before the last CameraModel evaluation.
+9. Returned candidate distance is recalculated from the final refined ground point using Karney surface distance, not the coarse ECEF ray parameter.
+10. Fixed 500 m direction-only candidates remain disabled during calculation and after no-solution.
+
+Performance
+- No full-range manual-equivalent brute force was added.
+- The expensive detailed path is restricted to the neighborhood of existing coarse solutions.
+- Terrain samples are requested in batches of up to 9 per pass.
+
+Preserved
+- User-configurable camera/lens center height.
+- geometricAltitudeDegrees for ECEF celestial direction.
+- Neutral DEM interpolation for tripod position search.
+- Conservative DEM interpolation for LOS only.
+- Point-specific geoid finalization.
+- Existing CameraModel round-trip tolerance.

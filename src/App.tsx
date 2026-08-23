@@ -95,7 +95,6 @@ import {
   thirdDimensionSourceForAccuracyMode,
 } from "./cesium/celestialOcclusion";
 import {
-  buildDirectionalTripodCandidates,
   calculateTripodCandidates,
 } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
@@ -1091,21 +1090,10 @@ function App() {
       {} as Partial<Record<TripodCandidate["id"], number>>
     );
 
-    // 精密計算中も候補点を完全に消さない。TripodCandidate型には、
-    // 精密な地形交点がまだ得られていない場合に表示するための
-    // direction-only候補が正式に定義されている。ここを空配列へすると、
-    // 被写体ピンを置いた直後から精密計算完了まで（または解0件時に永久に）
-    // 三脚候補点が1つも描画されない。
-    //
-    // 方位候補は solutionType="direction-only" として描画・選択時にも
-    // 「要確認」と明示されるため、確定地形交点との混同を避けつつ表示を維持する。
-    // 精密解が得られた時点で aligned 候補へ置き換える。
-    const directionalCandidates = buildDirectionalTripodCandidates(
-      subjectPoint,
-      enabledPoints
-    );
-    tripodCandidatesRef.current = directionalCandidates;
-    setTripodCandidates(directionalCandidates);
+    // 計算中は固定500mのdirection-only仮候補を描画しない。
+    // 精密計算が確定したaligned候補だけを表示する。
+    tripodCandidatesRef.current = [];
+    setTripodCandidates([]);
     setTripodCandidateCalculationStatus("calculating");
 
     let cancelled = false;
@@ -1139,9 +1127,7 @@ function App() {
             // 精密解が0件でも、天体方位そのものは有効なので確認用の
             // direction-only候補を残す。これにより「候補点が消える」回帰を防ぐ。
             // aligned候補が1件以上ある場合は、確認用候補を混在させず精密解だけを表示する。
-            const displayedCandidates = candidates.length > 0
-              ? candidates
-              : directionalCandidates;
+            const displayedCandidates = candidates;
             tripodCandidatesRef.current = displayedCandidates;
             setTripodCandidates(displayedCandidates);
             setTripodCandidateCalculationStatus(
@@ -1153,10 +1139,9 @@ function App() {
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
           if (!cancelled) {
-            // 地形取得エラー時も、天体方位から求めた確認用候補まで消さない。
-            // 精密解ではないことは solutionType とエラー表示の双方で明示する。
-            tripodCandidatesRef.current = directionalCandidates;
-            setTripodCandidates(directionalCandidates);
+            // 計算失敗時も固定距離の仮候補は表示しない。
+            tripodCandidatesRef.current = [];
+            setTripodCandidates([]);
             setTripodCandidateCalculationStatus("error");
             showUserNotice({
               key: "tripod-candidate-calculation",

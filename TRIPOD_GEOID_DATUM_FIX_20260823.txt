@@ -1,0 +1,30 @@
+AstroSight tripod geoid/datum fix - 2026-08-23
+
+Purpose
+- Prevent orthometric height H, geoid separation N, and ellipsoidal height h from being mixed between subject and tripod candidate locations.
+
+Changes
+1. Removed subject.geoidHeightMeters reuse from tripod candidate GroundPoint creation.
+2. Neutral GSI DEM sampling now records the geoid N actually used when converting GSI orthometric DEM height H to ellipsoidal h.
+3. Intermediate candidate GroundPoints use only the N attached to their own terrain sample.
+4. Before a candidate can be confirmed, AstroSight requests GSI geoid height in point-specific mode at that candidate latitude/longitude.
+5. Final height is reconstructed as h = H + N using candidate-specific N.
+6. Final altitude check and CameraModel round-trip use the corrected final ellipsoidal height.
+7. Returned TripodCandidate height also uses the corrected final ellipsoidal height.
+8. Server terrain batching no longer applies one midpoint geoid value to all samples; geoid values are separated by local region. Final candidate still uses exact point-specific N.
+9. If point-specific geoid cannot be obtained, the candidate is not labeled as confirmed; no ambiguous height-datum fallback is accepted for confirmation.
+
+Unchanged
+- User-configurable camera height.
+- geometricAltitudeDegrees ECEF direction fix.
+- Neutral DEM interpolation for tripod search.
+- LOS upward-biased interpolation.
+- CameraModel final round-trip tolerance.
+- 500 m direction-only display remains removed.
+
+Verification
+- scripts/verify-tripod-geoid-datum-20260823.mjs: 10/10 PASS
+- scripts/verify-tripod-neutral-dem-20260823.mjs: PASS
+- scripts/verify-tripod-camera-height-20260823.mjs: PASS
+- scripts/verify-tripod-ecef-direction-frame.mjs: PASS
+- tsc --noEmit: PASS

@@ -110,27 +110,38 @@ async function sampleServerWorldTerrainUncached(
     return fallbackToWorldTerrain(result);
   }
 
-  const firstGsiIndex = gsiSamples.findIndex((sample) =>
-    sample.source !== null && typeof sample.heightMeters === "number"
-  );
-  let geoidHeightMeters: number | null = null;
-  if (firstGsiIndex >= 0) {
-    const midpoint = result[Math.floor(result.length / 2)] ?? result[firstGsiIndex];
-    try {
-      geoidHeightMeters = await lookupGsiGeoidHeight(
-        CesiumMath.toDegrees(midpoint.latitude),
-        CesiumMath.toDegrees(midpoint.longitude)
-      );
-    } catch {
-      geoidHeightMeters = null;
+  // 以前は配列中央1地点のジオイド高Nを全サンプルへ流用していた。
+  // H(標高)→h(楕円体高)変換の高さ基準を地点間で混同しないため、
+  // 各0.01度地域ごとに代表Nを解決して、その地域内のサンプルだけへ適用する。
+  // 最終三脚候補はブラウザー側でさらに地点固有Nへ置換して確定する。
+  const geoidByRegion = new Map<string, number>();
+  const regionKey = (point: Cartographic) =>
+    `${CesiumMath.toDegrees(point.latitude).toFixed(2)},${CesiumMath.toDegrees(point.longitude).toFixed(2)}`;
+  const representativeByRegion = new Map<string, Cartographic>();
+  for (let index = 0; index < result.length; index += 1) {
+    const sample = gsiSamples[index];
+    if (sample?.source && Number.isFinite(sample.heightMeters)) {
+      const key = regionKey(result[index]);
+      if (!representativeByRegion.has(key)) representativeByRegion.set(key, result[index]);
     }
   }
+  await Promise.all(Array.from(representativeByRegion.entries()).map(async ([key, point]) => {
+    try {
+      geoidByRegion.set(key, await lookupGsiGeoidHeight(
+        CesiumMath.toDegrees(point.latitude),
+        CesiumMath.toDegrees(point.longitude)
+      ));
+    } catch {
+      // その地域だけWorld Terrainへフォールバックする。
+    }
+  }));
 
   const unresolvedIndexes: number[] = [];
   for (let index = 0; index < result.length; index += 1) {
     const sample = gsiSamples[index];
-    if (sample?.source && Number.isFinite(sample.heightMeters) && geoidHeightMeters !== null) {
-      result[index].height = Number(sample.heightMeters) + geoidHeightMeters;
+    const geoidHeightMeters = geoidByRegion.get(regionKey(result[index]));
+    if (sample?.source && Number.isFinite(sample.heightMeters) && Number.isFinite(geoidHeightMeters)) {
+      result[index].height = Number(sample.heightMeters) + (geoidHeightMeters as number);
     } else {
       unresolvedIndexes.push(index);
     }

@@ -22,7 +22,12 @@ import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
 } from "../geodesy/karneyGeodesic";
-import { sampleWorldTerrainNeutral, terrainDataSource } from "./worldTerrain";
+import {
+  fetchGsiGeoidHeightPointSpecific,
+  geoidHeightMetersForTerrainSample,
+  sampleWorldTerrainNeutral,
+  terrainDataSource,
+} from "./worldTerrain";
 import { computeApparentElevation } from "../apparent/apparentElevation";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
@@ -234,23 +239,17 @@ function directSightlineSeedDistanceMeters(
 }
 
 /**
- * 高さ基準を混同しないための候補地点GroundPoint生成。
- *
- * DEM（sampleWorldTerrain）は楕円体高だけを返し、地点別ジオイド高は
- * 取得しない。ジオイド分離量は数kmの範囲では極めて滑らかに変化するため、
- * 被写体側で既に解決済みのジオイド高（resolveGroundPoint等で取得済みの
- * 場合）を候補地点へそのまま流用する。被写体側にジオイド情報がない場合は
- * 明示的なorthometric/geoidを設定せず、`orthometricHeightMeters()`の
- * 通常フォールバック（≒楕円体高）へ委ねる。ここで「楕円体高をlegacy
- * heightとして代用する」新たな混同を発生させないことが目的。
+ * DEMサンプルと同じ高さ基準で候補GroundPointを生成する。
+ * 被写体のジオイド高は一切流用しない。GSI DEMを楕円体高へ変換した際に
+ * 実際にそのサンプルへ使ったN値だけを採用する。
  */
 export function buildCandidateGroundPoint(
   cartographic: Cartographic,
-  subject: GroundPoint,
+  _subject: GroundPoint,
   label: string
 ): GroundPoint {
   const ellipsoidal = cartographic.height;
-  const geoid = subject.geoidHeightMeters;
+  const geoid = geoidHeightMetersForTerrainSample(cartographic);
   const hasGeoid = Number.isFinite(geoid);
   return {
     latitude: CesiumMath.toDegrees(cartographic.latitude),
@@ -260,6 +259,34 @@ export function buildCandidateGroundPoint(
     orthometricHeightMeters: hasGeoid ? ellipsoidal - (geoid as number) : undefined,
     geoidHeightMeters: hasGeoid ? (geoid as number) : undefined,
     heightSource: "dem",
+    label,
+  };
+}
+
+/**
+ * 最終候補では候補座標自身のGSIジオイド高Nを取得してH/N/hを再構成する。
+ * 交点探索時に地域Nを使ったGSI DEMサンプルならHをその値から復元し、
+ * 地点固有Nへ差し替えて楕円体高hを更新する。別地点のNは使用しない。
+ */
+async function buildPointSpecificFinalCandidateGroundPoint(
+  cartographic: Cartographic,
+  subject: GroundPoint,
+  label: string,
+  signal?: AbortSignal
+): Promise<GroundPoint> {
+  const base = buildCandidateGroundPoint(cartographic, subject, label);
+  const exactGeoid = await fetchGsiGeoidHeightPointSpecific(cartographic, signal);
+  const sampledGeoid = geoidHeightMetersForTerrainSample(cartographic);
+  const orthometric = Number.isFinite(sampledGeoid)
+    ? cartographic.height - (sampledGeoid as number)
+    : cartographic.height - exactGeoid;
+  const ellipsoidal = orthometric + exactGeoid;
+  return {
+    ...base,
+    height: ellipsoidal,
+    ellipsoidalHeightMeters: ellipsoidal,
+    orthometricHeightMeters: orthometric,
+    geoidHeightMeters: exactGeoid,
     label,
   };
 }
@@ -993,6 +1020,185 @@ function verifyRoundTripProjection(
   }
 }
 
+
+
+type ManualEquivalentEvaluation = {
+  candidatePoint: GroundPoint;
+  horizontal: { azimuthDegrees: number; altitudeDegrees: number; geometricAltitudeDegrees?: number };
+  roundTrip: { dxPercent: number; dyPercent: number; inFront: boolean };
+  score: number;
+  distanceMeters: number;
+};
+
+/**
+ * 手動三脚ピンと同じ最終評価経路。
+ * 地点が決まった後は、地表高→任意カメラ高→天体水平座標→CameraModel投影
+ * という通常プレビューと同じ順で評価し、天体中心と被写体中心の画面誤差を返す。
+ * ECEFレイや0.002度の角度収束値はここでは正解判定に使わない。
+ */
+function evaluateManualEquivalentCandidate(
+  candidatePoint: GroundPoint,
+  subject: GroundPoint,
+  point: CelestialScreenPoint,
+  cameraSettings: CameraSettings,
+  previewAspectRatio: number,
+  date: Date,
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
+): ManualEquivalentEvaluation | null {
+  const lensObserver = withLensCenterHeight(
+    candidatePoint,
+    cameraSettings.lensCenterHeightMeters,
+    `${point.label}詳細探索レンズ中心`
+  );
+  const horizontal = calculateCelestialHorizontalCoordinates(
+    point.id,
+    date,
+    lensObserver,
+    calculationMode,
+    refractionWeather
+  );
+  if (!Number.isFinite(horizontal.altitudeDegrees) || horizontal.altitudeDegrees <= 0.25) {
+    return null;
+  }
+  const roundTrip = verifyRoundTripProjection(
+    candidatePoint,
+    subject,
+    cameraSettings,
+    previewAspectRatio,
+    calculationMode,
+    horizontal
+  );
+  if (!roundTrip || !roundTrip.inFront || !Number.isFinite(roundTrip.dxPercent) || !Number.isFinite(roundTrip.dyPercent)) {
+    return null;
+  }
+  const distanceMeters = calculateKarneyLineMetrics(subject, candidatePoint).distanceMeters;
+  return {
+    candidatePoint,
+    horizontal,
+    roundTrip,
+    score: Math.hypot(roundTrip.dxPercent, roundTrip.dyPercent),
+    distanceMeters,
+  };
+}
+
+/**
+ * 二段階方式の詳細側。粗いECEF+DEM解の近傍だけを、手動三脚ピンと同じ
+ * CameraModel評価で適応的に絞る。1回9点×最大3回=最大27点。
+ * 粗探索は位置のseedにのみ使い、最終的な正解は画面中心誤差で決める。
+ */
+async function refineWithManualEquivalentProjection(
+  coarseCartographic: Cartographic,
+  subject: GroundPoint,
+  point: CelestialScreenPoint,
+  cameraSettings: CameraSettings,
+  previewAspectRatio: number,
+  date: Date,
+  calculationMode: CalculationMode,
+  terrainSampler: TerrainSampler,
+  signal?: AbortSignal,
+  distanceRange?: TripodDistanceRange,
+  refractionWeather?: RefractionWeatherContext
+): Promise<ManualEquivalentEvaluation | null> {
+  const coarsePoint = buildCandidateGroundPoint(
+    coarseCartographic,
+    subject,
+    `${point.label}粗候補`
+  );
+  const coarseMetrics = calculateKarneyLineMetrics(subject, coarsePoint);
+  if (!(coarseMetrics.distanceMeters > 0) || !Number.isFinite(coarseMetrics.bearingDegrees)) {
+    return null;
+  }
+
+  const minimum = Math.max(
+    ABSOLUTE_MIN_DISTANCE_METERS,
+    distanceRange?.minMeters ?? ABSOLUTE_MIN_DISTANCE_METERS
+  );
+  const maximum = Math.min(
+    ABSOLUTE_MAX_DISTANCE_METERS,
+    distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS
+  );
+  let centerDistance = Math.min(maximum, Math.max(minimum, coarseMetrics.distanceMeters));
+  // 1km前後なら±約40m。今回のような10m級残差を確実に含めつつ、
+  // 詳細計算を広域化しない。短距離でも最低±24m、長距離でも±80mに制限。
+  let radius = Math.max(24, Math.min(80, centerDistance * 0.04));
+  let best: ManualEquivalentEvaluation | null = null;
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    abortIfRequested(signal);
+    const segments = 8;
+    const distances: number[] = [];
+    for (let index = 0; index <= segments; index += 1) {
+      const distance = centerDistance - radius + (2 * radius * index) / segments;
+      const clamped = Math.min(maximum, Math.max(minimum, distance));
+      if (!distances.some((existing) => Math.abs(existing - clamped) < 1e-6)) {
+        distances.push(clamped);
+      }
+    }
+    const requestPoints = distances.map((distance) =>
+      destinationCartographic(subject, coarseMetrics.bearingDegrees, distance)
+    );
+    const sampled = await terrainSampler(requestPoints, signal, "1m");
+    abortIfRequested(signal);
+
+    let passBest: ManualEquivalentEvaluation | null = null;
+    for (let index = 0; index < sampled.length; index += 1) {
+      const cartographic = sampled[index];
+      if (!cartographic || !Number.isFinite(cartographic.height)) continue;
+      const candidate = buildCandidateGroundPoint(
+        cartographic,
+        subject,
+        `${point.label}手動三脚ピン同等詳細候補`
+      );
+      const evaluated = evaluateManualEquivalentCandidate(
+        candidate,
+        subject,
+        point,
+        cameraSettings,
+        previewAspectRatio,
+        date,
+        calculationMode,
+        refractionWeather
+      );
+      if (!evaluated) continue;
+      if (!passBest || evaluated.score < passBest.score) passBest = evaluated;
+      if (!best || evaluated.score < best.score) best = evaluated;
+    }
+    if (!passBest) break;
+
+    centerDistance = passBest.distanceMeters;
+    // 次段階は前段階の1サンプル間隔だけを再探索する。
+    radius = Math.max(0.5, (2 * radius) / segments);
+  }
+
+  if (!best) return null;
+
+  // 最良地点だけ候補地点自身の正確なジオイドNでH/N/hを再構成し、
+  // 手動三脚ピンと同じCameraModelをもう一度通して最終評価する。
+  const bestCartographic = Cartographic.fromDegrees(
+    best.candidatePoint.longitude,
+    best.candidatePoint.latitude,
+    ellipsoidalHeightMeters(best.candidatePoint)
+  );
+  const exactPoint = await buildPointSpecificFinalCandidateGroundPoint(
+    bestCartographic,
+    subject,
+    `${point.label}手動三脚ピン同等最終候補`,
+    signal
+  );
+  abortIfRequested(signal);
+  return evaluateManualEquivalentCandidate(
+    exactPoint,
+    subject,
+    point,
+    cameraSettings,
+    previewAspectRatio,
+    date,
+    calculationMode,
+    refractionWeather
+  );
+}
+
 async function calculateOneCandidates(
   subject: GroundPoint,
   point: CelestialScreenPoint,
@@ -1161,28 +1367,41 @@ async function calculateOneCandidates(
 
     if (!Number.isFinite(solution.cartographic.height)) continue;
 
-    // 画角ではなく、三脚候補の幾何学成立条件だけを最終確認する。
-    // 追加DEM取得は行わず、最後に採用した候補座標で天体方位・仰角を再計算するだけ。
-    const finalCandidatePoint = buildCandidateGroundPoint(
-      solution.cartographic,
-      subject,
-      `${point.label}三脚候補最終確認`
-    );
-    const finalLensObserver = withLensCenterHeight(
-      finalCandidatePoint,
-      lensCenterHeightMeters,
-      `${point.label}三脚候補レンズ中心最終確認`
-    );
-    const finalHorizontal = calculateCelestialHorizontalCoordinates(
-      point.id,
-      date,
-      finalLensObserver,
-      calculationMode,
-      activeRefractionWeather
+    // 粗いECEF+DEM解はseedとしてのみ使用する。ここから先は、粗候補周辺だけを
+    // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
+    // 詳細探索し、画面中心誤差が最小の地点を正解候補とする。
+    let manualRefined: ManualEquivalentEvaluation | null;
+    try {
+      manualRefined = await refineWithManualEquivalentProjection(
+        solution.cartographic,
+        subject,
+        point,
+        cameraSettings,
+        previewAspectRatio,
+        date,
+        calculationMode,
+        terrainSampler,
+        signal,
+        distanceRange,
+        activeRefractionWeather
+      );
+    } catch (error) {
+      console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
+      continue;
+    }
+    if (!manualRefined) continue;
+
+    const finalCandidatePoint = manualRefined.candidatePoint;
+    const finalHorizontal = manualRefined.horizontal;
+    const roundTrip = manualRefined.roundTrip;
+    const finalCartographic = Cartographic.fromDegrees(
+      finalCandidatePoint.longitude,
+      finalCandidatePoint.latitude,
+      ellipsoidalHeightMeters(finalCandidatePoint)
     );
     const finalAltitudeError = Math.abs(
       elevationAngleDegrees(
-        solution.cartographic,
+        finalCartographic,
         subject,
         lensCenterHeightMeters,
         calculationMode
@@ -1191,22 +1410,11 @@ async function calculateOneCandidates(
     const finalSubjectBearing = calculateKarneyLineMetrics(finalCandidatePoint, subject).bearingDegrees;
     const finalAzimuthError = angularDifferenceDegrees(finalSubjectBearing, finalHorizontal.azimuthDegrees);
 
-    // 仕様3-G: 確定前に、既存プレビューと同じCameraModel/Projection経路へ
-    // 候補地点を逆投入し、天体中心と被写体中心のスクリーン座標差を測る。
-    const roundTrip = verifyRoundTripProjection(
-      finalCandidatePoint,
-      subject,
-      cameraSettings,
-      previewAspectRatio,
-      calculationMode,
-      finalHorizontal
-    );
-
     // 仕様7: 診断ログ（候補座標・高さ基準・天体/被写体方位仰角・誤差・
     // スクリーンdx/dy・地形データソース）。合否に関わらず出力する。
     const diagnostics = {
-      candidateLatitude: CesiumMath.toDegrees(solution.cartographic.latitude),
-      candidateLongitude: CesiumMath.toDegrees(solution.cartographic.longitude),
+      candidateLatitude: finalCandidatePoint.latitude,
+      candidateLongitude: finalCandidatePoint.longitude,
       ellipsoidalHeightMeters: finalCandidatePoint.ellipsoidalHeightMeters,
       orthometricHeightMeters: finalCandidatePoint.orthometricHeightMeters,
       geoidHeightMeters: finalCandidatePoint.geoidHeightMeters,
@@ -1214,7 +1422,7 @@ async function calculateOneCandidates(
       celestialAltitudeDegrees: finalHorizontal.altitudeDegrees,
       subjectAzimuthDegrees: finalSubjectBearing,
       subjectElevationDegrees: elevationAngleDegrees(
-        solution.cartographic,
+        finalCartographic,
         subject,
         lensCenterHeightMeters,
         calculationMode
@@ -1237,29 +1445,27 @@ async function calculateOneCandidates(
       finalHorizontal.altitudeDegrees <= 0.25 ||
       !Number.isFinite(finalAltitudeError) ||
       !Number.isFinite(finalAzimuthError) ||
-      finalAltitudeError > CONVERGED_HORIZONTAL_DEGREES ||
-      finalAzimuthError > CONVERGED_HORIZONTAL_DEGREES ||
       roundTripFailed
     ) {
       console.warn(`[tripod-candidate] ${point.label}: 最終幾何収束条件（round-trip含む）を満たさない候補を除外`, {
-        distanceMeters: solution.distanceMeters,
+        distanceMeters: manualRefined.distanceMeters,
         ...diagnostics,
       });
       continue;
     }
 
     console.debug(`[tripod-candidate] ${point.label}: 候補確定`, {
-      distanceMeters: solution.distanceMeters,
+      distanceMeters: manualRefined.distanceMeters,
       ...diagnostics,
     });
 
     converged.push({
       id: point.id,
       label: point.label,
-      latitude: CesiumMath.toDegrees(solution.cartographic.latitude),
-      longitude: CesiumMath.toDegrees(solution.cartographic.longitude),
-      height: solution.cartographic.height,
-      distanceMeters: solution.distanceMeters,
+      latitude: finalCandidatePoint.latitude,
+      longitude: finalCandidatePoint.longitude,
+      height: ellipsoidalHeightMeters(finalCandidatePoint),
+      distanceMeters: manualRefined.distanceMeters,
       solutionType: "aligned",
     });
   }

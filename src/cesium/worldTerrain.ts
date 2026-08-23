@@ -491,14 +491,15 @@ async function writeGeoidPersistentCache(key: string, height: number): Promise<v
 async function fetchGsiGeoidHeightOnce(
   latitude: number,
   longitude: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  pointSpecific = false
 ): Promise<number> {
   // 国土地理院ジオイドCGIは応答が不安定なことがあり、タイムアウトが
   // 無いとハングして無期限に待ち続けてしまう（実際に発生していた
   // 「数分待っても描画されない」不具合の主因の1つ）。
   const timeoutSignal = AbortSignal.timeout(GEOID_FETCH_TIMEOUT_MS);
   const response = await fetch(
-    `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
+    `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}${pointSpecific ? "&precision=point" : ""}`,
     {
       headers: { Accept: "application/json" },
       signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
@@ -569,6 +570,45 @@ export async function fetchGsiGeoidHeight(
     GEOID_MEMORY_CACHE_MAX_ENTRIES
   );
   return request;
+}
+
+/**
+ * 三脚候補の最終判定など、数cm級の高さ整合が必要な地点専用。
+ * 0.01度の地域代表値ではなく、その緯度経度自身をGSIジオイド計算へ渡す。
+ * キャッシュキーのみ約1mm相当の8桁へ量子化し、被写体や別候補のN値を流用しない。
+ */
+export async function fetchGsiGeoidHeightPointSpecific(
+  point: Cartographic,
+  signal?: AbortSignal
+): Promise<number> {
+  if (Date.now() < geoidUnavailableUntil) {
+    throw new Error("国土地理院ジオイドAPIの再試行待ちです");
+  }
+  const latitude = CesiumMath.toDegrees(point.latitude);
+  const longitude = CesiumMath.toDegrees(point.longitude);
+  const key = `point:${latitude.toFixed(8)},${longitude.toFixed(8)}`;
+  const cached = readMemoryCache(geoidHeightCache, key);
+  if (cached) return cached;
+
+  const request = (async () => {
+    const persistent = await readGeoidPersistentCache(key);
+    abortIfRequested(signal);
+    if (persistent !== null) return persistent;
+    const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal, true);
+    void writeGeoidPersistentCache(key, height);
+    return height;
+  })().catch((error: unknown) => {
+    geoidHeightCache.delete(key);
+    if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + 8_000;
+    throw error;
+  });
+  writeMemoryCache(geoidHeightCache, key, request, GEOID_MEMORY_CACHE_MAX_ENTRIES);
+  return request;
+}
+
+/** DEMサンプルを楕円体高へ変換する際に実際に使用したジオイド高N。 */
+export function geoidHeightMetersForTerrainSample(sample: Cartographic): number | undefined {
+  return geoidHeightBySample.get(sample);
 }
 
 async function fetchRegionalGeoidHeights(
@@ -671,6 +711,7 @@ export async function sampleWorldTerrainNeutral(
     ) {
       result[index].height = sample.heightMeters + geoidHeightMeters;
       terrainSourceBySample.set(result[index], GSI_SOURCE_NAMES[sample.source]);
+      geoidHeightBySample.set(result[index], geoidHeightMeters);
     } else {
       unresolvedIndexes.push(index);
     }
