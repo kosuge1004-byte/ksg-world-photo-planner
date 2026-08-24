@@ -8,6 +8,10 @@ type NominatimPlace = {
   lat?: unknown;
   lon?: unknown;
   display_name?: unknown;
+  name?: unknown;
+  namedetails?: unknown;
+  category?: unknown;
+  type?: unknown;
   importance?: unknown;
 };
 
@@ -34,8 +38,6 @@ const MAX_QUERY_LENGTH = 200;
 // どちらか一方の検索サービスが遅くても全体を長時間止めない。
 // 並列実行なので通常は最も遅い側の上限までで判定が完了する。
 const PROVIDER_TIMEOUT_MS = 4_000;
-const EARLY_ACCEPT_SCORE = 10.95;
-const EARLY_ACCEPT_MIN_QUERY_LENGTH = 3;
 
 export async function resolveJapanesePlaceName(
   rawQuery: string,
@@ -66,25 +68,11 @@ export async function resolveJapanesePlaceName(
     }
   }
 
-  // 2プロバイダーは同時開始する。ただし、明確な高信頼候補が先に返った場合は
-  // 遅い側を待たず即返す。曖昧な検索語は従来どおり両方を待って比較する。
-  const providerAbort = new AbortController();
-  const combinedSignal = signal
-    ? AbortSignal.any([signal, providerAbort.signal])
-    : providerAbort.signal;
-  const nominatimPromise = settleProvider(searchNominatim(query, combinedSignal, fetcher));
-  const gsiPromise = settleProvider(searchGsi(query, combinedSignal, fetcher));
-
-  const first = await Promise.race([nominatimPromise, gsiPromise]);
-  if (signal?.aborted) throw abortFromSignal(signal);
-  const firstBest = first.status === "fulfilled"
-    ? [...first.value].sort(compareRankedPlaces)[0]
-    : undefined;
-  if (firstBest && canAcceptEarly(query, firstBest)) {
-    providerAbort.abort();
-    return firstBest.resolved;
-  }
-
+  // 精度優先: 先に返ったプロバイダーだけで確定しない。
+  // Nominatim と国土地理院の両結果を待ち、名称・POI情報を同じ基準で比較する。
+  // 通信速度によって同じ検索語の座標が変わる非決定性を排除する。
+  const nominatimPromise = settleProvider(searchNominatim(query, signal, fetcher));
+  const gsiPromise = settleProvider(searchGsi(query, signal, fetcher));
   const [nominatimOutcome, gsiOutcome] = await Promise.all([nominatimPromise, gsiPromise]);
 
   if (signal?.aborted) throw abortFromSignal(signal);
@@ -106,12 +94,6 @@ export async function resolveJapanesePlaceName(
     throw bestProviderError(nominatimOutcome.reason, gsiOutcome.reason);
   }
   throw new Error("指定したスポットが見つかりませんでした");
-}
-
-function canAcceptEarly(query: string, candidate: RankedPlace): boolean {
-  const normalizedQuery = normalizedPlaceText(query);
-  return normalizedQuery.length >= EARLY_ACCEPT_MIN_QUERY_LENGTH &&
-    candidate.score <= EARLY_ACCEPT_SCORE;
 }
 
 function settleProvider<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
@@ -165,16 +147,28 @@ async function searchNominatim(
       label: String(place.display_name),
     };
     const importance = Number(place.importance);
-    // importance は同程度の文字一致候補の並び替えにだけ使い、文字一致を
-    // 逆転させない小さい補正に留める。
+    // display_name は住所まで含むため、施設名が完全一致していても
+    // startsWith 扱いになってしまう。name / namedetails の正式名称を優先し、
+    // 「岐阜城」のようなPOIを住所検索の短いラベルより下にしない。
+    const primaryName = nominatimPrimaryName(place);
+    const textScore = Math.min(
+      primaryName ? placeTextScore(query, primaryName) : Number.POSITIVE_INFINITY,
+      placeTextScore(query, resolved.label)
+    );
     const importancePenalty = Number.isFinite(importance)
       ? Math.max(0, Math.min(0.9, 1 - importance))
       : 0.9;
+    // 正式施設名が検索語と完全一致するPOIは、GSI住所検索の短い同名ラベルより
+    // 優先する。これにより「岐阜城」のような施設検索で住所側の同名地点に
+    // 引っ張られない。部分一致ではこのボーナスを与えない。
+    const exactPrimaryNameBonus = primaryName &&
+      normalizedPlaceText(primaryName) === normalizedPlaceText(query) ? -2 : 0;
+    const poiBonus = isNominatimPoi(place) ? -0.5 : 0;
     return [{
       resolved,
       index,
       source: "nominatim" as const,
-      score: placeTextScore(query, resolved.label) + importancePenalty,
+      score: textScore + importancePenalty + exactPrimaryNameBonus + poiBonus,
     }];
   });
 }
@@ -211,6 +205,24 @@ async function searchGsi(
         }]
       : [];
   });
+}
+
+function nominatimPrimaryName(place: NominatimPlace): string | null {
+  if (typeof place.name === "string" && place.name.trim()) return place.name.trim();
+  if (!place.namedetails || typeof place.namedetails !== "object") return null;
+  const details = place.namedetails as Record<string, unknown>;
+  for (const key of ["name:ja", "name", "official_name:ja", "official_name", "short_name:ja", "short_name"]) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function isNominatimPoi(place: NominatimPlace): boolean {
+  const category = typeof place.category === "string" ? place.category : "";
+  const type = typeof place.type === "string" ? place.type : "";
+  return ["tourism", "historic", "amenity", "man_made", "leisure"].includes(category) ||
+    ["castle", "attraction", "museum", "monument", "memorial", "viewpoint"].includes(type);
 }
 
 function providerSignal(parentSignal?: AbortSignal): AbortSignal {

@@ -12,7 +12,7 @@ const checks = [
   ['LOS-safe remains the default', /interpolationMode: "los-safe" \| "neutral" = "los-safe"/.test(gsi)],
   ['API parses interpolation mode', /interpolationMode:[\s\S]*value\.interpolationMode === "neutral"/.test(api)],
   ['R2 cache key includes interpolation mode', /interpolationMode: point\.interpolationMode \?\? "los-safe"/.test(api)],
-  ['R2 cache version bumped', /namespace: "gsi-elevation", version: "v2"/.test(api)],
+  ['R2 cache version bumped for persistent terrain results', /namespace: "gsi-elevation", version: "v3"/.test(api)],
   ['client transmits interpolation mode', /interpolationMode\?: "los-safe" \| "neutral"/.test(client)],
   ['neutral terrain sampler requests neutral GSI', /export async function sampleWorldTerrainNeutral[\s\S]*interpolationMode: "neutral" as const/.test(terrain)],
   ['tripod calculator defaults to neutral terrain sampler', /terrainSampler: TerrainSampler = sampleWorldTerrainNeutral/.test(tripod)],

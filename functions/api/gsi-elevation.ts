@@ -59,10 +59,10 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       maximumDetail: point.maximumDetail ?? "10m",
       interpolationMode: point.interpolationMode ?? "los-safe",
     }));
-    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, cacheKeyInput, {
-      namespace: "gsi-elevation", version: "v2", ttlSeconds: 30 * 86400,
+    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, cacheKeyInput, {
+      namespace: "gsi-elevation", version: "v3", ttlSeconds: null,
     }, async () => ({ samples: await lookupGsiElevations(points, context.request.signal) }), context.waitUntil);
-    return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=3600");
+    return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
   } catch (error) {
     // エラー応答は公開キャッシュしない（失敗を1時間キャッシュして再試行を妨げない）。
     return jsonResponse({ error: errorMessage(error) }, 422, "no-store");

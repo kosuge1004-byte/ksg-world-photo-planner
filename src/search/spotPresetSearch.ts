@@ -92,7 +92,7 @@ export type ResolvedSpotLocation = {
   label: string;
 };
 
-const LOCATION_CACHE_STORAGE_KEY = "astrosight-place-search-cache-v1";
+const LOCATION_CACHE_STORAGE_KEY = "astrosight-place-search-cache-v2";
 const LOCATION_CACHE_TTL_MS = 7 * DAY_MS;
 const LOCATION_CACHE_MAX_ENTRIES = 80;
 const locationMemoryCache = new Map<string, { value: ResolvedSpotLocation; expiresAt: number }>();

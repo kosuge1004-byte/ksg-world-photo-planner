@@ -66,7 +66,8 @@
     "verify:phase7-5": "node scripts/verify-phase7-5-final-release.mjs",
     "verify:karney-edge-cases": "node scripts/verify-karney-edge-cases.mjs",
     "verify:coordinate-serialization": "node scripts/verify-coordinate-serialization.mjs",
-    "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs"
+    "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs",
+    "verify:r2-safety-all-paths": "node scripts/verify-r2-safety-all-paths-20260824.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

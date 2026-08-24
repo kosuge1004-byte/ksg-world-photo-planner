@@ -33,7 +33,7 @@ export default {
       // DEMタイル本体・空判定はR2（NETWORK_CACHE）で永続化し、全ユーザー・
       // 全検索ジョブで共有する（server/r2PersistentCache.ts）。Workers KV
       // へは書き込まない方針は維持（server/gsiElevation.tsのコメント参照）。
-      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE),
+      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, message as object),
       waitUntil: (promise) => context.waitUntil(promise),
     });
 

@@ -134,6 +134,10 @@ const cases = [
     arguments: ["./scripts/verify-cloudflare-migration.mjs"],
   },
   {
+    name: "R2 full free-tier safety on all cache paths",
+    arguments: ["./scripts/verify-r2-safety-all-paths-20260824.mjs"],
+  },
+  {
     name: "Cloudflare API and geo-tz runtime contracts",
     arguments: [
       "--import",

@@ -1,0 +1,21 @@
+AstroSight terrain/geoid shared cache persistence change - 2026-08-24
+
+Changed:
+- gsi-elevation API R2 result cache: 30 days -> no application expiration (v3)
+- gsi-geoid API R2 result cache: 180 days -> no application expiration (v2)
+- gsi-geoid-batch R2 result cache: 180 days -> no application expiration (v2)
+- Generic R2 JSON cache now supports ttlSeconds=null as non-expiring.
+
+Already non-expiring before this change:
+- decoded GSI DEM tile persistent cache (gsi-decoded-dem-v2)
+- persistent per-location geoid cache (geoid/v1)
+
+Invalidation policy:
+- Never delete by application TTL.
+- Change cache key/version when source data or calculation semantics require refresh.
+- R2 bucket lifecycle auto-delete must remain disabled if permanent retention is desired.
+
+Not changed:
+- weather forecast/history cache policies
+- camera/tripod calculations
+- ECEF/DEM/geoid numerical logic

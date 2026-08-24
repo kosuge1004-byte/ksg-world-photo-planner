@@ -1,0 +1,14 @@
+AstroSight 2026-08-24 - Gifu Castle place-search fix
+
+Changes:
+1. Removed Promise.race early acceptance from Japanese place-name geocoding.
+   Nominatim and GSI are both awaited (subject to their provider timeout) before ranking.
+2. Nominatim official/primary name (name / namedetails) is ranked separately from full display_name.
+   Exact POI names such as "岐阜城" are no longer penalized merely because display_name contains a full address.
+3. Exact named POIs receive priority over short address-search labels when both share the same text.
+4. Browser place-search cache key bumped from v1 to v2 to invalidate previously cached wrong coordinates.
+5. Server geocode cache version bumped from v3 to v4 to invalidate previous cached results.
+6. Added scripts/verify-gifu-geocode-priority-20260824.mjs.
+
+Regression verified:
+- A faster GSI exact-label result at an intentionally wrong coordinate does not win against a slower exact Nominatim historic/castle POI for "岐阜城".

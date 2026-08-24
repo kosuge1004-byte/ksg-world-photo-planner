@@ -1,16 +1,25 @@
+import {
+  allowR2Read,
+  reserveR2Write,
+  trackedObjectBytes,
+  valueBytes,
+  type R2SafetyKv,
+} from "../../server/r2SafetyBudget.ts";
+
 export interface R2JsonCacheOptions {
   namespace: string;
   version: string;
-  ttlSeconds: number;
+  /** null/undefined = application-level non-expiring cache. */
+  ttlSeconds?: number | null;
 }
 
 interface CacheEnvelope<T> {
   version: string;
-  expiresAt: number;
+  expiresAt: number | null;
   value: T;
 }
 
-const inFlight = new Map<string, Promise<unknown>>();
+const inFlight = new Map<string, Promise<{ value: unknown; cache: "hit" | "miss" }>>();
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -31,64 +40,75 @@ async function cacheKey(options: R2JsonCacheOptions, input: unknown): Promise<st
 
 export async function getOrCreateR2Json<T>(
   bucket: R2Bucket | undefined,
+  safetyKv: R2SafetyKv | undefined,
+  requestIdentity: object | undefined,
   input: unknown,
   options: R2JsonCacheOptions,
   producer: () => Promise<T>,
   waitUntil?: (promise: Promise<unknown>) => void
 ): Promise<{ value: T; cache: "hit" | "miss" | "bypass" | "shared" }> {
-  if (!bucket) return { value: await producer(), cache: "bypass" };
-  const key = await cacheKey(options, input);
-  const existing = inFlight.get(key) as Promise<T> | undefined;
-  if (existing) return { value: await existing, cache: "shared" };
+  if (!bucket || !safetyKv) return { value: await producer(), cache: "bypass" };
 
-  const task = (async () => {
+  const key = await cacheKey(options, input);
+  const existing = inFlight.get(key);
+  if (existing) {
+    const shared = await existing;
+    return { value: shared.value as T, cache: "shared" };
+  }
+
+  const task = (async (): Promise<{ value: T; cache: "hit" | "miss" }> => {
     try {
-      const object = await bucket.get(key);
-      if (object) {
-        try {
-          const envelope = await object.json<CacheEnvelope<T>>();
-          if (envelope.version === options.version && envelope.expiresAt > Date.now()) {
-            return envelope.value;
+      if (await allowR2Read(safetyKv, requestIdentity)) {
+        const object = await bucket.get(key).catch(() => null);
+        if (object) {
+          try {
+            const envelope = await object.json<CacheEnvelope<T>>();
+            if (
+              envelope.version === options.version &&
+              (envelope.expiresAt === null || envelope.expiresAt === undefined || envelope.expiresAt > Date.now())
+            ) {
+              return { value: envelope.value, cache: "hit" };
+            }
+          } catch {
+            // Malformed cache objects are treated as misses.
+            // No unguarded delete: a guarded overwrite below replaces them.
           }
-          // キャッシュの削除失敗（バケット未整備・一時的な障害など）を、
-          // レスポンス確定後の「捕捉されない例外」としてWorker全体を
-          // クラッシュさせない（Cloudflare Error 1101の原因になりうる）。
-          // 削除に失敗しても、次回同じキーを読んだ際にバージョン不一致
-          // または期限切れとして扱われ、そのまま再生成されるだけなので
-          // 探索結果には影響しない。
-          waitUntil?.(bucket.delete(key).catch(() => undefined));
-        } catch {
-          waitUntil?.(bucket.delete(key).catch(() => undefined));
         }
       }
+
       const value = await producer();
       const envelope: CacheEnvelope<T> = {
         version: options.version,
-        expiresAt: Date.now() + options.ttlSeconds * 1000,
+        expiresAt: typeof options.ttlSeconds === "number"
+          ? Date.now() + options.ttlSeconds * 1000
+          : null,
         value,
       };
-      // キャッシュへの書き込み失敗（バケット未作成・権限・R2側の一時的な
-      // 障害など）も同様に、レスポンスそのものを失敗させたり、Worker全体を
-      // クラッシュさせたりしない。書き込みが失敗しても、計算結果自体
-      // （value）は既に確定しており、単に次回また同じ計算を行うだけになる。
-      const write = bucket.put(key, JSON.stringify(envelope), {
-        httpMetadata: { contentType: "application/json" },
-        customMetadata: {
-          version: options.version,
-          expiresAt: String(envelope.expiresAt),
-        },
-      }).catch(() => undefined);
-      if (waitUntil) {
-        waitUntil(write);
-      } else {
-        await write;
+      const serialized = JSON.stringify(envelope);
+      const newBytes = valueBytes(serialized);
+      const oldBytes = await trackedObjectBytes(safetyKv, key);
+
+      if (
+        oldBytes !== null &&
+        await reserveR2Write(safetyKv, key, newBytes, oldBytes, requestIdentity)
+      ) {
+        const write = bucket.put(key, serialized, {
+          httpMetadata: { contentType: "application/json" },
+          customMetadata: {
+            version: options.version,
+            expiresAt: envelope.expiresAt === null ? "none" : String(envelope.expiresAt),
+          },
+        }).catch(() => undefined);
+        if (waitUntil) waitUntil(write);
+        else await write;
       }
-      return value;
+
+      return { value, cache: "miss" };
     } finally {
       inFlight.delete(key);
     }
   })();
-  inFlight.set(key, task);
-  const hadObject = await bucket.head(key).catch(() => null);
-  return { value: await task, cache: hadObject ? "hit" : "miss" };
+
+  inFlight.set(key, task as Promise<{ value: unknown; cache: "hit" | "miss" }>);
+  return await task;
 }

@@ -18,8 +18,8 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       return jsonResponse({ error: `検索文字列は${MAX_QUERY_LENGTH}文字以内で入力してください` }, 400);
     }
     const query = body.query.trim().replace(/\s+/g, " ");
-    const result = await getOrCreateR2Json(env.NETWORK_CACHE, { query }, {
-      namespace: "geocode", version: "v3", ttlSeconds: 30 * 86400,
+    const result = await getOrCreateR2Json(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, request, { query }, {
+      namespace: "geocode", version: "v4", ttlSeconds: 30 * 86400,
     }, () => resolveJapanesePlaceName(query, request.signal), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
   } catch (error) {

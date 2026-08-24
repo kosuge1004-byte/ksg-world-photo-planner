@@ -1,4 +1,11 @@
 import type { RuntimeKvNamespace } from "./cloudflareRuntime.ts";
+import {
+  allowR2Read,
+  reserveR2Write,
+  trackedObjectBytes,
+  valueBytes,
+  type R2SafetyKv,
+} from "./r2SafetyBudget.ts";
 
 /**
  * DEMタイル本体・空判定の永続キャッシュをR2で提供するアダプタ。
@@ -15,14 +22,25 @@ import type { RuntimeKvNamespace } from "./cloudflareRuntime.ts";
  * workers/spot-search-consumer.ts（バックグラウンドのスポット検索）の
  * 両方から、それぞれのenv.NETWORK_CACHEを渡して使う。
  */
-export function persistentCacheFromR2(bucket: R2Bucket | undefined): RuntimeKvNamespace | undefined {
+export function persistentCacheFromR2(
+  bucket: R2Bucket | undefined,
+  safetyKv?: R2SafetyKv,
+  requestIdentity?: object,
+): RuntimeKvNamespace | undefined {
   if (!bucket) return undefined;
   return {
     async get(key) {
+      // Fail closed: once the conservative Class B budget is reached,
+      // bypass R2 entirely so the normal upstream path can run.
+      if (!await allowR2Read(safetyKv, requestIdentity)) return null;
       const object = await bucket.get(key);
       return object ? await object.arrayBuffer() : null;
     },
     async put(key, value) {
+      const newBytes = valueBytes(value as ArrayBuffer | Uint8Array | string);
+      const oldBytes = await trackedObjectBytes(safetyKv, key);
+      if (oldBytes === null) return; // accounting unavailable -> fail closed
+      if (!await reserveR2Write(safetyKv, key, newBytes, oldBytes, requestIdentity)) return;
       await bucket.put(key, value);
     },
   };

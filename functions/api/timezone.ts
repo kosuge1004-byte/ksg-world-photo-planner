@@ -14,7 +14,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   }
   try {
     const input = { latitude: Number(latitude.toFixed(4)), longitude: Number(longitude.toFixed(4)) };
-    const result = await getOrCreateR2Json(env.NETWORK_CACHE, input, {
+    const result = await getOrCreateR2Json(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, request, input, {
       namespace: "timezone", version: "v1", ttlSeconds: 30 * 86400,
     }, async () => ({ timeZone: (await findCloudflareTimeZones(latitude, longitude, env.ASSETS, request.url))[0] ?? null }), context.waitUntil);
     return result.value.timeZone

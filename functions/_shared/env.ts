@@ -25,7 +25,11 @@ export function configureCloudflareServerRuntime(
   configureServerRuntime({
     cesiumIonToken:
       context.env.CESIUM_ION_TOKEN ?? context.env.VITE_CESIUM_ION_TOKEN,
-    persistentCache: persistentCacheFromR2(context.env.NETWORK_CACHE),
+    persistentCache: persistentCacheFromR2(
+      context.env.NETWORK_CACHE,
+      context.env.SPOT_SEARCH_JOBS,
+      context.request,
+    ),
     waitUntil: (promise) => context.waitUntil(promise),
   });
 }

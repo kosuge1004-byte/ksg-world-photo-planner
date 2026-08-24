@@ -35,7 +35,7 @@ async function main() {
   // バック）。
   const platform = await getPlatformProxy<{ NETWORK_CACHE?: R2Bucket }>();
   configureServerRuntime({
-    persistentCache: persistentCacheFromR2(platform.env.NETWORK_CACHE),
+    persistentCache: undefined, // R2 safety: manual prewarm writes disabled
     waitUntil: (promise) => promise,
   });
 

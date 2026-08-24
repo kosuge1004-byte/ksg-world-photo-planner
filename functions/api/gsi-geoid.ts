@@ -38,8 +38,8 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         longitude: Number(longitude.toFixed(pointSpecific ? 8 : 2)),
         pointSpecific,
       };
-      const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, normalized, {
-        namespace: "gsi-geoid", version: "v1", ttlSeconds: 180 * 86400,
+      const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, normalized, {
+        namespace: "gsi-geoid", version: "v2", ttlSeconds: null,
       }, async () => ({
         geoidHeightMeters: await lookupGsiGeoidHeight(latitude, longitude, request.signal, pointSpecific),
       }), context.waitUntil);
@@ -59,11 +59,11 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         latitude: Number(point.latitude.toFixed(decimals)),
         longitude: Number(point.longitude.toFixed(decimals)),
       }));
-      const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, {
+      const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, {
         points: normalized,
         pointSpecific: parsed.pointSpecific,
       }, {
-        namespace: "gsi-geoid-batch", version: "v1", ttlSeconds: 180 * 86400,
+        namespace: "gsi-geoid-batch", version: "v2", ttlSeconds: null,
       }, async () => ({
         geoidHeightMeters: await Promise.all(parsed.points.map((point) =>
           lookupGsiGeoidHeight(point.latitude, point.longitude, request.signal, parsed.pointSpecific)

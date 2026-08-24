@@ -56,7 +56,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         longitude: Number(point.longitude.toFixed(5)),
       })),
     };
-    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, cacheKeyInput, {
+    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, cacheKeyInput, {
       namespace: "osm-site-context", version: "v1", ttlSeconds: 7 * 86400,
     }, async () => ({
       contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails),

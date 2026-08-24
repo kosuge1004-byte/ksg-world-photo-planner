@@ -137,3 +137,13 @@ npx.cmd wrangler deploy --dry-run --config wrangler.spot-search.jsonc --outdir .
 ## 保存形式
 
 KVレコードは既存API用の`job`に加え、`jobId`、`status`、`progress`、`createdAt`、`updatedAt`、`request`、`partialResult`、`finalResult`、`error`、`expiresAt`を保存します。内部状態は`queued`、`running`、`completed`、`failed`、`cancelled`です。公開APIは既存クライアントとの互換性のため`queued`、`running`、`awaiting-3d`、`complete`、`failed`を維持します。
+
+
+## DEM / ジオイド共有キャッシュの保持方針（2026-08-24）
+
+- GSI DEMのデコード済みタイル本体・404空判定は `NETWORK_CACHE` (R2) にアプリケーションTTLなしで保存します。
+- GSI標高バッチ結果とGSIジオイド結果も `NETWORK_CACHE` (R2) にアプリケーションTTLなしで保存します。
+- 誰か1人が取得した同一キーの地形・ジオイドデータは、以後ほかのユーザーからも共有利用できます。
+- データ更新が必要な場合はTTLで自然消滅させず、コード側の `version` / 永続キーのバージョンを上げて新データへ切り替えます。
+- Cloudflare R2側にバケットLifecycleの自動削除ルールを設定すると、そのルールが優先されます。消えない運用にする場合は `NETWORK_CACHE` バケットに自動削除Lifecycleを設定しないでください。
+- 天気予報など時間変化するデータのTTLはこの変更の対象外です。

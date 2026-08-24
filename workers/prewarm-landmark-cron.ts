@@ -40,7 +40,7 @@ export default {
     }
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE),
+      persistentCache: undefined, // R2 safety: automatic prewarm writes disabled
       waitUntil: (promise) => context.waitUntil(promise),
     });
 
@@ -63,7 +63,7 @@ export default {
   ): Promise<Response> {
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE),
+      persistentCache: undefined, // R2 safety: automatic prewarm writes disabled
       waitUntil: (promise) => context.waitUntil(promise),
     });
 
