@@ -28,16 +28,21 @@ export default {
     context: ExecutionContext
   ): Promise<void> {
     const kv = env.SPOT_SEARCH_JOBS as unknown as SpotSearchJobKv;
-    configureServerRuntime({
-      cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      // DEMタイル本体・空判定はR2（NETWORK_CACHE）で永続化し、全ユーザー・
-      // 全検索ジョブで共有する（server/r2PersistentCache.ts）。Workers KV
-      // へは書き込まない方針は維持（server/gsiElevation.tsのコメント参照）。
-      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, message as object),
-      waitUntil: (promise) => context.waitUntil(promise),
-    });
 
     for (const message of batch.messages) {
+      // リクエスト単位の予算（R2_MAX_READS_PER_REQUEST等）をメッセージごとに
+      // 独立させるため、configureServerRuntimeはメッセージごとに呼び直す
+      // （バッチ全体で1回だけ呼ぶと、persistentCacheFromR2の識別子として
+      // 未定義のmessageを参照してしまいコンパイルエラーになっていた）。
+      configureServerRuntime({
+        cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
+        // DEMタイル本体・空判定はR2（NETWORK_CACHE）で永続化し、全ユーザー・
+        // 全検索ジョブで共有する（server/r2PersistentCache.ts）。Workers KV
+        // へは書き込まない方針は維持（server/gsiElevation.tsのコメント参照）。
+        persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, message as object),
+        waitUntil: (promise) => context.waitUntil(promise),
+      });
+
       if (!isQueueMessage(message.body)) {
         message.ack();
         continue;

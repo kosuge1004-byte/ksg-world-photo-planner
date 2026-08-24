@@ -9,7 +9,6 @@
 import { PREWARM_LANDMARKS, type PrewarmLandmark } from "./landmarkPrewarmSeed.ts";
 import { prewarmMany } from "./prewarmLandmarkCore.ts";
 import { configureServerRuntime } from "./cloudflareRuntime.ts";
-import { persistentCacheFromR2 } from "./r2PersistentCache.ts";
 import { getPlatformProxy } from "wrangler";
 
 function parseArgs(): { category?: PrewarmLandmark["category"]; start: number; count: number } {

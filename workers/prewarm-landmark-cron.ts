@@ -7,7 +7,6 @@
 // 状態はどこにも保存しない（Workers KVへの書き込みを増やさない方針）。
 
 import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
-import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import { PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../server/prewarmLandmarkCore.ts";
 
