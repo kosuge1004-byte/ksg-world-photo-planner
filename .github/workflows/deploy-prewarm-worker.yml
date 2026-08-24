@@ -1,0 +1,38 @@
+name: Deploy prewarm landmark cron worker
+
+# main ブランチに push されるたびに、有名スポット(山・城・ランドマーク)の
+# DEMキャッシュを自動で温める Cloudflare Worker
+# (astrosight-prewarm-landmark-cron) をデプロイします。
+#
+# ターミナル操作は不要です。この仕組みが動くために必要なのは
+# 「CLOUDFLARE_API_TOKEN」という GitHub リポジトリの Secret 登録だけです。
+# 設定手順は README_DEPLOY_PREWARM_WORKER.md を参照してください。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "workers/prewarm-landmark-cron.ts"
+      - "server/**"
+      - "wrangler.prewarm.jsonc"
+      - ".github/workflows/deploy-prewarm-worker.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy prewarm-landmark-cron worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy --config wrangler.prewarm.jsonc
