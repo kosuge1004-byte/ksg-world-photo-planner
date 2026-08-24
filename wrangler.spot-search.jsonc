@@ -20,12 +20,12 @@
   // 登録自体は必須）なため、2026-08-23にカード登録なしで運用する方針へ戻した。
   // 将来カード登録済みでR2を使いたくなったら、以下のコメントを外して
   // bucket_nameを実際に作成したR2バケット名に置き換えるだけでよい。
-  // "r2_buckets": [
-  //   {
-  //     "binding": "NETWORK_CACHE",
-  //     "bucket_name": "ここに実際のR2バケット名"
-  //   }
-  // ],
+  "r2_buckets": [
+    {
+      "binding": "NETWORK_CACHE",
+      "bucket_name": "astrosight-network-cache"
+    }
+  ],
   "queues": {
     "consumers": [
       {

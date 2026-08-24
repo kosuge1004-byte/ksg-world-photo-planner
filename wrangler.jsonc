@@ -22,12 +22,12 @@
   // 国土地理院サーバーへ直接問い合わせるだけで正常に動作する
   // （速度面のメリットが無くなるだけで、機能上の問題は無い）。
   // 将来カード登録済みでR2を使いたくなったら、以下を有効にする：
-  // "r2_buckets": [
-  //   {
-  //     "binding": "NETWORK_CACHE",
-  //     "bucket_name": "実際に作成したR2バケット名"
-  //   }
-  // ],
+  "r2_buckets": [
+    {
+      "binding": "NETWORK_CACHE",
+      "bucket_name": "astrosight-network-cache"
+    }
+  ],
   "queues": {
     "producers": [
       {
