@@ -4,11 +4,17 @@
 // 197件（今後増える見込み）を一度に処理すると1回の実行が長くなりすぎる
 // ため、server/prewarmLandmarkCore.ts の selectDailyChunk() で
 // 「今日の担当分」だけを処理し、日をまたいで全件を自動的に巡回する。
-// 状態はどこにも保存しない（Workers KVへの書き込みを増やさない方針）。
+//
+// R2への保存は server/r2SafetyBudget.ts の予算ガード（月間書き込み/読み取り
+// 上限・1回あたりの上限・保存容量上限）経由でのみ行う。SPOT_SEARCH_JOBS KVが
+// 未設定/取得できない場合はfail-closedでR2書き込みをスキップする
+// （persistentCacheFromR2がsafetyKv未提供時に内部でallowされない設計）。
 
 import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
 import { PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../server/prewarmLandmarkCore.ts";
+import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
+import type { R2SafetyKv } from "../server/r2SafetyBudget.ts";
 
 // 1回の実行あたりの処理件数。1件あたり最大12回のDEM検索
 // （REQUEST_DELAY_MS=1.5秒間隔）+ ランドマーク間4秒待機のため、
@@ -19,11 +25,12 @@ interface PrewarmEnv {
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
   NETWORK_CACHE?: R2Bucket;
+  SPOT_SEARCH_JOBS?: R2SafetyKv;
 }
 
 export default {
   async scheduled(
-    _event: ScheduledEvent,
+    event: ScheduledEvent,
     env: PrewarmEnv,
     context: ExecutionContext
   ): Promise<void> {
@@ -37,9 +44,15 @@ export default {
           "wrangler.prewarm.jsoncのr2_bucketsを有効化してください。"
       );
     }
+    if (!env.SPOT_SEARCH_JOBS) {
+      console.warn(
+        "[prewarm-cron] SPOT_SEARCH_JOBS（予算カウンター用KV）が未設定のため、" +
+          "安全のためR2への保存はスキップされます。wrangler.prewarm.jsoncのkv_namespacesを確認してください。"
+      );
+    }
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: undefined, // R2 safety: automatic prewarm writes disabled
+      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, event),
       waitUntil: (promise) => context.waitUntil(promise),
     });
 
@@ -56,13 +69,13 @@ export default {
   // Cron Trigger専用のWorkerだが、手動での動作確認用にHTTPからも
   // トリガーできるようにしておく（ブラウザ/curlでアクセスして即時実行）。
   async fetch(
-    _request: Request,
+    request: Request,
     env: PrewarmEnv,
     context: ExecutionContext
   ): Promise<Response> {
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: undefined, // R2 safety: automatic prewarm writes disabled
+      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, request),
       waitUntil: (promise) => context.waitUntil(promise),
     });
 
@@ -73,6 +86,9 @@ export default {
         "警告: NETWORK_CACHE（R2）が未設定のため、今回の実行はキャッシュへ保存されません。" +
           "wrangler.prewarm.jsoncのr2_bucketsを有効化してください。"
       );
+    }
+    if (!env.SPOT_SEARCH_JOBS) {
+      logs.push("警告: SPOT_SEARCH_JOBS（予算カウンター用KV）が未設定のため、安全のためR2への保存はスキップされます。");
     }
 
     const { totalAttempts, totalCandidates } = await prewarmMany(targets, (message) => logs.push(message));
