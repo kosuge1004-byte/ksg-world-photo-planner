@@ -55,7 +55,14 @@ export function toUserFacingErrorMessage(
   const lower = message.toLocaleLowerCase();
 
   if (context === "google-maps-url") {
-    return "Googleマップの共有URLを確認できませんでした。共有リンクを貼り直して、もう一度お試しください。";
+    // サーバー側（functions/api/resolve-google-maps.ts）が返す詳細
+    // （例: GOOGLE_HTTP_ERROR、REDIRECT_LIMIT、INVALID_GOOGLE_MAPS_URL等の
+    // エラーコードを含む文言）を末尾に残す。原因ごとに毎回同じ一律の文言に
+    // 丸めてしまうと、実際に何が起きているか（無効なURLなのか、通信エラー
+    // なのか、転送回数超過なのか）が本人にも開発側にも分からなくなるため。
+    const detail = message.replace(/^共有URLの解析に失敗しました：?/, "").trim();
+    const base = "Googleマップの共有URLを確認できませんでした。共有リンクを貼り直して、もう一度お試しください。";
+    return detail ? `${base}（詳細: ${detail}）` : base;
   }
   if (
     lower.includes("googleマップ") ||
