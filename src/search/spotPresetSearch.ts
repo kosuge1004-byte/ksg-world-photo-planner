@@ -227,6 +227,13 @@ export async function prefetchSpotLocation(
   }
 }
 
+// 2026-08-25追記: 成功結果のキャッシュ（readCachedSpotLocation）だけでは
+// 「今まさに進行中の同一クエリへのリクエスト」を共有できない。確定検索の
+// 連打や、UI操作の重複などで同じクエリが短時間に複数回呼ばれると、
+// それぞれが独立してGoogleマップ等へ通信してしまい、429（レート制限）を
+// 誘発しうる。進行中のPromiseをクエリ単位で共有し、二重に通信しないようにする。
+const inFlightResolutions = new Map<string, Promise<ResolvedSpotLocation>>();
+
 export async function resolveSpotLocation(
   query: string,
   signal?: AbortSignal
@@ -235,6 +242,20 @@ export async function resolveSpotLocation(
   const cached = readCachedSpotLocation(normalizedQuery);
   if (cached) return cached;
 
+  const existing = inFlightResolutions.get(normalizedQuery);
+  if (existing) return existing;
+
+  const task = resolveSpotLocationUncached(normalizedQuery, signal).finally(() => {
+    inFlightResolutions.delete(normalizedQuery);
+  });
+  inFlightResolutions.set(normalizedQuery, task);
+  return task;
+}
+
+async function resolveSpotLocationUncached(
+  normalizedQuery: string,
+  signal?: AbortSignal
+): Promise<ResolvedSpotLocation> {
   const googleMapsUrl = extractGoogleMapsSharedUrl(normalizedQuery);
   if (googleMapsUrl) {
     const direct = extractGoogleMapsCoordinates(googleMapsUrl);

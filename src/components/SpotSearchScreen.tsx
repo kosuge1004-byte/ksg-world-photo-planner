@@ -458,7 +458,15 @@ export function SpotSearchScreen({
     const value = query.trim();
     if (!value) return;
     const looksLikeUrl = /^https?:\/\//i.test(value);
-    if (!looksLikeUrl && value.normalize("NFKC").replace(/\s+/gu, "").length < 2) return;
+    // 2026-08-25追記: Googleマップ共有URLは「貼り付けて確定」させる入力で、
+    // 文字を打ちながら候補を絞り込むユースケースがない。それにもかかわらず
+    // 先読みの対象に含めていたため、貼り付け後のカーソル移動や再フォーカス
+    // などの編集揺れのたびに、リダイレクト追跡を伴う重い通信がGoogle側へ
+    // 繰り返し発生し、実機で429（レート制限）を引き起こす一因になっていた。
+    // 先読みによるUX向上効果はほぼない一方で実害の方が大きいため、URLらしき
+    // 入力では先読み自体を行わない（本検索ボタンを押した時だけ解決する）。
+    if (looksLikeUrl) return;
+    if (value.normalize("NFKC").replace(/\s+/gu, "").length < 2) return;
 
     const controller = new AbortController();
     prefetchControllerRef.current = controller;
