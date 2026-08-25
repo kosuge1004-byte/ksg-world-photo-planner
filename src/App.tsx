@@ -1201,15 +1201,39 @@ function App() {
     let localViewer: Viewer | null = null;
     let removeCameraSync: (() => void) | null = null;
 
-    const authorizeHighPrecision = async (): Promise<void> => {
-      if (accuracyMode !== "highest") return;
+    const authorizeHighPrecision = async (): Promise<boolean> => {
+      if (accuracyMode !== "highest") return true;
       // ARカメラ側（ArCesiumOverlay）とセッションID・上限カウントの仕組みを
       // 共有するため、共通ヘルパーへ切り出したものを呼び出す。
-      await authorizeHighPrecisionSession();
+      try {
+        await authorizeHighPrecisionSession();
+        return true;
+      } catch (error) {
+        // 上限到達やサーバー側の一時的な不調（KV割り当て超過など）で
+        // 高精度モードの認可が取れなかった場合は、3D地図自体を諦めるのでは
+        // なく標準モードへフォールバックして表示は継続する。
+        console.warn("高精度モードの認可に失敗したため標準モードへフォールバックします:", error);
+        const message = error instanceof Error
+          ? error.message
+          : "Googleタイルモードを利用できなかったため、標準モードで表示しています。";
+        showUserNotice({
+          key: "map-initialization",
+          tone: "error",
+          message,
+        });
+        return false;
+      }
     };
 
     void authorizeHighPrecision()
-      .then(() => createMapViewer(mapRef.current!, token, accuracyMode, setStatus))
+      .then((highPrecisionAvailable) =>
+        createMapViewer(
+          mapRef.current!,
+          token,
+          highPrecisionAvailable ? accuracyMode : "standard",
+          setStatus
+        )
+      )
       .then((viewer) => {
         if (disposed) {
           viewer.destroy();

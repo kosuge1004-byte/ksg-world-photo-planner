@@ -1,6 +1,5 @@
 import { createAbortError, createTimeoutError } from "../utils/runtimeErrors";
 import type { GsiElevationApiSample } from "../types/geospatial";
-import { recordTerrainRoundTrip } from "../diagnostics/terrainRoundTripLog";
 
 export type GsiElevationClientPoint = {
   latitude: number;
@@ -50,12 +49,6 @@ async function requestBatch(
   );
   const onAbort = () => controller.abort(abortError());
   signal?.addEventListener("abort", onAbort, { once: true });
-  // 計測用: 往復1回ごとの所要時間・件数を記録する（既存の挙動・結果には
-  // 一切影響しない。エラー時も含めて必ず記録することで、遅い原因が
-  // ネットワーク往復の回数そのものにあるのか、個々の往復が遅いのかを
-  // 実測で切り分ける）。
-  const measurementStartedAt = performance.now();
-  let measurementOutcome: "success" | "error" = "error";
   try {
     const response = await fetcher("/api/gsi-elevation", {
       method: "POST",
@@ -81,7 +74,6 @@ async function requestBatch(
     if (data.samples.length !== points.length) {
       throw new Error("国土地理院標高APIの応答点数が一致しません");
     }
-    measurementOutcome = "success";
     return data.samples as GsiElevationApiSample[];
   } catch (error) {
     if (signal?.aborted) throw abortError();
@@ -89,11 +81,6 @@ async function requestBatch(
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
-    recordTerrainRoundTrip({
-      pointCount: points.length,
-      durationMs: performance.now() - measurementStartedAt,
-      outcome: measurementOutcome,
-    });
   }
 }
 
