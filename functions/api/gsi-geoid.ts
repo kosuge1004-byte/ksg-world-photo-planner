@@ -27,6 +27,12 @@ function parseBatch(body: unknown): { points: GeoidPoint[]; pointSpecific: boole
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   configureCloudflareServerRuntime(context);
   const { request } = context;
+  // 地点固有(point)モードのキャッシュキーは4桁（約11m）へ量子化する。
+  // 詳細は server/gsiGeoid.ts の同名定数のコメントを参照（三脚探索の候補
+  // 座標は1mm単位ではほぼ確実に変わるため、以前の8桁だとキャッシュが
+  // 実質機能していなかった。ジオイド高は数km規模でしか変化しない滑らかな
+  // 量のため、11mへ緩めても実用上の精度には影響しない）。
+  const POINT_SPECIFIC_CACHE_KEY_DECIMALS = 4;
   if (request.method === "GET") {
     const url = new URL(request.url);
     try {
@@ -34,8 +40,8 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       const latitude = Number(url.searchParams.get("latitude"));
       const longitude = Number(url.searchParams.get("longitude"));
       const normalized = {
-        latitude: Number(latitude.toFixed(pointSpecific ? 8 : 2)),
-        longitude: Number(longitude.toFixed(pointSpecific ? 8 : 2)),
+        latitude: Number(latitude.toFixed(pointSpecific ? POINT_SPECIFIC_CACHE_KEY_DECIMALS : 2)),
+        longitude: Number(longitude.toFixed(pointSpecific ? POINT_SPECIFIC_CACHE_KEY_DECIMALS : 2)),
         pointSpecific,
       };
       const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, normalized, {
@@ -54,7 +60,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     try {
       const parsed = parseBatch(await request.json());
       if (!parsed) return jsonResponse({ error: "座標配列が不正です" }, 400, "no-store");
-      const decimals = parsed.pointSpecific ? 8 : 2;
+      const decimals = parsed.pointSpecific ? POINT_SPECIFIC_CACHE_KEY_DECIMALS : 2;
       const normalized = parsed.points.map((point) => ({
         latitude: Number(point.latitude.toFixed(decimals)),
         longitude: Number(point.longitude.toFixed(decimals)),

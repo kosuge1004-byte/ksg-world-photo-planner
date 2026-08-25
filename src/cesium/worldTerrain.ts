@@ -575,7 +575,16 @@ export async function fetchGsiGeoidHeight(
 /**
  * 三脚候補の最終判定など、数cm級の高さ整合が必要な地点専用。
  * 0.01度の地域代表値ではなく、その緯度経度自身をGSIジオイド計算へ渡す。
- * キャッシュキーのみ約1mm相当の8桁へ量子化し、被写体や別候補のN値を流用しない。
+ * キャッシュキーのみ約11m相当（4桁）へ量子化し、被写体や別候補のN値を流用しない。
+ *
+ * 2026-08-25追記: 以前はキャッシュキーを8桁（約1mm）で量子化しており、
+ * 三脚探索の候補座標は反復計算のたびに1mm単位ではほぼ確実に変わるため、
+ * 「同じ場所を何度検索してもキャッシュがほぼ毎回外れ、国土地理院の
+ * レート制限（3.5秒/回）に毎回引っかかって数十秒待たされる」原因になって
+ * いた。ジオイド高は11m程度の範囲ではミリ未満しか変化しない滑らかな量
+ * であり、この関数がコメントで要求している「数cm級」の精度には
+ * 11mへの量子化は影響しない（実際にGSIへ問い合わせる座標は従来どおり
+ * 丸めていない原座標のまま送るため、値そのものの精度も変わらない）。
  */
 export async function fetchGsiGeoidHeightPointSpecific(
   point: Cartographic,
@@ -586,7 +595,7 @@ export async function fetchGsiGeoidHeightPointSpecific(
   }
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
-  const key = `point:${latitude.toFixed(8)},${longitude.toFixed(8)}`;
+  const key = `point:${latitude.toFixed(4)},${longitude.toFixed(4)}`;
   const cached = readMemoryCache(geoidHeightCache, key);
   if (cached) return cached;
 
@@ -747,10 +756,11 @@ export async function sampleWorldTerrainHighestPrecision(
     latitude: CesiumMath.toDegrees(point.latitude),
     longitude: CesiumMath.toDegrees(point.longitude),
   }));
-  // 通信・計算には倍精度の原座標を使い、同時要求共有キーだけ約1mm相当に量子化する。
+  // 通信・計算には倍精度の原座標を使い、同時要求共有キーだけ約11m相当（4桁）に
+  // 量子化する（fetchGsiGeoidHeightPointSpecific・server/gsiGeoid.tsと精度を統一）。
   const geoidKeyPoints = geoidPoints.map((point) => ({
-    latitude: Number(point.latitude.toFixed(8)),
-    longitude: Number(point.longitude.toFixed(8)),
+    latitude: Number(point.latitude.toFixed(4)),
+    longitude: Number(point.longitude.toFixed(4)),
   }));
   const geoidKey = `gsi-geoid-point-batch:${geoidKeyPoints.map((point) => `${point.latitude},${point.longitude}`).join(";")}`;
   const geoidHeights = await shareInFlightRequest({
