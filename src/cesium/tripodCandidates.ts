@@ -1295,8 +1295,32 @@ async function calculateOneCandidates(
   );
   if (initialSolutions.length === 0) return [];
 
+  // 2026-08-25追記: 見つかった交点候補（initialSolutions）が複数ある場合、
+  // 以前はここから先の処理（収束反復＋詳細探索、交点ごとに合計最大6回程度の
+  // 通信）を1つずつ直列に処理していた。各交点の計算は互いに独立しており、
+  // 前の交点の結果を次の交点の計算に使うことはないため、Promise.allSettledで
+  // 並列化しても結果は変わらない。これにより「候補が複数見つかる場所ほど、
+  // その数に比例して待たされる」という体感速度の問題を、通信回数自体は
+  // 変えずに改善する（過去に撤回した変更は反復回数やサンプル数を"増やす"もの
+  // だったため、ここでの"直列を並列にするだけ"の変更とは性質が異なる）。
+  const convergedResults = await Promise.allSettled(
+    initialSolutions.map((initialSolution) =>
+      processInitialSolution(initialSolution)
+    )
+  );
   const converged: TripodCandidate[] = [];
-  for (const initialSolution of initialSolutions) {
+  for (const result of convergedResults) {
+    if (result.status === "fulfilled" && result.value) {
+      converged.push(result.value);
+    } else if (result.status === "rejected") {
+      if (isAbortError(result.reason)) throw result.reason;
+      console.warn(`[tripod-candidate] ${point.label}: 交点候補の処理に失敗`, result.reason);
+    }
+  }
+
+  async function processInitialSolution(
+    initialSolution: TerrainSolution
+  ): Promise<TripodCandidate | null> {
     abortIfRequested(signal);
     let solution = initialSolution;
 
@@ -1383,7 +1407,7 @@ async function calculateOneCandidates(
       );
     }
 
-    if (!Number.isFinite(solution.cartographic.height)) continue;
+    if (!Number.isFinite(solution.cartographic.height)) return null;
 
     // 粗いECEF+DEM解はseedとしてのみ使用する。ここから先は、粗候補周辺だけを
     // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
@@ -1405,9 +1429,9 @@ async function calculateOneCandidates(
       );
     } catch (error) {
       console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
-      continue;
+      return null;
     }
-    if (!manualRefined) continue;
+    if (!manualRefined) return null;
 
     const finalCandidatePoint = manualRefined.candidatePoint;
     const finalHorizontal = manualRefined.horizontal;
@@ -1469,7 +1493,7 @@ async function calculateOneCandidates(
         distanceMeters: manualRefined.distanceMeters,
         ...diagnostics,
       });
-      continue;
+      return null;
     }
 
     console.debug(`[tripod-candidate] ${point.label}: 候補確定`, {
@@ -1477,7 +1501,7 @@ async function calculateOneCandidates(
       ...diagnostics,
     });
 
-    converged.push({
+    return {
       id: point.id,
       label: point.label,
       latitude: finalCandidatePoint.latitude,
@@ -1485,7 +1509,7 @@ async function calculateOneCandidates(
       height: ellipsoidalHeightMeters(finalCandidatePoint),
       distanceMeters: manualRefined.distanceMeters,
       solutionType: "aligned",
-    });
+    };
   }
 
   const unique = converged
