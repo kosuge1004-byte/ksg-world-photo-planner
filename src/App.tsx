@@ -1143,10 +1143,14 @@ function App() {
             tripodCandidatesRef.current = [];
             setTripodCandidates([]);
             setTripodCandidateCalculationStatus("error");
+            const isTerrainDataUnavailable =
+              error instanceof Error && error.name === "TerrainDataUnavailableError";
             showUserNotice({
               key: "tripod-candidate-calculation",
               tone: "error",
-              message: "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",
+              message: isTerrainDataUnavailable
+                ? `地形データを取得できず、三脚候補を計算できませんでした（${error.message}）。通信状態を確認して再試行してください。`
+                : "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",
               actionLabel: "再試行",
               onAction: () => setTripodCandidateRetrySequence((current) => current + 1),
             });

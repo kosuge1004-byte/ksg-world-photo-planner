@@ -68,6 +68,24 @@ export type TerrainSampler = (
   maximumDetail?: "1m" | "5m" | "10m"
 ) => Promise<Cartographic[]>;
 
+/**
+ * 地形データ（DEM）の取得そのものが通信不調で軒並み失敗した場合に投げる。
+ * 「本当に条件を満たす候補地点が存在しない」場合と区別するためのもの。
+ * 2026-08-25追記: 以前はDEM取得が全滅していても、単に交点が見つからない
+ * 場合と同じ「候補なし」という結果になり、通信起因の失敗なのか本当に
+ * 候補が存在しないのかをユーザー・開発側どちらも判別できなかった。
+ */
+export class TerrainDataUnavailableError extends Error {
+  readonly failedRatio: number;
+  constructor(failedRatio: number) {
+    super(
+      `地形データを取得できませんでした（要求点の${Math.round(failedRatio * 100)}%が失敗）`
+    );
+    this.name = "TerrainDataUnavailableError";
+    this.failedRatio = failedRatio;
+  }
+}
+
 export type RefractionWeatherResolver = (
   point: GroundPoint,
   signal?: AbortSignal
@@ -1543,6 +1561,21 @@ export async function calculateTripodCandidates(
       }
     : cameraSettingsOrLensHeight;
   abortIfRequested(signal);
+
+  // 地形データ取得の成否を集計するラッパー。既存のterrainSamplerの
+  // 挙動・戻り値は一切変えず、通過した点数と、高さが取得できなかった
+  // （NaN/未定義になった）点数だけを数える。
+  let terrainRequestedCount = 0;
+  let terrainFailedCount = 0;
+  const instrumentedTerrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
+    const result = await terrainSampler(samplePoints, sampleSignal, maximumDetail);
+    terrainRequestedCount += result.length;
+    terrainFailedCount += result.filter(
+      (sample) => !sample || !Number.isFinite(sample.height)
+    ).length;
+    return result;
+  };
+
   // 太陽・月に限定すると、同じ候補計算を共有する天の川・北極星が
   // アプリ全体から消えるため、地平線上にある有効な天体をすべて対象にする。
   const visiblePoints = points.filter(
@@ -1567,7 +1600,7 @@ export async function calculateTripodCandidates(
         previewAspectRatio,
         date,
         calculationMode,
-        terrainSampler,
+        instrumentedTerrainSampler,
         signal,
         distanceRange,
         pointSearchProfile,
@@ -1604,6 +1637,23 @@ export async function calculateTripodCandidates(
       rejected.map((result) => result.reason),
       "すべての三脚候補で地形データ取得に失敗しました"
     );
+  }
+
+  // 2026-08-25追記: 上のチェックは「例外が投げられた」場合しか拾えない。
+  // しかしDEM取得が失敗すると、多くの経路は例外を投げず「高さがNaNの
+  // サンプル」として静かに処理を続け、最終的に交点が見つからず候補0件に
+  // なる（＝「本当に候補が存在しない」場合と見分けがつかない）。
+  // 要求した地形サンプルの半分以上が失敗していて、かつ候補が1件も
+  // 得られなかった場合は、通信起因の失敗である可能性が高いとみなし、
+  // 呼び出し側（App.tsx）が「候補なし」ではなく「通信エラー」として
+  // 案内できるよう区別する。
+  const TERRAIN_FAILURE_RATIO_THRESHOLD = 0.5;
+  if (
+    candidates.length === 0 &&
+    terrainRequestedCount > 0 &&
+    terrainFailedCount / terrainRequestedCount >= TERRAIN_FAILURE_RATIO_THRESHOLD
+  ) {
+    throw new TerrainDataUnavailableError(terrainFailedCount / terrainRequestedCount);
   }
 
   return candidates;
