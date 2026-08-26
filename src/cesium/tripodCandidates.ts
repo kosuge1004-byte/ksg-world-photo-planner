@@ -114,6 +114,9 @@ export type TripodSearchDiagnostics = {
       /** 一次探索(狭い範囲)で解が見つからず、広い二次探索へ切り替わったか。 */
       usedWideFallbackScan: boolean;
       primaryScanMaxMeters: number | undefined;
+      /** 地形取得の通信往復回数と、その累計所要時間（ミリ秒）。 */
+      terrainRoundTripCount: number;
+      terrainRoundTripTotalMs: number;
     }
   >;
 };
@@ -1302,8 +1305,18 @@ async function calculateOneCandidates(
   // 集計とは別に、天体ごとの内訳を得るためにここでもう一段ラップする。
   let terrainRequestedCount = 0;
   let terrainFailedCount = 0;
+  // 2026-08-26追記: 「地形取得◯点」は送った座標の総数であり、通信の
+  // 往復回数（terrainSamplerの呼び出し回数）とは別物。点数が多くても
+  // 少ない往復回数にまとまっていれば精度を保ったまま遅くない設計と
+  // 言えるため、往復回数と累計所要時間も分けて記録し、遅さの本当の
+  // 原因（点数が多いのか、往復回数が多いのか）を切り分けられるようにする。
+  let terrainRoundTripCount = 0;
+  let terrainRoundTripTotalMs = 0;
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
+    const startedAt = performance.now();
     const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
+    terrainRoundTripCount += 1;
+    terrainRoundTripTotalMs += performance.now() - startedAt;
     terrainRequestedCount += result.length;
     terrainFailedCount += result.filter(
       (sample) => !sample || !Number.isFinite(sample.height)
@@ -1390,6 +1403,8 @@ async function calculateOneCandidates(
       distanceHintMeters: effectiveSeedDistance,
       usedWideFallbackScan: lastScanFallbackInfo?.usedFallback ?? false,
       primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
+      terrainRoundTripCount,
+      terrainRoundTripTotalMs,
     });
     return [];
   }
@@ -1661,6 +1676,8 @@ async function calculateOneCandidates(
     distanceHintMeters: effectiveSeedDistance,
     usedWideFallbackScan: lastScanFallbackInfo?.usedFallback ?? false,
     primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
+    terrainRoundTripCount,
+    terrainRoundTripTotalMs,
   });
   return unique;
 }

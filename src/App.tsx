@@ -675,7 +675,10 @@ function App() {
           `（距離ヒント: ${entry.distanceHintUsed ? "使用" : "未使用"}` +
           `${entry.distanceHintMeters !== undefined ? `・${Math.round(entry.distanceHintMeters)}m` : ""}）` +
           `（探索範囲: ${entry.usedWideFallbackScan ? "広域(二次)" : "狭域(一次)"}` +
-          `${entry.primaryScanMaxMeters !== undefined ? `・一次上限${Math.round(entry.primaryScanMaxMeters)}m` : ""}）`;
+          `${entry.primaryScanMaxMeters !== undefined ? `・一次上限${Math.round(entry.primaryScanMaxMeters)}m` : ""}）` +
+          `（通信: ${entry.terrainRoundTripCount}回・` +
+          `合計${(entry.terrainRoundTripTotalMs / 1000).toFixed(1)}秒・` +
+          `平均${entry.terrainRoundTripCount > 0 ? Math.round(entry.terrainRoundTripTotalMs / entry.terrainRoundTripCount) : 0}ms/回）`;
       }),
     ];
     try {
