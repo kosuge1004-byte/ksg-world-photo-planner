@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { UserNoticeTone } from "../errors/userFeedback";
 
 type Props = {
@@ -6,6 +7,7 @@ type Props = {
   actionLabel?: string;
   onAction?: () => void;
   onDismiss: () => void;
+  diagnosticDetail?: string;
 };
 
 export function UserNotice({
@@ -14,7 +16,21 @@ export function UserNotice({
   actionLabel,
   onAction,
   onDismiss,
+  diagnosticDetail,
 }: Props) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+
+  const handleCopyDetail = async () => {
+    if (!diagnosticDetail) return;
+    try {
+      await navigator.clipboard.writeText(diagnosticDetail);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    window.setTimeout(() => setCopyState("idle"), 3_000);
+  };
+
   return (
     <aside
       className={`user-notice ${tone}`}
@@ -26,6 +42,20 @@ export function UserNotice({
         {actionLabel && onAction && (
           <button type="button" onClick={onAction}>
             {actionLabel}
+          </button>
+        )}
+        {diagnosticDetail && (
+          <button
+            type="button"
+            className="user-notice-copy-detail"
+            onClick={handleCopyDetail}
+            title="開発者に問題を報告する際に役立つ技術的な情報をコピーします"
+          >
+            {copyState === "copied"
+              ? "コピーしました"
+              : copyState === "failed"
+                ? "コピーできませんでした"
+                : "詳細をコピー"}
           </button>
         )}
         <button

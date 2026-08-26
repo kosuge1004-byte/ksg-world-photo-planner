@@ -70,62 +70,92 @@ async function sendWarningOnce(
 }
 
 export const onRequestGet: PagesFunction<HighPrecisionEnv> = async (context) => {
-  const monthKey = pacificMonthKey();
-  const count = await countMonthlySessions(context.env.SPOT_SEARCH_JOBS, monthKey);
-  const limitsEnabled = context.env.HIGH_PRECISION_LIMITS_ENABLED !== "false";
-  return jsonResponse({
-    allowed: !limitsEnabled || count < STOP_LIMIT,
-    count,
-    warningLimit: WARNING_LIMIT,
-    stopLimit: STOP_LIMIT,
-    month: monthKey,
-    limitsEnabled,
-  });
+  try {
+    const monthKey = pacificMonthKey();
+    const count = await countMonthlySessions(context.env.SPOT_SEARCH_JOBS, monthKey);
+    const limitsEnabled = context.env.HIGH_PRECISION_LIMITS_ENABLED !== "false";
+    return jsonResponse({
+      allowed: !limitsEnabled || count < STOP_LIMIT,
+      count,
+      warningLimit: WARNING_LIMIT,
+      stopLimit: STOP_LIMIT,
+      month: monthKey,
+      limitsEnabled,
+    });
+  } catch (error) {
+    // KV側の障害・日次無料枠超過などで集計できない場合は、安全側に倒して
+    // 高精度モードを一時的に拒否する（クラッシュさせて3D地図全体を
+    // 巻き添えにしない。呼び出し側でallowed:falseは標準モードへの
+    // フォールバック材料として扱われる）。
+    console.error("high-precision-session GET failed:", error);
+    return jsonResponse({
+      allowed: false,
+      reason: "usage_check_unavailable",
+      warningLimit: WARNING_LIMIT,
+      stopLimit: STOP_LIMIT,
+    }, 200);
+  }
 };
 
 export const onRequestPost: PagesFunction<HighPrecisionEnv> = async (context) => {
-  const limitsEnabled = context.env.HIGH_PRECISION_LIMITS_ENABLED !== "false";
-  const body = await context.request.json().catch(() => ({})) as { sessionId?: unknown };
-  const sessionId = typeof body.sessionId === "string" && /^[a-zA-Z0-9_-]{16,128}$/.test(body.sessionId)
-    ? body.sessionId
-    : crypto.randomUUID().replaceAll("-", "");
-  const monthKey = pacificMonthKey();
-  const sessionKey = `${USAGE_KEY_PREFIX}${monthKey}:${sessionId}`;
+  try {
+    const limitsEnabled = context.env.HIGH_PRECISION_LIMITS_ENABLED !== "false";
+    const body = await context.request.json().catch(() => ({})) as { sessionId?: unknown };
+    const sessionId = typeof body.sessionId === "string" && /^[a-zA-Z0-9_-]{16,128}$/.test(body.sessionId)
+      ? body.sessionId
+      : crypto.randomUUID().replaceAll("-", "");
+    const monthKey = pacificMonthKey();
+    const sessionKey = `${USAGE_KEY_PREFIX}${monthKey}:${sessionId}`;
 
-  const existing = await context.env.SPOT_SEARCH_JOBS.get(sessionKey);
-  let count = await countMonthlySessions(context.env.SPOT_SEARCH_JOBS, monthKey);
+    const existing = await context.env.SPOT_SEARCH_JOBS.get(sessionKey);
+    let count = await countMonthlySessions(context.env.SPOT_SEARCH_JOBS, monthKey);
 
-  if (!existing) {
-    if (limitsEnabled && count >= STOP_LIMIT) {
-      return jsonResponse({
-        allowed: false,
-        reason: "monthly_limit_reached",
-        count,
-        warningLimit: WARNING_LIMIT,
-        stopLimit: STOP_LIMIT,
-        month: monthKey,
-      }, 429);
+    if (!existing) {
+      if (limitsEnabled && count >= STOP_LIMIT) {
+        return jsonResponse({
+          allowed: false,
+          reason: "monthly_limit_reached",
+          count,
+          warningLimit: WARNING_LIMIT,
+          stopLimit: STOP_LIMIT,
+          month: monthKey,
+        }, 429);
+      }
+
+      await context.env.SPOT_SEARCH_JOBS.put(sessionKey, new Date().toISOString(), {
+        expirationTtl: 40 * 24 * 60 * 60,
+      });
+      count += 1;
     }
 
-    await context.env.SPOT_SEARCH_JOBS.put(sessionKey, new Date().toISOString(), {
-      expirationTtl: 40 * 24 * 60 * 60,
+    if (limitsEnabled && count >= WARNING_LIMIT) {
+      await sendWarningOnce(context, monthKey, count).catch((error) => {
+        console.error("High precision warning notification failed:", error);
+      });
+    }
+
+    return jsonResponse({
+      allowed: !limitsEnabled || count <= STOP_LIMIT,
+      sessionId,
+      reused: Boolean(existing),
+      count,
+      warningLimit: WARNING_LIMIT,
+      stopLimit: STOP_LIMIT,
+      month: monthKey,
+      sessionTtlSeconds: SESSION_TTL_SECONDS,
+      limitsEnabled,
     });
-    count += 1;
+  } catch (error) {
+    // KV側の障害・日次無料枠超過などでセッション認可ができない場合も、
+    // クラッシュ（500/502）させず「今回は高精度モードを許可しない」という
+    // 通常のJSON応答として返す。呼び出し元（src/App.tsx）はこれを
+    // 標準モードへのフォールバック材料として扱う。
+    console.error("high-precision-session POST failed:", error);
+    return jsonResponse({
+      allowed: false,
+      reason: "usage_check_unavailable",
+      warningLimit: WARNING_LIMIT,
+      stopLimit: STOP_LIMIT,
+    }, 200);
   }
-
-  if (limitsEnabled && count >= WARNING_LIMIT) {
-    await sendWarningOnce(context, monthKey, count);
-  }
-
-  return jsonResponse({
-    allowed: !limitsEnabled || count <= STOP_LIMIT,
-    sessionId,
-    reused: Boolean(existing),
-    count,
-    warningLimit: WARNING_LIMIT,
-    stopLimit: STOP_LIMIT,
-    month: monthKey,
-    sessionTtlSeconds: SESSION_TTL_SECONDS,
-    limitsEnabled,
-  });
 };

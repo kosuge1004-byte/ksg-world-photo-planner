@@ -11,6 +11,7 @@ type HighPrecisionSessionResponse = {
   sessionTtlSeconds?: number;
   count?: number;
   stopLimit?: number;
+  reason?: string;
 };
 
 /**
@@ -53,6 +54,17 @@ export async function authorizeHighPrecisionSession(): Promise<void> {
   });
   const result = (await response.json()) as HighPrecisionSessionResponse;
   if (!response.ok || !result.allowed) {
+    // 2026-08-25追記: サーバー側（functions/api/high-precision-session.ts）は
+    // 「本当に月間上限に達した場合」（reason: monthly_limit_reached）と、
+    // 「KVの一時的な不調等で判定自体ができなかった場合」
+    // （reason: usage_check_unavailable）を区別して返している。以前は
+    // どちらも同じ「利用上限に達しました」という文言に丸めており、
+    // 実際には一時的な不調なのに恒久的な上限到達のように見えてしまっていた。
+    if (result.reason === "usage_check_unavailable") {
+      throw new Error(
+        "Googleタイルモードの利用可否を確認できませんでした（サーバー側の一時的な不調の可能性があります）。しばらくしてから再試行するか、標準モードをご利用ください。"
+      );
+    }
     throw new Error(
       `今月のGoogleタイルモード利用上限に達しました（${result.count ?? "-"}/${result.stopLimit ?? 850}）。標準モードをご利用ください。`
     );

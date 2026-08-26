@@ -86,6 +86,40 @@ export class TerrainDataUnavailableError extends Error {
   }
 }
 
+/**
+ * 「なぜ遅いのか／なぜ候補が見つからないのか」を、コードを読んだり
+ * DevToolsを開いたりせずに確認できるようにするための、直近1回分の
+ * 探索診断情報。calculateTripodCandidates が呼ばれるたびに上書きされる。
+ * 個人が特定できる情報は含めない（天体ラベル・件数・時間のみ）。
+ */
+export type TripodSearchDiagnostics = {
+  startedAtMs: number;
+  finishedAtMs: number | null;
+  perCelestialBody: Record<
+    string,
+    {
+      initialSolutionCount: number;
+      convergedCount: number;
+      terrainRequestedPoints: number;
+      terrainFailedPoints: number;
+    }
+  >;
+};
+
+let lastSearchDiagnostics: TripodSearchDiagnostics | null = null;
+
+export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null {
+  return lastSearchDiagnostics;
+}
+
+function recordDiagnostics(
+  celestialLabel: string,
+  entry: TripodSearchDiagnostics["perCelestialBody"][string]
+): void {
+  if (!lastSearchDiagnostics) return;
+  lastSearchDiagnostics.perCelestialBody[celestialLabel] = entry;
+}
+
 export type RefractionWeatherResolver = (
   point: GroundPoint,
   signal?: AbortSignal
@@ -1224,7 +1258,7 @@ async function calculateOneCandidates(
   previewAspectRatio: number,
   date: Date,
   calculationMode: CalculationMode,
-  terrainSampler: TerrainSampler,
+  outerTerrainSampler: TerrainSampler,
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
   searchProfile?: TripodSearchProfile,
@@ -1235,6 +1269,20 @@ async function calculateOneCandidates(
 ): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
   if (point.altitudeDegrees <= 0.25) return [];
+
+  // この天体単独の地形取得成否を集計する（診断表示用）。外側の
+  // outerTerrainSampler（instrumentedTerrainSampler）が担う全天体合算の
+  // 集計とは別に、天体ごとの内訳を得るためにここでもう一段ラップする。
+  let terrainRequestedCount = 0;
+  let terrainFailedCount = 0;
+  const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
+    const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
+    terrainRequestedCount += result.length;
+    terrainFailedCount += result.filter(
+      (sample) => !sample || !Number.isFinite(sample.height)
+    ).length;
+    return result;
+  };
 
   // 気象連動屈折（自動モード）は約0.05度（≈5.5km）格子でキャッシュされており、
   // 三脚候補の探索範囲（通常は被写体から数百m〜数km）はほぼ必ず同じ格子内に
@@ -1293,7 +1341,15 @@ async function calculateOneCandidates(
     directSeedDistance ?? searchProfile?.preferredDistanceMeters,
     doubleCheckEnabled
   );
-  if (initialSolutions.length === 0) return [];
+  if (initialSolutions.length === 0) {
+    recordDiagnostics(point.label, {
+      initialSolutionCount: 0,
+      convergedCount: 0,
+      terrainRequestedPoints: terrainRequestedCount,
+      terrainFailedPoints: terrainFailedCount,
+    });
+    return [];
+  }
 
   // 2026-08-25追記: 見つかった交点候補（initialSolutions）が複数ある場合、
   // 以前はここから先の処理（収束反復＋詳細探索、交点ごとに合計最大6回程度の
@@ -1553,6 +1609,12 @@ async function calculateOneCandidates(
     }
   }
 
+  recordDiagnostics(point.label, {
+    initialSolutionCount: initialSolutions.length,
+    convergedCount: unique.length,
+    terrainRequestedPoints: terrainRequestedCount,
+    terrainFailedPoints: terrainFailedCount,
+  });
   return unique;
 }
 
@@ -1585,6 +1647,12 @@ export async function calculateTripodCandidates(
       }
     : cameraSettingsOrLensHeight;
   abortIfRequested(signal);
+
+  lastSearchDiagnostics = {
+    startedAtMs: Date.now(),
+    finishedAtMs: null,
+    perCelestialBody: {},
+  };
 
   // 地形データ取得の成否を集計するラッパー。既存のterrainSamplerの
   // 挙動・戻り値は一切変えず、通過した点数と、高さが取得できなかった
@@ -1677,9 +1745,11 @@ export async function calculateTripodCandidates(
     terrainRequestedCount > 0 &&
     terrainFailedCount / terrainRequestedCount >= TERRAIN_FAILURE_RATIO_THRESHOLD
   ) {
+    if (lastSearchDiagnostics) lastSearchDiagnostics.finishedAtMs = Date.now();
     throw new TerrainDataUnavailableError(terrainFailedCount / terrainRequestedCount);
   }
 
+  if (lastSearchDiagnostics) lastSearchDiagnostics.finishedAtMs = Date.now();
   return candidates;
 }
 

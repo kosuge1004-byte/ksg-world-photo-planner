@@ -543,6 +543,33 @@ async function responseText(response: Response): Promise<string> {
   return text.length <= MAX_HTML_LENGTH ? text : text.slice(0, MAX_HTML_LENGTH);
 }
 
+// 2026-08-25追記: Googleマップ共有URLの解決が「429（レート制限）」で
+// 失敗する事例が実機で確認された。Cloudflareのエッジは共有IPアドレスを
+// 使うため、他の利用者・他サイトのトラフィックと合算されてGoogle側の
+// 一時的な制限に触れることがある。429は多くの場合すぐに解消される一時的な
+// ものなので、これだけは短い間隔を空けて1回だけ自動的に再試行する
+// （他のHTTPエラーは従来どおり即座に失敗として扱う。無条件リトライは
+// 429を悪化させる恐れがあるため対象を絞る）。
+const RATE_LIMIT_RETRY_DELAY_MS = 1_500;
+
+function withRateLimitRetry(fetcher: typeof fetch): typeof fetch {
+  return (async (input, init) => {
+    const response = await fetcher(input, init);
+    if (response.status !== 429) return response;
+    const signal = init?.signal;
+    if (signal?.aborted) return response;
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+    });
+    if (signal?.aborted) return response;
+    return fetcher(input, init);
+  }) as typeof fetch;
+}
+
 function placeInfo(metadata: GoogleMapsPlaceMetadata): GoogleMapsPlaceInfo {
   return {
     placeId: metadata.placeId,
@@ -605,7 +632,7 @@ export async function resolveGoogleMapsSharedUrl(
     );
   }
   diagnostics.sourceUrl = sourceUrl;
-  const fetcher = options.fetcher ?? fetch;
+  const fetcher = withRateLimitRetry(options.fetcher ?? fetch);
   const abortController = new AbortController();
   const timeoutId = setTimeout(
     () => abortController.abort(),

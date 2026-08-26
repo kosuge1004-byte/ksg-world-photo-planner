@@ -4,6 +4,13 @@ export type UserNoticeEvent = {
   key: string;
   tone: UserNoticeTone;
   message: string;
+  /**
+   * 開発者へ問題を報告する際に役立つ技術的な詳細（元のエラーメッセージ、
+   * 関連する数値、発生した機能名など）。指定された場合、通知に
+   * 「詳細をコピー」ボタンが表示され、利用者が自分の意思でタップした
+   * 時だけクリップボードへコピーされる（自動送信・自動収集はしない）。
+   */
+  diagnosticDetail?: string;
 };
 
 export type UserErrorContext =
@@ -45,6 +52,34 @@ export function publishUserNotice(notice: UserNoticeEvent): void {
 function technicalMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return typeof error === "string" ? error : "";
+}
+
+/**
+ * 「詳細をコピー」ボタンに渡す診断テキストを組み立てる。
+ * 個人が特定できる情報（氏名・端末固有IDなど）は含めない。
+ * 発生時刻・機能名・技術的なエラーメッセージ・任意の補足情報のみ。
+ * 座標や被写体名など、利用者自身が入力した検索内容が含まれる場合が
+ * あるため、送信ではなく「コピーして本人が貼り付ける」形にとどめ、
+ * 何が含まれるかは常にコピー前にボタンのそばへ明示する。
+ */
+export function buildDiagnosticDetail(
+  featureName: string,
+  error: unknown,
+  extra?: Record<string, string | number | boolean | undefined>
+): string {
+  const lines = [
+    `[AstroSightエラー報告]`,
+    `機能: ${featureName}`,
+    `日時: ${new Date().toISOString()}`,
+    `エラー内容: ${technicalMessage(error) || String(error)}`,
+  ];
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value === undefined) continue;
+      lines.push(`${key}: ${value}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export function toUserFacingErrorMessage(
