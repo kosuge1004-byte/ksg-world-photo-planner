@@ -27,6 +27,28 @@
  *      加算する。月100万回という予算に対しては十分な精度を保ったまま、
  *      KVへの書き込み回数を1/{READ_COUNTER_SAMPLE_RATE}に削減できる。
  * を満たす設計にしている。
+ *
+ * 2026-08-26追記: それでもなお、KVの日次無料枠（書き込み1,000回/日）に
+ * 複数回到達した。改めてCloudflare公式の無料枠を比較すると:
+ *   R2書き込み(Class A)  : 100万回/月
+ *   R2読み取り(Class B)  : 1000万回/月
+ *   KV書き込み           : 1,000回/日   ← 突出して厳しい
+ *   KV読み取り           : 10万回/日
+ * つまり「R2を見張るためのKV」の方が、見張られているR2本体よりずっと
+ * 厳しい制限を持っており、KVの制限がR2の制限より先に問題化する構造的な
+ * 弱点があった。これを踏まえ、さらに2点を見直す:
+ *   4) allowR2Read（読み取り確認）はKVへのアクセスを完全に廃止する。
+ *      R2読み取りの無料枠（月1000万回）に対しては、リクエスト単位の
+ *      上限（R2_MAX_READS_PER_REQUEST）だけで実用上十分安全であり、
+ *      月間の正確な集計を諦めてもR2側の無料枠を圧迫するリスクは
+ *      無視できるほど小さい。
+ *   5) reserveR2Write内の月間書き込みカウンター（writeBudgetKey）の
+ *      更新も、読み取りと同様にサンプリングで間引く
+ *      （WRITE_COUNTER_SAMPLE_RATE）。ただし、次回書き込み時の
+ *      oldBytes計算に必要な「個々のオブジェクトのサイズ記録」
+ *      （r2-safety:size:キー）は間引かない。R2への実際の書き込み内容・
+ *      キャッシュの正確さには4・5とも一切影響しない
+ *      （変わるのは「KVでの記録頻度」だけ）。
  */
 export const R2_MONTHLY_WRITE_BUDGET = 100_000;
 export const R2_MONTHLY_READ_BUDGET = 1_000_000;
@@ -39,6 +61,11 @@ export const R2_MAX_READS_PER_REQUEST = 256;
 // 予算に対しては十分な精度）。これによりKVへの書き込み回数を1/20に
 // 削減し、KV自体の日次無料枠（書き込み1,000回/日）を圧迫しないようにする。
 export const READ_COUNTER_SAMPLE_RATE = 20;
+// 書き込み月間カウンターをKVへ実際に反映する頻度。R2への実際の書き込み
+// （bucket.put自体）は毎回必ず行われ、キャッシュの内容・精度には一切
+// 影響しない。間引かれるのは「今月あと何回書けるか」を数えるKV側の
+// 記録頻度のみ。
+export const WRITE_COUNTER_SAMPLE_RATE = 10;
 
 export interface R2SafetyKv {
   get(key: string): Promise<string | null>;
@@ -91,22 +118,16 @@ async function readWriteBudgetState(kv:R2SafetyKv,mk:string):Promise<WriteBudget
 }
 
 export async function allowR2Read(kv:R2SafetyKv|undefined,id?:object){
+  // 2026-08-26追記: 以前はここでKVへの読み取り/書き込みを行っていたが、
+  // R2読み取りの無料枠（月1000万回）はKV書き込みの無料枠（1日1,000回）
+  // よりずっと大きく、月間集計をKV経由で行うこと自体が「見張り役の方が
+  // 見張られている本体より厳しい制限を持つ」という本末転倒な構造だった。
+  // ここではKVに一切アクセスせず、リクエスト単位の上限
+  // （R2_MAX_READS_PER_REQUEST）だけで暴走を防ぐ。kvが未設定（＝R2/KV
+  // どちらも無効な環境）の場合のみ、従来どおり安全側に倒してfalseを返す。
   if(!kv) return false;
   const c=counts(id);
   if(c.reads>=R2_MAX_READS_PER_REQUEST) return false;
-  // サンプリング: 全呼び出しのうち 1/READ_COUNTER_SAMPLE_RATE だけ実際に
-  // KVへ問い合わせ・反映する。それ以外は予算チェックをスキップして許可する
-  // （月100万回という予算に対しては十分に安全側。KVへの書き込み頻度を
-  // 大幅に下げることが、通常アクセスでKVの日次無料枠を守る上でより重要）。
-  if (Math.random() >= 1 / READ_COUNTER_SAMPLE_RATE) {
-    c.reads++;
-    return true;
-  }
-  const key=`r2-safety:reads:${monthKey()}`;
-  const current=await numberValue(kv,key);
-  if(current===null||current>=R2_MONTHLY_READ_BUDGET) return false;
-  const saved=await safeKvPut(kv,key,String(current+READ_COUNTER_SAMPLE_RATE),{expirationTtl:40*24*60*60});
-  if(!saved) return false;
   c.reads++;
   return true;
 }
@@ -125,17 +146,28 @@ export async function reserveR2Write(
   if(state===null||state.writes>=R2_MONTHLY_WRITE_BUDGET) return false;
   const projected=Math.max(0,state.storageBytes-oldBytes+newBytes);
   if(projected>R2_STORAGE_BUDGET_BYTES) return false;
-  // 1回のR2書き込みにつきKV書き込みは1回のみ（書き込み回数・保存容量・
-  // オブジェクトサイズを1つのJSON値にまとめる。以前は3回に分かれていて
-  // KVの日次無料枠を圧迫していた）。
-  const nextState:WriteBudgetState={writes:state.writes+1,storageBytes:projected};
-  const saved=await safeKvPut(
-    kv,
-    writeBudgetKey(mk),
-    JSON.stringify(nextState),
-    {expirationTtl:40*24*60*60}
-  );
-  if(!saved) return false;
+
+  // 2026-08-26追記: 月間書き込みカウンター（writeBudgetKey）へのKV反映を
+  // 間引く。R2への実際の書き込み（bucket.put）は下の行で毎回必ず行われ、
+  // キャッシュの内容・精度は一切変わらない。間引かれるのは「今月あと
+  // 何回書けるか」を数えるKV側の記録頻度のみ。保存容量（storageBytes）は
+  // 精度が必要なため毎回正確に計算するが、KVへの反映自体は
+  // WRITE_COUNTER_SAMPLE_RATE回に1回にまとめる。
+  if (Math.random() < 1 / WRITE_COUNTER_SAMPLE_RATE) {
+    const nextState:WriteBudgetState={
+      writes:state.writes+WRITE_COUNTER_SAMPLE_RATE,
+      storageBytes:projected,
+    };
+    const saved=await safeKvPut(
+      kv,
+      writeBudgetKey(mk),
+      JSON.stringify(nextState),
+      {expirationTtl:40*24*60*60}
+    );
+    if(!saved) return false;
+  }
+  // 次回このキーへ書き込む際のoldBytes計算に必要なため、個々のオブジェクト
+  // サイズは間引かず毎回正確に記録する（精度に直結する部分）。
   const sizeSaved=await safeKvPut(kv,`r2-safety:size:${objectKey}`,String(Math.floor(newBytes)),{expirationTtl:40*24*60*60});
   if(!sizeSaved) return false;
   c.writes++;
