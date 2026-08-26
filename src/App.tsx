@@ -74,11 +74,17 @@ import {
 import { loadPrecisionSettingsFromStorage, savePrecisionSettingsToStorage } from "./precision/precisionSettingsStorage";
 import { formatEstimatedRemainingTime } from "./search/searchProgress";
 import {
+  buildDiagnosticDetail,
   publishUserNotice,
   subscribeUserNotices,
   toUserFacingErrorMessage,
   type UserNoticeEvent,
 } from "./errors/userFeedback";
+import {
+  beginCesiumIonConnection,
+  completeCesiumIonConnection,
+  getValidCesiumIonAccessToken,
+} from "./precision/cesiumIonConnection";
 
 import { flyMapToTarget } from "./cesium/camera";
 import {
@@ -96,11 +102,11 @@ import {
 } from "./cesium/celestialOcclusion";
 import {
   calculateTripodCandidates,
+  getLastTripodSearchDiagnostics,
 } from "./cesium/tripodCandidates";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
-import { authorizeHighPrecisionSession } from "./precision/highPrecisionSession";
 import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
 import {
   calculateKarneyDestinationPoint,
@@ -428,6 +434,39 @@ function App() {
       id: ++userNoticeSequenceRef.current,
     });
   }, []);
+
+  // Cesium ionのOAuth認証画面から戻ってきた直後（URLに?code=...&state=...が
+  // 含まれる）であれば、アクセストークンへの交換を行う。アプリ起動時に
+  // 一度だけ実行すればよいため、依存配列は空にしている。
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code || !state) return;
+    // 二重処理・履歴汚染を避けるため、まずURLからパラメータを取り除く。
+    url.searchParams.delete("code");
+    url.searchParams.delete("state");
+    window.history.replaceState({}, "", url.toString());
+
+    void completeCesiumIonConnection(code, state)
+      .then(() => {
+        showUserNotice({
+          key: "cesium-ion-connection",
+          tone: "warning",
+          message: "Cesium ionアカウントを接続しました。Googleタイルモードが利用できます。",
+        });
+      })
+      .catch((error) => {
+        console.warn("Cesium ion接続に失敗しました", error);
+        showUserNotice({
+          key: "cesium-ion-connection",
+          tone: "error",
+          message: error instanceof Error
+            ? `Cesium ionアカウントの接続に失敗しました（${error.message}）`
+            : "Cesium ionアカウントの接続に失敗しました。",
+        });
+      });
+  }, [showUserNotice]);
   const [spotSearchOpen, setSpotSearchOpen] = useState(false);
   const [arCameraOpen, setArCameraOpen] = useState(false);
   const [arTracking, setArTracking] = useState<ArTrackingSnapshot>({ location: null, orientation: null });
@@ -507,6 +546,24 @@ function App() {
   const disableMapMeasurementRef = useRef<(() => void) | null>(null);
   const [precisionSettings, setPrecisionSettings] =
     useState<PrecisionSettings>(loadPrecisionSettings);
+  // BYOA化: ARカメラ画面（ArCameraScreen経由でArCesiumOverlayへ渡す）でも
+  // 高精度モードを使う場合、ユーザー自身のCesium ionトークンが必要になる。
+  // メイン3D地図側（authorizeHighPrecision内）とは別の場所で消費されるため、
+  // ここでもstateとして保持し、accuracyModeが変わるたびに取得し直す。
+  const [arCesiumIonToken, setArCesiumIonToken] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (precisionSettings.accuracyMode !== "highest") {
+      setArCesiumIonToken(undefined);
+      return;
+    }
+    let cancelled = false;
+    void getValidCesiumIonAccessToken().then((token) => {
+      if (!cancelled) setArCesiumIonToken(token ?? undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [precisionSettings.accuracyMode]);
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
@@ -535,8 +592,45 @@ function App() {
   const [tripodCandidateSelectionOpen, setTripodCandidateSelectionOpen] =
     useState(false);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
+  // 2026-08-25追記: 前回の確定候補（tripodCandidatesRef）を距離ヒントとして
+  // 再利用する仕組みは、天体IDだけをキーにしており「どの被写体で見つかった
+  // 距離か」を区別していなかった。そのため被写体を切り替えた直後は、
+  // 前の被写体での距離が誤ったヒントとして使われ、まずヒント周辺を無駄に
+  // 探索してから改めて全距離走査するという二度手間が生じ、体感速度が
+  // 大きく悪化する原因になっていた。ここで直前に検索した被写体の緯度経度を
+  // 保持し、被写体が変わっていたら距離ヒントを使わないようにする。
+  const tripodHintSubjectRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const [tripodCandidateCalculationStatus, setTripodCandidateCalculationStatus] =
     useState<"idle" | "calculating" | "complete" | "no-solution" | "error">("idle");
+  const [tripodDiagnosticsCopyState, setTripodDiagnosticsCopyState] =
+    useState<"idle" | "copied" | "failed">("idle");
+  const handleCopyTripodDiagnostics = useCallback(async () => {
+    const diagnostics = getLastTripodSearchDiagnostics();
+    if (!diagnostics) return;
+    const elapsedSeconds = diagnostics.finishedAtMs
+      ? ((diagnostics.finishedAtMs - diagnostics.startedAtMs) / 1000).toFixed(1)
+      : "計測中";
+    const lines = [
+      "[AstroSight三脚探索診断]",
+      `日時: ${new Date().toISOString()}`,
+      `所要時間: ${elapsedSeconds}秒`,
+      "天体別内訳:",
+      ...Object.entries(diagnostics.perCelestialBody).map(([label, entry]) => {
+        const failRate = entry.terrainRequestedPoints > 0
+          ? `${Math.round((entry.terrainFailedPoints / entry.terrainRequestedPoints) * 100)}%`
+          : "0%";
+        return `  ${label}: 交点候補${entry.initialSolutionCount}件→確定${entry.convergedCount}件` +
+          `（地形取得${entry.terrainRequestedPoints}点中${entry.terrainFailedPoints}点失敗=${failRate}）`;
+      }),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setTripodDiagnosticsCopyState("copied");
+    } catch {
+      setTripodDiagnosticsCopyState("failed");
+    }
+    window.setTimeout(() => setTripodDiagnosticsCopyState("idle"), 3_000);
+  }, []);
   const [dateTimeLocal, setDateTimeLocal] = useState(
     loadCelestialDateTime
   );
@@ -1079,16 +1173,35 @@ function App() {
     // 避けて1点確認または近傍のみの狭い走査で済むことが多い
     // （spotPresetSearch.tsの前回距離再利用と同じ仕組み）。
     // 外れていた場合は自動的に従来どおりの全距離走査へフォールバックする。
-    const preferredDistancesById = tripodCandidatesRef.current.reduce(
-      (result, candidate) => {
-        const current = result[candidate.id];
-        if (current === undefined || candidate.distanceMeters > current) {
-          result[candidate.id] = candidate.distanceMeters;
-        }
-        return result;
-      },
-      {} as Partial<Record<TripodCandidate["id"], number>>
-    );
+    //
+    // ただし被写体そのものが切り替わった場合、前回の距離ヒントはほぼ確実に
+    // 無関係（別の場所までの距離）であり、渡すと「ヒント周辺の無駄な探索」
+    // →「結局全距離走査」という二度手間で逆に遅くなる。被写体の緯度経度が
+    // 前回と十分近い（同一被写体とみなせる、約10m以内）場合だけヒントを使う。
+    const SUBJECT_SAME_THRESHOLD_METERS = 10;
+    const previousHintSubject = tripodHintSubjectRef.current;
+    const isSameSubjectAsBefore =
+      previousHintSubject !== null &&
+      calculateKarneyLineMetrics(
+        { latitude: previousHintSubject.latitude, longitude: previousHintSubject.longitude, height: 0 } as GroundPoint,
+        { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude, height: 0 } as GroundPoint
+      ).distanceMeters <= SUBJECT_SAME_THRESHOLD_METERS;
+    tripodHintSubjectRef.current = {
+      latitude: subjectPoint.latitude,
+      longitude: subjectPoint.longitude,
+    };
+    const preferredDistancesById = isSameSubjectAsBefore
+      ? tripodCandidatesRef.current.reduce(
+          (result, candidate) => {
+            const current = result[candidate.id];
+            if (current === undefined || candidate.distanceMeters > current) {
+              result[candidate.id] = candidate.distanceMeters;
+            }
+            return result;
+          },
+          {} as Partial<Record<TripodCandidate["id"], number>>
+        )
+      : undefined;
 
     // 計算中は固定500mのdirection-only仮候補を描画しない。
     // 精密計算が確定したaligned候補だけを表示する。
@@ -1151,6 +1264,12 @@ function App() {
               message: isTerrainDataUnavailable
                 ? `地形データを取得できず、三脚候補を計算できませんでした（${error.message}）。通信状態を確認して再試行してください。`
                 : "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",
+              diagnosticDetail: buildDiagnosticDetail("三脚候補計算", error, {
+                天体: enabledPoints.map((point) => point.id).join(","),
+                日時: selectedDate.toISOString(),
+                焦点距離mm: cameraSettings.focalLengthMm,
+                カメラ高m: cameraSettings.lensCenterHeightMeters,
+              }),
               actionLabel: "再試行",
               onAction: () => setTripodCandidateRetrySequence((current) => current + 1),
             });
@@ -1186,55 +1305,53 @@ function App() {
       return;
     }
 
-    const token = import.meta.env.VITE_CESIUM_ION_TOKEN;
     const accuracyMode = precisionSettings.accuracyMode;
-
-    if (accuracyMode === "highest" && !token) {
-      const message = "Googleタイルモードの3D地図を開始するためのアプリ設定が不足しています。標準モードは利用できます。";
-      console.warn("Cesium Ion token is not configured; highest precision map is unavailable");
-      setStatus(message);
-      showUserNotice({
-        key: "map-initialization",
-        tone: "error",
-        message,
-      });
-      return;
-    }
 
     let disposed = false;
     let localViewer: Viewer | null = null;
     let removeCameraSync: (() => void) | null = null;
 
-    const authorizeHighPrecision = async (): Promise<boolean> => {
-      if (accuracyMode !== "highest") return true;
-      // ARカメラ側（ArCesiumOverlay）とセッションID・上限カウントの仕組みを
-      // 共有するため、共通ヘルパーへ切り出したものを呼び出す。
-      try {
-        await authorizeHighPrecisionSession();
-        return true;
-      } catch (error) {
-        // 上限到達やサーバー側の一時的な不調（KV割り当て超過など）で
-        // 高精度モードの認可が取れなかった場合は、3D地図自体を諦めるのでは
-        // なく標準モードへフォールバックして表示は継続する。
-        console.warn("高精度モードの認可に失敗したため標準モードへフォールバックします:", error);
-        const message = error instanceof Error
-          ? error.message
-          : "Googleタイルモードを利用できなかったため、標準モードで表示しています。";
+    // 2026-08-25追記: 開発者1人のCesium ionトークンを全ユーザーで共有する
+    // 方式（VITE_CESIUM_ION_TOKEN）から、各ユーザーが自分のCesium ion
+    // アカウントを接続して使う方式（BYOA）へ切り替えた。標準モードは
+    // Cesium ionトークンに一切依存しない（createMapViewer内の
+    // createStandardViewerはtokenを受け取らない）ため、この変更で標準
+    // モードの動作は変わらない。
+    const authorizeHighPrecision = async (): Promise<{ available: boolean; token: string | undefined }> => {
+      if (accuracyMode !== "highest") return { available: true, token: undefined };
+
+      const cesiumToken = await getValidCesiumIonAccessToken();
+      if (!cesiumToken) {
+        console.warn("Cesium ion未接続のため標準モードへフォールバックします");
         showUserNotice({
           key: "map-initialization",
           tone: "error",
-          message,
+          message: "Googleタイルモードを利用するには、ご自身のCesium ionアカウントの接続が必要です。標準モードで表示しています。",
+          actionLabel: "接続する",
+          onAction: () => {
+            void beginCesiumIonConnection().then((url) => {
+              window.location.href = url;
+            });
+          },
         });
-        return false;
+        return { available: false, token: undefined };
       }
+
+      // 2026-08-25追記: 旧来のauthorizeHighPrecisionSession()は「開発者が
+      // 共有していたCesium ionアカウントの月間利用件数」を数える仕組みで、
+      // BYOA化した現在では数える対象が実態と合わなくなっている（守るべき
+      // なのは開発者の古いアカウントではなく、接続したユーザー自身の
+      // Cesium ionアカウントの利用量）。実装し直すまでの間、誤った基準で
+      // 正当な接続がブロックされないよう、このチェック自体を一旦外す。
+      return { available: true, token: cesiumToken };
     };
 
     void authorizeHighPrecision()
-      .then((highPrecisionAvailable) =>
+      .then(({ available, token }) =>
         createMapViewer(
           mapRef.current!,
           token,
-          highPrecisionAvailable ? accuracyMode : "standard",
+          available ? accuracyMode : "standard",
           setStatus
         )
       )
@@ -3523,11 +3640,10 @@ ${diagnosticMessage}
     }
     const viewer = mapViewerRef.current;
     if (mode === "3d" && (!mapReady || !viewer || viewer.isDestroyed())) {
-      setSearchMessage(
-        import.meta.env.VITE_CESIUM_ION_TOKEN
-          ? "3Dマップを読み込み中です。準備が完了してからもう一度お試しください"
-          : "3Dマップに必要な設定がないため、2D地図を表示しています"
-      );
+      // 標準モードはCesium ionトークンを必要としないため、以前あった
+      // 「トークン未設定なら2D地図のまま」という分岐は現在の設計と
+      // 合わなくなっていた（標準モードは常に3D表示できる）。
+      setSearchMessage("3Dマップを読み込み中です。準備が完了してからもう一度お試しください");
       return;
     }
     let synchronizedCenter = mapCenter;
@@ -3725,7 +3841,7 @@ ${diagnosticMessage}
         subjectAvailable={Boolean(subjectPoint)}
         subjectPoint={subjectPoint}
         accuracyMode={precisionSettings.accuracyMode}
-        cesiumIonToken={import.meta.env.VITE_CESIUM_ION_TOKEN}
+        cesiumIonToken={arCesiumIonToken}
         lensCenterHeightMeters={cameraSettings.lensCenterHeightMeters}
         onClose={() => setArCameraOpen(false)}
         onSaveCurrentPlan={saveCurrentCompositionFromAr}
@@ -4089,6 +4205,22 @@ ${diagnosticMessage}
               </button>
             )}
 
+            {tripodCandidateCalculationStatus !== "idle" &&
+              tripodCandidateCalculationStatus !== "calculating" && (
+                <button
+                  type="button"
+                  className="map-tripod-diagnostics-copy"
+                  onClick={handleCopyTripodDiagnostics}
+                  title="所要時間・見つかった交点候補数などをコピーします（開発者への報告用）"
+                >
+                  {tripodDiagnosticsCopyState === "copied"
+                    ? "診断情報をコピーしました"
+                    : tripodDiagnosticsCopyState === "failed"
+                      ? "コピーできませんでした"
+                      : "この検索の診断情報をコピー"}
+                </button>
+              )}
+
             {mapMeasuring && (
               <div className="map-tripod-candidate-status complete" role="status" aria-live="polite">
                 {mapMeasureDistanceMeters === null
@@ -4204,6 +4336,7 @@ ${diagnosticMessage}
           tone={userNotice.tone}
           message={userNotice.message}
           actionLabel={userNotice.actionLabel}
+          diagnosticDetail={userNotice.diagnosticDetail}
           onAction={userNotice.onAction
             ? () => {
                 userNotice.onAction?.();

@@ -19,7 +19,6 @@ import { celestialWorldDirection } from "../cesium/celestialOcclusion";
 import { loadGooglePhotorealisticTilesetWithRetry } from "../cesium/createMapViewer";
 import { markAsGoogleTileset } from "../cesium/googleTilesetMarker";
 import { dateFromZonedDateTimeLocal, daySerialFromDateText, dateTextFromDaySerial, zonedDateParts } from "../time/zonedTime";
-import { authorizeHighPrecisionSession } from "../precision/highPrecisionSession";
 import type { CalculationMode } from "../types/camera";
 import type { CelestialBodyId, CelestialVisibility, HorizontalCoordinates } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
@@ -372,13 +371,13 @@ export function ArCesiumOverlay({
 
     async function createGoogleViewer(container: HTMLDivElement): Promise<Viewer> {
       if (!cesiumIonToken) {
-        throw new Error("Googleタイルモードの3D表示に必要なCesium ion設定が不足しています");
+        throw new Error("Cesium ionアカウントが接続されていないため、Googleタイルモードは利用できません");
       }
 
-      // メイン3Dマップと同じセッションID・上限カウントの仕組みを流用するため、
-      // ここで独自にセッションを新規発行することはしない（共通ヘルパー任せ）。
-      onStatusChange?.("AR 3D：Google 3Dの利用可否を確認しています…");
-      await authorizeHighPrecisionSession();
+      // 2026-08-25追記: 旧来はここで開発者共有アカウントの月間利用件数
+      // チェック（authorizeHighPrecisionSession）を行っていたが、BYOA化に
+      // より数える対象が実態と合わなくなったため一旦外している
+      // （src/App.tsxの同じ変更と対）。
       if (disposed) throw new Error("disposed");
 
       Ion.defaultAccessToken = cesiumIonToken;
