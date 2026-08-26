@@ -181,3 +181,62 @@ export async function getValidCesiumIonAccessToken(): Promise<string | null> {
 export function isCesiumIonConnected(): boolean {
   return loadCesiumIonConnection() !== null;
 }
+
+// 2026-08-26追記: 「1つのCesium ionアカウントの利用が、複数端末で使い
+// 回されていないか」を検知する目的で導入。ただしAstroSightはユーザー
+// アカウントを持たない設計のため、サーバー側で複数端末を横断して
+// 名寄せする手段がない。そのため、この端末単体での利用回数のみを
+// 数える（=複数端末で使い回された場合、それぞれの端末は無自覚に低い
+// カウントのままになる）。この limitation はユーザーに正直に案内し
+// （「これは端末ごとのカウントであり、複数端末で同じアカウントを使う
+// 場合は合算で無料枠を超える可能性がある」）、実際の判断はユーザー
+// 自身の申告・注意に委ねる設計とする。
+const USAGE_COUNT_STORAGE_KEY = "ksg-cesium-ion-usage-count";
+const USAGE_SESSION_STORAGE_KEY = "ksg-cesium-ion-usage-session";
+const USAGE_SESSION_TTL_MS = 3 * 60 * 60 * 1000; // 3時間: 同一セッション内の再利用は1回として数える
+export const CESIUM_ION_USAGE_WARNING_THRESHOLD = 500;
+
+type UsageRecord = { month: string; count: number };
+
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function loadUsageRecord(): UsageRecord {
+  try {
+    const raw = localStorage.getItem(USAGE_COUNT_STORAGE_KEY);
+    if (!raw) return { month: currentMonthKey(), count: 0 };
+    const parsed = JSON.parse(raw) as Partial<UsageRecord>;
+    if (typeof parsed.month !== "string" || typeof parsed.count !== "number") {
+      return { month: currentMonthKey(), count: 0 };
+    }
+    // 月が変わっていたらリセットする。
+    if (parsed.month !== currentMonthKey()) return { month: currentMonthKey(), count: 0 };
+    return parsed as UsageRecord;
+  } catch {
+    return { month: currentMonthKey(), count: 0 };
+  }
+}
+
+/**
+ * 高精度モード（Googleタイルモード）を1回利用するたびに呼び出す。
+ * 同一セッション（3時間）内の重複呼び出しはカウントしない。
+ * 戻り値は「この端末での今月の利用回数」。
+ */
+export function recordCesiumIonHighPrecisionUsage(): number {
+  const now = Date.now();
+  const lastSessionAt = Number(sessionStorage.getItem(USAGE_SESSION_STORAGE_KEY) ?? "0");
+  const record = loadUsageRecord();
+  if (Number.isFinite(lastSessionAt) && now - lastSessionAt < USAGE_SESSION_TTL_MS) {
+    return record.count;
+  }
+  sessionStorage.setItem(USAGE_SESSION_STORAGE_KEY, String(now));
+  const updated: UsageRecord = { month: currentMonthKey(), count: record.count + 1 };
+  localStorage.setItem(USAGE_COUNT_STORAGE_KEY, JSON.stringify(updated));
+  return updated.count;
+}
+
+export function getCesiumIonMonthlyUsageCount(): number {
+  return loadUsageRecord().count;
+}

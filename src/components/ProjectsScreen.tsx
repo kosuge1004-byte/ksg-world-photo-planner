@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { PlannerProject } from "../types/project";
+import { estimateProjectByteSize, formatByteSize } from "../projectStorage";
 import "./ProjectScreens.css";
 
 type Props = {
@@ -118,11 +119,22 @@ export function ProjectsScreen({
       ) : (
         <div className="project-list">
           {projects.length === 0 && <p>保存済みプロジェクトはありません。</p>}
+          {projects.length > 0 && (
+            <p className="project-list-total-size">
+              全{projects.length}件・合計{formatByteSize(
+                projects.reduce((sum, p) => sum + estimateProjectByteSize(p), 0)
+              )}
+            </p>
+          )}
           {projects.map((p) => (
             <article key={p.id}>
               <button className="project-main" onClick={() => onLoad(p)}>
                 <strong>{p.name}</strong>
-                <span>{p.shootingDateTimeLocal.replace("T", " ")}</span>
+                <span>
+                  {p.shootingDateTimeLocal.replace("T", " ")}
+                  {" ・ "}
+                  {formatByteSize(estimateProjectByteSize(p))}
+                </span>
               </button>
               <div className="project-card-actions">
                 <label className="check project-calendar-check">

@@ -134,3 +134,21 @@ export function upsertProject(project: PlannerProject): PlannerProject[] {
 export function deleteProject(id: string): PlannerProject[] {
   return saveProjects(loadProjects().filter((item) => item.id !== id));
 }
+
+/**
+ * プロジェクト1件が端末のストレージ上でどれだけの容量を占めるかの概算。
+ * JSON文字列のUTF-8バイト数で計算する（日本語のプロジェクト名等は
+ * UTF-16の文字数と実際のバイト数が異なるため、TextEncoderで正確に測る）。
+ * 個々のプロジェクトはどれも1〜2KB程度で大差が付きにくいが、件数が
+ * 数百〜数千に積み重なると無視できない容量になるため、一覧画面での
+ * 整理の目安として使う。
+ */
+export function estimateProjectByteSize(project: PlannerProject): number {
+  return new TextEncoder().encode(JSON.stringify(project)).length;
+}
+
+export function formatByteSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
+}

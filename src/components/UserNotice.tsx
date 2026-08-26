@@ -8,6 +8,7 @@ type Props = {
   onAction?: () => void;
   onDismiss: () => void;
   diagnosticDetail?: string;
+  prominent?: boolean;
 };
 
 export function UserNotice({
@@ -17,6 +18,7 @@ export function UserNotice({
   onAction,
   onDismiss,
   diagnosticDetail,
+  prominent,
 }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
@@ -31,17 +33,17 @@ export function UserNotice({
     window.setTimeout(() => setCopyState("idle"), 3_000);
   };
 
-  // 2026-08-26追記: 「Cesium ion接続」のような、見逃すとGoogleタイル
-  // モードが使えないままになる重要な案内が、画面上部に小さく表示される
-  // だけで気づかれにくかったため、行動を要する通知（actionLabelがある
-  // もの）だけ、画面中央に大きく表示する。
+  // 2026-08-26追記: 「Cesium ion接続」のような行動を要する通知
+  // （actionLabelがあるもの）に加え、見逃すと実害につながる重要な
+  // 情報系の通知（prominent=true指定）も、画面中央に大きく表示する。
   const isActionable = Boolean(actionLabel && onAction);
+  const showProminent = isActionable || Boolean(prominent);
 
   return (
     <>
-      {isActionable && <div className="user-notice-backdrop" onClick={onDismiss} />}
+      {showProminent && <div className="user-notice-backdrop" onClick={onDismiss} />}
       <aside
-        className={`user-notice ${tone}${isActionable ? " prominent" : ""}`}
+        className={`user-notice ${tone}${showProminent ? " prominent" : ""}`}
         role={tone === "error" ? "alert" : "status"}
         aria-live={tone === "error" ? "assertive" : "polite"}
       >
@@ -64,6 +66,11 @@ export function UserNotice({
                 : copyState === "failed"
                   ? "コピーできませんでした"
                   : "詳細をコピー"}
+            </button>
+          )}
+          {showProminent && !isActionable && (
+            <button type="button" onClick={onDismiss}>
+              分かりました
             </button>
           )}
           <button

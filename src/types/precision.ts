@@ -10,7 +10,7 @@ export type PrecisionSettings = {
 };
 
 export const DEFAULT_PRECISION_SETTINGS: PrecisionSettings = {
-  accuracyMode: "standard",
+  accuracyMode: "highest",
   refractionCorrectionMode: "auto",
   tripodCandidateDoubleCheckEnabled: false,
 };

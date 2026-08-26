@@ -11,6 +11,14 @@ export type UserNoticeEvent = {
    * 時だけクリップボードへコピーされる（自動送信・自動収集はしない）。
    */
   diagnosticDetail?: string;
+  /**
+   * 2026-08-26追記: 「接続する」ボタンのような行動を要する通知
+   * （actionLabelがある場合）だけでなく、見逃すと実害につながる重要な
+   * 情報系の通知（例: Cesium ion無料枠の警告）も、画面中央に大きく
+   * 表示したい場合に明示的に指定する。actionLabelの有無とは独立して
+   * 制御できるようにする。
+   */
+  prominent?: boolean;
 };
 
 export type UserErrorContext =

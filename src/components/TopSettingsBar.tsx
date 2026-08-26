@@ -26,6 +26,9 @@ type Props = {
   onOpenArCamera: () => void;
   precisionSettings: PrecisionSettings;
   onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
+  cesiumIonConnected: boolean;
+  onConnectCesiumIon: () => void;
+  onDisconnectCesiumIon: () => void;
 };
 
 export function TopSettingsBar({
@@ -38,6 +41,9 @@ export function TopSettingsBar({
   onOpenArCamera,
   precisionSettings,
   onPrecisionSettingsChange,
+  cesiumIonConnected,
+  onConnectCesiumIon,
+  onDisconnectCesiumIon,
 }: Props) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const menuContainerRef = useRef<HTMLElement>(null);
@@ -158,6 +164,9 @@ export function TopSettingsBar({
             <strong>メニュー</strong>
             <button type="button" className="menu-close-button" onClick={() => { closeDetailPanels(); setModeMenuOpen(false); }} aria-label="メニューを閉じる">閉じる</button>
           </div>
+          <button type="button" onClick={() => toggleDetailPanel("3d")} aria-expanded={threeDSourceMenuOpen}>
+            <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
+          </button>
           <button type="button" onClick={() => {
             setModeMenuOpen(false);
             onOpenCalendar();
@@ -199,9 +208,6 @@ export function TopSettingsBar({
           )}
           <button type="button" onClick={() => toggleDetailPanel("precision")} aria-expanded={precisionMenuOpen}>
             <b>精度設定</b><small>三脚候補の検算・屈折補正</small>
-          </button>
-          <button type="button" onClick={() => toggleDetailPanel("3d")} aria-expanded={threeDSourceMenuOpen}>
-            <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
           </button>
           <button
             type="button"
@@ -282,6 +288,25 @@ export function TopSettingsBar({
                 <input
                   type="radio"
                   name="accuracy-mode"
+                  checked={precisionSettings.accuracyMode === "highest"}
+                  onChange={() => onPrecisionSettingsChange({
+                    ...precisionSettings,
+                    accuracyMode: "highest",
+                  })}
+                />
+                <span className="precision-choice-copy">
+                  <span className="precision-choice-title">
+                    <b>Google Photorealistic 3D Tiles</b><small>初期値</small>
+                  </span>
+                  <small>
+                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。遮蔽判定・最終確認は標準モードと同じくDEM地形のみで行います（建物3Dは表示専用です）。従量制サービスの利用量が増えます。
+                  </small>
+                </span>
+              </label>
+              <label className="precision-choice">
+                <input
+                  type="radio"
+                  name="accuracy-mode"
                   checked={precisionSettings.accuracyMode === "standard"}
                   onChange={() => onPrecisionSettingsChange({
                     ...precisionSettings,
@@ -290,30 +315,26 @@ export function TopSettingsBar({
                 />
                 <span className="precision-choice-copy">
                   <span className="precision-choice-title">
-                    <b>標準3D表示（無料）</b><small>初期値</small>
+                    <b>国土地理院3D表示</b>
                   </span>
                   <small>
                     Google Photorealistic 3D Tilesを使用しません。天体計算、Karney測地線、DEM、ジオイド、気象連動屈折補正など従量制でない計算は変わりません。
                   </small>
                 </span>
               </label>
-              <label className="precision-choice">
-                <input
-                  type="radio"
-                  name="accuracy-mode"
-                  checked={precisionSettings.accuracyMode === "highest"}
-                  onChange={() => onPrecisionSettingsChange({
-                    ...precisionSettings,
-                    accuracyMode: "highest",
-                  })}
-                />
-                <span className="precision-choice-copy">
-                  <span className="precision-choice-title"><b>Google Photorealistic 3D Tiles（有料）</b></span>
-                  <small>
-                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。遮蔽判定・最終確認は標準モードと同じくDEM地形のみで行います（建物3Dは表示専用です）。従量制サービスの利用量が増えます。
-                  </small>
-                </span>
-              </label>
+              <div className="cesium-ion-connection-status">
+                {cesiumIonConnected ? (
+                  <>
+                    <small>✓ ご自身のCesium ionアカウントに接続済みです。</small>
+                    <button type="button" onClick={onDisconnectCesiumIon}>接続を解除</button>
+                  </>
+                ) : (
+                  <>
+                    <small>Google Photorealistic 3D Tilesの利用には、ご自身のCesium ionアカウントの接続が必要です。</small>
+                    <button type="button" onClick={onConnectCesiumIon}>Cesium ionアカウントに接続</button>
+                  </>
+                )}
+              </div>
               <div className="precision-data-guide">
                 <strong>使用する地形・3Dデータ</strong>
                 <small>

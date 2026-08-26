@@ -47,6 +47,7 @@ import { SharedProjectImportDialog } from "./components/SharedProjectImportDialo
 import { ProjectShareQrDialog } from "./components/ProjectShareQrDialog";
 import { ProjectQrScanDialog } from "./components/ProjectQrScanDialog";
 import { PlacementConfirmDialog } from "./components/PlacementConfirmDialog";
+import { CesiumIonConsentDialog } from "./components/CesiumIonConsentDialog";
 import {
   decodeProjectShareCode,
   encodeProjectShareCode,
@@ -84,6 +85,10 @@ import {
   beginCesiumIonConnection,
   completeCesiumIonConnection,
   getValidCesiumIonAccessToken,
+  isCesiumIonConnected,
+  disconnectCesiumIon,
+  recordCesiumIonHighPrecisionUsage,
+  CESIUM_ION_USAGE_WARNING_THRESHOLD,
 } from "./precision/cesiumIonConnection";
 
 import { flyMapToTarget } from "./cesium/camera";
@@ -149,6 +154,7 @@ import type {
 } from "./types/camera";
 import type {
   CelestialVisibility,
+  CelestialBodyId,
   CelestialOcclusion,
   CelestialOcclusionMap,
   TripodCandidate,
@@ -571,6 +577,44 @@ function App() {
       cancelled = true;
     };
   }, [precisionSettings.accuracyMode]);
+
+  // 設定画面（TopSettingsBar）で接続状態の表示・解除ボタンを出すための
+  // state。アプリ起動時とaccuracyMode変更時に確認し直す。
+  const [cesiumIonConnected, setCesiumIonConnectedState] = useState(() => isCesiumIonConnected());
+  useEffect(() => {
+    setCesiumIonConnectedState(isCesiumIonConnected());
+  }, [precisionSettings.accuracyMode, arCesiumIonToken]);
+  const handleDisconnectCesiumIon = useCallback(() => {
+    disconnectCesiumIon();
+    setCesiumIonConnectedState(false);
+    setArCesiumIonToken(undefined);
+    showUserNotice({
+      key: "cesium-ion-connection",
+      tone: "warning",
+      message: "Cesium ionアカウントの接続を解除しました。",
+    });
+    // 3D地図がGoogleタイルモードで表示中だった場合、標準モードへ
+    // 切り替わるよう地図の初期化処理を再実行させる。
+    setMapInitializationAttempt((current) => current + 1);
+  }, [showUserNotice]);
+
+  // 2026-08-26追記: Cesium社（Bentley Systems）担当者からの回答に基づき、
+  // 「アプリケーションや利用規約等において、利用者が適切なCesium ion
+  // プランおよびライセンスを購入するよう案内いただくことをお勧めします」
+  // との推奨があったため、OAuth認証画面へ直接飛ばす前に、必ず
+  // CesiumIonConsentDialog（規約・プランに関する案内、リンク付き）を
+  // 表示し、明示的な同意を得てから接続を開始する。
+  const [cesiumIonConsentOpen, setCesiumIonConsentOpen] = useState(false);
+  const requestCesiumIonConnection = useCallback(() => {
+    setCesiumIonConsentOpen(true);
+  }, []);
+  const handleConfirmCesiumIonConsent = useCallback(() => {
+    setCesiumIonConsentOpen(false);
+    void beginCesiumIonConnection().then((url) => {
+      window.location.href = url;
+    });
+  }, []);
+
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
   const [timeZone, setTimeZone] = useState(systemTimeZone);
 
@@ -1335,21 +1379,26 @@ function App() {
           tone: "error",
           message: "Googleタイルモードを利用するには、ご自身のCesium ionアカウントの接続が必要です。標準モードで表示しています。",
           actionLabel: "接続する",
-          onAction: () => {
-            void beginCesiumIonConnection().then((url) => {
-              window.location.href = url;
-            });
-          },
+          onAction: requestCesiumIonConnection,
         });
         return { available: false, token: undefined };
       }
 
-      // 2026-08-25追記: 旧来のauthorizeHighPrecisionSession()は「開発者が
-      // 共有していたCesium ionアカウントの月間利用件数」を数える仕組みで、
-      // BYOA化した現在では数える対象が実態と合わなくなっている（守るべき
-      // なのは開発者の古いアカウントではなく、接続したユーザー自身の
-      // Cesium ionアカウントの利用量）。実装し直すまでの間、誤った基準で
-      // 正当な接続がブロックされないよう、このチェック自体を一旦外す。
+      // 2026-08-26追記: 「1つのCesium ionアカウントを複数端末で使い回して
+      // いないか」を検知する目的の利用回数記録。ただしAstroSightは
+      // ユーザーアカウントを持たないため、この端末単体でのカウントに
+      // とどまる（詳細はcesiumIonConnection.tsのコメント参照）。
+      // 500回（1人の通常利用ではまず届かない水準）に達しても利用は
+      // 止めず、複数端末で使っている可能性を案内する警告を出すのみとする。
+      const usageCount = recordCesiumIonHighPrecisionUsage();
+      if (usageCount === CESIUM_ION_USAGE_WARNING_THRESHOLD) {
+        showUserNotice({
+          key: "cesium-ion-usage-warning",
+          tone: "warning",
+          prominent: true,
+          message: `このCesium ionアカウントは、この端末だけで今月すでに${usageCount}回、Googleタイルモードを利用しています。1つのアカウントは1台の端末でのみ利用する前提のため、この回数がそのままアカウント全体の今月の利用実績です（他の端末でも使っている場合は、実際はさらに多くなります）。Cesium ion無料プラン（Community）の上限に近づいている、または超えている可能性があります。プランの確認は設定画面から行えます。`,
+        });
+      }
       return { available: true, token: cesiumToken };
     };
 
@@ -2633,6 +2682,29 @@ ${diagnosticMessage}
     const subject = setSubjectPinFromPosition(viewer, Cartesian3.fromDegrees(project.subject.longitude, project.subject.latitude, project.subject.height), project.subject.label, project.subject);
     const tripod = setTripodPin(viewer, Cartesian3.fromDegrees(project.tripod.longitude, project.tripod.latitude, project.tripod.height), project.tripod);
     setSubjectPoint(subject); setTripodPoint(tripod);
+
+    // 2026-08-26追記: プロジェクトを開いた直後の最初の三脚探索が、
+    // 距離ヒントなしの全距離走査（8m〜50km）になり、無駄に多くの地形
+    // データ取得（実機で205点）が発生していた不具合の修正。
+    // 「プロジェクトから呼んでいるので初めてではない」にもかかわらず、
+    // tripodHintSubjectRef／tripodCandidatesRef はページ読込のたびに
+    // 空の状態から始まるため、ヒントが一切効いていなかった。
+    // 保存済みの被写体〜三脚間の距離を使い、プロジェクト保存時点で
+    // 有効だった天体それぞれに対する初期ヒントとして復元する。
+    const savedDistanceMeters = calculateKarneyLineMetrics(tripod, subject).distanceMeters;
+    const enabledCelestialIds = (Object.keys(project.celestialVisibility) as CelestialBodyId[])
+      .filter((id) => project.celestialVisibility[id]);
+    tripodCandidatesRef.current = enabledCelestialIds.map((id) => ({
+      id,
+      label: "",
+      latitude: tripod.latitude,
+      longitude: tripod.longitude,
+      height: tripod.height,
+      distanceMeters: savedDistanceMeters,
+      solutionType: "aligned",
+    }));
+    tripodHintSubjectRef.current = { latitude: subject.latitude, longitude: subject.longitude };
+
     // 旧形式（ジオイド高・標高フィールド未保存）のプロジェクトは、標高が
     // 楕円体高のまま扱われ、日本国内で約30〜40mの系統誤差になりうる。
     // 楕円体高（3D位置）自体は保存済みの値のまま変更せず、ジオイド高だけを
@@ -3834,6 +3906,9 @@ ${diagnosticMessage}
         }}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
+        cesiumIonConnected={cesiumIonConnected}
+        onConnectCesiumIon={requestCesiumIonConnection}
+        onDisconnectCesiumIon={handleDisconnectCesiumIon}
       />
       <ArCameraScreen
         open={arCameraOpen}
@@ -4344,6 +4419,7 @@ ${diagnosticMessage}
           message={userNotice.message}
           actionLabel={userNotice.actionLabel}
           diagnosticDetail={userNotice.diagnosticDetail}
+          prominent={userNotice.prominent}
           onAction={userNotice.onAction
             ? () => {
                 userNotice.onAction?.();
@@ -4537,6 +4613,11 @@ ${diagnosticMessage}
         errorMessage={pendingPlacementError}
         onConfirm={() => void confirmPendingPlacement()}
         onCancel={cancelPendingPlacement}
+      />
+      <CesiumIonConsentDialog
+        open={cesiumIonConsentOpen}
+        onConfirm={handleConfirmCesiumIonConsent}
+        onCancel={() => setCesiumIonConsentOpen(false)}
       />
     </main>
   );
