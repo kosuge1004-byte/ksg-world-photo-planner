@@ -39,7 +39,16 @@ const DEFAULT_SAMPLE_COUNT = 32;
 // 10m DEMで一括補間する。全域を1m化しないため、精度向上と通信量抑制を両立する。
 const ADAPTIVE_COARSE_MAX_SPAN_METERS = 500;
 const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
-const ADAPTIVE_NEAR_RAY_ERROR_DEGREES = 0.12;
+// 2026-08-26追記: 以前は「距離に比例して広がる」高さ差の許容値
+// （0.12度 × 距離 × 0.05）を使っており、遠距離の候補ほど「レイに近い」と
+// 判定されやすくなっていた。これは最終的な確定精度（CONVERGED_HORIZONTAL_
+// DEGREES=0.002度・ROUND_TRIP_SCREEN_TOLERANCE_PERCENT=0.5%、共に距離に
+// 依存しない固定基準）には一切影響しない、粗い探索段階での「交点の見逃し
+// 防止」のための下準備にすぎなかった。三脚候補の確定精度は距離に関係なく
+// 常に数cm単位を要求されるべきであり、この粗い探索の判定だけが「遠いから
+// 緩くてよい」という誤った前提を持っていたのは筋が通っていなかったため、
+// 距離に依存しない固定のメートル単位の許容値に変更する。
+const ADAPTIVE_NEAR_RAY_ABSOLUTE_METERS = 6;
 const ADAPTIVE_MAX_TOTAL_SAMPLES = 640;
 // 精密化は固定575点取得ではなく、交差区間だけを32分割して2段階で絞る。
 // 32^2=1024分割相当となるため、従来の576分割より最終距離分解能は高い。
@@ -718,7 +727,7 @@ async function scanRayTerrainIntersections(
     // 高さ差（m）ベースの近接判定。地表付近では傾斜次第で角度しきい値を
     // そのままメートルへ流用できないため、区間内の最小距離に対する見かけの
     // 勾配（前後点の高さ差 / 区間長）が緩やかな場合を「レイに接近」とみなす。
-    const nearRay = Math.min(Math.abs(previous), Math.abs(current)) <= ADAPTIVE_NEAR_RAY_ERROR_DEGREES * distances[index] * 0.05;
+    const nearRay = Math.min(Math.abs(previous), Math.abs(current)) <= ADAPTIVE_NEAR_RAY_ABSOLUTE_METERS;
     const left = index >= 2 ? errors[index - 2] : Number.NaN;
     const right = index + 1 < errors.length ? errors[index + 1] : Number.NaN;
     const localApproach =
