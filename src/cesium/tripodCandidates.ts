@@ -111,11 +111,23 @@ export type TripodSearchDiagnostics = {
        */
       distanceHintUsed: boolean;
       distanceHintMeters: number | undefined;
+      /** 一次探索(狭い範囲)で解が見つからず、広い二次探索へ切り替わったか。 */
+      usedWideFallbackScan: boolean;
+      primaryScanMaxMeters: number | undefined;
     }
   >;
 };
 
 let lastSearchDiagnostics: TripodSearchDiagnostics | null = null;
+
+/**
+ * 2026-08-26追記: scanInitialRayTerrainIntersectionsが「一次探索(狭い範囲)」
+ * と「二次探索(ほぼ全距離範囲)」のどちらに落ちたかを、直近1回分だけ
+ * 記録する診断用変数。天体ごとに複数回呼ばれるため、都度recordDiagnostics
+ * 呼び出し時点の最新値を使う（同一天体内で複数交点があると上書きされるが、
+ * 「395点のような多さの原因が二次探索の発生にあるか」の確認には十分）。
+ */
+let lastScanFallbackInfo: { usedFallback: boolean; primaryMaxMeters: number } | null = null;
 
 export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null {
   return lastSearchDiagnostics;
@@ -928,6 +940,7 @@ async function scanInitialRayTerrainIntersections(
     preferred
   );
   if (primarySolutions.length > 0 || primaryMax >= ABSOLUTE_MAX_DISTANCE_METERS) {
+    lastScanFallbackInfo = { usedFallback: false, primaryMaxMeters: primaryMax };
     return primarySolutions;
   }
 
@@ -940,6 +953,11 @@ async function scanInitialRayTerrainIntersections(
     ),
     maxMeters: ABSOLUTE_MAX_DISTANCE_METERS,
   };
+  // 2026-08-26追記: 診断用。一次探索（seed±余裕の狭い範囲）で解が
+  // 見つからず、この広い二次探索（ほぼ8m〜50km全域）に落ちたことを記録
+  // する。地形取得点数が多い（実機で395点）原因が、この二次探索への
+  // 分岐にあるのかを確定するため。
+  lastScanFallbackInfo = { usedFallback: true, primaryMaxMeters: primaryMax };
   return scanRayTerrainIntersections(
     ray,
     lensCenterHeightMeters,
@@ -1370,6 +1388,8 @@ async function calculateOneCandidates(
       terrainFailedPoints: terrainFailedCount,
       distanceHintUsed: seedDistanceSource === "preferred-hint",
       distanceHintMeters: effectiveSeedDistance,
+      usedWideFallbackScan: lastScanFallbackInfo?.usedFallback ?? false,
+      primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
     });
     return [];
   }
@@ -1639,6 +1659,8 @@ async function calculateOneCandidates(
     terrainFailedPoints: terrainFailedCount,
     distanceHintUsed: seedDistanceSource === "preferred-hint",
     distanceHintMeters: effectiveSeedDistance,
+    usedWideFallbackScan: lastScanFallbackInfo?.usedFallback ?? false,
+    primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
   });
   return unique;
 }

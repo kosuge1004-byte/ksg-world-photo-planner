@@ -673,7 +673,9 @@ function App() {
         return `  ${label}: 交点候補${entry.initialSolutionCount}件→確定${entry.convergedCount}件` +
           `（地形取得${entry.terrainRequestedPoints}点中${entry.terrainFailedPoints}点失敗=${failRate}）` +
           `（距離ヒント: ${entry.distanceHintUsed ? "使用" : "未使用"}` +
-          `${entry.distanceHintMeters !== undefined ? `・${Math.round(entry.distanceHintMeters)}m` : ""}）`;
+          `${entry.distanceHintMeters !== undefined ? `・${Math.round(entry.distanceHintMeters)}m` : ""}）` +
+          `（探索範囲: ${entry.usedWideFallbackScan ? "広域(二次)" : "狭域(一次)"}` +
+          `${entry.primaryScanMaxMeters !== undefined ? `・一次上限${Math.round(entry.primaryScanMaxMeters)}m` : ""}）`;
       }),
     ];
     try {
