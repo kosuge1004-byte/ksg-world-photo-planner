@@ -455,6 +455,13 @@ function App() {
           tone: "warning",
           message: "Cesium ionアカウントを接続しました。Googleタイルモードが利用できます。",
         });
+        // 2026-08-26追記: 以前はここで通知を出すだけで、実際の3D地図
+        // 初期化処理（Cesium ionトークンの取得〜Googleタイルの読み込み）を
+        // 再実行するトリガーが無く、「接続しました」と表示されても
+        // 標準モード（国土地理院地図）のまま固定される不具合があった。
+        // mapInitializationAttemptを更新し、3D地図の初期化useEffectを
+        // 明示的に再実行させる。
+        setMapInitializationAttempt((current) => current + 1);
       })
       .catch((error) => {
         console.warn("Cesium ion接続に失敗しました", error);

@@ -390,6 +390,51 @@ button { cursor: pointer; }
   border-color: rgba(255, 112, 112, .78);
   background: rgba(40, 8, 10, .97);
 }
+.user-notice.prominent {
+  /* 2026-08-26追記: 「Cesium ion接続」のような、見逃すとGoogleタイル
+     モードが使えないままになる重要な案内が、画面上部に小さく表示される
+     だけで気づかれにくかったため、行動を要する通知（actionLabelがある
+     もの）だけ、画面中央に大きく表示するようにした。 */
+  top: 50%;
+  left: 50%;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(340px, calc(100% - 32px));
+  min-height: 0;
+  padding: 22px 20px;
+  border-width: 2px;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .6);
+  font-size: 15px;
+  line-height: 1.6;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+.user-notice-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 12999;
+  background: rgba(0, 0, 0, .55);
+}
+.user-notice.prominent > span {
+  margin-bottom: 14px;
+}
+.user-notice.prominent .user-notice-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.user-notice.prominent .user-notice-actions button {
+  min-height: 44px;
+  font-size: 15px;
+}
+.user-notice.prominent .user-notice-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  min-height: 30px;
+}
 .user-notice > span {
   min-width: 0;
   overflow-wrap: anywhere;
