@@ -671,7 +671,9 @@ function App() {
           ? `${Math.round((entry.terrainFailedPoints / entry.terrainRequestedPoints) * 100)}%`
           : "0%";
         return `  ${label}: 交点候補${entry.initialSolutionCount}件→確定${entry.convergedCount}件` +
-          `（地形取得${entry.terrainRequestedPoints}点中${entry.terrainFailedPoints}点失敗=${failRate}）`;
+          `（地形取得${entry.terrainRequestedPoints}点中${entry.terrainFailedPoints}点失敗=${failRate}）` +
+          `（距離ヒント: ${entry.distanceHintUsed ? "使用" : "未使用"}` +
+          `${entry.distanceHintMeters !== undefined ? `・${Math.round(entry.distanceHintMeters)}m` : ""}）`;
       }),
     ];
     try {

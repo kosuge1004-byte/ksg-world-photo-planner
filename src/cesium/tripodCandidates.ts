@@ -102,6 +102,15 @@ export type TripodSearchDiagnostics = {
       convergedCount: number;
       terrainRequestedPoints: number;
       terrainFailedPoints: number;
+      /**
+       * 2026-08-26追記: 前回検索の距離を再利用する「距離ヒント」が
+       * 実際に使われたかどうか。使われていれば探索範囲が絞り込まれ
+       * 地形取得点数が少なくなるはず。使われていない場合、8m〜50kmの
+       * 全距離走査になり点数が大きく増える。「なぜ点数が多いのか」を
+       * 推測ではなくこの値で確定できるようにする。
+       */
+      distanceHintUsed: boolean;
+      distanceHintMeters: number | undefined;
     }
   >;
 };
@@ -1331,6 +1340,18 @@ async function calculateOneCandidates(
     initialGeometricRayAltitudeDegrees,
     rayDirectionObserver
   );
+  // 2026-08-26追記: 診断用に、実際に使われた初期シード距離と、その出所
+  // （幾何学的な直接計算か、前回検索/プロジェクトからの距離ヒントか）を
+  // 記録する。directSeedDistanceは高度が正であればほぼ常に何らかの値を
+  // 返すため、以前はsearchProfile.preferredDistanceMetersが実質的に
+  // 一度も使われていなかった可能性がある。
+  const effectiveSeedDistance = directSeedDistance ?? searchProfile?.preferredDistanceMeters;
+  const seedDistanceSource: "direct-geometric" | "preferred-hint" | "none" =
+    directSeedDistance !== null
+      ? "direct-geometric"
+      : searchProfile?.preferredDistanceMeters !== undefined
+        ? "preferred-hint"
+        : "none";
   const initialSolutions = await scanInitialRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
@@ -1338,7 +1359,7 @@ async function calculateOneCandidates(
     signal,
     distanceRange,
     searchProfile,
-    directSeedDistance ?? searchProfile?.preferredDistanceMeters,
+    effectiveSeedDistance,
     doubleCheckEnabled
   );
   if (initialSolutions.length === 0) {
@@ -1347,6 +1368,8 @@ async function calculateOneCandidates(
       convergedCount: 0,
       terrainRequestedPoints: terrainRequestedCount,
       terrainFailedPoints: terrainFailedCount,
+      distanceHintUsed: seedDistanceSource === "preferred-hint",
+      distanceHintMeters: effectiveSeedDistance,
     });
     return [];
   }
@@ -1614,6 +1637,8 @@ async function calculateOneCandidates(
     convergedCount: unique.length,
     terrainRequestedPoints: terrainRequestedCount,
     terrainFailedPoints: terrainFailedCount,
+    distanceHintUsed: seedDistanceSource === "preferred-hint",
+    distanceHintMeters: effectiveSeedDistance,
   });
   return unique;
 }
