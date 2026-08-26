@@ -1324,7 +1324,7 @@ function App() {
       if (!cesiumToken) {
         console.warn("Cesium ion未接続のため標準モードへフォールバックします");
         showUserNotice({
-          key: "map-initialization",
+          key: "cesium-ion-connect-prompt",
           tone: "error",
           message: "Googleタイルモードを利用するには、ご自身のCesium ionアカウントの接続が必要です。標準モードで表示しています。",
           actionLabel: "接続する",
