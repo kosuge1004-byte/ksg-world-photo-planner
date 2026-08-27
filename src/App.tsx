@@ -653,6 +653,44 @@ function App() {
   const tripodHintSubjectRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const [tripodCandidateCalculationStatus, setTripodCandidateCalculationStatus] =
     useState<"idle" | "calculating" | "complete" | "no-solution" | "error">("idle");
+
+  // 2026-08-26追記: インストール型アプリ環境（PWA/専用アプリ）では
+  // ブラウザの開発者ツールが使えないため、「計算中のまま何分も動かない」
+  // 状態が、本当に処理が進んでいる（遅いだけ）のか完全に停止している
+  // （デッドロック等）のかを、アプリの中だけで判別できるようにする。
+  // 計算開始から15秒経過してもまだ計算中なら、通信回数・最後の通信から
+  // の経過秒数を自動的に画面へ表示する。
+  const TRIPOD_PROGRESS_DISPLAY_DELAY_MS = 15_000;
+  const [tripodProgressSnapshot, setTripodProgressSnapshot] = useState<{
+    elapsedSeconds: number;
+    roundTripCount: number;
+    secondsSinceLastRoundTrip: number | null;
+  } | null>(null);
+  useEffect(() => {
+    if (tripodCandidateCalculationStatus !== "calculating") {
+      setTripodProgressSnapshot(null);
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      const diagnostics = getLastTripodSearchDiagnostics();
+      if (!diagnostics || diagnostics.finishedAtMs !== null) return;
+      const now = Date.now();
+      const elapsedMs = now - diagnostics.startedAtMs;
+      if (elapsedMs < TRIPOD_PROGRESS_DISPLAY_DELAY_MS) {
+        setTripodProgressSnapshot(null);
+        return;
+      }
+      setTripodProgressSnapshot({
+        elapsedSeconds: Math.round(elapsedMs / 1000),
+        roundTripCount: diagnostics.liveRoundTripCount,
+        secondsSinceLastRoundTrip: diagnostics.liveLastRoundTripFinishedAtMs
+          ? Math.round((now - diagnostics.liveLastRoundTripFinishedAtMs) / 1000)
+          : null,
+      });
+    }, 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [tripodCandidateCalculationStatus]);
+
   const [tripodDiagnosticsCopyState, setTripodDiagnosticsCopyState] =
     useState<"idle" | "copied" | "failed">("idle");
   const handleCopyTripodDiagnostics = useCallback(async () => {
@@ -4292,6 +4330,20 @@ ${diagnosticMessage}
                       ? "現在の条件では確定できる三脚候補がありません"
                       : "三脚候補の計算に失敗しました"}
               </button>
+            )}
+
+            {tripodProgressSnapshot && (
+              <p className="map-tripod-progress-snapshot" role="status" aria-live="polite">
+                計算中… 経過{tripodProgressSnapshot.elapsedSeconds}秒・
+                通信{tripodProgressSnapshot.roundTripCount}回
+                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null
+                  ? `・最後の通信から${tripodProgressSnapshot.secondsSinceLastRoundTrip}秒経過`
+                  : "・まだ通信していません"}
+                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null &&
+                  tripodProgressSnapshot.secondsSinceLastRoundTrip >= 30 && (
+                    <><br />⚠ 30秒以上通信が発生していません。処理が停止している可能性があります。</>
+                  )}
+              </p>
             )}
 
             {tripodCandidateCalculationStatus !== "idle" &&

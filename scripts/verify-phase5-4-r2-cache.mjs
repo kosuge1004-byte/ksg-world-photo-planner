@@ -12,7 +12,11 @@ const checks = [
   [cache.includes("expiresAt") && cache.includes("version"), "TTL and version envelope"],
   [cache.includes("inFlight") && cache.includes('cache: "shared"'), "stampede protection"],
   [cache.includes("allowR2Read") && cache.includes("reserveR2Write"), "R2 read/write budget guards"],
-  [cache.includes("trackedObjectBytes"), "R2 storage accounting"],
+  // 2026-08-26: KVベースの月間保存容量集計(trackedObjectBytes)は撤廃。
+  // KVの無料枠(1日1000回)がR2の無料枠(月100万回)よりずっと厳しく、
+  // 見張り役がR2本体より先に破綻する構造だったため。R2使用量の監視は
+  // Cloudflareダッシュボードのネイティブなbudget alertsに委ねる。
+  [!cache.includes("trackedObjectBytes"), "no KV-based storage accounting (removed 2026-08-26)"],
   [!cache.includes("bucket.delete(key)"), "no unguarded R2 delete"],
   [files.every((text) => text.includes("getOrCreateR2Json")), "endpoint integration"],
   [files.some((text) => text.includes('namespace: "gsi-elevation"')), "GSI cache"],

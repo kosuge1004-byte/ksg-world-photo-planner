@@ -104,6 +104,15 @@ export class TerrainDataUnavailableError extends Error {
 export type TripodSearchDiagnostics = {
   startedAtMs: number;
   finishedAtMs: number | null;
+  /**
+   * 2026-08-26追記: 「計算中のまま何分も動かない」状態が、本当に処理が
+   * 進んでいる（遅いだけ）のか、完全に停止している（デッドロック等）
+   * のかを、開発者ツールを使えないインストール型アプリ環境でも判別
+   * できるようにする。terrainSampler（地形取得）が呼ばれるたびに、
+   * 計算完了を待たずリアルタイムで更新する。
+   */
+  liveRoundTripCount: number;
+  liveLastRoundTripFinishedAtMs: number | null;
   perCelestialBody: Record<
     string,
     {
@@ -1724,6 +1733,8 @@ export async function calculateTripodCandidates(
   lastSearchDiagnostics = {
     startedAtMs: Date.now(),
     finishedAtMs: null,
+    liveRoundTripCount: 0,
+    liveLastRoundTripFinishedAtMs: null,
     perCelestialBody: {},
   };
 
@@ -1734,6 +1745,13 @@ export async function calculateTripodCandidates(
   let terrainFailedCount = 0;
   const instrumentedTerrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
     const result = await terrainSampler(samplePoints, sampleSignal, maximumDetail);
+    // 2026-08-26追記: 計算完了を待たずリアルタイムで更新する（進行中
+    // 表示用）。天体ごとの内訳（recordDiagnostics）とは別に、全体の
+    // 「最後にいつ通信が完了したか」を常に最新化する。
+    if (lastSearchDiagnostics) {
+      lastSearchDiagnostics.liveRoundTripCount += 1;
+      lastSearchDiagnostics.liveLastRoundTripFinishedAtMs = Date.now();
+    }
     terrainRequestedCount += result.length;
     terrainFailedCount += result.filter(
       (sample) => !sample || !Number.isFinite(sample.height)

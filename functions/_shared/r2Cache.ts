@@ -1,7 +1,6 @@
 import {
   allowR2Read,
   reserveR2Write,
-  trackedObjectBytes,
   valueBytes,
   type R2SafetyKv,
 } from "../../server/r2SafetyBudget.ts";
@@ -86,12 +85,8 @@ export async function getOrCreateR2Json<T>(
       };
       const serialized = JSON.stringify(envelope);
       const newBytes = valueBytes(serialized);
-      const oldBytes = await trackedObjectBytes(safetyKv, key);
 
-      if (
-        oldBytes !== null &&
-        await reserveR2Write(safetyKv, key, newBytes, oldBytes, requestIdentity)
-      ) {
+      if (await reserveR2Write(safetyKv, key, newBytes, requestIdentity)) {
         const write = bucket.put(key, serialized, {
           httpMetadata: { contentType: "application/json" },
           customMetadata: {

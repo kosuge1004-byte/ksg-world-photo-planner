@@ -6,7 +6,12 @@ const endpoints=["functions/api/geocode.ts","functions/api/timezone.ts","functio
 const checks=[]; const check=(n,o)=>checks.push([n,!!o]);
 check("shared read guard",shared.includes("allowR2Read"));
 check("shared write guard",shared.includes("reserveR2Write"));
-check("shared storage accounting",shared.includes("trackedObjectBytes"));
+// 2026-08-26: KVベースの月間保存容量集計(trackedObjectBytes)は、KVの
+// 無料枠(1日1000回書き込み)がR2の無料枠(月100万回)よりずっと厳しく、
+// 見張り役の方が本体より先に破綻する構造だったため撤廃した。
+// R2自体の無料枠に対する監視はCloudflareダッシュボードのBudget Alerts
+// (ネイティブ機能)に委ね、アプリ側はリクエスト単位の上限のみを持つ。
+check("no shared trackedObjectBytes (removed 2026-08-26)",!shared.includes("trackedObjectBytes"));
 check("no shared direct delete",!shared.includes("bucket.delete("));
 check("no shared head probe",!shared.includes("bucket.head("));
 for(const rel of endpoints){ const s=fs.readFileSync(path.join(root,rel),"utf8"); check(rel+" passes safety KV",s.includes("SPOT_SEARCH_JOBS") && s.includes("getOrCreateR2Json(")); }

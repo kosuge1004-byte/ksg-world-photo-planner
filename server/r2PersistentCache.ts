@@ -2,7 +2,6 @@ import type { RuntimeKvNamespace } from "./cloudflareRuntime.ts";
 import {
   allowR2Read,
   reserveR2Write,
-  trackedObjectBytes,
   valueBytes,
   type R2SafetyKv,
 } from "./r2SafetyBudget.ts";
@@ -38,9 +37,7 @@ export function persistentCacheFromR2(
     },
     async put(key, value) {
       const newBytes = valueBytes(value as ArrayBuffer | Uint8Array | string);
-      const oldBytes = await trackedObjectBytes(safetyKv, key);
-      if (oldBytes === null) return; // accounting unavailable -> fail closed
-      if (!await reserveR2Write(safetyKv, key, newBytes, oldBytes, requestIdentity)) return;
+      if (!await reserveR2Write(safetyKv, key, newBytes, requestIdentity)) return;
       await bucket.put(key, value);
     },
   };
