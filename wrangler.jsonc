@@ -40,13 +40,13 @@
   // Cloudflare Pagesのビルド自体が失敗する。
   // 手順: README_D1_R2_WRITE_BUDGET_SETUP.md を参照。
   //
-  // "d1_databases": [
-  //   {
-  //     "binding": "R2_WRITE_BUDGET_DB",
-  //     "database_name": "astrosight-r2-write-budget",
-  //     "database_id": "ここに実際のDatabase IDを入れてから有効化する"
-  //   }
-  // ],
+  "d1_databases": [
+    {
+      "binding": "R2_WRITE_BUDGET_DB",
+      "database_name": "astrosight-r2-write-budget",
+      "database_id": "a679879f-6411-437e-b7f2-1a161fce8237"
+    }
+  ],
   "queues": {
     "producers": [
       {
