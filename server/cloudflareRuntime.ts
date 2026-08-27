@@ -1,3 +1,5 @@
+import type { R2MonthlyBudgetDb } from "./r2SafetyBudget.ts";
+
 export type RuntimeKvNamespace = {
   get(
     key: string,
@@ -17,6 +19,7 @@ type RuntimeConfiguration = {
   cesiumIonToken?: string;
   persistentCache?: RuntimeKvNamespace;
   waitUntil?: (promise: Promise<unknown>) => void;
+  r2WriteBudgetDb?: R2MonthlyBudgetDb;
 };
 
 let configuration: RuntimeConfiguration = {};
@@ -29,6 +32,7 @@ export function configureServerRuntime(
     cesiumIonToken: next.cesiumIonToken?.trim() || undefined,
     persistentCache: next.persistentCache,
     waitUntil: next.waitUntil,
+    r2WriteBudgetDb: next.r2WriteBudgetDb,
   };
 }
 
@@ -38,6 +42,10 @@ export function serverCesiumIonToken(): string | undefined {
 
 export function serverPersistentCache(): RuntimeKvNamespace | undefined {
   return configuration.persistentCache;
+}
+
+export function serverR2WriteBudgetDb(): R2MonthlyBudgetDb | undefined {
+  return configuration.r2WriteBudgetDb;
 }
 
 export function keepServerTaskAlive(promise: Promise<unknown>): void {

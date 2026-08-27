@@ -4,6 +4,7 @@ import {
   reserveR2Write,
   valueBytes,
   type R2SafetyKv,
+  type R2MonthlyBudgetDb,
 } from "./r2SafetyBudget.ts";
 
 /**
@@ -25,6 +26,7 @@ export function persistentCacheFromR2(
   bucket: R2Bucket | undefined,
   safetyKv?: R2SafetyKv,
   requestIdentity?: object,
+  budgetDb?: R2MonthlyBudgetDb,
 ): RuntimeKvNamespace | undefined {
   if (!bucket) return undefined;
   return {
@@ -37,7 +39,7 @@ export function persistentCacheFromR2(
     },
     async put(key, value) {
       const newBytes = valueBytes(value as ArrayBuffer | Uint8Array | string);
-      if (!await reserveR2Write(safetyKv, key, newBytes, requestIdentity)) return;
+      if (!await reserveR2Write(safetyKv, key, newBytes, requestIdentity, budgetDb)) return;
       await bucket.put(key, value);
     },
   };

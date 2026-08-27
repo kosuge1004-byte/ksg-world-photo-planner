@@ -4,6 +4,7 @@ import {
   valueBytes,
   type R2SafetyKv,
 } from "../../server/r2SafetyBudget.ts";
+import { serverR2WriteBudgetDb } from "../../server/cloudflareRuntime.ts";
 
 export interface R2JsonCacheOptions {
   namespace: string;
@@ -86,7 +87,7 @@ export async function getOrCreateR2Json<T>(
       const serialized = JSON.stringify(envelope);
       const newBytes = valueBytes(serialized);
 
-      if (await reserveR2Write(safetyKv, key, newBytes, requestIdentity)) {
+      if (await reserveR2Write(safetyKv, key, newBytes, requestIdentity, serverR2WriteBudgetDb())) {
         const write = bucket.put(key, serialized, {
           httpMetadata: { contentType: "application/json" },
           customMetadata: {

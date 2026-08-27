@@ -28,6 +28,25 @@
       "bucket_name": "astrosight-network-cache"
     }
   ],
+  // 2026-08-27追記: 「R2の月間書き込み総数」を数えるためのD1データベース。
+  // 支払い方法登録済み・R2が有効な状態で、将来利用者が増えた場合に
+  // R2の無料枠(月100万回書き込み)を超えて自動課金されるのを防ぐための
+  // 安全網（server/r2SafetyBudget.ts参照）。KVの無料枠(書き込み1,000回/日)
+  // より100倍大きいD1(書き込み100,000回/日)を採用。
+  //
+  // 【重要】D1データベースをCloudflareダッシュボードで作成し、実際の
+  // database_idを取得するまでは、以下のブロックをコメントアウトの
+  // ままにしておくこと。存在しないdatabase_idのまま有効化すると、
+  // Cloudflare Pagesのビルド自体が失敗する。
+  // 手順: README_D1_R2_WRITE_BUDGET_SETUP.md を参照。
+  //
+  // "d1_databases": [
+  //   {
+  //     "binding": "R2_WRITE_BUDGET_DB",
+  //     "database_name": "astrosight-r2-write-budget",
+  //     "database_id": "ここに実際のDatabase IDを入れてから有効化する"
+  //   }
+  // ],
   "queues": {
     "producers": [
       {
