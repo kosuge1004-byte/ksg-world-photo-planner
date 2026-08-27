@@ -716,7 +716,8 @@ function App() {
           `${entry.primaryScanMaxMeters !== undefined ? `・一次上限${Math.round(entry.primaryScanMaxMeters)}m` : ""}）` +
           `（通信: ${entry.terrainRoundTripCount}回・` +
           `合計${(entry.terrainRoundTripTotalMs / 1000).toFixed(1)}秒・` +
-          `平均${entry.terrainRoundTripCount > 0 ? Math.round(entry.terrainRoundTripTotalMs / entry.terrainRoundTripCount) : 0}ms/回）`;
+          `平均${entry.terrainRoundTripCount > 0 ? Math.round(entry.terrainRoundTripTotalMs / entry.terrainRoundTripCount) : 0}ms/回）` +
+          `（収束反復${(entry.convergenceLoopMs / 1000).toFixed(1)}秒・精密化${(entry.refinementMs / 1000).toFixed(1)}秒）`;
       }),
     ];
     try {

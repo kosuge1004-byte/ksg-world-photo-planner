@@ -135,6 +135,14 @@ export type TripodSearchDiagnostics = {
       /** 地形取得の通信往復回数と、その累計所要時間（ミリ秒）。 */
       terrainRoundTripCount: number;
       terrainRoundTripTotalMs: number;
+      /**
+       * 2026-08-27追記: 通信を高速化した後も体感の遅さが残ったため、
+       * 通信以外（収束反復ループの計算・精密化・ジオイド取得）に
+       * かかった時間も分けて記録する。複数の交点候補がある場合は、
+       * 最後に処理された候補の値で上書きされる（大まかな切り分け用途）。
+       */
+      convergenceLoopMs: number;
+      refinementMs: number;
     }
   >;
 };
@@ -1330,6 +1338,10 @@ async function calculateOneCandidates(
   // 原因（点数が多いのか、往復回数が多いのか）を切り分けられるようにする。
   let terrainRoundTripCount = 0;
   let terrainRoundTripTotalMs = 0;
+  // 2026-08-27追記: 通信以外（収束反復ループ・精密化・ジオイド取得）に
+  // かかった時間。processInitialSolution内で更新される。
+  let lastConvergenceLoopMs = 0;
+  let lastRefinementMs = 0;
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
     const startedAt = performance.now();
     const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
@@ -1423,6 +1435,8 @@ async function calculateOneCandidates(
       primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
       terrainRoundTripCount,
       terrainRoundTripTotalMs,
+      convergenceLoopMs: lastConvergenceLoopMs,
+      refinementMs: lastRefinementMs,
     });
     return [];
   }
@@ -1455,6 +1469,11 @@ async function calculateOneCandidates(
   ): Promise<TripodCandidate | null> {
     abortIfRequested(signal);
     let solution = initialSolution;
+    // 2026-08-27追記: 地形通信自体は高速化できたが、依然として体感の
+    // 遅さが残っていたため、通信以外（収束反復ループの計算・
+    // refineWithManualEquivalentProjection・ジオイド取得）にかかる時間を
+    // 分けて計測し、「謎の時間」の所在を特定できるようにする。
+    const convergenceLoopStartedAt = performance.now();
 
     // 各交点は独立に、候補地点で再計算した天体方位・高度へ最大3回だけ収束させる。
     // 全距離旧探索へは戻らない。重要なのは、候補地点のaz/altを被写体地点の
@@ -1540,10 +1559,13 @@ async function calculateOneCandidates(
     }
 
     if (!Number.isFinite(solution.cartographic.height)) return null;
+    const convergenceLoopMs = performance.now() - convergenceLoopStartedAt;
+    lastConvergenceLoopMs = convergenceLoopMs;
 
     // 粗いECEF+DEM解はseedとしてのみ使用する。ここから先は、粗候補周辺だけを
     // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
     // 詳細探索し、画面中心誤差が最小の地点を正解候補とする。
+    const refinementStartedAt = performance.now();
     let manualRefined: ManualEquivalentEvaluation | null;
     try {
       manualRefined = await refineWithManualEquivalentProjection(
@@ -1563,6 +1585,8 @@ async function calculateOneCandidates(
       console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
       return null;
     }
+    const refinementMs = performance.now() - refinementStartedAt;
+    lastRefinementMs = refinementMs;
     if (!manualRefined) return null;
 
     const finalCandidatePoint = manualRefined.candidatePoint;
@@ -1696,6 +1720,8 @@ async function calculateOneCandidates(
     primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
     terrainRoundTripCount,
     terrainRoundTripTotalMs,
+    convergenceLoopMs: lastConvergenceLoopMs,
+    refinementMs: lastRefinementMs,
   });
   return unique;
 }
