@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../src/cesium/worldTerrain.ts', import.meta.url), 'utf8');
+const start = source.indexOf('const localSamples = await resolveGsiSamplesFromDeviceTiles');
+const end = source.indexOf('if (networkLocalIndexes.length > 0)', start);
+if (start < 0 || end < 0) throw new Error('device DEM local-first block not found');
+const block = source.slice(start, end);
+if (!block.includes('fetchRegionalGeoidHeights(')) throw new Error('local DEM path skips regional geoid resolution');
+if (!block.includes('geoidRegionKey(missingPoints[localIndex])')) throw new Error('local DEM path does not use network-equivalent geoid region key');
+if (!block.includes('sample.heightMeters + geoidHeightMeters')) throw new Error('local DEM H is not converted to ellipsoidal h=H+N');
+if (!block.includes('networkLocalIndexes.push(localIndex)')) throw new Error('missing local geoid does not fall back to authoritative path');
+console.log('PASS: device DEM local path converts GSI H to ellipsoidal h=H+N and falls back when N is unavailable');

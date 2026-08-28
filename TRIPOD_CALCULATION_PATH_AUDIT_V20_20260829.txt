@@ -1,0 +1,29 @@
+AstroSight v20 - 三脚候補計算経路ゼロベース監査・回帰修復
+Date: 2026-08-29
+Base: v19
+
+確認した経路:
+App.tsx -> calculateTripodCandidates -> calculateOneCandidates ->
+scanInitialRayTerrainIntersections -> terrainSampler -> sampleWorldTerrainNeutral ->
+sampleTerrainCached -> [device decoded DEM cache OR authoritative API] -> geoid conversion ->
+ECEF intersection convergence -> 1m manual-equivalent refinement -> CameraModel round-trip.
+
+コード上で確定した回帰:
+1. v7のsampleWorldTerrainNeutralではGSI標高Hを取得後、地域ジオイドNを加えて
+   Cartographic.height（楕円体高h）へ変換していた。
+2. v10以降に追加されたdevice DEM local-first経路では、resolveGsiSamplesFromDeviceTiles()
+   のraw GSI heightMetersをsampleTerrainCached()がそのままCartographic.heightへ代入していた。
+3. つまり local cache HIT時だけ h=H+N ではなく h=H となり、network経路と高度基準が分裂した。
+4. 実機画像の「478秒・通信0回」はdevice cache経路だけで探索していた状況と整合する。
+   ただし画像だけではこの不具合単独が全症状の唯一原因とは断定しない。
+
+v20修正:
+- device DEM sampleにもnetwork経路と同じfetchRegionalGeoidHeights()/geoidRegionKeyを適用し、
+  result.height = sample.heightMeters + geoidHeightMeters とする。
+- geoid Nを取得できないlocal sampleは採用せずauthoritative network pathへfallbackする。
+- v19で推測に基づき追加した2D refinementは撤回し、v18/v7系の既存1D refinementへ戻した。
+- round-trip tolerance、収束条件、DEM source priority、interpolation、1m final detailは変更しない。
+
+重要:
+この修正は「許容値を緩めて候補を出す」ものではない。
+network経路とdevice-cache経路の高さdatumを同一に戻す回帰修復である。

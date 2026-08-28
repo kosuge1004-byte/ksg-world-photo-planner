@@ -1429,12 +1429,20 @@ function App() {
 
     const inFlightKey = exactCacheKey ?? JSON.stringify({
       subject: subjectPoint,
-      points: enabledPoints.map((p) => p.id),
+      points: enabledPoints.map((p) => ({
+        id: p.id,
+        azimuthDegrees: p.azimuthDegrees,
+        altitudeDegrees: p.altitudeDegrees,
+        geometricAltitudeDegrees: p.geometricAltitudeDegrees ?? null,
+      })),
       focalLengthMm: cameraSettings.focalLengthMm,
+      lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
       date: selectedDate.toISOString(),
       calculationMode,
       previewAspectRatio,
       refractionMode: precisionSettings.refractionCorrectionMode,
+      refractionWeather: previewRefractionWeather ?? null,
+      initialDirectionObserver: initialDirectionObserver ?? null,
       accuracyMode: precisionSettings.accuracyMode,
       doubleCheck: precisionSettings.tripodCandidateDoubleCheckEnabled,
     });
@@ -1554,6 +1562,11 @@ function App() {
       cancelled = true;
       controller.abort();
       window.clearTimeout(timer);
+      // Cleanup belongs to this exact calculation key.  Clear it synchronously so a
+      // dependency-driven rerun cannot be suppressed by an already-aborted predecessor.
+      if (tripodCalculationInFlightKeyRef.current === inFlightKey) {
+        tripodCalculationInFlightKeyRef.current = null;
+      }
     };
   }, [
     subjectPoint,

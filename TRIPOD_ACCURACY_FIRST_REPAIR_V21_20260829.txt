@@ -1,0 +1,91 @@
+AstroSight v21 三脚候補計算 精度最優先修復
+Date: 2026-08-29
+Base: AstroSight-FULL-20260829-tripod-datum-regression-repair-v20.zip
+Source audit: AstroSight-v20-tripod-full-path-audit-20260829.txt
+
+方針
+- 最優先は「正しい三脚候補点を確定できること」。
+- 速度のために探索範囲、round-trip許容値、DEM解像度、天体計算精度を緩めない。
+- v20監査で確認した正確性/停止性の問題をコード上で修復する。
+
+修復対応
+ERROR-01: 一次範囲で粗交点が1件でも出ると残りを探索しない
+  -> 修復。seedの有無に関係なく8m〜50kmのauthoritative距離域を探索する。
+  -> seedはサンプル追加ヒントだけで、探索範囲を切らない。
+
+ERROR-02: neutral DEMの使用ジオイドNメタデータ欠落
+  -> 修復。device DEM / network GSIの両方で geoidHeightBySample を保存。
+  -> terrain persistent cacheにもsource/geoidを保存。
+  -> metadata無し旧cacheを混ぜないためDB schemaをterrain-v3へ更新。
+
+ERROR-03: abortされた旧effectのin-flight keyが新計算を止め得る
+  -> 修復。cleanup時、自己のkeyが残っていれば同期的にclear。
+
+ERROR-04: in-flight keyが入力を完全に表していない
+  -> 修復。camera lens center height、天体az/alt/geometric alt、weather、initial observerを追加。
+
+ERROR-05: 候補地点で気象を再解決しない
+  -> 修復。各粗候補/収束反復で candidatePoint を使って weather resolver を再実行し、
+     その候補固有weatherを天体再計算と最終refinementへ渡す。
+
+ERROR-06: 最終refinementが距離1Dだけ
+  -> 修復。無制限2D探索ではなく、従来と同じ9 terrain samples/passを3x3
+     (distance x bearing)へ再配置。3 pass。CameraModel dx/dyの両自由度を詰める。
+  -> v19の探索爆発方式は復活させていない。
+
+ERROR-07: 符号反転の無い接線交点を見逃す
+  -> 修復。adaptive sampling後の局所|height error|最小点をtangent candidateとして
+     1m refinementへ回す。final CameraModel round-trip基準は不変。
+  -> tangent候補は1m refinement後のheight residual <=0.25mも要求。
+
+ERROR-08: 640 sample上限で遠方細分化をslice
+  -> 修復。上限を4096へ拡張。現行50km/500m coarse/100m adaptive条件で
+     正常な全域細分化要求を切らない安全余裕を持たせた。
+
+ERROR-09: 永続seedが最遠1件のみ
+  -> 正確性リスクを無効化。seed自体は性能ヒントとして1件のままだが、
+     ERROR-01修復によりseedが探索範囲を切らないため、最終候補網羅性には影響しない。
+
+ERROR-10: terrain persistent cacheがheightしか持たずsource/geoid喪失
+  -> 修復。cache recordにsource/geoidHeightMetersを保存・復元。
+  -> DBをterrain-v3へ分離し、旧metadata-less recordを再利用しない。
+
+ERROR-11: IndexedDB open/readにtimeoutがなく通信0回で長時間停止し得る
+  -> 修復。device DEM cache / terrain cacheのopen/readに3秒timeout。
+  -> timeout時はcache missとして既存authoritative pathへ進む。精度値の代替はしない。
+
+変更していない精度条件
+- ROUND_TRIP_SCREEN_TOLERANCE_PERCENT: 変更なし
+- CONVERGED_HORIZONTAL_DEGREES: 変更なし
+- 1m final DEM: 維持
+- neutral DEM interpolation: 維持
+- GSI source priority: 維持
+- ECEF/Karney/CameraModel: 維持
+- point-specific final geoid rebuild: 維持
+- refraction modeの選択ルール: 維持
+
+実行確認
+PASS:
+- scripts/verify-tripod-geoid-datum-20260823.mjs (全項目)
+- scripts/verify-tripod-neutral-dem-20260823.mjs
+- scripts/verify-device-dem-tile-cache-20260829.mjs
+- scripts/verify-tripod-speed-cache-20260829.mjs
+- scripts/verify-tripod-performance-instrumentation-20260829.mjs
+- scripts/verify-tripod-accuracy-first-v21-20260829.mjs (新規13項目)
+- scripts/verify-r2-safety-all-paths-20260824.mjs (11/11)
+- TypeScript transpile syntax check: tripodCandidates.ts / worldTerrain.ts / gsiDemTileCache.ts / App.tsx PASS
+
+既存weather回帰testについて
+- scripts/verify-tripod-candidate-weather-reconvergence.mjs は一部regexが旧実装の変数名/呼び出し形を
+  固定しているため3項目FAILを残す。
+- 実コードでは await refractionWeatherResolver(candidatePoint, signal) と
+  candidateRefractionWeatherによるcandidate-local再計算が存在し、新規v21検証で確認済み。
+- 旧regex FAILを「機能FAIL」とは扱っていない。
+
+未確認
+- 完全な npm run build: node_modules未同梱かつこの環境でnpm ciを完了できないため未確認。
+- 実機で対象ケースが「交点候補5件 -> 確定候補>=1」になること: 実機実行前なので未確認。
+
+結論
+v20監査で確認した正確性/停止性のコード問題について、v21では上記の修復を実装した。
+ただし「実機で正しい候補点が出た」ことは実機結果が得られるまでは断定しない。

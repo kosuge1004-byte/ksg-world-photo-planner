@@ -54,13 +54,22 @@ const pendingGsiRequests = new Map<
 
 // 同じ被写体周辺を再検索した際にDEM通信を繰り返さない。
 // 約1m単位（緯度経度5桁）でメモリとIndexedDBへ保存する。
-const TERRAIN_CACHE_DB = "ksg-world-photo-planner-terrain-v2";
+const TERRAIN_CACHE_DB = "ksg-world-photo-planner-terrain-v3";
 const TERRAIN_CACHE_STORE = "terrain";
 const TERRAIN_CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const terrainHeightMemoryCache = new Map<string, number>();
+const terrainSourceMemoryCache = new Map<string, TerrainDataSource>();
+const terrainGeoidMemoryCache = new Map<string, number>();
 const TERRAIN_MEMORY_CACHE_MAX_ENTRIES = 32_768;
+const TERRAIN_INDEXED_DB_TIMEOUT_MS = 3_000;
 
-type TerrainCacheRecord = { key: string; height: number; updatedAt: number };
+type TerrainCacheRecord = {
+  key: string;
+  height: number;
+  updatedAt: number;
+  source?: TerrainDataSource;
+  geoidHeightMeters?: number;
+};
 
 function readMemoryCache<K, V>(cache: Map<K, V>, key: K): V | undefined {
   const value = cache.get(key);
@@ -151,6 +160,17 @@ function openTerrainCache(): Promise<KsgIdbDatabase | null> {
   // 地形キャッシュもジオイドと同様にDB接続を共有する。read/writeのキー、
   // 高度値、有効期限、DEM詳細度は一切変更せず、接続確立コストだけを削減する。
   terrainCacheDatabasePromise ??= new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: KsgIdbDatabase | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const timeout = setTimeout(() => {
+      terrainCacheDatabasePromise = null;
+      finish(null);
+    }, TERRAIN_INDEXED_DB_TIMEOUT_MS);
     const request = indexedDb.open(TERRAIN_CACHE_DB, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -164,11 +184,11 @@ function openTerrainCache(): Promise<KsgIdbDatabase | null> {
         database.close();
         terrainCacheDatabasePromise = null;
       };
-      resolve(database);
+      finish(database);
     };
     request.onerror = () => {
       terrainCacheDatabasePromise = null;
-      resolve(null);
+      finish(null);
     };
   });
   return terrainCacheDatabasePromise;
@@ -197,6 +217,14 @@ async function readTerrainCache(
   const store = transaction.objectStore(TERRAIN_CACHE_STORE);
   await Promise.all(missing.map((index) => new Promise<void>((resolve) => {
     const key = terrainCacheKey(points[index], maximumDetails?.[index], interpolationMode);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(finish, TERRAIN_INDEXED_DB_TIMEOUT_MS);
     const request = store.get(key);
     request.onsuccess = () => {
       const record = request.result as TerrainCacheRecord | undefined;
@@ -208,10 +236,16 @@ async function readTerrainCache(
           record.height,
           TERRAIN_MEMORY_CACHE_MAX_ENTRIES
         );
+        if (record.source) {
+          writeMemoryCache(terrainSourceMemoryCache, key, record.source, TERRAIN_MEMORY_CACHE_MAX_ENTRIES);
+        }
+        if (typeof record.geoidHeightMeters === "number" && Number.isFinite(record.geoidHeightMeters)) {
+          writeMemoryCache(terrainGeoidMemoryCache, key, record.geoidHeightMeters, TERRAIN_MEMORY_CACHE_MAX_ENTRIES);
+        }
       }
-      resolve();
+      finish();
     };
-    request.onerror = () => resolve();
+    request.onerror = () => finish();
   })));
   return values;
 }
@@ -221,19 +255,27 @@ async function writeTerrainCache(
   maximumDetails?: GsiMaximumDetail[],
   interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<void> {
-  const records = points.flatMap((point, index) => Number.isFinite(point.height)
+  const records: TerrainCacheRecord[] = points.flatMap((point, index) => Number.isFinite(point.height)
     ? [{
         key: terrainCacheKey(point, maximumDetails?.[index], interpolationMode),
         height: point.height,
+        source: terrainSourceBySample.get(point),
+        geoidHeightMeters: geoidHeightBySample.get(point),
         updatedAt: Date.now(),
       }]
     : []);
-  records.forEach((record) => writeMemoryCache(
-    terrainHeightMemoryCache,
-    record.key,
-    record.height,
-    TERRAIN_MEMORY_CACHE_MAX_ENTRIES
-  ));
+  records.forEach((record) => {
+    writeMemoryCache(
+      terrainHeightMemoryCache,
+      record.key,
+      record.height,
+      TERRAIN_MEMORY_CACHE_MAX_ENTRIES
+    );
+    if (record.source) writeMemoryCache(terrainSourceMemoryCache, record.key, record.source, TERRAIN_MEMORY_CACHE_MAX_ENTRIES);
+    if (typeof record.geoidHeightMeters === "number" && Number.isFinite(record.geoidHeightMeters)) {
+      writeMemoryCache(terrainGeoidMemoryCache, record.key, record.geoidHeightMeters, TERRAIN_MEMORY_CACHE_MAX_ENTRIES);
+    }
+  });
   const database = await openTerrainCache();
   if (!database || records.length === 0) return;
   await new Promise<void>((resolve) => {
@@ -258,8 +300,16 @@ async function sampleTerrainCached(
   const result = points.map((point) => Cartographic.clone(point));
   const missingIndexes: number[] = [];
   cachedHeights.forEach((height, index) => {
-    if (height === null) missingIndexes.push(index);
-    else result[index].height = height;
+    if (height === null) {
+      missingIndexes.push(index);
+      return;
+    }
+    result[index].height = height;
+    const key = terrainCacheKey(points[index], maximumDetails?.[index], interpolationMode);
+    const source = readMemoryCache(terrainSourceMemoryCache, key);
+    const geoid = readMemoryCache(terrainGeoidMemoryCache, key);
+    if (source) terrainSourceBySample.set(result[index], source);
+    if (typeof geoid === "number" && Number.isFinite(geoid)) geoidHeightBySample.set(result[index], geoid);
   });
   if (missingIndexes.length > 0) {
     const missingPoints = missingIndexes.map((index) => points[index]);
@@ -281,18 +331,46 @@ async function sampleTerrainCached(
     );
     abortIfRequested(signal);
 
+    // Device DEM tiles store the same raw GSI elevation H (orthometric / mean-sea-level
+    // height) returned by /api/gsi-elevation.  Cartographic.height used by the ECEF solver,
+    // however, MUST be ellipsoidal height h = H + N.  The first device-cache implementation
+    // assigned H directly to Cartographic.height, skipping the geoid N conversion performed by
+    // sampleTerrainWithGsiPriority().  That changes the ray/terrain intersection geometry by
+    // tens of metres in Japan and can turn valid coarse intersections into zero final candidates.
+    // Apply the exact same regional-geoid path as the authoritative network branch.  If N cannot
+    // be resolved, do NOT accept the local sample: fall back to the existing authoritative path.
+    const localEligibleIndexes = localSamples.map((sample, localIndex) =>
+      sample !== null && sample.source !== null &&
+      typeof sample.heightMeters === "number" && Number.isFinite(sample.heightMeters)
+        ? localIndex
+        : -1
+    ).filter((index) => index >= 0);
+    const localGeoidHeightByRegion = await fetchRegionalGeoidHeights(
+      missingPoints,
+      localEligibleIndexes,
+      signal
+    );
+    abortIfRequested(signal);
+
     const networkLocalIndexes: number[] = [];
     localSamples.forEach((sample, localIndex) => {
-      if (sample === null || sample.heightMeters === null) {
+      if (
+        sample === null || sample.source === null ||
+        typeof sample.heightMeters !== "number" || !Number.isFinite(sample.heightMeters)
+      ) {
+        networkLocalIndexes.push(localIndex);
+        return;
+      }
+      const geoidHeightMeters = localGeoidHeightByRegion.get(geoidRegionKey(missingPoints[localIndex]));
+      if (typeof geoidHeightMeters !== "number" || !Number.isFinite(geoidHeightMeters)) {
         networkLocalIndexes.push(localIndex);
         return;
       }
       const originalIndex = missingIndexes[localIndex];
-      result[originalIndex].height = sample.heightMeters;
-      if (sample.source) {
-        const source = GSI_SOURCE_NAMES[sample.source];
-        if (source) terrainSourceBySample.set(result[originalIndex], source);
-      }
+      result[originalIndex].height = sample.heightMeters + geoidHeightMeters;
+      const source = GSI_SOURCE_NAMES[sample.source];
+      if (source) terrainSourceBySample.set(result[originalIndex], source);
+      geoidHeightBySample.set(result[originalIndex], geoidHeightMeters);
     });
 
     if (networkLocalIndexes.length > 0) {
@@ -960,6 +1038,7 @@ async function sampleTerrainWithGsiPriority(
       // GSI標高（平均海面基準）へ地域ごとのジオイド高を加え、楕円体高へ統一する。
       result[index].height = gsi.heightMeters + geoidHeightMeters;
       terrainSourceBySample.set(result[index], GSI_SOURCE_NAMES[gsi.source]);
+      geoidHeightBySample.set(result[index], geoidHeightMeters);
     } else {
       unresolvedIndexes.push(index);
     }
