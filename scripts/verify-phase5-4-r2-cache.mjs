@@ -4,7 +4,13 @@ const root = new URL("../", import.meta.url);
 const read = (path) => fs.readFileSync(new URL(path, root), "utf8");
 const cache = read("functions/_shared/r2Cache.ts");
 const env = read("functions/_shared/env.ts");
-const files = ["timezone.ts", "geocode.ts", "gsi-elevation.ts", "gsi-geoid.ts", "osm-site-context.ts"].map((name) => read(`functions/api/${name}`));
+const files = ["timezone.ts", "geocode.ts", "gsi-geoid.ts", "osm-site-context.ts"].map((name) => read(`functions/api/${name}`));
+// 2026-08-28追記: gsi-elevation.tsは「複数座標をまとめた外側の
+// バッチキャッシュ」（getOrCreateR2Json経由）を撤去し、本当に効果の
+// ある「DEMタイル単位のR2永続キャッシュ」（lookupGsiElevations経由）を
+// 直接使う設計に変わったため、files配列からは除外し、別途確認する。
+const gsiElevationEndpoint = read("functions/api/gsi-elevation.ts");
+const gsiElevationServer = read("server/gsiElevation.ts");
 
 const checks = [
   [env.includes("NETWORK_CACHE?: R2Bucket"), "optional R2 binding"],
@@ -19,7 +25,10 @@ const checks = [
   [!cache.includes("trackedObjectBytes"), "no KV-based storage accounting (removed 2026-08-26)"],
   [!cache.includes("bucket.delete(key)"), "no unguarded R2 delete"],
   [files.every((text) => text.includes("getOrCreateR2Json")), "endpoint integration"],
-  [files.some((text) => text.includes('namespace: "gsi-elevation"')), "GSI cache"],
+  [
+    gsiElevationEndpoint.includes("lookupGsiElevations(") && gsiElevationServer.includes("serverPersistentCache("),
+    "GSI cache (tile-level, 2026-08-28)",
+  ],
   [files.some((text) => text.includes('namespace: "osm-site-context"')), "OSM cache"],
 ];
 for (const [ok, label] of checks) {

@@ -1,5 +1,6 @@
 import {
   lookupGsiElevations,
+  createTileCacheCounter,
   type GsiElevationRequestPoint,
 } from "../../server/gsiElevation.ts";
 import {
@@ -7,7 +8,6 @@ import {
   type CloudflareEnv,
 } from "../_shared/env.ts";
 import { errorMessage, jsonResponse } from "../_shared/http.ts";
-import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
 // クライアント側の実際の最大利用規模（地形稜線の粗走査1方位あたり最大112点、
 // 複数天体を同時判定してもマイクロタスク単位でまとめて数百点程度）に対して
@@ -53,16 +53,22 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         "no-store"
       );
     }
-    const cacheKeyInput = points.map((point) => ({
-      latitude: Number(point.latitude.toFixed(5)),
-      longitude: Number(point.longitude.toFixed(5)),
-      maximumDetail: point.maximumDetail ?? "10m",
-      interpolationMode: point.interpolationMode ?? "los-safe",
-    }));
-    const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, cacheKeyInput, {
-      namespace: "gsi-elevation", version: "v3", ttlSeconds: null,
-    }, async () => ({ samples: await lookupGsiElevations(points, context.request.signal) }), context.waitUntil);
-    return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
+    // 2026-08-28追記: 以前はここで「最大64点分の応答をまるごと1つの
+    // 塊としてR2にキャッシュする」外側のバッチキャッシュ層
+    // (getOrCreateR2Json)を経由していた。しかし三脚探索は毎回わずかに
+    // 違う座標の組み合わせで問い合わせるため、この「複数点まとめて
+    // 1キー」という単位はほとんどヒットせず、ミスするたびに応答全体を
+    // 無駄にもう一度R2へ書き込んでいた（本当に効果があるのは、
+    // server/gsiElevation.ts内部のDEMタイル単位のキャッシュの方）。
+    // 外側の層を撤去し、常にlookupGsiElevationsを直接呼ぶことで、
+    // 無駄な二重書き込みと、無意味なR2予算の消費をなくす。
+    const tileCacheCounter = createTileCacheCounter();
+    const samples = await lookupGsiElevations(points, context.request.signal, tileCacheCounter);
+    return jsonResponse(
+      { samples, tileCacheHit: tileCacheCounter.hit, tileCacheMiss: tileCacheCounter.miss },
+      200,
+      "public, max-age=86400"
+    );
   } catch (error) {
     // エラー応答は公開キャッシュしない（失敗を1時間キャッシュして再試行を妨げない）。
     return jsonResponse({ error: errorMessage(error) }, 422, "no-store");

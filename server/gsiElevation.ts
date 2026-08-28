@@ -61,6 +61,20 @@ const MAX_TILE_CACHE_ENTRIES = 512;
 export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 12;
 const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
+
+/**
+ * 2026-08-28追記: 「複数点をまとめた外側のバッチキャッシュ」は三脚探索の
+ * 性質上ほとんど意味をなさなかったため撤去し（functions/api/
+ * gsi-elevation.ts参照）、代わりに本当に効果のある「DEMタイル単位の
+ * R2永続キャッシュ」のヒット/ミスを直接計測できるようにする。
+ * サーバーレス環境では同一プロセス内で複数リクエストが同時に処理され
+ * うるため、グローバル変数での集計は数値が混ざる可能性がある。
+ * 呼び出し元（1回のAPIリクエスト）ごとに専用のカウンタを作って渡す。
+ */
+export type TileCacheCounter = { hit: number; miss: number };
+export function createTileCacheCounter(): TileCacheCounter {
+  return { hit: 0, miss: 0 };
+}
 let activeTileRequests = 0;
 const tileRequestWaiters: Array<() => void> = [];
 
@@ -392,7 +406,8 @@ async function fetchDecodedTile(
   source: ElevationTileSource,
   x: number,
   y: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  counter?: TileCacheCounter
 ): Promise<DecodedElevationTile | null> {
   const key = `${source.id}/${source.zoom}/${x}/${y}`;
   const cached = tileCache.get(key);
@@ -403,6 +418,11 @@ async function fetchDecodedTile(
   // 基礎Promiseは中断信号から独立させ、各呼び出し側の待機だけを中断可能にする。
   const promise = withTileRequestLimit(async () => {
     const persistent = await readPersistentTile(source, x, y);
+    if (persistent !== null) {
+      if (counter) counter.hit++;
+    } else {
+      if (counter) counter.miss++;
+    }
     if (persistent?.kind === "empty") return null;
     if (persistent?.kind === "data") return persistent.tile;
 
@@ -632,7 +652,13 @@ function sourceIsAllowedForPoint(
 
 export async function lookupGsiElevations(
   points: GsiElevationRequestPoint[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /**
+   * 2026-08-28追記: DEMタイル単位のR2キャッシュが実際にヒットして
+   * いるかを診断できるよう、呼び出し元が用意したカウンタへ記録する
+   * （createTileCacheCounter()で作成）。
+   */
+  tileCacheCounter?: TileCacheCounter
 ): Promise<GsiElevationSample[]> {
   if (points.length > 2_048) {
     throw new Error("一度に取得できる標高点は2,048点までです");
@@ -720,7 +746,7 @@ export async function lookupGsiElevations(
     const tileEntries = await Promise.all(
       [...uniqueTiles.entries()].map(async ([tileKey, coordinate]) => [
         tileKey,
-        await fetchDecodedTile(source, coordinate.x, coordinate.y, signal),
+        await fetchDecodedTile(source, coordinate.x, coordinate.y, signal, tileCacheCounter),
       ] as const)
     );
     const tiles = new Map<string, DecodedElevationTile | null>(tileEntries);

@@ -118,14 +118,16 @@ export type TripodSearchDiagnostics = {
   liveRoundTripCount: number;
   liveLastRoundTripFinishedAtMs: number | null;
   /**
-   * 2026-08-28追記: サーバー側のR2キャッシュが実際に活用されているかを
-   * 確認できるようにする。「地形取得◯点」という座標の総数とは別に、
-   * 「そのうち何回分の通信で、実際にR2キャッシュが再利用されたか」を
-   * 検索全体（全天体合算）で記録する。
+   * 2026-08-28追記: サーバー側のR2キャッシュ（DEMタイル単位、実際に
+   * 効果のある層）が活用されているかを確認できるようにする。「地形取得
+   * ◯点」という座標の総数とは別に、「そのうちタイル参照何回分で、
+   * 実際にR2キャッシュが再利用されたか」を検索全体（全天体合算）で
+   * 記録する。以前は「複数座標をまとめた外側のバッチキャッシュ」の
+   * ヒット/ミスを見ていたが、三脚探索の性質上ほとんど意味をなさない
+   * 層だったため撤去し、タイル単位の値に切り替えた。
    */
   cacheHitBatchCount: number;
   cacheMissBatchCount: number;
-  cacheOtherBatchCount: number;
   perCelestialBody: Record<
     string,
     {
@@ -1809,7 +1811,6 @@ export async function calculateTripodCandidates(
     liveLastRoundTripFinishedAtMs: null,
     cacheHitBatchCount: 0,
     cacheMissBatchCount: 0,
-    cacheOtherBatchCount: 0,
     perCelestialBody: {},
   };
 
@@ -1913,7 +1914,6 @@ export async function calculateTripodCandidates(
     const cacheStats = getGsiElevationCacheStats();
     lastSearchDiagnostics.cacheHitBatchCount = cacheStats.hit;
     lastSearchDiagnostics.cacheMissBatchCount = cacheStats.miss;
-    lastSearchDiagnostics.cacheOtherBatchCount = cacheStats.other;
   };
   if (
     candidates.length === 0 &&

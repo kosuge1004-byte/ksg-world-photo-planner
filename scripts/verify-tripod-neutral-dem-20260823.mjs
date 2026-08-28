@@ -11,8 +11,16 @@ const checks = [
   ['neutral 1m interpolation uses constrained bicubic without upward max bias', /interpolationMode === "neutral"[\s\S]*\? bicubicHeight[\s\S]*: Math\.max\(bilinearHeight, bicubicHeight\)/.test(gsi)],
   ['LOS-safe remains the default', /interpolationMode: "los-safe" \| "neutral" = "los-safe"/.test(gsi)],
   ['API parses interpolation mode', /interpolationMode:[\s\S]*value\.interpolationMode === "neutral"/.test(api)],
-  ['R2 cache key includes interpolation mode', /interpolationMode: point\.interpolationMode \?\? "los-safe"/.test(api)],
-  ['R2 cache version bumped for persistent terrain results', /namespace: "gsi-elevation", version: "v3"/.test(api)],
+  // 2026-08-28追記: 「複数座標をまとめた外側のバッチキャッシュ」（この
+  // 2項目が検証していたcacheKeyInput/namespace: "gsi-elevation"の記述）
+  // は撤去した。代わりに「DEMタイル単位の永続キャッシュ」を使う設計に
+  // 変わった。タイルの生データ自体は補間方式（interpolationMode）に
+  // 関わらず共通（違うのは取得後の補間計算だけ）なので、タイル
+  // キャッシュ側でinterpolationModeごとにキーを分ける必要がない
+  // （むしろ分けない方が、los-safe/neutral間でも同じタイルを共有できて
+  // 効率的）。APIがinterpolationModeをlookupGsiElevationsへ正しく
+  // 渡していることを確認する。
+  ['API forwards interpolation mode to lookupGsiElevations (2026-08-28)', /lookupGsiElevations\(points,/.test(api)],
   ['client transmits interpolation mode', /interpolationMode\?: "los-safe" \| "neutral"/.test(client)],
   ['neutral terrain sampler requests neutral GSI', /export async function sampleWorldTerrainNeutral[\s\S]*interpolationMode: "neutral" as const/.test(terrain)],
   ['tripod calculator defaults to neutral terrain sampler', /terrainSampler: TerrainSampler = sampleWorldTerrainNeutral/.test(tripod)],

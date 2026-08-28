@@ -9,7 +9,13 @@ const geoidCore = fs.readFileSync(new URL("../server/gsiGeoid.ts", import.meta.u
 const checks = [
   [r2.includes('ttlSeconds?: number | null'), 'R2 helper supports no-expiry'],
   [r2.includes('envelope.expiresAt === null'), 'R2 helper accepts non-expiring envelope'],
-  [elev.includes('namespace: "gsi-elevation", version: "v3", ttlSeconds: null'), 'elevation result cache is non-expiring'],
+  // 2026-08-28追記: gsi-elevation.tsは「複数座標をまとめた外側の
+  // バッチキャッシュ」（namespace: "gsi-elevation"の行はまさにこの層）
+  // を撤去し、本当に効果のある「DEMタイル単位のR2永続キャッシュ」
+  // （server/gsiElevation.tsのwritePersistentTile、expirationTtl未指定
+  // ＝R2のデフォルトである無期限保存）を直接使う設計に変わったため、
+  // タイル側のキャッシュが有効期限なしであることを確認する。
+  [!dem.includes('expirationTtl'), 'DEM tile cache is non-expiring (2026-08-28)'],
   [geoid.includes('namespace: "gsi-geoid", version: "v2", ttlSeconds: null'), 'point geoid cache is non-expiring'],
   [geoid.includes('namespace: "gsi-geoid-batch", version: "v2", ttlSeconds: null'), 'batch geoid cache is non-expiring'],
   [dem.includes('gsi-decoded-dem-v2/'), 'decoded DEM tiles remain persistent/versioned'],

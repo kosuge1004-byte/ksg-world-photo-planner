@@ -16,10 +16,21 @@ import { prewarmMany, selectDailyChunk } from "../server/prewarmLandmarkCore.ts"
 import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import type { R2SafetyKv } from "../server/r2SafetyBudget.ts";
 
-// 1回の実行あたりの処理件数。1件あたり最大12回のDEM検索
-// （REQUEST_DELAY_MS=1.5秒間隔）+ ランドマーク間4秒待機のため、
-// 8件でおおよそ数分程度に収まる想定（Cron Triggerの実行時間に配慮）。
-const CHUNK_SIZE = 8;
+// 1回の実行あたりの処理件数。
+//
+// Cloudflare公式の制限（developers.cloudflare.com/workers/platform/limits）:
+//   - CPU時間: 有料プランで30秒/回（実際に計算している時間のみ。
+//     fetch()やsleep()などの待機時間はカウントされない）
+//   - 実時間（wall-clock time）: Cron Triggerは15分/回まで
+// このワーカーの処理時間は、大半がGSIサーバーへの配慮のための意図的な
+// 待機（REQUEST_DELAY_MS=1.5秒×最大12回/件、LANDMARK_DELAY_MS=4秒/件）と
+// 通信待ちで占められ、実際のCPU時間はごくわずかなため、支配的な制約は
+// 「15分の実時間上限」の方。
+// 1件あたり最大12回のDEM検索（1.5秒間隔）+ ランドマーク間4秒待機のため、
+// 1件あたり約22秒。35件で約12.8分となり、15分の上限に対して安全マージン
+// （約2分）を残しつつ、以前の8件（約35日で全件一巡）より大幅に速く
+// （約8日で一巡）できる件数として35件を設定する。
+const CHUNK_SIZE = 35;
 
 interface PrewarmEnv {
   CESIUM_ION_TOKEN?: string;
