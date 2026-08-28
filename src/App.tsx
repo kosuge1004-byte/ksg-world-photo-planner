@@ -741,6 +741,8 @@ function App() {
       "[AstroSight三脚探索診断]",
       `日時: ${new Date().toISOString()}`,
       `所要時間: ${elapsedSeconds}秒`,
+      `R2キャッシュ: ヒット${diagnostics.cacheHitBatchCount}回・ミス${diagnostics.cacheMissBatchCount}回・その他${diagnostics.cacheOtherBatchCount}回` +
+        `（1回=最大64点をまとめた通信1回分。ヒットが多いほど国土地理院への実問い合わせが省略できている）`,
       "天体別内訳:",
       ...Object.entries(diagnostics.perCelestialBody).map(([label, entry]) => {
         const failRate = entry.terrainRequestedPoints > 0

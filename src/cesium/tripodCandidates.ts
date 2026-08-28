@@ -28,6 +28,10 @@ import {
   sampleWorldTerrainNeutral,
   terrainDataSource,
 } from "./worldTerrain";
+import {
+  resetGsiElevationCacheStats,
+  getGsiElevationCacheStats,
+} from "./gsiElevationClient";
 import { computeApparentElevation } from "../apparent/apparentElevation";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
@@ -113,6 +117,15 @@ export type TripodSearchDiagnostics = {
    */
   liveRoundTripCount: number;
   liveLastRoundTripFinishedAtMs: number | null;
+  /**
+   * 2026-08-28追記: サーバー側のR2キャッシュが実際に活用されているかを
+   * 確認できるようにする。「地形取得◯点」という座標の総数とは別に、
+   * 「そのうち何回分の通信で、実際にR2キャッシュが再利用されたか」を
+   * 検索全体（全天体合算）で記録する。
+   */
+  cacheHitBatchCount: number;
+  cacheMissBatchCount: number;
+  cacheOtherBatchCount: number;
   perCelestialBody: Record<
     string,
     {
@@ -1788,11 +1801,15 @@ export async function calculateTripodCandidates(
     : cameraSettingsOrLensHeight;
   abortIfRequested(signal);
 
+  resetGsiElevationCacheStats();
   lastSearchDiagnostics = {
     startedAtMs: Date.now(),
     finishedAtMs: null,
     liveRoundTripCount: 0,
     liveLastRoundTripFinishedAtMs: null,
+    cacheHitBatchCount: 0,
+    cacheMissBatchCount: 0,
+    cacheOtherBatchCount: 0,
     perCelestialBody: {},
   };
 
@@ -1890,16 +1907,24 @@ export async function calculateTripodCandidates(
   // 呼び出し側（App.tsx）が「候補なし」ではなく「通信エラー」として
   // 案内できるよう区別する。
   const TERRAIN_FAILURE_RATIO_THRESHOLD = 0.5;
+  const finalizeDiagnostics = () => {
+    if (!lastSearchDiagnostics) return;
+    lastSearchDiagnostics.finishedAtMs = Date.now();
+    const cacheStats = getGsiElevationCacheStats();
+    lastSearchDiagnostics.cacheHitBatchCount = cacheStats.hit;
+    lastSearchDiagnostics.cacheMissBatchCount = cacheStats.miss;
+    lastSearchDiagnostics.cacheOtherBatchCount = cacheStats.other;
+  };
   if (
     candidates.length === 0 &&
     terrainRequestedCount > 0 &&
     terrainFailedCount / terrainRequestedCount >= TERRAIN_FAILURE_RATIO_THRESHOLD
   ) {
-    if (lastSearchDiagnostics) lastSearchDiagnostics.finishedAtMs = Date.now();
+    finalizeDiagnostics();
     throw new TerrainDataUnavailableError(terrainFailedCount / terrainRequestedCount);
   }
 
-  if (lastSearchDiagnostics) lastSearchDiagnostics.finishedAtMs = Date.now();
+  finalizeDiagnostics();
   return candidates;
 }
 

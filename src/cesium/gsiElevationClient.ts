@@ -12,6 +12,15 @@ export type GsiElevationClientResult = {
   samples: GsiElevationApiSample[];
   failedPointCount: number;
   lastError: unknown;
+  /**
+   * 2026-08-28追記: R2キャッシュが実際に活用されているかを診断できる
+   * よう、リクエストのバッチ単位でのヒット/ミス回数を集計する。
+   * 「地形取得◯点」という点数の集計とは別に、「そのうち何回分の通信で、
+   * 実際にキャッシュが再利用されたか」を確認できるようにする。
+   */
+  cacheHitCount: number;
+  cacheMissCount: number;
+  cacheOtherCount: number;
 };
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -28,6 +37,28 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_CONCURRENT_REQUESTS = 8;
 const SINGLE_POINT_RETRY_DELAY_MS = 250;
 
+// 2026-08-28追記: 「R2キャッシュが実際に活用されているか」を、通信
+// フローの型シグネチャ（TerrainSampler等）を変えずに診断できるよう、
+// モジュールレベルでヒット/ミス回数を記録する（フリーズ検知
+// freezeDetector.tsと同じ設計パターン）。検索1回ごとにリセットして使う。
+let globalCacheHitCount = 0;
+let globalCacheMissCount = 0;
+let globalCacheOtherCount = 0;
+
+export function resetGsiElevationCacheStats(): void {
+  globalCacheHitCount = 0;
+  globalCacheMissCount = 0;
+  globalCacheOtherCount = 0;
+}
+
+export function getGsiElevationCacheStats(): {
+  hit: number;
+  miss: number;
+  other: number;
+} {
+  return { hit: globalCacheHitCount, miss: globalCacheMissCount, other: globalCacheOtherCount };
+}
+
 function emptySamples(count: number): GsiElevationApiSample[] {
   return Array.from({ length: count }, () => ({ heightMeters: null, source: null }));
 }
@@ -36,11 +67,16 @@ function abortError(): Error {
   return createAbortError("標高取得を中止しました");
 }
 
+type BatchFetchResult = {
+  samples: GsiElevationApiSample[];
+  cache: "hit" | "miss" | "bypass" | "shared" | "unknown";
+};
+
 async function requestBatch(
   points: GsiElevationClientPoint[],
   signal: AbortSignal | undefined,
   fetcher: FetchLike
-): Promise<GsiElevationApiSample[]> {
+): Promise<BatchFetchResult> {
   if (signal?.aborted) throw abortError();
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -63,7 +99,7 @@ async function requestBatch(
     if (!contentType.toLowerCase().includes("application/json")) {
       throw new Error(`国土地理院標高APIがJSON以外を返しました（${response.status}）`);
     }
-    const data = (await response.json()) as { samples?: unknown; error?: unknown };
+    const data = (await response.json()) as { samples?: unknown; error?: unknown; cache?: unknown };
     if (!response.ok || !Array.isArray(data.samples)) {
       throw new Error(
         typeof data.error === "string"
@@ -74,7 +110,16 @@ async function requestBatch(
     if (data.samples.length !== points.length) {
       throw new Error("国土地理院標高APIの応答点数が一致しません");
     }
-    return data.samples as GsiElevationApiSample[];
+    // 2026-08-28追記: R2キャッシュが実際に「ヒット」しているのか
+    // 「毎回ミスして国土地理院に問い合わせ直している」のかを、
+    // これまでクライアント側では一切確認できていなかった
+    // （サーバー側は正しく返していたが、受け取っていなかった）。
+    // 診断情報として、この後の集計に使えるよう保持する。
+    const cache: BatchFetchResult["cache"] =
+      data.cache === "hit" || data.cache === "miss" || data.cache === "bypass" || data.cache === "shared"
+        ? data.cache
+        : "unknown";
+    return { samples: data.samples as GsiElevationApiSample[], cache };
   } catch (error) {
     if (signal?.aborted) throw abortError();
     throw error;
@@ -86,7 +131,7 @@ async function requestBatch(
 
 type ScheduledRequest = (
   points: GsiElevationClientPoint[]
-) => Promise<GsiElevationApiSample[]>;
+) => Promise<BatchFetchResult>;
 
 // 2026-08-25追記: 以前は fetchGsiElevationSamples が呼ばれるたびに、
 // 呼び出し1回ごとに専用の「8並列までのキュー」を新規作成していた。
@@ -103,7 +148,7 @@ type ScheduledJob = {
   points: GsiElevationClientPoint[];
   signal: AbortSignal | undefined;
   fetcher: FetchLike;
-  resolve: (samples: GsiElevationApiSample[]) => void;
+  resolve: (result: BatchFetchResult) => void;
   reject: (error: unknown) => void;
 };
 
@@ -132,7 +177,7 @@ function createRequestScheduler(
   signal: AbortSignal | undefined,
   fetcher: FetchLike
 ): ScheduledRequest {
-  return (points) => new Promise<GsiElevationApiSample[]>((resolve, reject) => {
+  return (points) => new Promise<BatchFetchResult>((resolve, reject) => {
     sharedQueue.push({ points, signal, fetcher, resolve, reject });
     pumpSharedQueue();
   });
@@ -169,11 +214,21 @@ async function requestBatchWithRecovery(
   signal: AbortSignal | undefined,
   request: ScheduledRequest
 ): Promise<GsiElevationClientResult> {
-  try {
+  const emptyCacheCounts = { cacheHitCount: 0, cacheMissCount: 0, cacheOtherCount: 0 };
+  function tallyCache(cache: BatchFetchResult["cache"]) {
     return {
-      samples: await request(points),
+      cacheHitCount: cache === "hit" || cache === "shared" ? 1 : 0,
+      cacheMissCount: cache === "miss" ? 1 : 0,
+      cacheOtherCount: cache === "bypass" || cache === "unknown" ? 1 : 0,
+    };
+  }
+  try {
+    const result = await request(points);
+    return {
+      samples: result.samples,
       failedPointCount: 0,
       lastError: null,
+      ...tallyCache(result.cache),
     };
   } catch (error) {
     if (signal?.aborted) {
@@ -182,10 +237,12 @@ async function requestBatchWithRecovery(
     if (points.length <= MIN_RECOVERY_SPLIT_SIZE) {
       try {
         await waitForSinglePointRetry(signal);
+        const result = await request(points);
         return {
-          samples: await request(points),
+          samples: result.samples,
           failedPointCount: 0,
           lastError: null,
+          ...tallyCache(result.cache),
         };
       } catch (retryError) {
         if (signal?.aborted) {
@@ -195,6 +252,7 @@ async function requestBatchWithRecovery(
           samples: emptySamples(points.length),
           failedPointCount: points.length,
           lastError: retryError,
+          ...emptyCacheCounts,
         };
       }
     }
@@ -211,6 +269,9 @@ async function requestBatchWithRecovery(
       samples: [...left.samples, ...right.samples],
       failedPointCount: left.failedPointCount + right.failedPointCount,
       lastError: right.lastError ?? left.lastError ?? error,
+      cacheHitCount: left.cacheHitCount + right.cacheHitCount,
+      cacheMissCount: left.cacheMissCount + right.cacheMissCount,
+      cacheOtherCount: left.cacheOtherCount + right.cacheOtherCount,
     };
   }
 }
@@ -221,7 +282,7 @@ export async function fetchGsiElevationSamples(
   fetcher: FetchLike = fetch
 ): Promise<GsiElevationClientResult> {
   if (points.length === 0) {
-    return { samples: [], failedPointCount: 0, lastError: null };
+    return { samples: [], failedPointCount: 0, lastError: null, cacheHitCount: 0, cacheMissCount: 0, cacheOtherCount: 0 };
   }
   const batches = Array.from(
     { length: Math.ceil(points.length / REQUEST_BATCH_SIZE) },
@@ -246,9 +307,16 @@ export async function fetchGsiElevationSamples(
     { length: Math.min(MAX_CONCURRENT_REQUESTS, batches.length) },
     () => worker()
   ));
-  return {
+  const finalResult = {
     samples: results.flatMap((result) => result.samples),
     failedPointCount: results.reduce((sum, result) => sum + result.failedPointCount, 0),
     lastError: results.findLast((result) => result.lastError)?.lastError ?? null,
+    cacheHitCount: results.reduce((sum, result) => sum + result.cacheHitCount, 0),
+    cacheMissCount: results.reduce((sum, result) => sum + result.cacheMissCount, 0),
+    cacheOtherCount: results.reduce((sum, result) => sum + result.cacheOtherCount, 0),
   };
+  globalCacheHitCount += finalResult.cacheHitCount;
+  globalCacheMissCount += finalResult.cacheMissCount;
+  globalCacheOtherCount += finalResult.cacheOtherCount;
+  return finalResult;
 }
