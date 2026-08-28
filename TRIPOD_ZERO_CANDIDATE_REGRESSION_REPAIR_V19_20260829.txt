@@ -1,0 +1,22 @@
+AstroSight v19 - tripod zero-candidate regression repair
+Date: 2026-08-29
+Base: v18
+
+EVIDENCE CONFIRMED IN SOURCE
+1. Current diagnostic: 5 terrain intersections -> 0 accepted candidates; terrain failures 0/2143.
+2. src/cesium/tripodCandidates.ts refineWithManualEquivalentProjection() in v7-v18 refined only distance along coarseMetrics.bearingDegrees.
+3. Final acceptance is two-dimensional CameraModel round-trip: abs(dxPercent)<=0.5 AND abs(dyPercent)<=0.5.
+4. The 2026-08-23 implementation note explicitly describes the refinement as "adaptive 1D local search along the subject-to-coarse bearing".
+5. Therefore the final optimizer had only one spatial degree of freedom while the acceptance objective has two screen dimensions. A lateral coarse-solution error could not be corrected by that refinement.
+
+REPAIR
+- Replaced distance-only 1D manual-equivalent refinement with 2D distance+bearing refinement around each coarse ECEF/DEM intersection.
+- Uses the same terrainSampler in 1m mode.
+- Uses the same calculateCelestialHorizontalCoordinates, createCameraProjection/projectHorizontalToPreview objective.
+- Keeps final point-specific GSI geoid rebuild.
+- Keeps final 0.5% dx/dy round-trip acceptance unchanged.
+- Does NOT create direction-only/fixed-distance fallback candidates.
+- Does NOT relax any acceptance threshold.
+
+LIMITATION
+This is a source-level regression repair based on the confirmed dimensional mismatch. A real-device run at the failing scene is still required to prove that this was the only cause of that specific 5->0 result.

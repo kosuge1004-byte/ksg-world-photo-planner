@@ -32,7 +32,14 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 // 適応精密化により1天体あたりの要求点数を大幅に削減したため、過剰な16並列は
 // 不要。スマホ回線やCloudflare/GSI側へ瞬間的に負荷を集中させない8並列に制限し、
 // スループットを維持しつつ一時失敗・輻輳を減らす。座標やDEM詳細度は間引かない。
-const REQUEST_BATCH_SIZE = 64;
+// 2026-08-29実機診断: 三脚初期探索は最大640点規模を1回のterrainSamplerで
+// 要求するのに、クライアントが64点ごとに分割していたため、同一探索段階だけで
+// 最大10本のHTTP往復が発生していた。サーバー/API側は1リクエスト最大2000点を
+// 正式に受理し、内部では同一DEMタイルを共有して処理する。そこで640点を丸ごと
+// 1要求に収められる1024点へ拡大する。座標・順序・maximumDetail・補間方式・
+// DEMソース優先順位・再試行条件は一切変更せず、HTTP分割境界だけを変更する。
+// これにより精度を変えず、初期探索のHTTP往復とサーバー側の重複タイル処理を削減する。
+const REQUEST_BATCH_SIZE = 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_CONCURRENT_REQUESTS = 8;
 const SINGLE_POINT_RETRY_DELAY_MS = 250;

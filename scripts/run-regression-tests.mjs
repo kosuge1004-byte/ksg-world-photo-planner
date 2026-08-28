@@ -138,6 +138,14 @@ const cases = [
     arguments: ["./scripts/verify-r2-safety-all-paths-20260824.mjs"],
   },
   {
+    name: "device DEM tile cache parity with server interpolation",
+    arguments: ["--experimental-strip-types", "./scripts/verify-device-dem-tile-cache-20260829.mjs"],
+  },
+  {
+    name: "tripod candidate speed caches preserve exact-result safety",
+    arguments: ["--experimental-strip-types", "./scripts/verify-tripod-speed-cache-20260829.mjs"],
+  },
+  {
     name: "Cloudflare API and geo-tz runtime contracts",
     arguments: [
       "--import",

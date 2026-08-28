@@ -1,0 +1,100 @@
+--- /mnt/data/v18/src/cesium/tripodCandidates.ts	2026-08-28 16:25:06.018398109 +0000
++++ /mnt/data/v19/src/cesium/tripodCandidates.ts	2026-08-28 16:31:50.114959034 +0000
+@@ -1257,27 +1257,54 @@
+     ABSOLUTE_MAX_DISTANCE_METERS,
+     distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS
+   );
++
++  // 2026-08-29 regression repair:
++  // The previous manual-equivalent refinement searched only along ONE fixed bearing
++  // (coarseMetrics.bearingDegrees). That can minimize distance error but cannot correct
++  // a lateral error in the coarse ECEF/DEM intersection. Because final acceptance is a
++  // 2-D CameraModel screen error (dx AND dy), a 1-D distance-only optimizer can leave
++  // every real intersection outside the 0.5% round-trip gate even when valid terrain
++  // intersections exist. Keep the exact same CameraModel objective and acceptance gate,
++  // but solve the missing second degree of freedom: bearing/lateral displacement.
+   let centerDistance = Math.min(maximum, Math.max(minimum, coarseMetrics.distanceMeters));
+-  // 1km前後なら±約40m。今回のような10m級残差を確実に含めつつ、
+-  // 詳細計算を広域化しない。短距離でも最低±24m、長距離でも±80mに制限。
+-  let radius = Math.max(24, Math.min(80, centerDistance * 0.04));
++  let centerBearing = coarseMetrics.bearingDegrees;
++  let radialRadiusMeters = Math.max(24, Math.min(80, centerDistance * 0.04));
++  let lateralRadiusMeters = radialRadiusMeters;
+   let best: ManualEquivalentEvaluation | null = null;
+ 
+   for (let pass = 0; pass < 3; pass += 1) {
+     abortIfRequested(signal);
+     const segments = 8;
+-    const distances: number[] = [];
+-    for (let index = 0; index <= segments; index += 1) {
+-      const distance = centerDistance - radius + (2 * radius * index) / segments;
+-      const clamped = Math.min(maximum, Math.max(minimum, distance));
+-      if (!distances.some((existing) => Math.abs(existing - clamped) < 1e-6)) {
+-        distances.push(clamped);
++    const requests: Array<{ distance: number; bearing: number; cartographic: Cartographic }> = [];
++    const dedupe = new Set<string>();
++
++    for (let radialIndex = 0; radialIndex <= segments; radialIndex += 1) {
++      const rawDistance = centerDistance - radialRadiusMeters +
++        (2 * radialRadiusMeters * radialIndex) / segments;
++      const distance = Math.min(maximum, Math.max(minimum, rawDistance));
++      for (let lateralIndex = 0; lateralIndex <= segments; lateralIndex += 1) {
++        const lateralMeters = -lateralRadiusMeters +
++          (2 * lateralRadiusMeters * lateralIndex) / segments;
++        // Convert the requested cross-track displacement to a bearing offset without
++        // quantizing coordinates. atan2 is stable even at the minimum 8 m range.
++        const bearingOffsetDegrees = Math.atan2(lateralMeters, Math.max(distance, 1)) * 180 / Math.PI;
++        const bearing = (centerBearing + bearingOffsetDegrees + 360) % 360;
++        const key = `${distance.toFixed(9)}:${bearing.toFixed(12)}`;
++        if (dedupe.has(key)) continue;
++        dedupe.add(key);
++        requests.push({
++          distance,
++          bearing,
++          cartographic: destinationCartographic(subject, bearing, distance),
++        });
+       }
+     }
+-    const requestPoints = distances.map((distance) =>
+-      destinationCartographic(subject, coarseMetrics.bearingDegrees, distance)
++
++    const sampled = await terrainSampler(
++      requests.map((request) => request.cartographic),
++      signal,
++      "1m"
+     );
+-    const sampled = await terrainSampler(requestPoints, signal, "1m");
+     abortIfRequested(signal);
+ 
+     let passBest: ManualEquivalentEvaluation | null = null;
+@@ -1287,7 +1314,7 @@
+       const candidate = buildCandidateGroundPoint(
+         cartographic,
+         subject,
+-        `${point.label}手動三脚ピン同等詳細候補`
++        `${point.label}手動三脚ピン同等2D詳細候補`
+       );
+       const evaluated = evaluateManualEquivalentCandidate(
+         candidate,
+@@ -1305,15 +1332,16 @@
+     }
+     if (!passBest) break;
+ 
+-    centerDistance = passBest.distanceMeters;
+-    // 次段階は前段階の1サンプル間隔だけを再探索する。
+-    radius = Math.max(0.5, (2 * radius) / segments);
++    const passMetrics = calculateKarneyLineMetrics(subject, passBest.candidatePoint);
++    centerDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
++    centerBearing = passMetrics.bearingDegrees;
++    // One grid spacing from the preceding pass becomes the next search radius.
++    radialRadiusMeters = Math.max(0.5, (2 * radialRadiusMeters) / segments);
++    lateralRadiusMeters = Math.max(0.5, (2 * lateralRadiusMeters) / segments);
+   }
+ 
+   if (!best) return null;
+ 
+-  // 最良地点だけ候補地点自身の正確なジオイドNでH/N/hを再構成し、
+-  // 手動三脚ピンと同じCameraModelをもう一度通して最終評価する。
+   const bestCartographic = Cartographic.fromDegrees(
+     best.candidatePoint.longitude,
+     best.candidatePoint.latitude,

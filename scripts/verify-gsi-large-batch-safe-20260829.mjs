@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const client=fs.readFileSync(new URL('../src/cesium/gsiElevationClient.ts', import.meta.url),'utf8');
+const api=fs.readFileSync(new URL('../functions/api/gsi-elevation.ts', import.meta.url),'utf8');
+if(!client.includes('const REQUEST_BATCH_SIZE = 1024;')) throw new Error('client batch is not 1024');
+const m=api.match(/const MAX_POINTS_PER_REQUEST = ([0-9_]+);/);
+if(!m) throw new Error('server max not found');
+const max=Number(m[1].replaceAll('_',''));
+if(max < 1024) throw new Error(`server max ${max} below client batch`);
+for(const token of ['maximumDetail', 'interpolationMode']) if(!client.includes(token)) throw new Error(`missing ${token}`);
+console.log(`PASS GSI large-batch safety: client=1024 serverMax=${max}`);

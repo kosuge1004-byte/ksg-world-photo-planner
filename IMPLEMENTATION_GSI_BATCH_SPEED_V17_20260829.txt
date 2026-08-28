@@ -1,0 +1,27 @@
+AstroSight v17 - 三脚候補DEM通信の実測ボトルネック高速化
+2026-08-29
+
+実機診断:
+総確定 210.136秒 / 初期探索 200.71秒 / terrainSampler累計 201.7秒 / 64回 / 2143点。
+
+変更:
+src/cesium/gsiElevationClient.ts のHTTP REQUEST_BATCH_SIZEを64 -> 1024へ拡大。
+functions/api/gsi-elevation.ts は従来から1要求最大2000点を受理するため契約内。
+三脚初期探索は内部上限640点なので、従来最大10本に分割され得た同一段階を1本にまとめられる。
+サーバー側では同一要求内のDEMタイル取得を共有できるため、HTTP往復だけでなく重複タイル処理も減る。
+
+精度不変:
+座標、要求点数、点順序、maximumDetail、interpolationMode、DEM source priority、補間式、探索範囲、
+1m精密化、収束回数/閾値、CameraModel round-trip、double-checkは変更なし。
+
+検証:
+- client batch 1024 <= server max 2000: PASS
+- gsiElevationClient.ts targeted TypeScript: PASS
+- device DEM tile cache math: PASS
+- tripod speed cache safety: PASS
+- R2 safety: 11/11 PASS
+- runtime mock testはNodeの拡張子なしTS import解決制約で実行不可。PASS扱いにしていない。
+- full npm buildはnode_modules未同梱のため未実行。
+
+次の実機確認:
+同一地点・同一条件で診断を取得し、総確定時間/初期探索/通信回数をv16の210.1秒・200.71秒・64回と比較する。

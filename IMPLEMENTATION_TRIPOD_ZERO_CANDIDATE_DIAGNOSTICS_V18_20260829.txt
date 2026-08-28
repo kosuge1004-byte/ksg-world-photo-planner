@@ -1,0 +1,35 @@
+AstroSight v18 - 三脚候補 5件→確定0件 原因特定診断
+
+目的:
+速度ではなく、粗交点候補が最終確定候補にならない直接原因を特定する。
+精度条件・探索条件は一切緩和しない。
+
+追加した診断:
+- solution-height-invalid
+- manual-refinement-exception
+- manual-refinement-no-valid-evaluation
+- final-celestial-altitude-invalid
+- final-celestial-below-threshold
+- final-altitude-error-invalid
+- final-azimuth-error-invalid
+- roundtrip-missing
+- roundtrip-behind-camera
+- roundtrip-horizontal-outside-tolerance
+- roundtrip-vertical-outside-tolerance
+
+最終判定まで到達した候補について以下もコピー診断へ出力:
+- 候補距離
+- 方位誤差(deg)
+- 仰角誤差(deg)
+- CameraModel round-trip dx/dy(%)
+- カメラ前方/後方
+
+重要:
+ROUND_TRIP_SCREEN_TOLERANCE_PERCENT=0.5、CONVERGED_HORIZONTAL_DEGREES=0.002、
+DEM解像度、1m精密化、探索範囲、反復回数、CameraModel経路は変更していない。
+候補を無理に通す修正ではなく、落ちた理由を記録するだけ。
+
+検証:
+R2 safety 11/11 PASS。
+完全TypeScript buildは supplied ZIP に node_modules がなく、Cesium/astronomy-engine/
+geographiclib-geodesic の型解決不能のため未実行。これをPASSとは扱わない。

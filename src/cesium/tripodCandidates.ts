@@ -128,6 +128,8 @@ export type TripodSearchDiagnostics = {
    */
   cacheHitBatchCount: number;
   cacheMissBatchCount: number;
+  /** 2026-08-29: 最終確定時間の実測内訳。計算結果には影響しない診断専用。 */
+  totalElapsedMs: number | null;
   perCelestialBody: Record<
     string,
     {
@@ -156,8 +158,22 @@ export type TripodSearchDiagnostics = {
        * かかった時間も分けて記録する。複数の交点候補がある場合は、
        * 最後に処理された候補の値で上書きされる（大まかな切り分け用途）。
        */
+      initialScanMs: number;
+      weatherResolveMs: number;
       convergenceLoopMs: number;
       refinementMs: number;
+      doubleCheckMs: number;
+      totalBodyMs: number;
+      rejectionReasons: Record<string, number>;
+      finalEvaluations: Array<{
+        distanceMeters: number | null;
+        reason: string;
+        azimuthErrorDegrees: number | null;
+        altitudeErrorDegrees: number | null;
+        dxPercent: number | null;
+        dyPercent: number | null;
+        inFront: boolean | null;
+      }>;
     }
   >;
 };
@@ -1241,27 +1257,54 @@ async function refineWithManualEquivalentProjection(
     ABSOLUTE_MAX_DISTANCE_METERS,
     distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS
   );
+
+  // 2026-08-29 regression repair:
+  // The previous manual-equivalent refinement searched only along ONE fixed bearing
+  // (coarseMetrics.bearingDegrees). That can minimize distance error but cannot correct
+  // a lateral error in the coarse ECEF/DEM intersection. Because final acceptance is a
+  // 2-D CameraModel screen error (dx AND dy), a 1-D distance-only optimizer can leave
+  // every real intersection outside the 0.5% round-trip gate even when valid terrain
+  // intersections exist. Keep the exact same CameraModel objective and acceptance gate,
+  // but solve the missing second degree of freedom: bearing/lateral displacement.
   let centerDistance = Math.min(maximum, Math.max(minimum, coarseMetrics.distanceMeters));
-  // 1km前後なら±約40m。今回のような10m級残差を確実に含めつつ、
-  // 詳細計算を広域化しない。短距離でも最低±24m、長距離でも±80mに制限。
-  let radius = Math.max(24, Math.min(80, centerDistance * 0.04));
+  let centerBearing = coarseMetrics.bearingDegrees;
+  let radialRadiusMeters = Math.max(24, Math.min(80, centerDistance * 0.04));
+  let lateralRadiusMeters = radialRadiusMeters;
   let best: ManualEquivalentEvaluation | null = null;
 
   for (let pass = 0; pass < 3; pass += 1) {
     abortIfRequested(signal);
     const segments = 8;
-    const distances: number[] = [];
-    for (let index = 0; index <= segments; index += 1) {
-      const distance = centerDistance - radius + (2 * radius * index) / segments;
-      const clamped = Math.min(maximum, Math.max(minimum, distance));
-      if (!distances.some((existing) => Math.abs(existing - clamped) < 1e-6)) {
-        distances.push(clamped);
+    const requests: Array<{ distance: number; bearing: number; cartographic: Cartographic }> = [];
+    const dedupe = new Set<string>();
+
+    for (let radialIndex = 0; radialIndex <= segments; radialIndex += 1) {
+      const rawDistance = centerDistance - radialRadiusMeters +
+        (2 * radialRadiusMeters * radialIndex) / segments;
+      const distance = Math.min(maximum, Math.max(minimum, rawDistance));
+      for (let lateralIndex = 0; lateralIndex <= segments; lateralIndex += 1) {
+        const lateralMeters = -lateralRadiusMeters +
+          (2 * lateralRadiusMeters * lateralIndex) / segments;
+        // Convert the requested cross-track displacement to a bearing offset without
+        // quantizing coordinates. atan2 is stable even at the minimum 8 m range.
+        const bearingOffsetDegrees = Math.atan2(lateralMeters, Math.max(distance, 1)) * 180 / Math.PI;
+        const bearing = (centerBearing + bearingOffsetDegrees + 360) % 360;
+        const key = `${distance.toFixed(9)}:${bearing.toFixed(12)}`;
+        if (dedupe.has(key)) continue;
+        dedupe.add(key);
+        requests.push({
+          distance,
+          bearing,
+          cartographic: destinationCartographic(subject, bearing, distance),
+        });
       }
     }
-    const requestPoints = distances.map((distance) =>
-      destinationCartographic(subject, coarseMetrics.bearingDegrees, distance)
+
+    const sampled = await terrainSampler(
+      requests.map((request) => request.cartographic),
+      signal,
+      "1m"
     );
-    const sampled = await terrainSampler(requestPoints, signal, "1m");
     abortIfRequested(signal);
 
     let passBest: ManualEquivalentEvaluation | null = null;
@@ -1271,7 +1314,7 @@ async function refineWithManualEquivalentProjection(
       const candidate = buildCandidateGroundPoint(
         cartographic,
         subject,
-        `${point.label}手動三脚ピン同等詳細候補`
+        `${point.label}手動三脚ピン同等2D詳細候補`
       );
       const evaluated = evaluateManualEquivalentCandidate(
         candidate,
@@ -1289,15 +1332,16 @@ async function refineWithManualEquivalentProjection(
     }
     if (!passBest) break;
 
-    centerDistance = passBest.distanceMeters;
-    // 次段階は前段階の1サンプル間隔だけを再探索する。
-    radius = Math.max(0.5, (2 * radius) / segments);
+    const passMetrics = calculateKarneyLineMetrics(subject, passBest.candidatePoint);
+    centerDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
+    centerBearing = passMetrics.bearingDegrees;
+    // One grid spacing from the preceding pass becomes the next search radius.
+    radialRadiusMeters = Math.max(0.5, (2 * radialRadiusMeters) / segments);
+    lateralRadiusMeters = Math.max(0.5, (2 * lateralRadiusMeters) / segments);
   }
 
   if (!best) return null;
 
-  // 最良地点だけ候補地点自身の正確なジオイドNでH/N/hを再構成し、
-  // 手動三脚ピンと同じCameraModelをもう一度通して最終評価する。
   const bestCartographic = Cartographic.fromDegrees(
     best.candidatePoint.longitude,
     best.candidatePoint.latitude,
@@ -1356,8 +1400,26 @@ async function calculateOneCandidates(
   let terrainRoundTripTotalMs = 0;
   // 2026-08-27追記: 通信以外（収束反復ループ・精密化・ジオイド取得）に
   // かかった時間。processInitialSolution内で更新される。
-  let lastConvergenceLoopMs = 0;
-  let lastRefinementMs = 0;
+  let convergenceLoopTotalMs = 0;
+  let refinementTotalMs = 0;
+  let initialScanMs = 0;
+  let weatherResolveMs = 0;
+  let doubleCheckMs = 0;
+  const bodyStartedAt = performance.now();
+  const rejectionReasons: Record<string, number> = {};
+  const finalEvaluations: TripodSearchDiagnostics["perCelestialBody"][string]["finalEvaluations"] = [];
+  const reject = (reason: string, evaluation?: Partial<TripodSearchDiagnostics["perCelestialBody"][string]["finalEvaluations"][number]>) => {
+    rejectionReasons[reason] = (rejectionReasons[reason] ?? 0) + 1;
+    finalEvaluations.push({
+      distanceMeters: evaluation?.distanceMeters ?? null,
+      reason,
+      azimuthErrorDegrees: evaluation?.azimuthErrorDegrees ?? null,
+      altitudeErrorDegrees: evaluation?.altitudeErrorDegrees ?? null,
+      dxPercent: evaluation?.dxPercent ?? null,
+      dyPercent: evaluation?.dyPercent ?? null,
+      inFront: evaluation?.inFront ?? null,
+    });
+  };
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
     const startedAt = performance.now();
     const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
@@ -1379,7 +1441,9 @@ async function calculateOneCandidates(
   // 各反復で候補地点ごとに再計算するため、精度への影響はない。
   let activeRefractionWeather = refractionWeather;
   if (refractionWeatherResolver) {
+    const weatherStartedAt = performance.now();
     const resolvedWeather = await refractionWeatherResolver(subject, signal);
+    weatherResolveMs += performance.now() - weatherStartedAt;
     abortIfRequested(signal);
     if (resolvedWeather) activeRefractionWeather = resolvedWeather;
   }
@@ -1459,6 +1523,7 @@ async function calculateOneCandidates(
       : directSeedDistance !== null
         ? "direct-geometric"
         : "none";
+  const initialScanStartedAt = performance.now();
   const initialSolutions = await scanInitialRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
@@ -1469,6 +1534,7 @@ async function calculateOneCandidates(
     effectiveSeedDistance,
     doubleCheckEnabled
   );
+  initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
     recordDiagnostics(point.label, {
       initialSolutionCount: 0,
@@ -1481,8 +1547,14 @@ async function calculateOneCandidates(
       primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
       terrainRoundTripCount,
       terrainRoundTripTotalMs,
-      convergenceLoopMs: lastConvergenceLoopMs,
-      refinementMs: lastRefinementMs,
+      initialScanMs,
+      weatherResolveMs,
+      convergenceLoopMs: convergenceLoopTotalMs,
+      refinementMs: refinementTotalMs,
+      doubleCheckMs,
+      totalBodyMs: performance.now() - bodyStartedAt,
+      rejectionReasons,
+      finalEvaluations,
     });
     return [];
   }
@@ -1604,9 +1676,12 @@ async function calculateOneCandidates(
       );
     }
 
-    if (!Number.isFinite(solution.cartographic.height)) return null;
+    if (!Number.isFinite(solution.cartographic.height)) {
+      reject("solution-height-invalid", { distanceMeters: solution.distanceMeters });
+      return null;
+    }
     const convergenceLoopMs = performance.now() - convergenceLoopStartedAt;
-    lastConvergenceLoopMs = convergenceLoopMs;
+    convergenceLoopTotalMs += convergenceLoopMs;
 
     // 粗いECEF+DEM解はseedとしてのみ使用する。ここから先は、粗候補周辺だけを
     // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
@@ -1628,12 +1703,16 @@ async function calculateOneCandidates(
         activeRefractionWeather
       );
     } catch (error) {
+      reject("manual-refinement-exception", { distanceMeters: solution.distanceMeters });
       console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
       return null;
     }
     const refinementMs = performance.now() - refinementStartedAt;
-    lastRefinementMs = refinementMs;
-    if (!manualRefined) return null;
+    refinementTotalMs += refinementMs;
+    if (!manualRefined) {
+      reject("manual-refinement-no-valid-evaluation", { distanceMeters: solution.distanceMeters });
+      return null;
+    }
 
     const finalCandidatePoint = manualRefined.candidatePoint;
     const finalHorizontal = manualRefined.horizontal;
@@ -1691,6 +1770,29 @@ async function calculateOneCandidates(
       !Number.isFinite(finalAzimuthError) ||
       roundTripFailed
     ) {
+      const rejectionReason = !Number.isFinite(finalHorizontal.altitudeDegrees)
+        ? "final-celestial-altitude-invalid"
+        : finalHorizontal.altitudeDegrees <= 0.25
+          ? "final-celestial-below-threshold"
+          : !Number.isFinite(finalAltitudeError)
+            ? "final-altitude-error-invalid"
+            : !Number.isFinite(finalAzimuthError)
+              ? "final-azimuth-error-invalid"
+              : !roundTrip
+                ? "roundtrip-missing"
+                : !roundTrip.inFront
+                  ? "roundtrip-behind-camera"
+                  : Math.abs(roundTrip.dxPercent) > ROUND_TRIP_SCREEN_TOLERANCE_PERCENT
+                    ? "roundtrip-horizontal-outside-tolerance"
+                    : "roundtrip-vertical-outside-tolerance";
+      reject(rejectionReason, {
+        distanceMeters: manualRefined.distanceMeters,
+        azimuthErrorDegrees: Number.isFinite(finalAzimuthError) ? finalAzimuthError : null,
+        altitudeErrorDegrees: Number.isFinite(finalAltitudeError) ? finalAltitudeError : null,
+        dxPercent: roundTrip && Number.isFinite(roundTrip.dxPercent) ? roundTrip.dxPercent : null,
+        dyPercent: roundTrip && Number.isFinite(roundTrip.dyPercent) ? roundTrip.dyPercent : null,
+        inFront: roundTrip?.inFront ?? null,
+      });
       console.warn(`[tripod-candidate] ${point.label}: 最終幾何収束条件（round-trip含む）を満たさない候補を除外`, {
         distanceMeters: manualRefined.distanceMeters,
         ...diagnostics,
@@ -1723,6 +1825,7 @@ async function calculateOneCandidates(
   // 旧方式はユーザーがONにした時だけ独立検算として1回実行する。
   // 本計算の候補を置換・除外しない（仕様3-H）。
   if (doubleCheckEnabled && unique.length > 0) {
+    const doubleCheckStartedAt = performance.now();
     const verification = await solveTerrainDistance(
       subject,
       initialBearing,
@@ -1735,6 +1838,7 @@ async function calculateOneCandidates(
       undefined
     );
     abortIfRequested(signal);
+    doubleCheckMs += performance.now() - doubleCheckStartedAt;
     if (!verification) {
       console.warn(`[tripod-double-check] ${point.label}: 旧方式で検算解を取得できませんでした`);
     } else {
@@ -1761,8 +1865,14 @@ async function calculateOneCandidates(
     primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
     terrainRoundTripCount,
     terrainRoundTripTotalMs,
-    convergenceLoopMs: lastConvergenceLoopMs,
-    refinementMs: lastRefinementMs,
+    initialScanMs,
+    weatherResolveMs,
+    convergenceLoopMs: convergenceLoopTotalMs,
+    refinementMs: refinementTotalMs,
+    doubleCheckMs,
+    totalBodyMs: performance.now() - bodyStartedAt,
+    rejectionReasons,
+    finalEvaluations,
   });
   return unique;
 }
@@ -1811,6 +1921,7 @@ export async function calculateTripodCandidates(
     liveLastRoundTripFinishedAtMs: null,
     cacheHitBatchCount: 0,
     cacheMissBatchCount: 0,
+    totalElapsedMs: null,
     perCelestialBody: {},
   };
 
@@ -1911,6 +2022,8 @@ export async function calculateTripodCandidates(
   const finalizeDiagnostics = () => {
     if (!lastSearchDiagnostics) return;
     lastSearchDiagnostics.finishedAtMs = Date.now();
+    lastSearchDiagnostics.totalElapsedMs =
+      lastSearchDiagnostics.finishedAtMs - lastSearchDiagnostics.startedAtMs;
     const cacheStats = getGsiElevationCacheStats();
     lastSearchDiagnostics.cacheHitBatchCount = cacheStats.hit;
     lastSearchDiagnostics.cacheMissBatchCount = cacheStats.miss;

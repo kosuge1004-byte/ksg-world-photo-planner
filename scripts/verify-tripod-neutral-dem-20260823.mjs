@@ -22,7 +22,14 @@ const checks = [
   // 渡していることを確認する。
   ['API forwards interpolation mode to lookupGsiElevations (2026-08-28)', /lookupGsiElevations\(points,/.test(api)],
   ['client transmits interpolation mode', /interpolationMode\?: "los-safe" \| "neutral"/.test(client)],
-  ['neutral terrain sampler requests neutral GSI', /export async function sampleWorldTerrainNeutral[\s\S]*interpolationMode: "neutral" as const/.test(terrain)],
+  // 2026-08-28追記: sampleWorldTerrainNeutralは、以前は独自に
+  // fetchGsiElevationSamplesを直接呼んでいたが、端末側の永続キャッシュ
+  // （sampleTerrainCached、IndexedDB）を経由するよう変更した。これにより
+  // "neutral"という文字列は、fetchGsiElevationSamplesへの直接指定では
+  // なく、sampleTerrainCachedへの引数として渡される形に変わったため、
+  // 検証パターンを更新する。
+  ['neutral terrain sampler requests neutral GSI (2026-08-28: via sampleTerrainCached)',
+    /export async function sampleWorldTerrainNeutral[\s\S]*sampleTerrainCached[\s\S]*"neutral"/.test(terrain)],
   ['tripod calculator defaults to neutral terrain sampler', /terrainSampler: TerrainSampler = sampleWorldTerrainNeutral/.test(tripod)],
   ['tripod imports no ordinary sampleWorldTerrain fallback as default', !/import \{ sampleWorldTerrain, terrainDataSource \}/.test(tripod)],
 ];

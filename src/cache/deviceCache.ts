@@ -102,6 +102,66 @@ export async function getDeviceCache<T>(
   return record.value;
 }
 
+/**
+ * Read multiple keys with one IndexedDB readonly transaction. Memory/expiry/LRU
+ * semantics are identical to getDeviceCache(); only transaction overhead changes.
+ * Returned array preserves input order.
+ */
+export async function getDeviceCacheMany<T>(
+  policy: DeviceCachePolicy,
+  keys: readonly string[]
+): Promise<Array<T | null>> {
+  if (keys.length === 0) return [];
+  const now = Date.now();
+  const results: Array<T | null> = keys.map(() => null);
+  const missing: Array<{ index: number; id: string }> = [];
+
+  keys.forEach((key, index) => {
+    const id = compoundKey(policy.namespace, key);
+    const cached = memory.get(id) as CacheRecord<T> | undefined;
+    if (!cached) {
+      missing.push({ index, id });
+      return;
+    }
+    if (cached.expiresAt <= now) {
+      memory.delete(id);
+      void removePersistent(id);
+      return;
+    }
+    cached.accessedAt = now;
+    touchMemory(cached, policy.memoryEntries ?? Math.min(policy.maxEntries, 256));
+    results[index] = cached.value;
+  });
+
+  if (missing.length === 0) return results;
+  const database = await openDatabase();
+  if (!database) return results;
+
+  const transaction = database.transaction(STORE_NAME, "readonly");
+  const store = transaction.objectStore(STORE_NAME);
+  await Promise.all(missing.map(({ index, id }) => new Promise<void>((resolve) => {
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const record = (request.result as CacheRecord<T> | undefined) ?? null;
+      if (!record) {
+        resolve();
+        return;
+      }
+      if (record.expiresAt <= now) {
+        void removePersistent(id);
+        resolve();
+        return;
+      }
+      record.accessedAt = now;
+      touchMemory(record, policy.memoryEntries ?? Math.min(policy.maxEntries, 256));
+      results[index] = record.value;
+      resolve();
+    };
+    request.onerror = () => resolve();
+  })));
+  return results;
+}
+
 async function pruneNamespaceNow(policy: DeviceCachePolicy): Promise<void> {
   const database = await openDatabase();
   if (!database) return;
@@ -170,6 +230,37 @@ export async function setDeviceCache<T>(
   await new Promise<void>((resolve) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(record);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+  await scheduleNamespacePrune(policy);
+}
+
+
+export async function setDeviceCacheMany<T>(
+  policy: DeviceCachePolicy,
+  entries: ReadonlyArray<{ key: string; value: T; ttlMs?: number }>
+): Promise<void> {
+  if (entries.length === 0) return;
+  const now = Date.now();
+  const maximum = policy.memoryEntries ?? Math.min(policy.maxEntries, 256);
+  const records = entries.map(({ key, value, ttlMs }) => ({
+    id: compoundKey(policy.namespace, key),
+    namespace: policy.namespace,
+    key,
+    value,
+    createdAt: now,
+    accessedAt: now,
+    expiresAt: now + (ttlMs ?? policy.ttlMs),
+  } satisfies CacheRecord<T>));
+  for (const record of records) touchMemory(record, maximum);
+  const database = await openDatabase();
+  if (!database) return;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    for (const record of records) store.put(record);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
     transaction.onabort = () => resolve();
