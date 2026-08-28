@@ -1,0 +1,37 @@
+AstroSight v15 - 三脚候補最終確定時間プロファイリング
+2026-08-29
+
+目的:
+三脚候補の「表示開始」ではなく「最終確定」までの実時間を工程別に測定し、
+次の高速化率を推測ではなく実測から算出できるようにする。
+
+追加計測:
+- 総確定時間 totalElapsedMs
+- 天体別総時間 totalBodyMs
+- 初期交点探索 initialScanMs
+- 気象/屈折コンテキスト解決 weatherResolveMs
+- DEM terrainSampler 累計待ち時間 terrainRoundTripTotalMs / 回数
+- 収束反復 convergenceLoopMs（複数交点は合計）
+- 1m最終精密化 refinementMs（複数交点は合計）
+- double-check doubleCheckMs
+- 既存: DEM要求点数、失敗数、wide fallback、距離seed、R2 hit/miss
+
+確認方法:
+三脚候補検索完了後「この検索の診断情報をコピー」を押す。
+コピー内容に総確定時間(ms)と工程別秒数が出る。
+同じ場所・同じ条件で初回/2回目を各3回程度測ると、端末DEMキャッシュ効果も分離しやすい。
+
+精度への影響:
+なし。計算式、DEM解像度、DEM優先順位、探索点数、探索範囲、収束回数、
+収束閾値、1m精密化、CameraModel round-trip、double-checkの条件は変更していない。
+performance.now()/Date.now()による時刻計測と診断値の加算のみ。
+
+検証:
+- 新規 instrumentation wiring test: PASS
+- R2 safety all paths: 11/11 PASS
+- 重要定数 CONVERGED_HORIZONTAL_DEGREES=0.002,
+  ROUND_TRIP_SCREEN_TOLERANCE_PERCENT=0.5,
+  ABSOLUTE_MIN_DISTANCE_METERS=8,
+  ABSOLUTE_MAX_DISTANCE_METERS=50000 はv14と一致
+- 一部既存TS実行テストは、この環境にTypeScript loader/node_modulesがないため実行不能。
+  これはPASS扱いにはしていない。

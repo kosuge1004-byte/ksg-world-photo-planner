@@ -1,0 +1,116 @@
+AstroSight 三脚候補点 高速化追加実装 v11
+基準: AstroSight-FULL-20260829-device-dem-tile-cache-v10.zip
+実装日: 2026-08-29
+
+目的
+- 三脚候補点の最終位置精度、DEM解像度、補間方式、収束条件、広域フォールバックを変更せず表示を高速化する。
+- キャッシュ誤利用による古い/別条件の候補確定を防止する。
+
+今回実装した内容
+
+1. 永続三脚候補seedキャッシュ
+新規: src/cesium/tripodCandidateSeedCache.ts
+- 確定済み aligned 候補のみから、天体IDごとの距離・緯度・経度・高さを端末DeviceCacheへ保存。
+- キーは被写体位置の近接bucket + 天体ID + 方位bucket + 幾何高度bucket + seedバージョン。
+- TTL 30日、最大512件。
+- 保存値は「最終結果」として一切採用しない。
+- 次回探索の preferredDistanceMeters としてのみ利用。
+- 現セッションの直前確定候補が存在する場合は、そちらを永続seedより優先。
+- seedが外れていても既存solverのwide fallbackが必ず残るため、最終精度条件は不変。
+
+2. 過去候補座標を使った端末DEMメモリウォーム
+変更: src/cesium/gsiDemTileCache.ts / src/App.tsx
+- 永続seedに保存された候補座標周辺について、IndexedDBに既に存在するDEMタイルをメモリLRUへ読み出す。
+- warmGsiDeviceTilesFromPersistentCache() はネットワーク通信を行わない。
+- 欠損タイルは無視し、地形ソース選択や最終計算には影響しない。
+
+3. 同一DEMタイルの同時IndexedDB読み出し共有
+変更: src/cesium/gsiDemTileCache.ts
+- inFlightReads を追加。
+- 複数天体/複数候補が同一タイルを同時要求した場合、IndexedDB GETを1本に共有。
+- 返すTileLookupは従来と同一。数値処理は変更なし。
+
+4. 1m DEM隣接タイル読み出しの並列化
+変更: src/cesium/gsiDemTileCache.ts
+- Bicubic/境界処理に必要な隣接タイル読み出しを直列awaitからPromise.allへ変更。
+- neighborOffsets、NoData判定、DEM優先順位、Bilinear/Bicubicの値は変更なし。
+- I/O待ち順だけを変更。
+
+5. 完全一致三脚候補結果キャッシュ Phase 1
+新規: src/cesium/tripodCandidateExactCache.ts
+変更: src/App.tsx
+- 同一アプリ実行中のメモリキャッシュのみ。
+- 永続化しない。
+- aligned の確定候補のみ保存。0件、preliminary、direction-onlyは保存しない。
+- キーに以下を高精度文字列で含める:
+  * 被写体緯度/経度/高さ
+  * 有効天体ID、方位、高度、幾何高度
+  * 焦点距離、レンズ中心高
+  * 日時(ms完全一致)
+  * CalculationMode
+  * プレビューアスペクト比
+  * previewRefractionWeatherの全内容
+  * double-check設定
+  * initialDirectionObserver
+  * accuracyMode
+  * refractionMode
+  * キャッシュアルゴリズムバージョン
+- 自動気象(refractionCorrectionMode=auto)では完全一致結果キャッシュを完全無効化。
+  理由: 候補地点で再解決される気象/外部データにimmutableな版fingerprintが現状ないため。
+- 標準大気時のみ、同一セッション内で完全一致した場合に即時返却。
+
+完全一致結果キャッシュ Phase 2（意図的に未有効化）
+- 再起動後も残る永続「最終結果」キャッシュは今回有効化していない。
+- DEM/GSIデータや気象データのimmutable source version/fingerprintがAPIから得られない現状では、古い外部データ由来結果を「完全一致」と誤認するリスクをゼロにできないため。
+- これは未実装ではなく、精度優先で危険な再利用経路を明示的に止めた分割実装。
+- 再起動後の高速化は、最終結果を信用する代わりに「永続seed + DEMタイルキャッシュ」で安全側に実現する。
+
+精度に関して変更していないもの
+- GSI DEM1A/5A/5B/5C/10B優先順位
+- 1m/5m/10m detail
+- neutral補間
+- constrained bicubic
+- NoData処理
+- ジオイド処理
+- ECEFレイ計算
+- 収束回数/終了条件
+- 1m最終精密化
+- round-trip検証
+- wide fallback
+- double-check
+
+検証
+PASS:
+- TypeScript transpile syntax: App.tsx
+- TypeScript transpile syntax: gsiDemTileCache.ts
+- TypeScript transpile syntax: tripodCandidateSeedCache.ts
+- TypeScript transpile syntax: tripodCandidateExactCache.ts
+- scripts/verify-device-dem-tile-cache-20260829.mjs
+  -> device DEM tile cache math matches server DEM math
+- scripts/verify-tripod-speed-cache-20260829.mjs
+  -> 完全一致のみHIT
+  -> 日時1ms差でMISS
+  -> 焦点距離差でMISS
+  -> 被写体座標差でMISS
+  -> preliminaryは保存拒否
+  -> 永続seed/DEM cache-only warm/in-flight read共有の配線確認
+- scripts/verify-tripod-neutral-dem-20260823.mjs
+- scripts/verify-r2-safety-all-paths-20260824.mjs : 11/11 PASS
+
+未完了の検証
+- npm ci がこの実行環境で120秒タイムアウトし、node_modulesが不完全な状態になったため、フル tsc -b / npm run build / 全regression suiteは実行不能。
+- tsc -bの停止理由は vite/client, node, @cloudflare/workers-types の型定義が不完全installのため見つからないこと。
+- これはソースのコンパイルエラーを確認した結果ではない。
+- 配布ZIPから不完全node_modulesは除外する。
+
+追加テスト
+- scripts/verify-tripod-speed-cache-20260829.mjs
+- package.json: verify:tripod-speed-cache
+- scripts/run-regression-tests.mjs に新規テストを登録済み。
+
+安全設計の要点
+- 永続データは最終答えではなくseedとしてだけ使う。
+- exact final resultは現時点ではsession memory限定。
+- auto weatherではexact final result cacheを使わない。
+- DEM local warmはネットワークを起こさない。
+- 新しい高速化が失敗しても既存のDEM/API/full-scan経路へ戻れる。

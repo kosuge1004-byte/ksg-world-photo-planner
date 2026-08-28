@@ -1,0 +1,6 @@
+AstroSight v14 safe speed optimization
+
+Added only duplicate-start suppression for tripod candidate calculation.
+- If exactly the same calculation inputs are already in flight, a second start is ignored.
+- No DEM source, interpolation, convergence, refinement, CameraModel verification, or result cache behavior was changed.
+- The in-flight marker is cleared on success, error, and cleanup/abort.

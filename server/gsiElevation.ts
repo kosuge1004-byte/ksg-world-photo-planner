@@ -234,7 +234,7 @@ function decodeElevationTile(bytes: Uint8Array): DecodedElevationTile {
   return { width: png.width, height: png.height, heightsCentimeters };
 }
 
-function tileCoordinates(
+export function tileCoordinates(
   point: GsiElevationRequestPoint,
   zoom: number
 ): { x: number; y: number; pixelX: number; pixelY: number; fracX: number; fracY: number } {
@@ -480,7 +480,7 @@ function rawHeightAt(
  * 簡略化。高精度Constrained Bicubicでは下記の heightFromNeighborhood が
  * 実際の隣接タイルを取得して使う）。
  */
-function heightFromTile(
+export function heightFromTile(
   tile: DecodedElevationTile,
   pixelX: number,
   pixelY: number,
@@ -781,6 +781,24 @@ export async function lookupGsiElevations(
   return results;
 }
 
+
+
+export async function getGsiDecodedTileForClient(
+  sourceLabel: GsiElevationSource,
+  x: number,
+  y: number,
+  signal?: AbortSignal
+): Promise<DecodedElevationTile | null> {
+  const source = GSI_TILE_SOURCES.find((candidate) => candidate.label === sourceLabel);
+  if (!source || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) {
+    return null;
+  }
+  const tileCount = 2 ** source.zoom;
+  if (x >= tileCount || y >= tileCount) return null;
+  // Reuse the exact same decoded-tile path as lookupGsiElevations: in-memory → R2 → GSI.
+  // The client endpoint is therefore only a transport for the already-authoritative tile data.
+  return await fetchDecodedTile(source, x, y, signal);
+}
 
 export type GsiTerrainAzimuthBand = {
   startDegrees: number;

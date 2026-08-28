@@ -1,0 +1,66 @@
+AstroSight v13 - Tripod candidate speed optimization without precision reduction
+Date: 2026-08-29
+Base: AstroSight-FULL-20260829-safe-tripod-speed-v12.zip
+
+GOAL
+Improve tripod-candidate display speed without changing numerical precision, DEM resolution, DEM source priority, interpolation, convergence/refinement thresholds, CameraModel verification, ECEF/Karney math, refraction handling, or fallback behavior.
+
+CHANGES IN V13
+1. Device-cache batch writes
+- Added setDeviceCacheMany() in src/cache/deviceCache.ts.
+- Persistent tripod seeds for multiple celestial bodies are written in one IndexedDB readwrite transaction instead of one transaction per body.
+- Cache keys, TTL, values, and pruning semantics are unchanged.
+
+2. DEM IndexedDB in-flight + batch reads run concurrently
+- readTilesBatch() no longer waits for already-running per-tile reads before starting an independent batch transaction for other missing tiles.
+- Both complete via Promise.all().
+- Source priority, expiry checks, corruption checks, and values are unchanged.
+
+3. All potentially relevant DEM base tiles are read in one batch
+- resolveGsiSamplesFromDeviceTiles() now pre-reads base tiles across allowed DEM sources in a single batched IndexedDB pass.
+- IMPORTANT: source selection remains strictly DEM1A -> DEM5A -> DEM5B -> DEM5C -> DEM10B.
+- A missing higher-priority required tile still forces authoritative API fallback for that point. A lower-priority cached tile is never allowed to win merely because it was pre-read.
+- 1m neighborhood interpolation remains unchanged and still requires a complete required neighborhood or API fallback.
+
+4. Persistent-seed DEM warm-up is awaited before solving
+- When persistent tripod seeds exist, cache-only IndexedDB -> memory warm-up completes before calculateTripodCandidates() starts.
+- The warm-up performs no network access.
+- This prevents the solver and warm-up from competing for the same IndexedDB reads and increases immediate memory-cache hits on repeat searches.
+- Missing cached tiles are ignored and normal authoritative terrain resolution remains intact.
+
+5. TypeScript syntax correction found during stricter verification
+- Replaced invalid `readonly Array<T>` declarations in the touched cache code with `ReadonlyArray<T>`.
+- This was a compile-time syntax issue, not an algorithm change.
+
+UNCHANGED PRECISION / AUTHORITY
+- DEM detail selection: unchanged.
+- DEM source priority: unchanged.
+- Neutral constrained bicubic interpolation: unchanged.
+- LOS-safe interpolation: unchanged.
+- NoData semantics: unchanged.
+- GSI/R2/API authoritative fallback: unchanged.
+- 1m final refinement: unchanged.
+- ECEF/Karney/geoid math: unchanged.
+- convergence / wide fallback / round-trip / double-check: unchanged.
+- exact-result cache safety policy: unchanged from v12 (session-only and standard-refraction-only).
+
+VERIFICATION COMPLETED
+PASS: scripts/verify-device-dem-tile-cache-20260829.mjs
+  - device DEM tile-cache math matches server DEM math.
+PASS: scripts/verify-tripod-speed-cache-20260829.mjs
+  - exact session result cache safety and persistent/batched cache wiring.
+PASS: scripts/verify-tripod-neutral-dem-20260823.mjs
+  - neutral/LOS interpolation routing and tripod neutral terrain path.
+PASS: scripts/verify-r2-safety-all-paths-20260824.mjs
+  - R2 safety 11/11.
+PASS: targeted TypeScript type check for:
+  - src/cache/deviceCache.ts
+  - src/cesium/gsiDemTileCache.ts
+  - src/cesium/tripodCandidateSeedCache.ts
+  using ES2023/DOM + Bundler module resolution.
+
+NOT VERIFIED IN THIS ENVIRONMENT
+- Full npm run build / complete regression suite cannot be claimed because the supplied project archive does not contain the complete node_modules dependency tree. Do not treat this package as full-build-verified until run in the normal project environment with dependencies installed.
+
+SAFETY PRINCIPLE
+Every v13 optimization changes only cache I/O scheduling/transaction count. If device cache evidence is insufficient, the existing authoritative API path remains the fallback. No lower-resolution or approximate answer is accepted for speed.

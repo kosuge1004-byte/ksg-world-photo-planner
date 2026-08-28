@@ -13,6 +13,7 @@ import type {
 } from "../types/geospatial";
 import { publishUserNotice } from "../errors/userFeedback";
 import { fetchGsiElevationSamples } from "./gsiElevationClient";
+import { prefetchGsiDeviceTilesForSamples, resolveGsiSamplesFromDeviceTiles } from "./gsiDemTileCache";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
 
@@ -261,22 +262,56 @@ async function sampleTerrainCached(
     else result[index].height = height;
   });
   if (missingIndexes.length > 0) {
-    const sampled = await sampleTerrainWithGsiPriority(
-      missingIndexes.map((index) => points[index]),
-      maximumDetails ? missingIndexes.map((index) => maximumDetails[index]) : undefined,
-      signal,
-      interpolationMode
+    const missingPoints = missingIndexes.map((index) => points[index]);
+    const missingMaximumDetails = maximumDetails
+      ? missingIndexes.map((index) => maximumDetails[index])
+      : undefined;
+
+    // 2026-08-29: Before using the network, try the decoded DEM tile cache.
+    // This path never rounds coordinates and only returns a value when all tiles
+    // required to reproduce the server decision are present; otherwise it safely
+    // falls through to the existing API.
+    const localSamples = await resolveGsiSamplesFromDeviceTiles(
+      missingPoints.map((point, index) => ({
+        latitude: CesiumMath.toDegrees(point.latitude),
+        longitude: CesiumMath.toDegrees(point.longitude),
+        maximumDetail: missingMaximumDetails?.[index],
+        interpolationMode,
+      }))
     );
-    sampled.forEach((point, sampledIndex) => {
-      result[missingIndexes[sampledIndex]] = point;
+    abortIfRequested(signal);
+
+    const networkLocalIndexes: number[] = [];
+    localSamples.forEach((sample, localIndex) => {
+      if (sample === null || sample.heightMeters === null) {
+        networkLocalIndexes.push(localIndex);
+        return;
+      }
+      const originalIndex = missingIndexes[localIndex];
+      result[originalIndex].height = sample.heightMeters;
+      if (sample.source) {
+        const source = GSI_SOURCE_NAMES[sample.source];
+        if (source) terrainSourceBySample.set(result[originalIndex], source);
+      }
     });
-    void writeTerrainCache(
-      sampled,
-      maximumDetails
-        ? missingIndexes.map((index) => maximumDetails[index])
-        : undefined,
-      interpolationMode
-    );
+
+    if (networkLocalIndexes.length > 0) {
+      const networkPoints = networkLocalIndexes.map((localIndex) => missingPoints[localIndex]);
+      const networkMaximumDetails = missingMaximumDetails
+        ? networkLocalIndexes.map((localIndex) => missingMaximumDetails[localIndex])
+        : undefined;
+      const sampled = await sampleTerrainWithGsiPriority(
+        networkPoints,
+        networkMaximumDetails,
+        signal,
+        interpolationMode
+      );
+      sampled.forEach((point, networkIndex) => {
+        const localIndex = networkLocalIndexes[networkIndex];
+        result[missingIndexes[localIndex]] = point;
+      });
+      void writeTerrainCache(sampled, networkMaximumDetails, interpolationMode);
+    }
   }
   return result;
 }
@@ -306,15 +341,16 @@ async function fetchGsiElevations(
     return points.map(() => ({ heightMeters: null, source: null }));
   }
   try {
-    const result = await fetchGsiElevationSamples(
-      points.map((point, index) => ({
-        latitude: CesiumMath.toDegrees(point.latitude),
-        longitude: CesiumMath.toDegrees(point.longitude),
-        maximumDetail: maximumDetails?.[index],
-        interpolationMode,
-      })),
-      signal
-    );
+    const clientPoints = points.map((point, index) => ({
+      latitude: CesiumMath.toDegrees(point.latitude),
+      longitude: CesiumMath.toDegrees(point.longitude),
+      maximumDetail: maximumDetails?.[index],
+      interpolationMode,
+    }));
+    const result = await fetchGsiElevationSamples(clientPoints, signal);
+    // Warm decoded tiles only after the authoritative API result is available.
+    // This never delays the current search and makes later nearby searches local-first.
+    prefetchGsiDeviceTilesForSamples(clientPoints, result.samples);
     if (result.failedPointCount > 0) {
       const allFailed = result.failedPointCount === points.length;
       if (allFailed) gsiUnavailableUntil = Date.now() + 15_000;

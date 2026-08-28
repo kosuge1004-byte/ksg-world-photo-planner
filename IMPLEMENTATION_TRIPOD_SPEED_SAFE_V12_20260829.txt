@@ -1,0 +1,78 @@
+AstroSight 三脚候補点 精度不変高速化 v12
+基準: AstroSight-FULL-20260829-safe-tripod-speed-v11.zip
+実装日: 2026-08-29
+
+目的
+- DEM解像度、DEM優先順位、補間方式、NoData処理、ECEF/Karney計算、収束条件、1m精密化、wide fallback、double-checkを変更せず、三脚候補表示のI/O待ちと重複処理を削減する。
+
+今回追加した高速化
+
+1. 永続三脚seedのDeviceCache一括読み出し
+変更: src/cache/deviceCache.ts
+変更: src/cesium/tripodCandidateSeedCache.ts
+- getDeviceCacheMany() を追加。
+- 従来は天体ごとにIndexedDB readonly transactionを作成していた。
+- 同一検索で必要なseedを1つのreadonly transaction/storeでまとめて取得する。
+- キー、TTL、値、LRU、期限判定は変更なし。
+- 検索結果やseedの意味は一切変更しない。
+
+2. DEMタイルIndexedDBのバッチ読み出し
+変更: src/cesium/gsiDemTileCache.ts
+- readTilesBatch() を追加。
+- 同一探索段階で必要な複数DEMタイルを1つのreadonly transaction/storeで取得。
+- メモリLRU・既存inFlight readがあればそれを優先して共有。
+- タイルデータ、デコード値、補間ロジックは変更なし。
+
+3. DEMローカル解決をソース優先順位維持の段階バッチ方式へ変更
+変更: src/cesium/gsiDemTileCache.ts
+- DEM1A → DEM5A → DEM5B → DEM5C → DEM10B の優先順は従来どおり。
+- 各ソースについて複数地点のbase tileをまとめて読み出す。
+- 1m補間で必要な隣接タイルもまとめて読み出す。
+- 高優先ソースのタイルが端末に1枚でも無い場合、その地点は低優先の端末タイルへ勝手にフォールバックせず、従来のauthoritative /api/gsi-elevationへ戻す。
+- したがって端末キャッシュの不完全性が地形ソース選択を変える経路はない。
+
+4. DEM cache-only warm-upもバッチreadを利用
+- 過去候補周辺をメモリへwarmする処理でも1タイル1transactionを廃止。
+- ネットワークは発生しない。
+
+精度に関して変更していないもの
+- DEM1A/5A/5B/5C/10B優先順位
+- 1m/5m/10m detail
+- neutral constrained bicubic
+- los-safe補間
+- NoData判定
+- GSI欠損時のauthoritative API/World Terrain経路
+- ジオイド処理
+- ECEF/Karney計算
+- 三脚候補収束回数・終了条件
+- 最終1m精密化
+- round-trip検証
+- wide fallback
+- double-check
+- 完全一致結果キャッシュの安全条件
+
+検証結果 PASS
+- TypeScript transpile syntax:
+  src/cache/deviceCache.ts
+  src/cesium/tripodCandidateSeedCache.ts
+  src/cesium/gsiDemTileCache.ts
+- scripts/verify-device-dem-tile-cache-20260829.mjs
+  PASS: device DEM tile cache math matches server DEM math
+- scripts/verify-tripod-speed-cache-20260829.mjs
+  PASS: exact session result cache only reuses strictly identical aligned inputs
+  PASS: persistent seed + batched device-cache/DEM reads + fail-safe network fallback are wired
+- scripts/verify-tripod-neutral-dem-20260823.mjs
+  PASS: neutral/LOS modes, neutral bicubic, API forwarding, tripod neutral sampler
+- scripts/verify-r2-safety-all-paths-20260824.mjs
+  PASS 11/11
+
+フル回帰テストについて
+- 配布ZIPにはnode_modulesが含まれていない。
+- 作業環境のglobal TypeScriptを一時接続すると最初のTypeScript不足は解消したが、次にcesium package不足でtests/regression/core-calculations.test.mjsが開始前に停止した。
+- よってフル run-regression-tests / npm run build はこの環境では完走できていない。
+- 今回変更部分の対象テストと構文検証は上記の通りPASS。
+
+安全性結論
+- 今回の変更は計算値を近似・間引きする高速化ではない。
+- 同じキャッシュキーに対して同じ保存値を返し、同じDEMタイルを同じ優先順位・同じ補間式で評価する。
+- 端末キャッシュが不完全なら従来APIへ戻るため、速度最適化が最終精度を下げる経路を設けていない。

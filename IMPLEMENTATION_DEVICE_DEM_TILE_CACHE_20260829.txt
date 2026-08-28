@@ -1,0 +1,84 @@
+AstroSight v9 - 端末側DEMタイルキャッシュ実装記録
+2026-08-29
+
+目的
+- 三脚候補点（neutral DEM）で、過去に検索した同一/近接地域を再検索した際のDEM通信待ちを削減する。
+- DEM選択、座標、Bilinear、Constrained Bicubic、NoData、neutral/los-safeの精度規則は変更しない。
+
+実装内容
+1. src/cesium/gsiDemTileCache.ts を追加
+   - GSIデコード済みDEMタイルをIndexedDBへ永続保存。
+   - メモリLRU 48タイル。
+   - IndexedDB最大目安192タイル、90日TTL。
+   - キャッシュキーにスキーマ、DEM種別、zoom、x、yを含む。
+   - 404/非カバータイルもemptyとして保存。
+   - 一時通信失敗は保存しない。
+   - 端末ローカル解決は、サーバーと同じ結果を再現するために必要なタイルが全て揃っている時だけ使用。
+   - 1枚でも不足/破損/期限切れなら従来 /api/gsi-elevation へフォールバック。
+   - 問い合わせ座標は量子化・丸めを行わない。
+
+2. functions/api/gsi-dem-tile.ts を追加
+   - サーバーが既に使用しているデコード済みDEMタイルをlittle-endian Int32で端末へ渡す。
+   - 新規の独自DEM計算は行わず、server/gsiElevation.ts の既存 fetchDecodedTile 経路を再利用。
+   - source/x/yを検証。
+
+3. server/gsiElevation.ts
+   - getGsiDecodedTileForClient() を追加。
+   - 既存の in-memory -> R2 -> GSI のタイル取得経路をそのまま再利用。
+   - tileCoordinates() / heightFromTile() を精度一致テスト用にexport。
+
+4. src/cesium/worldTerrain.ts
+   - 従来の約1m座標キャッシュMISS時に、まず端末DEMタイルキャッシュで解決を試す。
+   - ローカルで証明できない点だけ従来APIへ送る。
+   - authoritativeなAPI結果取得後、neutral経路のみバックグラウンドでタイルを保存。
+   - 初回検索の結果表示をタイル保存でブロックしない。
+
+5. バックグラウンド保存の安全制限
+   - neutral（三脚候補）限定。
+   - 最大2並列。
+   - 1回最大24タイル。
+   - LOS等の大量地形処理では自動保存しない。
+
+精度安全策
+- DEMソース優先順位: DEM1A -> DEM5A -> DEM5B -> DEM5C -> DEM10B を維持。
+- maximumDetail=1m/5m/10mの選択規則を維持。
+- WebMercatorタイル座標計算をサーバーと同式で実装。
+- 1mは4x4近傍Constrained Bicubic、neutralは上方maxバイアスなし。
+- los-safeはBilinearとBicubicの高い方。
+- NoData時の最近傍/Bilinearフォールバックを維持。
+- タイル境界では実隣接タイルを使用。
+- ローカル判定に必要な上位DEMソースの「存在/不存在」が未キャッシュなら従来APIへ戻す。
+
+追加検証
+scripts/verify-device-dem-tile-cache-20260829.mjs
+- server/client WebMercator座標変換比較: 差0
+- Bilinear比較: 差0
+- Constrained Bicubic neutral比較: 差0
+- Constrained Bicubic los-safe比較: 差0
+- タイル境界比較: 差0
+- NoData比較: 差0
+結果: PASS
+
+既存検証
+- verify-tripod-neutral-dem-20260823.mjs: PASS
+- verify-r2-safety-all-paths-20260824.mjs: PASS 11/11
+
+CI/回帰
+- scripts/run-regression-tests.mjsへdevice DEM parity testを登録。
+- package.jsonへ verify:device-dem-tile-cache を登録。
+
+未完了の検証
+- npm run build は、この作業環境の展開ZIPにnode_modulesが無く、npm ci/npm installがタイムアウトしたため実行完了できていない。
+- 追加TSモジュールおよびAPIモジュールはNode 22 --experimental-strip-typesで実パース成功。
+- したがって、実機/通常の開発環境では最終的に npm ci -> npm run build -> npm test を必ず実施すること。
+
+期待動作
+初回検索:
+従来APIで標高取得 -> 現在検索結果を即継続 -> neutral使用タイルを背景保存
+
+再検索:
+地点単位キャッシュMISS -> 端末DEMタイルHIT -> 端末内で同一補間 -> API通信なし
+不足タイルあり -> 従来APIへ自動フォールバック
+
+重要
+- 高速化のためのDEM解像度低下、探索点削減、収束回数削減は行っていない。

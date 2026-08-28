@@ -128,6 +128,8 @@ export type TripodSearchDiagnostics = {
    */
   cacheHitBatchCount: number;
   cacheMissBatchCount: number;
+  /** 2026-08-29: 最終確定時間の実測内訳。計算結果には影響しない診断専用。 */
+  totalElapsedMs: number | null;
   perCelestialBody: Record<
     string,
     {
@@ -156,8 +158,12 @@ export type TripodSearchDiagnostics = {
        * かかった時間も分けて記録する。複数の交点候補がある場合は、
        * 最後に処理された候補の値で上書きされる（大まかな切り分け用途）。
        */
+      initialScanMs: number;
+      weatherResolveMs: number;
       convergenceLoopMs: number;
       refinementMs: number;
+      doubleCheckMs: number;
+      totalBodyMs: number;
     }
   >;
 };
@@ -1356,8 +1362,12 @@ async function calculateOneCandidates(
   let terrainRoundTripTotalMs = 0;
   // 2026-08-27追記: 通信以外（収束反復ループ・精密化・ジオイド取得）に
   // かかった時間。processInitialSolution内で更新される。
-  let lastConvergenceLoopMs = 0;
-  let lastRefinementMs = 0;
+  let convergenceLoopTotalMs = 0;
+  let refinementTotalMs = 0;
+  let initialScanMs = 0;
+  let weatherResolveMs = 0;
+  let doubleCheckMs = 0;
+  const bodyStartedAt = performance.now();
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
     const startedAt = performance.now();
     const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
@@ -1379,7 +1389,9 @@ async function calculateOneCandidates(
   // 各反復で候補地点ごとに再計算するため、精度への影響はない。
   let activeRefractionWeather = refractionWeather;
   if (refractionWeatherResolver) {
+    const weatherStartedAt = performance.now();
     const resolvedWeather = await refractionWeatherResolver(subject, signal);
+    weatherResolveMs += performance.now() - weatherStartedAt;
     abortIfRequested(signal);
     if (resolvedWeather) activeRefractionWeather = resolvedWeather;
   }
@@ -1459,6 +1471,7 @@ async function calculateOneCandidates(
       : directSeedDistance !== null
         ? "direct-geometric"
         : "none";
+  const initialScanStartedAt = performance.now();
   const initialSolutions = await scanInitialRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
@@ -1469,6 +1482,7 @@ async function calculateOneCandidates(
     effectiveSeedDistance,
     doubleCheckEnabled
   );
+  initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
     recordDiagnostics(point.label, {
       initialSolutionCount: 0,
@@ -1481,8 +1495,12 @@ async function calculateOneCandidates(
       primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
       terrainRoundTripCount,
       terrainRoundTripTotalMs,
-      convergenceLoopMs: lastConvergenceLoopMs,
-      refinementMs: lastRefinementMs,
+      initialScanMs,
+      weatherResolveMs,
+      convergenceLoopMs: convergenceLoopTotalMs,
+      refinementMs: refinementTotalMs,
+      doubleCheckMs,
+      totalBodyMs: performance.now() - bodyStartedAt,
     });
     return [];
   }
@@ -1606,7 +1624,7 @@ async function calculateOneCandidates(
 
     if (!Number.isFinite(solution.cartographic.height)) return null;
     const convergenceLoopMs = performance.now() - convergenceLoopStartedAt;
-    lastConvergenceLoopMs = convergenceLoopMs;
+    convergenceLoopTotalMs += convergenceLoopMs;
 
     // 粗いECEF+DEM解はseedとしてのみ使用する。ここから先は、粗候補周辺だけを
     // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
@@ -1632,7 +1650,7 @@ async function calculateOneCandidates(
       return null;
     }
     const refinementMs = performance.now() - refinementStartedAt;
-    lastRefinementMs = refinementMs;
+    refinementTotalMs += refinementMs;
     if (!manualRefined) return null;
 
     const finalCandidatePoint = manualRefined.candidatePoint;
@@ -1723,6 +1741,7 @@ async function calculateOneCandidates(
   // 旧方式はユーザーがONにした時だけ独立検算として1回実行する。
   // 本計算の候補を置換・除外しない（仕様3-H）。
   if (doubleCheckEnabled && unique.length > 0) {
+    const doubleCheckStartedAt = performance.now();
     const verification = await solveTerrainDistance(
       subject,
       initialBearing,
@@ -1735,6 +1754,7 @@ async function calculateOneCandidates(
       undefined
     );
     abortIfRequested(signal);
+    doubleCheckMs += performance.now() - doubleCheckStartedAt;
     if (!verification) {
       console.warn(`[tripod-double-check] ${point.label}: 旧方式で検算解を取得できませんでした`);
     } else {
@@ -1761,8 +1781,12 @@ async function calculateOneCandidates(
     primaryScanMaxMeters: lastScanFallbackInfo?.primaryMaxMeters,
     terrainRoundTripCount,
     terrainRoundTripTotalMs,
-    convergenceLoopMs: lastConvergenceLoopMs,
-    refinementMs: lastRefinementMs,
+    initialScanMs,
+    weatherResolveMs,
+    convergenceLoopMs: convergenceLoopTotalMs,
+    refinementMs: refinementTotalMs,
+    doubleCheckMs,
+    totalBodyMs: performance.now() - bodyStartedAt,
   });
   return unique;
 }
@@ -1811,6 +1835,7 @@ export async function calculateTripodCandidates(
     liveLastRoundTripFinishedAtMs: null,
     cacheHitBatchCount: 0,
     cacheMissBatchCount: 0,
+    totalElapsedMs: null,
     perCelestialBody: {},
   };
 
@@ -1911,6 +1936,8 @@ export async function calculateTripodCandidates(
   const finalizeDiagnostics = () => {
     if (!lastSearchDiagnostics) return;
     lastSearchDiagnostics.finishedAtMs = Date.now();
+    lastSearchDiagnostics.totalElapsedMs =
+      lastSearchDiagnostics.finishedAtMs - lastSearchDiagnostics.startedAtMs;
     const cacheStats = getGsiElevationCacheStats();
     lastSearchDiagnostics.cacheHitBatchCount = cacheStats.hit;
     lastSearchDiagnostics.cacheMissBatchCount = cacheStats.miss;
