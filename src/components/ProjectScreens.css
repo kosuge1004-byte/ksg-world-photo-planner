@@ -3,7 +3,12 @@
   z-index: 260;
   top: 0;
   left: 50%;
+  /* 2026-08-27追記: dvh未対応の古いブラウザ向けのフォールバック
+     （src/App.cssの同じパターンに合わせる）。dvh対応ブラウザでは
+     直後の行が上書きする。 */
+  width: min(100vw, calc(100vh * .45));
   width: min(100vw, calc(100dvh * .45));
+  height: 100vh;
   height: 100dvh;
   background: #07101b;
   color: #fff;
@@ -21,6 +26,9 @@
   align-items: center;
   min-height: 72px;
   padding: 12px 14px;
+  /* 2026-08-27追記: ノッチ・ステータスバー避け（src/App.cssの
+     同様パターンに合わせる）。 */
+  padding-top: calc(12px + env(safe-area-inset-top));
   background: #0d1927;
   border-bottom: 1px solid #334155;
 }

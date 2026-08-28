@@ -152,7 +152,9 @@ function updateTripodCandidateEntities(
       const candidateKind =
         candidate.solutionType === "direction-only"
           ? "三脚方位候補（要確認）"
-          : "三脚候補";
+          : candidate.solutionType === "preliminary"
+            ? "候補点計算中"
+            : "三脚候補";
       const candidateNumber = candidate.intersectionCount && candidate.intersectionCount > 1
         ? ` ${candidateIndex}/${candidate.intersectionCount}`
         : "";
@@ -166,7 +168,14 @@ function updateTripodCandidateEntities(
         continue;
       }
 
-      const color = COLORS[candidate.id];
+      // 2026-08-28追記: 暫定（計算中）候補は、地形（建物・山などの凹凸）を
+      // 未確認の理論値であることが視覚的にひと目で分かるよう、色を半透明
+      // にする。精密計算が完了し確定候補に置き換わると、通常の不透明な
+      // 色で再描画される。
+      const baseColor = COLORS[candidate.id];
+      const color = candidate.solutionType === "preliminary"
+        ? baseColor.withAlpha(0.45)
+        : baseColor;
       const state: TripodCandidateEntityState = { position, text };
       states.set(id, state);
       viewer.entities.add({

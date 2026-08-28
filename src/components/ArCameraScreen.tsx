@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { resolveGroundPoint } from "../height/heightResolver";
 import type { CalculationMode } from "../types/camera";
 import type { CelestialVisibility } from "../types/celestial";
@@ -11,6 +12,8 @@ import {
   matchAndroidCameraFromLabel,
 } from "../ar/nativeCameraInfo";
 import { startEnvironmentCamera, stopCameraStream } from "../ar/cameraSession";
+import { loadArOrientationOffset, saveArOrientationOffset } from "../ar/orientationOffset";
+import { createArOrientationSmoother } from "../ar/orientationSmoothing";
 import {
   startArLocationTracking,
   startArOrientationTracking,
@@ -85,10 +88,55 @@ export function ArCameraScreen({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const generationRef = useRef(0);
+  // 2026-08-28追記: 方位・姿勢センサーの生の値には、端末を静止させて
+  // いても細かいノイズが乗るため、そのまま3D表示に反映すると画面が
+  // 小刻みに振動して見える。センサーの値を受け取るたびに、この
+  // インスタンスを通して平滑化する（src/ar/orientationSmoothing.ts参照）。
+  const orientationSmootherRef = useRef(createArOrientationSmoother());
   const [cameraStatus, setCameraStatus] = useState("カメラを準備しています…");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraDetail, setCameraDetail] = useState<string | null>(null);
   const [cameraProjection, setCameraProjection] = useState<ArCameraProjection | null>(null);
+  // 2026-08-27追記: 方位センサーは磁気干渉等でズレることがあるため、
+  // 画面を指でスワイプして、実際のカメラ映像と3D表示を手動で合わせられる
+  // ようにする（詳細はsrc/ar/orientationOffset.tsのコメント参照）。
+  const [orientationOffset, setOrientationOffset] = useState(() => loadArOrientationOffset());
+  const orientationOffsetRef = useRef(orientationOffset);
+  orientationOffsetRef.current = orientationOffset;
+  const swipeStartRef = useRef<{ x: number; y: number; offset: typeof orientationOffset } | null>(null);
+  const handleCalibrationPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    swipeStartRef.current = { x: event.clientX, y: event.clientY, offset: orientationOffsetRef.current };
+  };
+  const handleCalibrationPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current;
+    if (!start || !cameraProjection) return;
+    const stageWidth = event.currentTarget.clientWidth || 1;
+    const stageHeight = event.currentTarget.clientHeight || 1;
+    // 画面いっぱいのスワイプ（stage幅/高さ分）が、ちょうどカメラの
+    // 画角（horizontalFovDeg/verticalFovDeg）分の回転に対応するようにする。
+    // これにより、実際にカメラに映っている景色の見た目の動きと、
+    // 3D表示の動きが一致し、直感的に合わせられる。
+    const dxDegrees = ((event.clientX - start.x) / stageWidth) * cameraProjection.horizontalFovDeg;
+    const dyDegrees = ((event.clientY - start.y) / stageHeight) * cameraProjection.verticalFovDeg;
+    setOrientationOffset({
+      // 画面を右にスワイプ＝景色を右へ動かしたい＝3D表示を左（マイナス）へ
+      // ずらす必要があるため符号を反転する。
+      headingOffsetDegrees: start.offset.headingOffsetDegrees - dxDegrees,
+      // 画面を下にスワイプ＝見上げる角度を下げたい＝pitchを減らす。
+      pitchOffsetDegrees: start.offset.pitchOffsetDegrees - dyDegrees,
+    });
+  };
+  const handleCalibrationPointerUp = () => {
+    if (!swipeStartRef.current) return;
+    swipeStartRef.current = null;
+    saveArOrientationOffset(orientationOffsetRef.current);
+  };
+  const handleCalibrationReset = () => {
+    swipeStartRef.current = null;
+    const reset = { headingOffsetDegrees: 0, pitchOffsetDegrees: 0 };
+    setOrientationOffset(reset);
+    saveArOrientationOffset(reset);
+  };
   const [mapOpacity, setMapOpacity] = useState(0.42);
   const [arMapStatus, setArMapStatus] = useState("AR 3D地図を準備しています…");
   const [arLocation, setArLocation] = useState<ArDeviceLocation | null>(null);
@@ -225,8 +273,9 @@ export function ArCameraScreen({
     };
 
     const stopOrientation = startArOrientationTracking(
-      (orientation) => {
+      (rawOrientation) => {
         if (disposed) return;
+        const orientation = orientationSmootherRef.current.smooth(rawOrientation);
         orientationRef.current = orientation;
         setArOrientation(orientation);
         setTrackingMessage(locationRef.current ? "現在地・方位を追跡中" : "方位を追跡中・現在地を取得しています…");
@@ -296,7 +345,13 @@ export function ArCameraScreen({
 
   return (
     <section className="ar-camera-screen" aria-label="ARカメラ">
-      <div className="ar-camera-stage">
+      <div
+        className="ar-camera-stage"
+        onPointerDown={handleCalibrationPointerDown}
+        onPointerMove={handleCalibrationPointerMove}
+        onPointerUp={handleCalibrationPointerUp}
+        onPointerCancel={handleCalibrationPointerUp}
+      >
         <video
           ref={videoRef}
           className={`ar-camera-video${cameraReady ? " ready" : ""}`}
@@ -320,8 +375,20 @@ export function ArCameraScreen({
           refractionWeather={refractionWeather}
           visibility={visibility}
           opacity={mapOpacity}
+          headingOffsetDegrees={orientationOffset.headingOffsetDegrees}
+          pitchOffsetDegrees={orientationOffset.pitchOffsetDegrees}
           onStatusChange={setArMapStatus}
         />
+        {(orientationOffset.headingOffsetDegrees !== 0 || orientationOffset.pitchOffsetDegrees !== 0) && (
+          <button
+            type="button"
+            className="ar-calibration-reset"
+            onClick={handleCalibrationReset}
+            title="画面をスワイプして実際の景色と3D表示を合わせた補正を、元に戻します"
+          >
+            方角補正をリセット
+          </button>
+        )}
         {!cameraReady && (
           <div className="ar-camera-foundation" aria-hidden="true">
             <span>AR</span>

@@ -1321,7 +1321,8 @@ async function calculateOneCandidates(
   refractionWeather?: RefractionWeatherContext,
   refractionWeatherResolver?: RefractionWeatherResolver,
   doubleCheckEnabled = false,
-  initialDirectionObserver?: GroundPoint
+  initialDirectionObserver?: GroundPoint,
+  onPreliminaryCandidate?: (candidate: TripodCandidate) => void
 ): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
   if (point.altitudeDegrees <= 0.25) return [];
@@ -1401,17 +1402,47 @@ async function calculateOneCandidates(
     initialGeometricRayAltitudeDegrees,
     rayDirectionObserver
   );
-  // 2026-08-26追記: 診断用に、実際に使われた初期シード距離と、その出所
-  // （幾何学的な直接計算か、前回検索/プロジェクトからの距離ヒントか）を
-  // 記録する。directSeedDistanceは高度が正であればほぼ常に何らかの値を
-  // 返すため、以前はsearchProfile.preferredDistanceMetersが実質的に
-  // 一度も使われていなかった可能性がある。
-  const effectiveSeedDistance = directSeedDistance ?? searchProfile?.preferredDistanceMeters;
+  // 2026-08-28追記: 地形（建物・山などの凹凸）を確認する精密計算には
+  // 通信を伴い数秒〜数十秒かかるため、それを待つ前に、通信を一切使わない
+  // 理論値（地球を完全な球体とみなした場合の交点）を「候補点計算中」として
+  // 先に表示できるよう、判明した時点でコールバックする。最終的な精密な
+  // 結果が出たら、この暫定値は呼び出し元で確定候補に置き換えられる
+  // （精度・最終結果には一切影響しない、表示のタイミングだけの変更）。
+  if (onPreliminaryCandidate && directSeedDistance !== null) {
+    const preliminaryCartographic = rayCartographicAtDistance(initialRay, directSeedDistance);
+    if (preliminaryCartographic) {
+      const preliminaryPoint = buildCandidateGroundPoint(
+        preliminaryCartographic,
+        subject,
+        `${point.label}（計算中）`
+      );
+      onPreliminaryCandidate({
+        id: point.id,
+        label: point.label,
+        latitude: preliminaryPoint.latitude,
+        longitude: preliminaryPoint.longitude,
+        height: ellipsoidalHeightMeters(preliminaryPoint),
+        distanceMeters: directSeedDistance,
+        solutionType: "preliminary",
+      });
+    }
+  }
+  // 2026-08-27追記: 「実際に地面を確認して見つかった、前回の確かな
+  // 答え」（searchProfile.preferredDistanceMeters）よりも、「地面を
+  // 一切見ていない、机上の幾何学的な見積もり」（directSeedDistance）が
+  // 優先される構造になっていた。directSeedDistanceは高度が正であれば
+  // ほぼ常に何らかの値を返すため、結果として前回の確かな答えが実質的に
+  // 一度も使われていなかった。被写体が変わっていない場合の距離ヒントは
+  // App.tsx側で「同一被写体か」を確認した上でのみ渡されるため信頼でき、
+  // 優先すべきなのはこちらである。仮にヒントが外れていても、一次探索の
+  // 範囲を超えた場合は自動的に全距離走査へフォールバックする安全弁が
+  // 既にあるため、優先順位を入れ替えても精度・安全性は変わらない。
+  const effectiveSeedDistance = searchProfile?.preferredDistanceMeters ?? directSeedDistance ?? undefined;
   const seedDistanceSource: "direct-geometric" | "preferred-hint" | "none" =
-    directSeedDistance !== null
-      ? "direct-geometric"
-      : searchProfile?.preferredDistanceMeters !== undefined
-        ? "preferred-hint"
+    searchProfile?.preferredDistanceMeters !== undefined
+      ? "preferred-hint"
+      : directSeedDistance !== null
+        ? "direct-geometric"
         : "none";
   const initialSolutions = await scanInitialRayTerrainIntersections(
     initialRay,
@@ -1652,11 +1683,6 @@ async function calculateOneCandidates(
       return null;
     }
 
-    console.debug(`[tripod-candidate] ${point.label}: 候補確定`, {
-      distanceMeters: manualRefined.distanceMeters,
-      ...diagnostics,
-    });
-
     return {
       id: point.id,
       label: point.label,
@@ -1746,7 +1772,13 @@ export async function calculateTripodCandidates(
   preferredDistancesById?: Partial<Record<CelestialScreenPoint["id"], number>>,
   refractionWeatherResolver?: RefractionWeatherResolver,
   doubleCheckEnabled = false,
-  initialDirectionObserver?: GroundPoint
+  initialDirectionObserver?: GroundPoint,
+  /**
+   * 2026-08-28追記: 精密計算（数秒〜数十秒）が終わる前に、通信不要の
+   * 理論値を「候補点計算中」として先に表示できるよう、天体ごとに
+   * 判明した時点で呼び出す。最終結果には一切影響しない。
+   */
+  onPreliminaryCandidate?: (candidate: TripodCandidate) => void
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -1816,7 +1848,8 @@ export async function calculateTripodCandidates(
         refractionWeather,
         refractionWeatherResolver,
         doubleCheckEnabled,
-        initialDirectionObserver
+        initialDirectionObserver,
+        onPreliminaryCandidate
       );
     })
   );

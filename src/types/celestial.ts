@@ -154,8 +154,12 @@ export type TripodCandidate = {
   /**
    * alignedは被写体中心と天体中心の画角内一致をDEM上で解いた地点。
    * direction-onlyは精密解が存在しない場合にも表示する天体方位上の確認地点。
+   * preliminaryは、地形（建物・山などの凹凸）を未確認のまま、地球を
+   * 完全な球体とみなした理論値だけで求めた、計算中の暫定地点
+   * （2026-08-28追記：最初の候補点が出るまでの待ち時間を、ユーザーに
+   * 何も見せずに待たせないための「候補点計算中」表示に使う）。
    */
-  solutionType?: "aligned" | "direction-only";
+  solutionType?: "aligned" | "direction-only" | "preliminary";
   /** 同一天体で複数の地形交点がある場合の、遠い順の候補番号。 */
   intersectionIndex?: number;
   /** 同一天体で検出された有効地形交点の総数。 */

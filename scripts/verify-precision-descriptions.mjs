@@ -44,7 +44,9 @@ requireText(
 );
 
 for (const expected of [
-  'accuracyMode: "standard"',
+  // 2026-08-26: Google Photorealistic 3D Tilesを初期値(デフォルト)に
+  // 変更したため、"standard"ではなく"highest"を検証する。
+  'accuracyMode: "highest"',
   'refractionCorrectionMode: "auto"',
 ]) {
   requireText(precisionTypes, expected, `default setting changed or missing: ${expected}`);

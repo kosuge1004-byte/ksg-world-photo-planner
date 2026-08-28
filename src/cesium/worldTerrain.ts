@@ -620,6 +620,17 @@ export function geoidHeightMetersForTerrainSample(sample: Cartographic): number 
   return geoidHeightBySample.get(sample);
 }
 
+/**
+ * テスト専用: 実際の地形取得（sampleWorldTerrainNeutral等）を経由せず、
+ * 特定のCartographicへジオイド高を直接紐づける。本番のロジックは
+ * server/worldTerrain.ts内の地形取得処理が自動的にgeoidHeightBySample.set()
+ * を呼ぶため、この関数は使わない（単体テストで、地形取得を経由しない
+ * 座標に対してジオイド高が正しく引き継がれることを検証するためだけに存在する）。
+ */
+export function __setGeoidHeightForTesting(sample: Cartographic, geoidHeightMeters: number): void {
+  geoidHeightBySample.set(sample, geoidHeightMeters);
+}
+
 async function fetchRegionalGeoidHeights(
   points: Cartographic[],
   eligibleIndexes: number[],

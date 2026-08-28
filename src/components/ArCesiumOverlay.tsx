@@ -53,7 +53,11 @@ function clamp(value: number, min: number, max: number): number {
  * （betaが90°付近ではgammaの変化がほぼ方位側に化けてしまう等）が混入するため、
  * 単純な角度の付け替えでは正しい姿勢にならない。
  */
-function orientationToCesiumPose(orientation: ArDeviceOrientation | null): {
+function orientationToCesiumPose(
+  orientation: ArDeviceOrientation | null,
+  headingOffsetDegrees = 0,
+  pitchOffsetDegrees = 0
+): {
   headingRadians: number;
   pitchRadians: number;
   rollRadians: number;
@@ -114,8 +118,12 @@ function orientationToCesiumPose(orientation: ArDeviceOrientation | null): {
   }
 
   return {
-    headingRadians: CesiumMath.toRadians(heading),
-    pitchRadians: CesiumMath.toRadians(pitchDegrees),
+    // 2026-08-27追記: 端末の方位センサーは、磁気干渉や個体差により
+    // 実際の方角とズレることがある（キャリブレーションでは解消しきれない
+    // 場合がある）。ユーザーが手動で補正できるオフセットを、センサー値に
+    // 加算する。360度で正規化し、負の値・360以上の値も正しく扱う。
+    headingRadians: CesiumMath.toRadians(((heading + headingOffsetDegrees) % 360 + 360) % 360),
+    pitchRadians: CesiumMath.toRadians(clamp(pitchDegrees + pitchOffsetDegrees, -89, 89)),
     rollRadians: CesiumMath.toRadians(rollDegrees),
   };
 }
@@ -243,6 +251,10 @@ type Props = {
   accuracyMode: AccuracyMode;
   cesiumIonToken: string | undefined;
   lensCenterHeightMeters: number;
+  /** ユーザーが手動で調整する、方位センサーへの補正値（度）。既定0。 */
+  headingOffsetDegrees?: number;
+  /** ユーザーが手動で調整する、上下(見上げる角度)への補正値（度）。既定0。 */
+  pitchOffsetDegrees?: number;
   onStatusChange?: (message: string) => void;
 };
 
@@ -261,6 +273,8 @@ export function ArCesiumOverlay({
   accuracyMode,
   cesiumIonToken,
   lensCenterHeightMeters,
+  headingOffsetDegrees = 0,
+  pitchOffsetDegrees = 0,
   onStatusChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -475,7 +489,7 @@ export function ArCesiumOverlay({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed() || !ready || !location) return;
-    const pose = orientationToCesiumPose(orientation);
+    const pose = orientationToCesiumPose(orientation, headingOffsetDegrees, pitchOffsetDegrees);
     if (!pose) return;
 
     const altitude = resolveObserverAltitude(viewer, location, lensCenterHeightMeters);
@@ -488,7 +502,7 @@ export function ArCesiumOverlay({
       },
     });
     viewer.scene.requestRender();
-  }, [location, orientation, ready, lensCenterHeightMeters]);
+  }, [location, orientation, ready, lensCenterHeightMeters, headingOffsetDegrees, pitchOffsetDegrees]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

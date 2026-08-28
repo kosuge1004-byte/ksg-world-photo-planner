@@ -44,9 +44,10 @@ export function ProjectQrScanDialog({ open, onClose, onScanned }: Props) {
       }
     }
 
+    let frameInFlight = false;
     function scanFrame() {
       const video = videoRef.current;
-      if (!video || video.readyState < video.HAVE_ENOUGH_DATA || disposed) {
+      if (!video || video.readyState < video.HAVE_ENOUGH_DATA || disposed || frameInFlight) {
         animationFrameRef.current = requestAnimationFrame(scanFrame);
         return;
       }
@@ -61,13 +62,21 @@ export function ProjectQrScanDialog({ open, onClose, onScanned }: Props) {
       }
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-      const text = decodeQrFromImageData(imageData);
-      if (text) {
-        stopScanLoop();
-        onScanned(text);
-        return;
-      }
-      animationFrameRef.current = requestAnimationFrame(scanFrame);
+      // 2026-08-27追記: decodeQrFromImageDataはjsQRライブラリの遅延読み込み
+      // のためasync化した。初回フレームだけライブラリのダウンロードを待つ
+      // （通常は一瞬）。frameInFlightで、前のフレームの解析中に次の
+      // requestAnimationFrameが二重に走らないようにする。
+      frameInFlight = true;
+      void decodeQrFromImageData(imageData).then((text) => {
+        frameInFlight = false;
+        if (disposed) return;
+        if (text) {
+          stopScanLoop();
+          onScanned(text);
+          return;
+        }
+        animationFrameRef.current = requestAnimationFrame(scanFrame);
+      });
     }
 
     async function start() {

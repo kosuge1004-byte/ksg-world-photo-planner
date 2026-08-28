@@ -1,5 +1,18 @@
 import QRCode from "qrcode";
-import jsQR from "jsqr";
+
+// 2026-08-27追記: jsQR（QRコード解読ライブラリ、圧縮前227KB/gzip52KB）は
+// プロジェクトのQRコード読み取り機能でしか使わないにもかかわらず、
+// 静的importのためアプリ起動時に毎回全ユーザー分読み込まれ、初期表示
+// バンドルの約1/4を占めていた。実際に読み取り機能を使う瞬間まで読み込みを
+// 遅らせる（動的import）。一度読み込んだ後はモジュールをキャッシュし、
+// 2回目以降の呼び出し（1フレームごとに呼ばれるスキャンループ含む）では
+// 再ダウンロードしない。
+
+let jsQrModulePromise: Promise<typeof import("jsqr")> | null = null;
+function loadJsQr(): Promise<typeof import("jsqr")> {
+  if (!jsQrModulePromise) jsQrModulePromise = import("jsqr");
+  return jsQrModulePromise;
+}
 
 /**
  * 撮影計画の共有リンクをQRコード画像（PNGのdata URL）にする。
@@ -24,7 +37,8 @@ export class QrDecodeError extends Error {
 }
 
 /** カメラ映像1フレーム分のImageDataからQRコードの中身の文字列を読み取る。見つからなければnull。 */
-export function decodeQrFromImageData(imageData: ImageData): string | null {
+export async function decodeQrFromImageData(imageData: ImageData): Promise<string | null> {
+  const { default: jsQR } = await loadJsQr();
   const result = jsQR(imageData.data, imageData.width, imageData.height, {
     inversionAttempts: "attemptBoth",
   });
@@ -48,7 +62,7 @@ export async function decodeQrFromImageFile(file: File): Promise<string> {
     if (!context) throw new QrDecodeError("画像を解析できませんでした");
     context.drawImage(image, 0, 0);
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const text = decodeQrFromImageData(imageData);
+    const text = await decodeQrFromImageData(imageData);
     if (!text) throw new QrDecodeError("この画像からQRコードを読み取れませんでした");
     return text;
   } finally {

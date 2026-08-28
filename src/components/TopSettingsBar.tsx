@@ -15,6 +15,7 @@ const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import { parseFocalLengthInput } from "../utils/focalLengthInput";
 import { usePwaInstall } from "../pwa/install";
+import { getRecordedFreezes, clearRecordedFreezes } from "../diagnostics/freezeDetector";
 
 type Props = {
   settings: CameraSettings;
@@ -62,6 +63,31 @@ export function TopSettingsBar({
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
   const [lightPollutionGuideOpen, setLightPollutionGuideOpen] = useState(false);
+  const [freezeDiagnosticsCopyState, setFreezeDiagnosticsCopyState] =
+    useState<"idle" | "copied" | "empty" | "failed">("idle");
+  const handleCopyFreezeDiagnostics = async () => {
+    const freezes = getRecordedFreezes();
+    if (freezes.length === 0) {
+      setFreezeDiagnosticsCopyState("empty");
+      window.setTimeout(() => setFreezeDiagnosticsCopyState("idle"), 3_000);
+      return;
+    }
+    const lines = [
+      "[AstroSightフリーズ診断]",
+      `記録件数: ${freezes.length}`,
+      ...freezes.map((f, i) =>
+        `${i + 1}. ${f.detectedAtIso} 固まった長さ: ${(f.gapMs / 1000).toFixed(1)}秒 ` +
+        `直前の処理: ${f.operationTagAtFreezeStart ?? "(特定できず)"}`
+      ),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setFreezeDiagnosticsCopyState("copied");
+    } catch {
+      setFreezeDiagnosticsCopyState("failed");
+    }
+    window.setTimeout(() => setFreezeDiagnosticsCopyState("idle"), 3_000);
+  };
 
   const closeDetailPanels = () => {
     setPrecisionMenuOpen(false);
@@ -334,6 +360,23 @@ export function TopSettingsBar({
                     <button type="button" onClick={onConnectCesiumIon}>Cesium ionアカウントに接続</button>
                   </>
                 )}
+              </div>
+              <div className="freeze-diagnostics-section">
+                <small>
+                  画面が固まった(フリーズした)場合、その情報がここに記録されます。固まった直後に押してもらえると、原因調査に役立ちます。
+                </small>
+                <button type="button" onClick={handleCopyFreezeDiagnostics}>
+                  {freezeDiagnosticsCopyState === "copied"
+                    ? "コピーしました"
+                    : freezeDiagnosticsCopyState === "empty"
+                      ? "記録されたフリーズはありません"
+                      : freezeDiagnosticsCopyState === "failed"
+                        ? "コピーできませんでした"
+                        : "フリーズ診断情報をコピー"}
+                </button>
+                <button type="button" onClick={() => { clearRecordedFreezes(); setFreezeDiagnosticsCopyState("idle"); }}>
+                  記録をクリア
+                </button>
               </div>
               <div className="precision-data-guide">
                 <strong>使用する地形・3Dデータ</strong>

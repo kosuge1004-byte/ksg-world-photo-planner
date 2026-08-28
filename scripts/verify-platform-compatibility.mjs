@@ -50,7 +50,11 @@ const required = [
   [backgroundSearch, "runtimeCrypto?.getRandomValues", "secure UUID fallback"],
   [userFeedback, "2D地図は利用できます", "3D initialization fallback"],
   [app, 'mode === "3d" && (!mapReady || !viewer || viewer.isDestroyed())', "3D activation guard"],
-  [app, "2D地図を表示しています", "3D unavailable keeps 2D visible"],
+  // 2026-08-27追記: BYOA化に伴い「Cesium ionトークンが無ければ2D地図の
+  // まま」という古い分岐は削除済み（標準モードはCesium ionトークンに
+  // 一切依存せず常に3D表示できるため）。3D初期化がまだ完了していない
+  // 場合の「読み込み中」の案内であることを検証する。
+  [app, "3Dマップを読み込み中です", "3D unavailable keeps 2D visible"],
   [app, "<canvas", "Canvas preview"],
   [app, "<svg", "SVG overlay"],
 ];

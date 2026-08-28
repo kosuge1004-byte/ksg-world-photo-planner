@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -28,7 +30,9 @@ import { Map2DInteractionLayer } from "./components/Map2DInteractionLayer";
 import { PinControls } from "./components/PinControls";
 import { PreviewStatus } from "./components/PreviewStatus";
 import { PreviewChrome } from "./components/PreviewChrome";
-import { CelestialTransitSearchDialog } from "./components/CelestialTransitSearchDialog";
+const CelestialTransitSearchDialog = lazy(() =>
+  import("./components/CelestialTransitSearchDialog").then((m) => ({ default: m.CelestialTransitSearchDialog }))
+);
 import { PreviewGestureLayer } from "./components/PreviewGestureLayer";
 import { PreviewMeasurementOverlay } from "./components/PreviewMeasurementOverlay";
 import {
@@ -39,14 +43,25 @@ import { enableMapMeasurement } from "./cesium/mapMeasurement";
 import { ForegroundPreviewOverlay } from "./components/ForegroundPreviewOverlay";
 import { ForegroundObjectControls } from "./components/ForegroundObjectControls";
 import { SpotSearchScreen } from "./components/SpotSearchScreen";
-import { ProjectsScreen } from "./components/ProjectsScreen";
-import { CalendarScreen } from "./components/CalendarScreen";
-import { MoonAgeCalendarScreen } from "./components/MoonAgeCalendarScreen";
+const ProjectsScreen = lazy(() =>
+  import("./components/ProjectsScreen").then((m) => ({ default: m.ProjectsScreen }))
+);
+const CalendarScreen = lazy(() =>
+  import("./components/CalendarScreen").then((m) => ({ default: m.CalendarScreen }))
+);
+const MoonAgeCalendarScreen = lazy(() =>
+  import("./components/MoonAgeCalendarScreen").then((m) => ({ default: m.MoonAgeCalendarScreen }))
+);
 import { ProjectSaveDialog } from "./components/ProjectSaveDialog";
 import { SharedProjectImportDialog } from "./components/SharedProjectImportDialog";
 import { ProjectShareQrDialog } from "./components/ProjectShareQrDialog";
 import { ProjectQrScanDialog } from "./components/ProjectQrScanDialog";
 import { PlacementConfirmDialog } from "./components/PlacementConfirmDialog";
+import {
+  beginOperationTag,
+  endOperationTag,
+  startFreezeMonitoring,
+} from "./diagnostics/freezeDetector";
 import { CesiumIonConsentDialog } from "./components/CesiumIonConsentDialog";
 import {
   decodeProjectShareCode,
@@ -56,7 +71,10 @@ import {
 } from "./sharing/projectShareCode";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
-import { ArCameraScreen, type ArCameraProjection } from "./components/ArCameraScreen";
+import type { ArCameraProjection } from "./components/ArCameraScreen";
+const ArCameraScreen = lazy(() =>
+  import("./components/ArCameraScreen").then((m) => ({ default: m.ArCameraScreen }))
+);
 import {
   requestArOrientationPermissionFromUserGesture,
   type ArTrackingSnapshot,
@@ -441,6 +459,12 @@ function App() {
     });
   }, []);
 
+  // 2026-08-27追記: 「マップ・スライダーが原因不明に固まる」という報告への
+  // 対応。開発者ツールが使えないインストール型アプリ環境でも、フリーズの
+  // 発生と直前の状況を診断できるようにする（詳細はsrc/diagnostics/
+  // freezeDetector.tsのコメント参照）。アプリ起動時に1回だけ監視を開始する。
+  useEffect(() => startFreezeMonitoring(), []);
+
   // Cesium ionのOAuth認証画面から戻ってきた直後（URLに?code=...&state=...が
   // 含まれる）であれば、アクセストークンへの交換を行う。アプリ起動時に
   // 一度だけ実行すればよいため、依存配列は空にしている。
@@ -523,6 +547,14 @@ function App() {
     useState<GroundPoint | null>(null);
   const [tripodPoint, setTripodPoint] =
     useState<GroundPoint | null>(null);
+  // 2026-08-28追記: 三脚探索のuseEffectが、視線方向の観測点として
+  // tripodPointの最新値を参照する際に使う。あえて依存配列には含めず、
+  // このrefだけを参照することで、「候補点計算中の概算地点に三脚を
+  // 仮設置しても、進行中の精密計算を中断・やり直しさせない」を実現する
+  // （setTripodPoint自体は今まで通り呼ばれるが、それだけでは探索の
+  // useEffectを再トリガーしなくなる）。
+  const tripodPointRef = useRef(tripodPoint);
+  tripodPointRef.current = tripodPoint;
   const [foregroundObjects, setForegroundObjects] = useState<ForegroundObject[]>([]);
   const foregroundObject = foregroundObjects[0] ?? null;
   // 人物を配置する前に指定した身長を保持し、配置時の初期サイズへ使用する。
@@ -640,6 +672,12 @@ function App() {
     useState<Partial<Record<number, boolean>>>({});
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
+  // 2026-08-28追記: 精密計算（数秒〜数十秒）が終わる前に、通信不要の
+  // 理論値を「候補点計算中」として先に表示するための、天体ID→暫定候補の
+  // マップ。精密計算が完了した天体は、対応するエントリを削除する
+  // （tripodCandidatesの確定表示に切り替わるため）。
+  const [preliminaryTripodCandidates, setPreliminaryTripodCandidates] =
+    useState<Partial<Record<TripodCandidate["id"], TripodCandidate>>>({});
   const [tripodCandidateSelectionOpen, setTripodCandidateSelectionOpen] =
     useState(false);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
@@ -1209,7 +1247,22 @@ function App() {
   );
 
   const displayedTripodCandidates = useMemo(() => {
-    if (!timelineInteracting || !subjectPoint) return tripodCandidates;
+    if (!timelineInteracting || !subjectPoint) {
+      // 2026-08-28追記: まだ精密計算が終わっていない（確定候補がまだない）
+      // 天体については、通信を待たずに表示できる暫定候補（地球を完全な
+      // 球体とみなした理論値、solutionType: "preliminary"）を補って表示する。
+      // 精密計算が終わった天体は、確定候補（tripodCandidates）が優先される
+      // （setPreliminaryTripodCandidatesが完了時に空にリセットされるため、
+      // 自然にこの補完は行われなくなる）。
+      const confirmedIds = new Set(tripodCandidates.map((candidate) => candidate.id));
+      const preliminaryOnly = Object.values(preliminaryTripodCandidates).filter(
+        (candidate): candidate is TripodCandidate =>
+          candidate !== undefined && !confirmedIds.has(candidate.id)
+      );
+      return preliminaryOnly.length > 0
+        ? [...tripodCandidates, ...preliminaryOnly]
+        : tripodCandidates;
+    }
     const previousById = new Map<TripodCandidate["id"], TripodCandidate[]>();
     for (const candidate of tripodCandidatesRef.current) {
       const list = previousById.get(candidate.id) ?? [];
@@ -1241,6 +1294,7 @@ function App() {
     timelineInteracting,
     tripodCandidateSourcePoints,
     tripodCandidates,
+    preliminaryTripodCandidates,
   ]);
 
   const selectableDisplayedTripodCandidates = useMemo(
@@ -1304,11 +1358,13 @@ function App() {
     // 精密計算が確定したaligned候補だけを表示する。
     tripodCandidatesRef.current = [];
     setTripodCandidates([]);
+    setPreliminaryTripodCandidates({});
     setTripodCandidateCalculationStatus("calculating");
 
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
+      beginOperationTag("calculateTripodCandidates");
       void calculateTripodCandidates(
         subjectPoint,
         enabledPoints,
@@ -1324,15 +1380,23 @@ function App() {
         preferredDistancesById,
         resolveTripodCandidateRefractionWeather,
         precisionSettings.tripodCandidateDoubleCheckEnabled,
-        tripodPoint
+        tripodPointRef.current
           ? withLensCenterHeight(
-              tripodPoint,
+              tripodPointRef.current,
               cameraSettings.lensCenterHeightMeters,
               "三脚候補初期方向観測点"
             )
-          : undefined
+          : undefined,
+        (preliminary) => {
+          if (cancelled) return;
+          setPreliminaryTripodCandidates((current) => ({
+            ...current,
+            [preliminary.id]: preliminary,
+          }));
+        }
       )
         .then((candidates) => {
+          endOperationTag("calculateTripodCandidates");
           if (!cancelled) {
             // 精密解が0件でも、天体方位そのものは有効なので確認用の
             // direction-only候補を残す。これにより「候補点が消える」回帰を防ぐ。
@@ -1340,18 +1404,22 @@ function App() {
             const displayedCandidates = candidates;
             tripodCandidatesRef.current = displayedCandidates;
             setTripodCandidates(displayedCandidates);
+            // 全天体の精密計算が完了したため、暫定（計算中）表示は不要になる。
+            setPreliminaryTripodCandidates({});
             setTripodCandidateCalculationStatus(
               candidates.length > 0 ? "complete" : "no-solution"
             );
           }
         })
         .catch((error) => {
+          endOperationTag("calculateTripodCandidates");
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
           if (!cancelled) {
             // 計算失敗時も固定距離の仮候補は表示しない。
             tripodCandidatesRef.current = [];
             setTripodCandidates([]);
+            setPreliminaryTripodCandidates({});
             setTripodCandidateCalculationStatus("error");
             const isTerrainDataUnavailable =
               error instanceof Error && error.name === "TerrainDataUnavailableError";
@@ -1381,7 +1449,6 @@ function App() {
     };
   }, [
     subjectPoint,
-    tripodPoint,
     tripodCandidateSourcePoints,
     celestialVisibility,
     cameraSettings,
@@ -1745,6 +1812,7 @@ function App() {
             [pointId]: result,
           }));
         };
+        beginOperationTag("evaluateCelestialLineOfSight");
         await Promise.all(enabledPoints.map(async (point) => {
           const result = await evaluateCelestialLineOfSight(
             viewer,
@@ -1756,6 +1824,7 @@ function App() {
           );
           updatePointOcclusion(point.id, result);
         }));
+        endOperationTag("evaluateCelestialLineOfSight");
       }).catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         console.warn("天体の地形・建物遮蔽を検証できませんでした", error);
@@ -1999,6 +2068,7 @@ function App() {
     if (mapViewMode !== "3d") return;
 
     try {
+      beginOperationTag("updateCelestialMapEntities");
       updateCelestialMapEntities(
         viewer,
         tripodPoint,
@@ -2013,6 +2083,7 @@ function App() {
         mapViewMode,
         cameraSettings.lensCenterHeightMeters
       );
+      endOperationTag("updateCelestialMapEntities");
     } catch (error) {
       // 天体オーバーレイの異常だけで地図本体を失わないよう、描画更新を局所的に停止する。
       console.warn("天体の地図表示を更新できませんでした", error);
@@ -3884,7 +3955,25 @@ ${diagnosticMessage}
     setTripodCandidateSelectionOpen(true);
   }
 
+  const [pendingPreliminaryCandidate, setPendingPreliminaryCandidate] =
+    useState<TripodCandidate | null>(null);
+
   function selectTripodCandidate(candidate: TripodCandidate) {
+    // 2026-08-28追記: 「候補点計算中」の暫定候補（地形未確認の理論値）を
+    // そのまま設置すると、実際には建物や崖の上など、不正確な場所を
+    // 指している可能性がある。確認を一度挟み、同意した場合だけ設置する。
+    // 三脚を設置しても、裏側で進行中の精密計算（calculateTripodCandidates）
+    // は止めない（このダイアログは表示だけの分岐で、計算処理には一切
+    // 触れていないため、自然に両立する）。
+    if (candidate.solutionType === "preliminary") {
+      setTripodCandidateSelectionOpen(false);
+      setPendingPreliminaryCandidate(candidate);
+      return;
+    }
+    placeTripodAtCandidateConfirmed(candidate);
+  }
+
+  function placeTripodAtCandidateConfirmed(candidate: TripodCandidate) {
     const viewer = mapViewerRef.current;
     setTripodCandidateSelectionOpen(false);
     stopAllEditModes();
@@ -3907,7 +3996,9 @@ ${diagnosticMessage}
     setMapCenter({ latitude: point.latitude, longitude: point.longitude });
     setSearchMessage(candidate.solutionType === "direction-only"
       ? `${candidate.label}の方位上にある三脚確認地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。プレビューと現地の見通しを確認してください`
-      : `${candidate.label}の地形交点候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。構図はプレビューで確認してください`
+      : candidate.solutionType === "preliminary"
+        ? `${candidate.label}の概算地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。精密な地形確認が完了次第、位置が自動で更新されます`
+        : `${candidate.label}の地形交点候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。構図はプレビューで確認してください`
     );
     // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
     // ここで確定後に正式なDEM/ジオイド解決へ差し替える
@@ -3956,32 +4047,36 @@ ${diagnosticMessage}
         onConnectCesiumIon={requestCesiumIonConnection}
         onDisconnectCesiumIon={handleDisconnectCesiumIon}
       />
-      <ArCameraScreen
-        open={arCameraOpen}
-        dateTimeLocal={dateTimeLocal}
-        timeZone={timeZone}
-        calculationMode={calculationMode}
-        refractionWeather={previewRefractionWeather}
-        timelineLocation={tripodPoint ?? subjectPoint}
-        visibility={celestialVisibility}
-        celestialMenuOpen={celestialMenuOpen}
-        lightPollutionEnabled={lightPollutionEnabled}
-        subjectAvailable={Boolean(subjectPoint)}
-        subjectPoint={subjectPoint}
-        accuracyMode={precisionSettings.accuracyMode}
-        cesiumIonToken={arCesiumIonToken}
-        lensCenterHeightMeters={cameraSettings.lensCenterHeightMeters}
-        onClose={() => setArCameraOpen(false)}
-        onSaveCurrentPlan={saveCurrentCompositionFromAr}
-        onChangeDateTime={setDateTimeLocal}
-        onInteractionChange={setTimelineInteracting}
-        onToggleCelestialMenu={() => setCelestialMenuOpen((current) => !current)}
-        onChangeVisibility={setCelestialVisibility}
-        onChangeLightPollution={setLightPollutionEnabled}
-        onRequestSearch={openArTransitSearch}
-        onCameraProjectionChange={setArCameraProjection}
-        onTrackingChange={setArTracking}
-      />
+      {arCameraOpen && (
+        <Suspense fallback={null}>
+          <ArCameraScreen
+            open={arCameraOpen}
+            dateTimeLocal={dateTimeLocal}
+            timeZone={timeZone}
+            calculationMode={calculationMode}
+            refractionWeather={previewRefractionWeather}
+            timelineLocation={tripodPoint ?? subjectPoint}
+            visibility={celestialVisibility}
+            celestialMenuOpen={celestialMenuOpen}
+            lightPollutionEnabled={lightPollutionEnabled}
+            subjectAvailable={Boolean(subjectPoint)}
+            subjectPoint={subjectPoint}
+            accuracyMode={precisionSettings.accuracyMode}
+            cesiumIonToken={arCesiumIonToken}
+            lensCenterHeightMeters={cameraSettings.lensCenterHeightMeters}
+            onClose={() => setArCameraOpen(false)}
+            onSaveCurrentPlan={saveCurrentCompositionFromAr}
+            onChangeDateTime={setDateTimeLocal}
+            onInteractionChange={setTimelineInteracting}
+            onToggleCelestialMenu={() => setCelestialMenuOpen((current) => !current)}
+            onChangeVisibility={setCelestialVisibility}
+            onChangeLightPollution={setLightPollutionEnabled}
+            onRequestSearch={openArTransitSearch}
+            onCameraProjectionChange={setArCameraProjection}
+            onTrackingChange={setArTracking}
+          />
+        </Suspense>
+      )}
       <section
         ref={previewSectionRef}
         className="preview-section"
@@ -4312,19 +4407,27 @@ ${diagnosticMessage}
               <button
                 type="button"
                 className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus} ${
-                  tripodCandidateCalculationStatus === "complete" ? "tappable" : ""
+                  tripodCandidateCalculationStatus === "complete" ||
+                  (tripodCandidateCalculationStatus === "calculating" && Object.keys(preliminaryTripodCandidates).length > 0)
+                    ? "tappable" : ""
                 }`}
                 role={tripodCandidateCalculationStatus === "complete" ? undefined : "status"}
                 aria-live="polite"
-                disabled={tripodCandidateCalculationStatus !== "complete"}
+                disabled={
+                  tripodCandidateCalculationStatus !== "complete" &&
+                  !(tripodCandidateCalculationStatus === "calculating" && Object.keys(preliminaryTripodCandidates).length > 0)
+                }
                 onClick={
-                  tripodCandidateCalculationStatus === "complete"
+                  tripodCandidateCalculationStatus === "complete" ||
+                  (tripodCandidateCalculationStatus === "calculating" && Object.keys(preliminaryTripodCandidates).length > 0)
                     ? placeTripodAtDisplayedCandidate
                     : undefined
                 }
               >
                 {tripodCandidateCalculationStatus === "calculating"
-                  ? "三脚候補を精密計算中…"
+                  ? (Object.keys(preliminaryTripodCandidates).length > 0
+                      ? "候補点計算中…（表示中の位置は概算です）"
+                      : "三脚候補を精密計算中…")
                   : tripodCandidateCalculationStatus === "complete"
                     ? "確定した三脚候補"
                     : tripodCandidateCalculationStatus === "no-solution"
@@ -4563,35 +4666,39 @@ ${diagnosticMessage}
         onCancel={cancelSubjectEdit}
       />
 
-      <CelestialTransitSearchDialog
-        open={celestialTransitSearchOpen}
-        currentDate={selectedDate}
-        timeZone={timeZone}
-        tripod={arSearchTripod ?? tripodPoint}
-        subject={subjectPoint}
-        visibility={celestialVisibility}
-        precisionSettings={precisionSettings}
-        cameraSettings={arSearchCameraSettings ?? cameraSettings}
-        previewAspectRatio={arSearchAspectRatio ?? previewAspectRatio}
-        viewCorrection={previewViewCorrection}
-        onClose={() => {
-          setCelestialTransitSearchOpen(false);
-          setArSearchTripod(null);
-          setArSearchCameraSettings(null);
-          setArSearchAspectRatio(null);
-        }}
-        onSelect={(result, refractionWeather) => {
-          const localized = zonedDateTimeLocalFromDate(result.date, timeZone);
-          setPreviewRefractionWeather(
-            precisionSettings.accuracyMode === "highest" &&
-            refractionWeather?.effectiveMode === "weather"
-              ? refractionWeather
-              : undefined
-          );
-          dateTimeLocalRef.current = localized;
-          setDateTimeLocal(localized);
-        }}
-      />
+      {celestialTransitSearchOpen && (
+        <Suspense fallback={null}>
+          <CelestialTransitSearchDialog
+            open={celestialTransitSearchOpen}
+            currentDate={selectedDate}
+            timeZone={timeZone}
+            tripod={arSearchTripod ?? tripodPoint}
+            subject={subjectPoint}
+            visibility={celestialVisibility}
+            precisionSettings={precisionSettings}
+            cameraSettings={arSearchCameraSettings ?? cameraSettings}
+            previewAspectRatio={arSearchAspectRatio ?? previewAspectRatio}
+            viewCorrection={previewViewCorrection}
+            onClose={() => {
+              setCelestialTransitSearchOpen(false);
+              setArSearchTripod(null);
+              setArSearchCameraSettings(null);
+              setArSearchAspectRatio(null);
+            }}
+            onSelect={(result, refractionWeather) => {
+              const localized = zonedDateTimeLocalFromDate(result.date, timeZone);
+              setPreviewRefractionWeather(
+                precisionSettings.accuracyMode === "highest" &&
+                refractionWeather?.effectiveMode === "weather"
+                  ? refractionWeather
+                  : undefined
+              );
+              dateTimeLocalRef.current = localized;
+              setDateTimeLocal(localized);
+            }}
+          />
+        </Suspense>
+      )}
       <SpotSearchScreen
         open={spotSearchOpen}
         hasCurrentSubject={Boolean(currentSubjectPoint())}
@@ -4613,17 +4720,21 @@ ${diagnosticMessage}
         justRegisteredFavoriteId={justRegisteredFavorite}
         onSelect={applySpotPreset}
       />
-      <ProjectsScreen
-        open={savedPlansOpen}
-        projects={projects}
-        onBack={() => setSavedPlansOpen(false)}
-        onLoad={loadPlannerProject}
-        onUpdate={updatePlannerProject}
-        onDelete={removePlannerProject}
-        onShare={shareProject}
-        onImport={importShareLinkOrCode}
-        onOpenQrScan={() => setQrScanOpen(true)}
-      />
+      {savedPlansOpen && (
+        <Suspense fallback={null}>
+          <ProjectsScreen
+            open={savedPlansOpen}
+            projects={projects}
+            onBack={() => setSavedPlansOpen(false)}
+            onLoad={loadPlannerProject}
+            onUpdate={updatePlannerProject}
+            onDelete={removePlannerProject}
+            onShare={shareProject}
+            onImport={importShareLinkOrCode}
+            onOpenQrScan={() => setQrScanOpen(true)}
+          />
+        </Suspense>
+      )}
       <ProjectShareQrDialog
         open={qrShareUrl !== null}
         url={qrShareUrl}
@@ -4636,18 +4747,26 @@ ${diagnosticMessage}
         onClose={() => setQrScanOpen(false)}
         onScanned={handleQrScanned}
       />
-      <CalendarScreen
-        open={calendarOpen}
-        projects={projects}
-        onBack={() => setCalendarOpen(false)}
-        onLoad={loadPlannerProject}
-      />
-      <MoonAgeCalendarScreen
-        open={moonAgeCalendarOpen}
-        timeZone={timeZone}
-        initialDate={selectedDate}
-        onBack={() => setMoonAgeCalendarOpen(false)}
-      />
+      {calendarOpen && (
+        <Suspense fallback={null}>
+          <CalendarScreen
+            open={calendarOpen}
+            projects={projects}
+            onBack={() => setCalendarOpen(false)}
+            onLoad={loadPlannerProject}
+          />
+        </Suspense>
+      )}
+      {moonAgeCalendarOpen && (
+        <Suspense fallback={null}>
+          <MoonAgeCalendarScreen
+            open={moonAgeCalendarOpen}
+            timeZone={timeZone}
+            initialDate={selectedDate}
+            onBack={() => setMoonAgeCalendarOpen(false)}
+          />
+        </Suspense>
+      )}
       <ProjectSaveDialog
         open={projectSaveOpen}
         onCancel={() => {
@@ -4679,6 +4798,34 @@ ${diagnosticMessage}
         onConfirm={handleConfirmCesiumIonConsent}
         onCancel={() => setCesiumIonConsentOpen(false)}
       />
+      {pendingPreliminaryCandidate && (
+        <>
+          <div
+            className="user-notice-backdrop"
+            onClick={() => setPendingPreliminaryCandidate(null)}
+          />
+          <aside className="user-notice warning prominent" role="alertdialog" aria-live="assertive">
+            <span>
+              まだ計算中の、概算の場所です。地形（建物・崖など）を確認しきれていないため、実際の位置とズレる可能性があります。ここに三脚を設置しますか？（計算は裏側で続き、正確な位置が分かり次第、自動的に更新されます）
+            </span>
+            <div className="user-notice-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  const candidate = pendingPreliminaryCandidate;
+                  setPendingPreliminaryCandidate(null);
+                  placeTripodAtCandidateConfirmed(candidate);
+                }}
+              >
+                概算のまま設置する
+              </button>
+              <button type="button" onClick={() => setPendingPreliminaryCandidate(null)}>
+                やめる
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
     </main>
   );
 }
