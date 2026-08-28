@@ -21,6 +21,9 @@ export type GsiElevationClientResult = {
    */
   tileCacheHitCount: number;
   tileCacheMissCount: number;
+  tileMemoryHitCount: number;
+  tileCacheSharedCount: number;
+  tileCacheBypassCount: number;
 };
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -51,17 +54,32 @@ const SINGLE_POINT_RETRY_DELAY_MS = 250;
 // リセットして使う。
 let globalCacheHitCount = 0;
 let globalCacheMissCount = 0;
+let globalMemoryHitCount = 0;
+let globalCacheSharedCount = 0;
+let globalCacheBypassCount = 0;
 
 export function resetGsiElevationCacheStats(): void {
   globalCacheHitCount = 0;
   globalCacheMissCount = 0;
+  globalMemoryHitCount = 0;
+  globalCacheSharedCount = 0;
+  globalCacheBypassCount = 0;
 }
 
 export function getGsiElevationCacheStats(): {
   hit: number;
   miss: number;
+  memoryHit: number;
+  shared: number;
+  bypass: number;
 } {
-  return { hit: globalCacheHitCount, miss: globalCacheMissCount };
+  return {
+    hit: globalCacheHitCount,
+    miss: globalCacheMissCount,
+    memoryHit: globalMemoryHitCount,
+    shared: globalCacheSharedCount,
+    bypass: globalCacheBypassCount,
+  };
 }
 
 function emptySamples(count: number): GsiElevationApiSample[] {
@@ -81,7 +99,16 @@ type BatchFetchResult = {
    */
   tileCacheHit: number;
   tileCacheMiss: number;
+  tileMemoryHit: number;
+  tileCacheShared: number;
+  tileCacheBypass: number;
 };
+
+function diagnosticCount(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
+}
 
 async function requestBatch(
   points: GsiElevationClientPoint[],
@@ -115,6 +142,9 @@ async function requestBatch(
       error?: unknown;
       tileCacheHit?: unknown;
       tileCacheMiss?: unknown;
+      tileMemoryHit?: unknown;
+      tileCacheShared?: unknown;
+      tileCacheBypass?: unknown;
     };
     if (!response.ok || !Array.isArray(data.samples)) {
       throw new Error(
@@ -133,8 +163,11 @@ async function requestBatch(
     // 診断情報として、この後の集計に使えるよう保持する。
     return {
       samples: data.samples as GsiElevationApiSample[],
-      tileCacheHit: typeof data.tileCacheHit === "number" ? data.tileCacheHit : 0,
-      tileCacheMiss: typeof data.tileCacheMiss === "number" ? data.tileCacheMiss : 0,
+      tileCacheHit: diagnosticCount(data.tileCacheHit),
+      tileCacheMiss: diagnosticCount(data.tileCacheMiss),
+      tileMemoryHit: diagnosticCount(data.tileMemoryHit),
+      tileCacheShared: diagnosticCount(data.tileCacheShared),
+      tileCacheBypass: diagnosticCount(data.tileCacheBypass),
     };
   } catch (error) {
     if (signal?.aborted) throw abortError();
@@ -230,7 +263,13 @@ async function requestBatchWithRecovery(
   signal: AbortSignal | undefined,
   request: ScheduledRequest
 ): Promise<GsiElevationClientResult> {
-  const emptyCacheCounts = { tileCacheHitCount: 0, tileCacheMissCount: 0 };
+  const emptyCacheCounts = {
+    tileCacheHitCount: 0,
+    tileCacheMissCount: 0,
+    tileMemoryHitCount: 0,
+    tileCacheSharedCount: 0,
+    tileCacheBypassCount: 0,
+  };
   try {
     const result = await request(points);
     return {
@@ -239,6 +278,9 @@ async function requestBatchWithRecovery(
       lastError: null,
       tileCacheHitCount: result.tileCacheHit,
       tileCacheMissCount: result.tileCacheMiss,
+      tileMemoryHitCount: result.tileMemoryHit,
+      tileCacheSharedCount: result.tileCacheShared,
+      tileCacheBypassCount: result.tileCacheBypass,
     };
   } catch (error) {
     if (signal?.aborted) {
@@ -254,6 +296,9 @@ async function requestBatchWithRecovery(
           lastError: null,
           tileCacheHitCount: result.tileCacheHit,
           tileCacheMissCount: result.tileCacheMiss,
+          tileMemoryHitCount: result.tileMemoryHit,
+          tileCacheSharedCount: result.tileCacheShared,
+          tileCacheBypassCount: result.tileCacheBypass,
         };
       } catch (retryError) {
         if (signal?.aborted) {
@@ -282,6 +327,9 @@ async function requestBatchWithRecovery(
       lastError: right.lastError ?? left.lastError ?? error,
       tileCacheHitCount: left.tileCacheHitCount + right.tileCacheHitCount,
       tileCacheMissCount: left.tileCacheMissCount + right.tileCacheMissCount,
+      tileMemoryHitCount: left.tileMemoryHitCount + right.tileMemoryHitCount,
+      tileCacheSharedCount: left.tileCacheSharedCount + right.tileCacheSharedCount,
+      tileCacheBypassCount: left.tileCacheBypassCount + right.tileCacheBypassCount,
     };
   }
 }
@@ -292,7 +340,16 @@ export async function fetchGsiElevationSamples(
   fetcher: FetchLike = fetch
 ): Promise<GsiElevationClientResult> {
   if (points.length === 0) {
-    return { samples: [], failedPointCount: 0, lastError: null, tileCacheHitCount: 0, tileCacheMissCount: 0 };
+    return {
+      samples: [],
+      failedPointCount: 0,
+      lastError: null,
+      tileCacheHitCount: 0,
+      tileCacheMissCount: 0,
+      tileMemoryHitCount: 0,
+      tileCacheSharedCount: 0,
+      tileCacheBypassCount: 0,
+    };
   }
   const batches = Array.from(
     { length: Math.ceil(points.length / REQUEST_BATCH_SIZE) },
@@ -323,8 +380,14 @@ export async function fetchGsiElevationSamples(
     lastError: results.findLast((result) => result.lastError)?.lastError ?? null,
     tileCacheHitCount: results.reduce((sum, result) => sum + result.tileCacheHitCount, 0),
     tileCacheMissCount: results.reduce((sum, result) => sum + result.tileCacheMissCount, 0),
+    tileMemoryHitCount: results.reduce((sum, result) => sum + result.tileMemoryHitCount, 0),
+    tileCacheSharedCount: results.reduce((sum, result) => sum + result.tileCacheSharedCount, 0),
+    tileCacheBypassCount: results.reduce((sum, result) => sum + result.tileCacheBypassCount, 0),
   };
   globalCacheHitCount += finalResult.tileCacheHitCount;
   globalCacheMissCount += finalResult.tileCacheMissCount;
+  globalMemoryHitCount += finalResult.tileMemoryHitCount;
+  globalCacheSharedCount += finalResult.tileCacheSharedCount;
+  globalCacheBypassCount += finalResult.tileCacheBypassCount;
   return finalResult;
 }

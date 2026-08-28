@@ -1,0 +1,211 @@
+AstroSight / ksg-world-photo-planner
+標高キャッシュ回帰修正 引き継ぎ資料
+作成日: 2026-08-29
+
+【ユーザー優先順位】
+1. 精度を最優先
+2. 次に三脚候補点の表示速度を優先
+
+精度計算式、DEM解像度、DEMソース優先順位、補間方式、探索点、収束条件を落として高速化してはならない。
+
+【リポジトリ】
+GitHub: kosuge1004-byte/ksg-world-photo-planner
+ローカル: /workspace/scratch/a2919ec6435d/repo
+作業ブランチ: fix/elevation-cache-regression-coverage
+基準: 最新main a8be7d6
+調査起点コミット: 1f4e862b5a2cf64d8bbf124120d8834d6677dbc5
+
+注意:
+- 変更は未コミット・未push。
+- 作業ツリーに以下の差分がそのまま残っている。
+- 次のCodexは新規cloneやresetをせず、この作業ツリーを継続すること。
+- git reset --hard / checkoutによる差分破棄は禁止。
+
+【1f4e862の検査で確定した問題】
+1. server/gsiElevation.tsのプロセス内tileCacheがヒットした場合、R2カウンタを通らずAPIがhit=0/miss=0を返していた。
+2. 同じ冷えたタイルへの同時要求では基礎Promiseは共有されるが、先行要求だけにmissが付き、追従要求は0/0になっていた。
+3. R2未設定、読み取り予算超過、R2障害、タイムアウト、破損データ、通常のキー未存在がすべてmissに集約されていた。
+4. 更新された検証の多くがincludes/正規表現による文字列検査で、実際のR2→GSI→永続化経路を実行していなかった。
+5. gsi-elevation-client.test.mjsは新しいキャッシュ診断値を応答に含めず、集計を検証していなかった。
+6. 一部の変更済み検証スクリプトがnpm testに未接続だった。
+
+【最新mainで既に存在する精度維持型の速度改善】
+1f4e862後のmainには以下が追加済み。今回の差分で巻き戻してはならない。
+- 端末IndexedDB DEMタイルキャッシュ
+- サーバー/端末補間値一致検証
+- 三脚候補seedキャッシュ（最終結果ではなく探索ヒントのみ）
+- 同一セッション限定の完全一致候補キャッシュ
+- auto気象時の完全一致キャッシュ無効化
+- 1m DEM隣接タイル読み出し並列化
+- 同一IndexedDB読み出しの共有
+- GSI APIのクライアントバッチを64点から1024点へ拡大
+- 640点を1 HTTP要求で処理する検証
+
+これらはDEM優先順位、neutral/los-safe補間、NoData、ECEF、ジオイド、収束条件、round-trip検証を変更しない設計。
+
+【今回すでに実装した変更】
+
+1. server/cloudflareRuntime.ts
+- RuntimeKvNamespaceへ任意のgetWithStatusを追加。
+- 戻り値をhit / miss / bypassに区別。
+
+2. server/r2PersistentCache.ts
+- R2キー存在時だけhit。
+- 正常なキー未存在だけmiss。
+- R2未許可、予算ガード、例外、タイムアウトはbypass。
+- 従来get()との互換性を維持。
+- 標高結果・フォールバック順は変更していない。
+
+3. server/gsiElevation.ts
+- tileCacheの値をPromise単体から{ promise, settled }へ変更。
+- TileCacheCounterを以下へ拡張。
+  hit: R2ヒット
+  miss: R2正常ミス
+  memoryHit: 完了済みプロセス内タイル再利用
+  shared: 同時進行中Promiseの共有
+  bypass: R2未設定/拒否/障害/破損
+- 完了済みメモリヒットと同時共有を明示計測。
+- R2破損データをbypassとしてGSIへフォールバック。
+- DEM取得順、タイルキー、補間、標高値は未変更。
+
+4. functions/api/gsi-elevation.ts
+- 従来のtileCacheHit/tileCacheMissを維持。
+- tileMemoryHit、tileCacheShared、tileCacheBypassを追加。
+
+5. src/cesium/gsiElevationClient.ts
+- 上記5種類を全バッチ・分割回復後に集計。
+- 負数、小数、安全整数外、文字列など不正な診断値は0へ正規化。
+- 検索全体のグローバル診断へ5種類を反映。
+
+6. src/cesium/tripodCandidates.ts / src/App.tsx
+- TripodSearchDiagnosticsにmemory/shared/bypassを追加。
+- コピー診断表示を以下へ変更。
+  R2ヒット / R2ミス / メモリヒット / 同時要求共有 / R2不使用・障害
+- 診断専用で、候補計算値には影響しない。
+
+7. tests/regression/gsi-elevation-client.test.mjs
+- 最新の1024点バッチ仕様に古い64点テストを更新。
+- 1500点=1024+476の2バッチで5種類の診断値合算を検証。
+- 不正な診断値が合計を壊さないことを検証。
+
+8. 新規 tests/regression/gsi-elevation-cache-path.test.mjs
+- 実API onRequestを呼び、モックR2/GSIで次を検証。
+  R2ヒット時はGSI通信0
+  メモリヒット時はR2再読込0、GSI通信0
+  R2ミス時はGSIへフォールバック
+  GSI 404のemptyタイルをR2へ保存
+  R2未設定をmissではなくbypassとして計測
+  同時2要求がR2/GSI取得を1本に共有
+
+9. scripts/run-regression-tests.mjs
+- 新しい実動作キャッシュ経路テストを通常回帰スイートへ登録。
+
+【現在の変更ファイル】
+M functions/api/gsi-elevation.ts
+M scripts/run-regression-tests.mjs
+M server/cloudflareRuntime.ts
+M server/gsiElevation.ts
+M server/r2PersistentCache.ts
+M src/App.tsx
+M src/cesium/gsiElevationClient.ts
+M src/cesium/tripodCandidates.ts
+M tests/regression/gsi-elevation-client.test.mjs
+?? tests/regression/gsi-elevation-cache-path.test.mjs
+
+【実行済みテストと実測結果】
+
+1. 対象テスト
+command:
+node --import ./scripts/register-typescript-source-loader.mjs --test ./tests/regression/gsi-elevation-client.test.mjs ./tests/regression/gsi-elevation-cache-path.test.mjs
+
+結果:
+- tests 6
+- pass 6
+- fail 0
+- cache path test 約48ms
+- client testを含む全体 約2.0秒
+
+通過項目:
+- elevation API distinguishes R2, memory, shared and bypass cache paths
+- large DEM requests split until Cloudflare can complete them
+- unrecoverable point recovery floor
+- cancellation
+- diagnostics aggregation across batches
+- invalid diagnostics normalization
+
+2. ビルド
+command: npm run build
+結果: 成功
+- tsc -b 成功
+- vite build成功
+- 171 modules transformed
+- 既存のchunk size警告のみ
+
+3. npm test
+結果: 途中まで成功したが、既存の別件で停止。
+
+停止内容:
+Error: unreachable source modules: src/precision/highPrecisionSession.ts
+発生元: scripts/verify-final-cleanup.mjs:99
+
+確認済み事実:
+- src/precision/highPrecisionSession.tsは現在どこからもimportされていない。
+- 同ファイルは旧Google Photorealistic 3D Tilesセッション許可処理。
+- 現在のApp.tsxはsrc/precision/cesiumIonConnection.tsのBYOA系処理を使用。
+- ArCesiumOverlay.tsxのコメントにも旧authorizeHighPrecisionSession処理を行わない旨がある。
+- この到達不能エラーは今回のキャッシュ差分で発生したものではなく、作業開始前の1f4e862でも再現済み。
+- ただし削除か再接続かの判断はまだ実施していない。推測で削除しないこと。
+
+【次のCodexが最初に行うこと】
+1. /workspace/scratch/a2919ec6435d/repo を開く。
+2. git status --short --branch と git diff --check を確認。
+3. 今回の差分をコードレビュー。特に以下を確認。
+   - RuntimeKvNamespaceの既存利用者との型互換
+   - getWithStatusのhit/miss/bypass境界
+   - MemoryTileCacheEntryのsettled更新とエラー時delete
+   - 同時Pages Function要求でカウンタが要求ごとに混ざらないこと
+4. highPrecisionSession.tsの現仕様上の要否をApp/AR/API/履歴から確定。
+   - 不要がコードと履歴で確定した場合のみ削除。
+   - 必要なら正しい現行経路へ再接続。
+5. npm testを最後まで通す。
+6. 以下の変更済み/関連検証を個別にも実行。
+   node scripts/verify-coordinate-serialization.mjs
+   node scripts/verify-phase5-4-r2-cache.mjs
+   node scripts/verify-r2-safety-all-paths-20260824.mjs
+   node scripts/verify-terrain-persistent-cache-20260824.mjs
+   node scripts/verify-tripod-neutral-dem-20260823.mjs
+   node --experimental-strip-types scripts/verify-device-dem-tile-cache-20260829.mjs
+   node --experimental-strip-types scripts/verify-tripod-speed-cache-20260829.mjs
+   node --experimental-strip-types scripts/verify-gsi-large-batch-runtime-20260829.mjs
+   node scripts/verify-gsi-large-batch-safe-20260829.mjs
+7. npm run lintを実行し、新規警告を増やしていないことを確認。
+8. git diff --check、git status、git diffを最終確認。
+9. ユーザーの明示指示がない限りpush/PR作成はしない。
+
+【追加推奨テスト】
+- R2 bucket.get例外をbypassとして記録し、GSI結果が変わらないこと。
+- 壊れたR2バイナリをbypassとして扱い、GSIで回復すること。
+- R2 read safety上限到達時をbypassとして計測すること。
+- API 200応答のsamples順序・値がキャッシュ有無で完全一致すること。
+- 1m/5m/10m、neutral/los-safe、タイル境界についてキャッシュ有無の数値同一性。
+
+【絶対に変更しない精度要件】
+- DEM1A -> DEM5A -> DEM5B -> DEM5C -> DEM10Bの優先順位
+- maximumDetail 1m/5m/10m
+- neutralのConstrained Bicubic
+- los-safeのmax(Bilinear, Constrained Bicubic)
+- NoData処理
+- タイル境界での実隣接タイル利用
+- 座標の丸め禁止
+- ECEF/WGS84、ジオイド、地球曲率、屈折補正
+- 収束回数/終了条件、wide fallback、round-trip検証
+
+【完了条件】
+- 標高値がキャッシュ有無で完全一致。
+- R2、メモリ、共有、バイパスを診断値で区別可能。
+- 同一タイルの同時要求は上流通信1回。
+- 精度を落とす間引きや近似を追加していない。
+- npm run build成功。
+- npm test全件成功。
+- 関連個別検証全件成功。
+- 新規テストがscripts/run-regression-tests.mjsに接続済み。

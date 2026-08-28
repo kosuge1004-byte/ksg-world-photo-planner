@@ -20,6 +20,14 @@ const cases = [
     ],
   },
   {
+    name: "tripod candidate progressive display and finite fallback waits",
+    arguments: ["./scripts/verify-tripod-candidate-performance-resilience.mjs"],
+  },
+  {
+    name: "tripod candidate visible fallback and progressive rendering",
+    arguments: ["./scripts/verify-tripod-candidate-rendering.mjs"],
+  },
+  {
     name: "surface obstruction (building + vegetation) line-of-sight geometry (Phase2-3)",
     arguments: [
       "--import",
@@ -103,6 +111,15 @@ const cases = [
       "./scripts/register-typescript-source-loader.mjs",
       "--test",
       "./tests/regression/gsi-elevation-client.test.mjs",
+    ],
+  },
+  {
+    name: "GSI elevation R2, memory, shared and bypass cache paths",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/gsi-elevation-cache-path.test.mjs",
     ],
   },
   {

@@ -11,6 +11,8 @@ const checks = [
   ['coarse scan remains 10m only before 1m final refinement', /全距離走査[\s\S]*?"10m"/],
   ['per-celestial failure isolation remains allSettled', /Promise\.allSettled\(/],
   ['World Terrain retries up to three attempts', /WORLD_TERRAIN_MAX_ATTEMPTS\s*=\s*3/],
+  ['World Terrain attempts have a finite timeout', /WORLD_TERRAIN_OPERATION_TIMEOUT_MS\s*=\s*30_000/],
+  ['World Terrain provider and sampling both use the timeout guard', /(waitForWorldTerrainOperation\([\s\S]*?terrainPromise[\s\S]*?waitForWorldTerrainOperation\([\s\S]*?sampleTerrainMostDetailed)/],
   ['rejected World Terrain provider promise is cleared', /terrainPromise\s*=\s*null/],
   ['World Terrain retry never changes requested coordinates', /sampleWorldTerrainFallbackWithRecovery\(fallbackPoints, signal\)/],
   ['GSI request concurrency capped at eight', /MAX_CONCURRENT_REQUESTS\s*=\s*8/],

@@ -13,6 +13,18 @@ export type RuntimeKvNamespace = {
       metadata?: Record<string, unknown>;
     }
   ): Promise<void>;
+  /**
+   * Optional diagnostic read used by the DEM path. `bypass` means that R2 was
+   * unavailable, rejected by a safety guard, or failed; it must not be reported
+   * as a normal cache miss.
+   */
+  getWithStatus?(
+    key: string,
+    options: { type: "arrayBuffer" }
+  ): Promise<{
+    status: "hit" | "miss" | "bypass";
+    value: ArrayBuffer | null;
+  }>;
 };
 
 type RuntimeConfiguration = {

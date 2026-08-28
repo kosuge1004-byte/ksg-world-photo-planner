@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Cartesian3, Cartographic, Ellipsoid, Math as CesiumMath } from "cesium";
+import { Cartographic, Math as CesiumMath } from "cesium";
 
 globalThis.window ??= { setTimeout: globalThis.setTimeout };
 
@@ -181,6 +181,52 @@ test("tripod candidate round-trip: candidate reproduces subject/celestial alignm
     Math.abs(subjectElevation - finalHorizontal.altitudeDegrees) < 0.01,
     "候補地点から見た被写体の仰角は天体高度と一致するべき"
   );
+});
+
+test("tripod candidate progress: preliminary display does not wait for weather I/O and final body results arrive before the aggregate return", async () => {
+  const sun = realSunHorizontal();
+  const point = { id: "sun", label: "太陽", azimuthDegrees: sun.azimuthDegrees, altitudeDegrees: sun.altitudeDegrees };
+  const ray = buildCelestialBackwardRay(SUBJECT, sun.azimuthDegrees, sun.altitudeDegrees);
+  const terrainSampler = makeMockTerrainSampler(ray, SUBJECT, CAMERA.lensCenterHeightMeters, (d) => d - 500);
+  const events = [];
+  let releaseWeather;
+  const weatherGate = new Promise((resolve) => {
+    releaseWeather = resolve;
+  });
+
+  const calculation = calculateTripodCandidates(
+    SUBJECT,
+    [point],
+    CAMERA,
+    DATE,
+    CALCULATION_MODE,
+    terrainSampler,
+    undefined,
+    3 / 2,
+    { minMeters: 100, maxMeters: 1000 },
+    undefined,
+    undefined,
+    undefined,
+    async () => weatherGate,
+    false,
+    undefined,
+    (candidate) => events.push({ type: "preliminary", candidate }),
+    (id, candidates) => events.push({ type: "resolved", id, candidates })
+  );
+
+  await Promise.resolve();
+  assert.equal(events[0]?.type, "preliminary", "気象I/Oが未完了でも概算候補を先に通知するべき");
+  assert.equal(events[0]?.candidate.solutionType, "preliminary");
+
+  releaseWeather(undefined);
+  const candidates = await calculation;
+  events.push({ type: "returned", candidates });
+
+  const resolvedIndex = events.findIndex((event) => event.type === "resolved");
+  const returnedIndex = events.findIndex((event) => event.type === "returned");
+  assert.ok(resolvedIndex >= 0, "天体単位の確定候補通知が呼ばれるべき");
+  assert.ok(resolvedIndex < returnedIndex, "天体単位の確定候補は全体returnより前に通知されるべき");
+  assert.deepEqual(events[resolvedIndex].candidates, candidates, "途中通知と最終戻り値の精度・候補順は同一であるべき");
 });
 
 test("multiple terrain intersections: both crossings are kept as separate candidates, not merged into one", async () => {

@@ -52,25 +52,39 @@ export function persistentCacheFromR2(
   budgetDb?: R2MonthlyBudgetDb,
 ): RuntimeKvNamespace | undefined {
   if (!bucket) return undefined;
+  const activeBucket = bucket;
+  async function getWithStatus(key: string): Promise<{
+    status: "hit" | "miss" | "bypass";
+    value: ArrayBuffer | null;
+  }> {
+    // Fail closed: once the conservative Class B budget is reached,
+    // bypass R2 entirely so the normal upstream path can run.
+    if (!await allowR2Read(safetyKv, requestIdentity)) {
+      return { status: "bypass", value: null };
+    }
+    try {
+      const object = await withTimeout(activeBucket.get(key), R2_ACCESS_TIMEOUT_MS);
+      if (!object) return { status: "miss", value: null };
+      const value = await withTimeout(object.arrayBuffer(), R2_ACCESS_TIMEOUT_MS);
+      return { status: "hit", value };
+    } catch {
+      // R2 failure is observably different from a key miss, while the elevation
+      // path still falls back to GSI exactly as before.
+      return { status: "bypass", value: null };
+    }
+  }
   return {
     async get(key) {
-      // Fail closed: once the conservative Class B budget is reached,
-      // bypass R2 entirely so the normal upstream path can run.
-      if (!await allowR2Read(safetyKv, requestIdentity)) return null;
-      try {
-        const object = await withTimeout(bucket.get(key), R2_ACCESS_TIMEOUT_MS);
-        return object ? await withTimeout(object.arrayBuffer(), R2_ACCESS_TIMEOUT_MS) : null;
-      } catch {
-        // タイムアウト、またはR2側の一時的な問題。キャッシュなしとして
-        // 扱い、呼び出し元は通常どおり国土地理院への直接取得へ進む。
-        return null;
-      }
+      return (await getWithStatus(key)).value;
+    },
+    async getWithStatus(key) {
+      return getWithStatus(key);
     },
     async put(key, value) {
       const newBytes = valueBytes(value as ArrayBuffer | Uint8Array | string);
       if (!await reserveR2Write(safetyKv, key, newBytes, requestIdentity, budgetDb)) return;
       try {
-        await withTimeout(bucket.put(key, value), R2_ACCESS_TIMEOUT_MS);
+        await withTimeout(activeBucket.put(key, value), R2_ACCESS_TIMEOUT_MS);
       } catch {
         // 保存の失敗は探索結果に影響させない（次回また通常取得へフォールバック）。
       }

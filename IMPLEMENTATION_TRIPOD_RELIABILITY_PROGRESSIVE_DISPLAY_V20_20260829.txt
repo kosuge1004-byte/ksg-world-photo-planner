@@ -1,0 +1,72 @@
+AstroSight v20 - 三脚候補の完走性・段階表示・安全な表示高速化
+実装日: 2026-08-29
+基準: AstroSight-elevation-cache-WIP-20260829.zip
+
+優先順位
+1. 三脚候補点を途中停止させず表示する
+2. 確定候補の精度を維持する
+3. アプリ起動から全候補表示までを短縮する
+
+修正内容
+
+1. 中断後に同条件の探索が再開されない不具合を修正
+- 旧実装は重複防止キーを中断時に解放せず、時間スライダー操作などで
+  Abortされた後、同じ入力の再探索を「実行中」と誤認して開始しなかった。
+- keyに加えてrunIdを持ち、中断・完了・例外の全経路で「自分自身のrun」だけを
+  解放する。古い非同期処理が新しいrunの状態を消す競合も防止した。
+- 自動気象時も、天体方位・カメラ高などを含む完全な計算キーを使用する。
+
+2. I/O待ち前に概算候補を即時表示
+- WGS84楕円体との理論交点からpreliminary候補を同期計算し、IndexedDB、
+  気象API、DEM APIより先に表示する。
+- 地形未確認の概算であることを2D地図、候補一覧、ステータスに明記する。
+- 概算候補は最終解として保存せず、精密なaligned候補が得られた天体だけ置換する。
+
+3. 天体ごとの確定候補を完了順に表示
+- 全天体のPromise.allSettled完了を待たず、太陽・月・天の川・北極星のうち
+  完了した天体の全交点候補を直ちにAppへ通知して表示する。
+- 最終戻り値の候補値・候補順・採否条件は変更しない。
+
+4. 失敗時にも表示済み概算候補を維持
+- 確定解0件、地形通信失敗、World Terrain失敗のときに概算候補を消さない。
+- 「確定解なし」「精密計算失敗」と概算表示を区別し、再試行も維持する。
+
+5. 高速化専用キャッシュが探索を止めないよう修正
+- seed読込とDEMウォームアップの例外を通常探索から分離した。
+- キャッシュ準備の待機を各2秒で打ち切り、authoritativeな通常探索を開始する。
+- キャッシュ値は従来どおり探索seedのみで、最終候補として採用しない。
+
+6. World Terrainの無期限待ちを防止
+- provider生成とsampleTerrainMostDetailedの各試行に30秒の待機上限を追加した。
+- 最大3回、同じ座標・同じ最詳細データを再試行する。低解像度・近似値へは置換しない。
+
+7. 旧BYOA移行前モジュールを削除
+- src/precision/highPrecisionSession.tsは参照0件で、メイン地図・ARとも現行の
+  src/precision/cesiumIonConnection.tsを使用していることを確認して削除した。
+- これによりfinal-cleanupの到達不能モジュール検査を解消した。
+
+変更していない精度条件
+- DEM1A -> DEM5A -> DEM5B -> DEM5C -> DEM10Bの優先順位
+- maximumDetail 1m/5m/10m
+- neutral Constrained Bicubic / los-safe max(Bilinear, Constrained Bicubic)
+- NoData、隣接タイル、座標倍精度、ECEF/WGS84、ジオイド、地球曲率、屈折補正
+- 収束回数・終了条件・wide fallback・1m最終精密化
+- CameraModel round-trip 0.5% dx/dy判定・double-check
+
+検証結果
+- npm run build: PASS（tsc -b / Vite production build）
+- npm test: PASS（回帰33グループ）
+- 三脚候補実計算: PASS 8/8
+  * 気象I/O前のpreliminary通知
+  * 天体単位の確定候補通知がaggregate returnより先行
+  * 単一交点・複数交点・岩場相当地形・round-trip・double-check分離
+- GSI 640点: 1 HTTP要求、点順・値一致 PASS
+- device DEM tile cacheとserver補間値一致 PASS
+- neutral/los-safe補間配線 PASS
+- R2安全性 11/11 PASS
+- npm run lint: エラー0（既存テスト/検証スクリプトの警告のみ）
+
+実機確認推奨
+- 実際に停止していた地点・日時で、時間スライダー操作後にも再探索が開始されること。
+- 概算候補が即時に表示され、天体ごとに確定候補へ順次置き換わること。
+- 診断コピーで総確定時間、工程別時間、DEM通信回数、R2/メモリ/共有/バイパスを比較すること。

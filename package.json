@@ -69,7 +69,8 @@
     "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs",
     "verify:r2-safety-all-paths": "node scripts/verify-r2-safety-all-paths-20260824.mjs",
     "verify:device-dem-tile-cache": "node --experimental-strip-types scripts/verify-device-dem-tile-cache-20260829.mjs",
-    "verify:tripod-speed-cache": "node --experimental-strip-types scripts/verify-tripod-speed-cache-20260829.mjs"
+    "verify:tripod-speed-cache": "node --experimental-strip-types scripts/verify-tripod-speed-cache-20260829.mjs",
+    "verify:tripod-resilience": "node scripts/verify-tripod-candidate-performance-resilience.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

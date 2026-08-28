@@ -38,7 +38,6 @@ const MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const TILE_SIZE = 256;
 const MEMORY_MAX_ENTRIES = 48;
-const INDEXED_DB_TIMEOUT_MS = 3_000;
 const PERSISTED_MAX_ENTRIES = 192;
 const PREFETCH_CONCURRENCY = 2;
 const PREFETCH_MAX_TILES_PER_CALL = 24;
@@ -107,17 +106,6 @@ function openDatabase(): Promise<IdbDatabase | null> {
   const indexedDb = getIndexedDbFactory();
   if (!indexedDb) return Promise.resolve(null);
   databasePromise ??= new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: IdbDatabase | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve(value);
-    };
-    const timeout = setTimeout(() => {
-      databasePromise = null;
-      finish(null);
-    }, INDEXED_DB_TIMEOUT_MS);
     const request = indexedDb.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -131,11 +119,11 @@ function openDatabase(): Promise<IdbDatabase | null> {
         database.close();
         databasePromise = null;
       };
-      finish(database);
+      resolve(database);
     };
     request.onerror = () => {
       databasePromise = null;
-      finish(null);
+      resolve(null);
     };
   });
   return databasePromise;
@@ -192,27 +180,19 @@ async function readTile(source: SourceDefinition, x: number, y: number): Promise
     const database = await openDatabase();
     if (!database) return null;
     return await new Promise<TileLookup | null>((resolve) => {
-      let settled = false;
-      const finish = (value: TileLookup | null) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve(value);
-      };
-      const timeout = setTimeout(() => finish(null), INDEXED_DB_TIMEOUT_MS);
       const transaction = database.transaction(STORE_NAME, "readonly");
       const request = transaction.objectStore(STORE_NAME).get(key);
       request.onsuccess = () => {
         const record = request.result as StoredTile | undefined;
         if (!record || Date.now() - record.updatedAt > MAX_AGE_MS) {
-          finish(null);
+          resolve(null);
           return;
         }
         const lookup = storedToLookup(record);
         if (lookup) writeMemory(key, lookup);
-        finish(lookup);
+        resolve(lookup);
       };
-      request.onerror = () => finish(null);
+      request.onerror = () => resolve(null);
     });
   })().finally(() => {
     if (inFlightReads.get(key) === requestPromise) inFlightReads.delete(key);
@@ -269,33 +249,22 @@ async function readTilesBatch(
     const store = transaction.objectStore(STORE_NAME);
     const now = Date.now();
     await Promise.all(missing.map(({ key }) => new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve();
-      };
-      const timeout = setTimeout(() => {
-        results.set(key, null);
-        finish();
-      }, INDEXED_DB_TIMEOUT_MS);
       const request = store.get(key);
       request.onsuccess = () => {
         const record = request.result as StoredTile | undefined;
         if (!record || now - record.updatedAt > MAX_AGE_MS) {
           results.set(key, null);
-          finish();
+          resolve();
           return;
         }
         const lookup = storedToLookup(record);
         if (lookup) writeMemory(key, lookup);
         results.set(key, lookup);
-        finish();
+        resolve();
       };
       request.onerror = () => {
         results.set(key, null);
-        finish();
+        resolve();
       };
     })));
   })();

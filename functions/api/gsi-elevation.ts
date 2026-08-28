@@ -65,7 +65,14 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     const tileCacheCounter = createTileCacheCounter();
     const samples = await lookupGsiElevations(points, context.request.signal, tileCacheCounter);
     return jsonResponse(
-      { samples, tileCacheHit: tileCacheCounter.hit, tileCacheMiss: tileCacheCounter.miss },
+      {
+        samples,
+        tileCacheHit: tileCacheCounter.hit,
+        tileCacheMiss: tileCacheCounter.miss,
+        tileMemoryHit: tileCacheCounter.memoryHit,
+        tileCacheShared: tileCacheCounter.shared,
+        tileCacheBypass: tileCacheCounter.bypass,
+      },
       200,
       "public, max-age=86400"
     );

@@ -474,14 +474,18 @@ export function Map2DOverlay({
             title={
               candidate.solutionType === "direction-only"
                 ? `${candidate.label}の三脚方位候補（要確認）`
-                : `${candidate.label}の三脚位置`
+                : candidate.solutionType === "preliminary"
+                  ? `${candidate.label}の三脚概算候補（地形確認中）`
+                  : `${candidate.label}の三脚位置`
             }
           >
             <span aria-hidden="true">●</span>
             {candidate.label}{" "}
             {candidate.solutionType === "direction-only"
               ? "三脚方位候補"
-              : "三脚候補"}
+              : candidate.solutionType === "preliminary"
+                ? "三脚概算候補"
+                : "三脚候補"}
             {candidate.intersectionCount && candidate.intersectionCount > 1
               ? ` ${candidate.intersectionIndex}/${candidate.intersectionCount}`
               : ""}{" "}

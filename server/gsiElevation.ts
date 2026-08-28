@@ -60,7 +60,11 @@ const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_TILE_CACHE_ENTRIES = 512;
 export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 12;
-const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
+type MemoryTileCacheEntry = {
+  promise: Promise<DecodedElevationTile | null>;
+  settled: boolean;
+};
+const tileCache = new Map<string, MemoryTileCacheEntry>();
 
 /**
  * 2026-08-28追記: 「複数点をまとめた外側のバッチキャッシュ」は三脚探索の
@@ -71,9 +75,20 @@ const tileCache = new Map<string, Promise<DecodedElevationTile | null>>();
  * うるため、グローバル変数での集計は数値が混ざる可能性がある。
  * 呼び出し元（1回のAPIリクエスト）ごとに専用のカウンタを作って渡す。
  */
-export type TileCacheCounter = { hit: number; miss: number };
+export type TileCacheCounter = {
+  /** R2 contained a valid empty/data tile record. */
+  hit: number;
+  /** R2 was available but did not contain the tile key. */
+  miss: number;
+  /** A completed in-process decoded tile was reused. */
+  memoryHit: number;
+  /** An in-flight tile lookup was shared with another caller. */
+  shared: number;
+  /** R2 was unavailable, safety-limited, failed, or returned invalid data. */
+  bypass: number;
+};
 export function createTileCacheCounter(): TileCacheCounter {
-  return { hit: 0, miss: 0 };
+  return { hit: 0, miss: 0, memoryHit: 0, shared: 0, bypass: 0 };
 }
 let activeTileRequests = 0;
 const tileRequestWaiters: Array<() => void> = [];
@@ -297,6 +312,11 @@ type PersistentTileLookup =
   | { kind: "empty" }
   | { kind: "data"; tile: DecodedElevationTile };
 
+type PersistentTileRead = {
+  status: "hit" | "miss" | "bypass";
+  value: PersistentTileLookup | null;
+};
+
 function serializeEmptyPersistentTile(): ArrayBuffer {
   return new Uint8Array([PERSISTENT_TILE_KIND_EMPTY]).buffer;
 }
@@ -343,17 +363,31 @@ async function readPersistentTile(
   source: ElevationTileSource,
   x: number,
   y: number
-): Promise<PersistentTileLookup | null> {
+): Promise<PersistentTileRead> {
   const persistentCache = serverPersistentCache();
-  if (!persistentCache) return null;
+  if (!persistentCache) return { status: "bypass", value: null };
   try {
-    const bytes = await persistentCache.get(persistentTileKey(source, x, y), {
-      type: "arrayBuffer",
-    });
-    return bytes instanceof ArrayBuffer ? deserializePersistentTile(bytes) : null;
+    const key = persistentTileKey(source, x, y);
+    const fallbackValue = persistentCache.getWithStatus
+      ? undefined
+      : await persistentCache.get(key, { type: "arrayBuffer" });
+    const read = persistentCache.getWithStatus
+      ? await persistentCache.getWithStatus(key, { type: "arrayBuffer" })
+      : {
+          status: fallbackValue instanceof ArrayBuffer ? "hit" as const : "miss" as const,
+          value: fallbackValue ?? null,
+        };
+    if (read.status !== "hit") return { status: read.status, value: null };
+    if (!(read.value instanceof ArrayBuffer)) {
+      return { status: "bypass", value: null };
+    }
+    const value = deserializePersistentTile(read.value);
+    return value
+      ? { status: "hit", value }
+      : { status: "bypass", value: null };
   } catch {
     // ローカル開発やR2未設定環境では永続キャッシュを使わず従来処理を継続する。
-    return null;
+    return { status: "bypass", value: null };
   }
 }
 
@@ -411,18 +445,25 @@ async function fetchDecodedTile(
 ): Promise<DecodedElevationTile | null> {
   const key = `${source.id}/${source.zoom}/${x}/${y}`;
   const cached = tileCache.get(key);
-  if (cached) return awaitWithAbort(cached, signal);
+  if (cached) {
+    if (counter) {
+      if (cached.settled) counter.memoryHit++;
+      else counter.shared++;
+    }
+    return awaitWithAbort(cached.promise, signal);
+  }
 
   // 同一タイルの通信・PNG展開Promiseを要求間で共有する。
   // 個々の検索中断で共有処理そのものを停止させると、別検索まで巻き込むため、
   // 基礎Promiseは中断信号から独立させ、各呼び出し側の待機だけを中断可能にする。
   const promise = withTileRequestLimit(async () => {
-    const persistent = await readPersistentTile(source, x, y);
-    if (persistent !== null) {
-      if (counter) counter.hit++;
-    } else {
-      if (counter) counter.miss++;
+    const persistentRead = await readPersistentTile(source, x, y);
+    if (counter) {
+      if (persistentRead.status === "hit") counter.hit++;
+      else if (persistentRead.status === "miss") counter.miss++;
+      else counter.bypass++;
     }
+    const persistent = persistentRead.value;
     if (persistent?.kind === "empty") return null;
     if (persistent?.kind === "data") return persistent.tile;
 
@@ -451,7 +492,12 @@ async function fetchDecodedTile(
     return null;
   });
 
-  tileCache.set(key, promise);
+  const entry: MemoryTileCacheEntry = { promise, settled: false };
+  tileCache.set(key, entry);
+  const markSettled = () => {
+    if (tileCache.get(key) === entry) entry.settled = true;
+  };
+  void promise.then(markSettled, markSettled);
   if (tileCache.size > MAX_TILE_CACHE_ENTRIES) {
     const oldestKey = tileCache.keys().next().value;
     if (typeof oldestKey === "string") tileCache.delete(oldestKey);

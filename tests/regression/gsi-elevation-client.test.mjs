@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fetchGsiElevationSamples } from "../../src/cesium/gsiElevationClient.ts";
+import {
+  fetchGsiElevationSamples,
+  getGsiElevationCacheStats,
+  resetGsiElevationCacheStats,
+} from "../../src/cesium/gsiElevationClient.ts";
 import { isAbortError } from "../../src/utils/runtimeErrors.ts";
 
 function points(count) {
@@ -46,14 +50,13 @@ test("large DEM requests split until Cloudflare can complete them", async () => 
   assert.equal(result.samples.length, 100);
   assert.equal(result.failedPointCount, 0);
   assert.ok(result.samples.every((sample) => sample.source === "DEM5A"));
-  // 100点は1リクエストあたり最大64点でまず2つ（64点・36点）に分割され、
-  // サーバーが8点超を拒否するため、8点以下に収まるまで再帰的に半分へ分割し続ける。
-  assert.ok(requestSizes.includes(64));
-  assert.ok(requestSizes.includes(32));
-  assert.ok(requestSizes.includes(16));
-  assert.ok(requestSizes.includes(8));
-  assert.ok(Math.max(...requestSizes) <= 64);
-  assert.ok(maximumActiveRequests <= 16);
+  // 1024点以下は1本で送り、失敗時だけ8点以下まで半分に分割する。
+  assert.ok(requestSizes.includes(100));
+  assert.ok(requestSizes.includes(50));
+  assert.ok(requestSizes.includes(25));
+  assert.ok(requestSizes.some((size) => size <= 8));
+  assert.ok(Math.max(...requestSizes) <= 1024);
+  assert.ok(maximumActiveRequests <= 8);
 });
 
 test("an unrecoverable DEM point does not discard its neighboring points", async () => {
@@ -95,4 +98,59 @@ test("DEM requests preserve user cancellation", async () => {
     }),
     (error) => isAbortError(error)
   );
+});
+
+test("tile cache diagnostics aggregate every server cache path across batches", async () => {
+  resetGsiElevationCacheStats();
+  let calls = 0;
+  const fetcher = async (_url, init) => {
+    calls += 1;
+    const requested = JSON.parse(init.body).points;
+    return jsonResponse({
+      samples: requested.map(() => ({ heightMeters: 10, source: "DEM10B" })),
+      tileCacheHit: 1,
+      tileCacheMiss: 2,
+      tileMemoryHit: 3,
+      tileCacheShared: 4,
+      tileCacheBypass: 5,
+    });
+  };
+
+  const result = await fetchGsiElevationSamples(points(1500), undefined, fetcher);
+
+  assert.equal(calls, 2, "1500 points should use 1024 + 476 point batches");
+  assert.equal(result.tileCacheHitCount, 2);
+  assert.equal(result.tileCacheMissCount, 4);
+  assert.equal(result.tileMemoryHitCount, 6);
+  assert.equal(result.tileCacheSharedCount, 8);
+  assert.equal(result.tileCacheBypassCount, 10);
+  assert.deepEqual(getGsiElevationCacheStats(), {
+    hit: 2,
+    miss: 4,
+    memoryHit: 6,
+    shared: 8,
+    bypass: 10,
+  });
+});
+
+test("invalid cache diagnostics cannot corrupt search totals", async () => {
+  resetGsiElevationCacheStats();
+  const fetcher = async (_url, init) => {
+    const requested = JSON.parse(init.body).points;
+    return jsonResponse({
+      samples: requested.map(() => ({ heightMeters: 10, source: "DEM10B" })),
+      tileCacheHit: -1,
+      tileCacheMiss: 1.5,
+      tileMemoryHit: Number.MAX_SAFE_INTEGER + 1,
+      tileCacheShared: "3",
+      tileCacheBypass: null,
+    });
+  };
+
+  const result = await fetchGsiElevationSamples(points(1), undefined, fetcher);
+  assert.equal(result.tileCacheHitCount, 0);
+  assert.equal(result.tileCacheMissCount, 0);
+  assert.equal(result.tileMemoryHitCount, 0);
+  assert.equal(result.tileCacheSharedCount, 0);
+  assert.equal(result.tileCacheBypassCount, 0);
 });
