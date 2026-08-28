@@ -1,0 +1,22 @@
+AstroSight v16 Cloudflare TypeScript build fix
+2026-08-29
+
+修正対象: src/cesium/gsiDemTileCache.ts
+
+1. TS2322 ArrayBuffer | SharedArrayBuffer -> ArrayBuffer | null
+- TypedArray.buffer.slice(...) の戻り値が ArrayBufferLike と推論される問題を修正。
+- Int32Arrayを同じ長さの新規Int32Arrayへcopy.set()し、そのbufferを保存する helper に変更。
+- DEM値、順序、補間、座標、精度には変更なし。バイト列は同一値のコピー。
+
+2. TS6133 locallyResolvePoint 未使用
+- v13のバッチ版 resolveGsiSamplesFromDeviceTiles に置換済みで参照が0件だった旧serial resolverを削除。
+- 実行経路には使われていないため計算結果への影響なし。
+
+検証:
+- 対象ファイル単体 TypeScript strict相当チェック: PASS
+- device DEM tile cache math parity: PASS
+- R2 safety: 11/11 PASS
+- tripod performance instrumentation wiring: PASS
+
+制約:
+- 配布ZIPにnode_modulesが含まれないため、この環境では npm run build 全体は実行不能。

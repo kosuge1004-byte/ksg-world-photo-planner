@@ -143,6 +143,12 @@ function writeMemory(key: string, value: TileLookup): void {
   }
 }
 
+function copyInt32ArrayToArrayBuffer(values: Int32Array): ArrayBuffer {
+  const copy = new Int32Array(values.length);
+  copy.set(values);
+  return copy.buffer;
+}
+
 function storedToLookup(record: StoredTile): TileLookup | null {
   if (record.empty) return { kind: "empty" };
   if (!record.heightsBuffer || record.width <= 0 || record.height <= 0) return null;
@@ -325,10 +331,7 @@ async function writeTile(
         width: lookup.tile.width,
         height: lookup.tile.height,
         empty: false,
-        heightsBuffer: lookup.tile.heightsCentimeters.buffer.slice(
-          lookup.tile.heightsCentimeters.byteOffset,
-          lookup.tile.heightsCentimeters.byteOffset + lookup.tile.heightsCentimeters.byteLength
-        ),
+        heightsBuffer: copyInt32ArrayToArrayBuffer(lookup.tile.heightsCentimeters),
         updatedAt: now,
         accessedAt: now,
       };
@@ -498,60 +501,6 @@ function interpolateBilinear(
     return fracX < 0.5 ? (fracY < 0.5 ? tl : bl) : (fracY < 0.5 ? tr : br);
   }
   return bilinear(tl, tr, bl, br, fracX, fracY);
-}
-
-async function locallyResolvePoint(point: GsiElevationClientPoint): Promise<GsiElevationApiSample | null> {
-  if (!isJapaneseCoverage(point.latitude, point.longitude)) {
-    return { heightMeters: null, source: null };
-  }
-  for (const source of SOURCES) {
-    if (!sourceAllowed(source, point.maximumDetail)) continue;
-    const coordinate = tileCoordinates(point.latitude, point.longitude, source.zoom);
-    const base = await readTile(source, coordinate.x, coordinate.y);
-    // Missing means we cannot prove what the server would do: fail safe to API.
-    if (base === null) return null;
-    if (base.kind === "empty") continue;
-
-    let height: number | null;
-    if (point.maximumDetail === "1m") {
-      const tiles = new Map<string, DecodedTile | null>();
-      const offsets = neighborOffsets(coordinate.pixelX, coordinate.pixelY);
-      const lookups = await Promise.all(offsets.map((offset) =>
-        offset.x === 0 && offset.y === 0
-          ? Promise.resolve(base)
-          : readTile(source, coordinate.x + offset.x, coordinate.y + offset.y)
-      ));
-      for (let index = 0; index < offsets.length; index += 1) {
-        const offset = offsets[index];
-        const lookup = lookups[index];
-        if (lookup === null) return null;
-        tiles.set(
-          `${coordinate.x + offset.x}/${coordinate.y + offset.y}`,
-          lookup.kind === "data" ? lookup.tile : null
-        );
-      }
-      height = interpolateNeighborhood(
-        tiles,
-        coordinate.x,
-        coordinate.y,
-        coordinate.pixelX,
-        coordinate.pixelY,
-        coordinate.fracX,
-        coordinate.fracY,
-        point.interpolationMode ?? "los-safe"
-      );
-    } else {
-      height = interpolateBilinear(
-        base.tile,
-        coordinate.pixelX,
-        coordinate.pixelY,
-        coordinate.fracX,
-        coordinate.fracY
-      );
-    }
-    if (height !== null) return { heightMeters: height, source: source.label };
-  }
-  return { heightMeters: null, source: null };
 }
 
 export async function resolveGsiSamplesFromDeviceTiles(
