@@ -127,16 +127,6 @@ import {
   calculateTripodCandidates,
   getLastTripodSearchDiagnostics,
 } from "./cesium/tripodCandidates";
-import {
-  loadPersistentTripodSeeds,
-  savePersistentTripodSeeds,
-} from "./cesium/tripodCandidateSeedCache";
-import {
-  exactTripodCacheKey,
-  getExactTripodCandidates,
-  setExactTripodCandidates,
-} from "./cesium/tripodCandidateExactCache";
-import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
@@ -691,9 +681,6 @@ function App() {
   const [tripodCandidateSelectionOpen, setTripodCandidateSelectionOpen] =
     useState(false);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
-  // 同一入力での重複計算を防ぐためのin-flightキー。計算式や結果は共有せず、
-  // 同じ条件の再起動だけを抑止する。
-  const tripodCalculationInFlightKeyRef = useRef<string | null>(null);
   // 2026-08-25追記: 前回の確定候補（tripodCandidatesRef）を距離ヒントとして
   // 再利用する仕組みは、天体IDだけをキーにしており「どの被写体で見つかった
   // 距離か」を区別していなかった。そのため被写体を切り替えた直後は、
@@ -754,7 +741,6 @@ function App() {
       "[AstroSight三脚探索診断]",
       `日時: ${new Date().toISOString()}`,
       `所要時間: ${elapsedSeconds}秒`,
-      `総確定時間(ms): ${diagnostics.totalElapsedMs !== null ? Math.round(diagnostics.totalElapsedMs) : "計測中"}`,
       `R2キャッシュ(地形タイル単位): ヒット${diagnostics.cacheHitBatchCount}回・ミス${diagnostics.cacheMissBatchCount}回` +
         `（ヒットが多いほど国土地理院への実問い合わせが省略できている）`,
       "天体別内訳:",
@@ -771,12 +757,7 @@ function App() {
           `（通信: ${entry.terrainRoundTripCount}回・` +
           `合計${(entry.terrainRoundTripTotalMs / 1000).toFixed(1)}秒・` +
           `平均${entry.terrainRoundTripCount > 0 ? Math.round(entry.terrainRoundTripTotalMs / entry.terrainRoundTripCount) : 0}ms/回）` +
-          `（初期探索${(entry.initialScanMs / 1000).toFixed(2)}秒・` +
-          `気象${(entry.weatherResolveMs / 1000).toFixed(2)}秒・` +
-          `収束反復${(entry.convergenceLoopMs / 1000).toFixed(2)}秒・` +
-          `精密化${(entry.refinementMs / 1000).toFixed(2)}秒・` +
-          `ダブルチェック${(entry.doubleCheckMs / 1000).toFixed(2)}秒・` +
-          `天体総時間${(entry.totalBodyMs / 1000).toFixed(2)}秒）`;
+          `（収束反復${(entry.convergenceLoopMs / 1000).toFixed(1)}秒・精密化${(entry.refinementMs / 1000).toFixed(1)}秒）`;
       }),
     ];
     try {
@@ -1375,58 +1356,6 @@ function App() {
         )
       : undefined;
 
-    const initialDirectionObserver = tripodPointRef.current
-      ? withLensCenterHeight(
-          tripodPointRef.current,
-          cameraSettings.lensCenterHeightMeters,
-          "三脚候補初期方向観測点"
-        )
-      : undefined;
-
-    // 完全一致結果キャッシュ Phase 1: 標準大気時だけ、同一アプリ実行中の
-    // メモリ結果を再利用する。自動気象時は候補地点で解決される気象データの
-    // immutableな版情報をまだ持てないため、誤った再利用を避けて無効化する。
-    const exactCacheEnabled = precisionSettings.refractionCorrectionMode === "standard";
-    const exactCacheKey = exactCacheEnabled
-      ? exactTripodCacheKey({
-          subject: subjectPoint,
-          points: enabledPoints,
-          cameraSettings,
-          date: selectedDate,
-          calculationMode,
-          previewAspectRatio,
-          refractionWeather: previewRefractionWeather,
-          doubleCheckEnabled: precisionSettings.tripodCandidateDoubleCheckEnabled,
-          initialDirectionObserver,
-          accuracyMode: precisionSettings.accuracyMode,
-          refractionMode: precisionSettings.refractionCorrectionMode,
-        })
-      : null;
-    const exactCachedCandidates = exactCacheKey
-      ? getExactTripodCandidates(exactCacheKey)
-      : null;
-    if (exactCachedCandidates) {
-      tripodCandidatesRef.current = exactCachedCandidates;
-      setTripodCandidates(exactCachedCandidates);
-      setPreliminaryTripodCandidates({});
-      setTripodCandidateCalculationStatus("complete");
-      return;
-    }
-
-    const inFlightKey = exactCacheKey ?? JSON.stringify({
-      subject: subjectPoint,
-      points: enabledPoints.map((p) => p.id),
-      focalLengthMm: cameraSettings.focalLengthMm,
-      date: selectedDate.toISOString(),
-      calculationMode,
-      previewAspectRatio,
-      refractionMode: precisionSettings.refractionCorrectionMode,
-      accuracyMode: precisionSettings.accuracyMode,
-      doubleCheck: precisionSettings.tripodCandidateDoubleCheckEnabled,
-    });
-    if (tripodCalculationInFlightKeyRef.current === inFlightKey) return;
-    tripodCalculationInFlightKeyRef.current = inFlightKey;
-
     // 計算中は固定500mのdirection-only仮候補を描画しない。
     // 精密計算が確定したaligned候補だけを表示する。
     tripodCandidatesRef.current = [];
@@ -1437,79 +1366,59 @@ function App() {
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void (async () => {
-        // 永続キャッシュは「最終回答」ではなく探索seedとしてのみ利用する。
-        // 現セッションの確定候補があればそちらを優先し、永続seedが古くても
-        // solver側の全距離フォールバックが最終精度を保証する。
-        const persistedSeeds = await loadPersistentTripodSeeds(subjectPoint, enabledPoints);
-        if (cancelled || controller.signal.aborted) return;
-        const persistedDistances = Object.fromEntries(
-          Object.entries(persistedSeeds).map(([id, seed]) => [id, seed?.distanceMeters])
-        ) as Partial<Record<TripodCandidate["id"], number>>;
-        const mergedPreferredDistances = {
-          ...persistedDistances,
-          ...(preferredDistancesById ?? {}),
-        };
-
-        // 候補付近で過去に保存済みのDEMタイルだけをIndexedDB→メモリへ
-        // 先にまとめてウォームする。ネットワークは発生しない。seedがある再検索時は
-        // solverとIndexedDB読み出しを競合させず、直後の地形参照をメモリHITに寄せる。
-        const persistedSeedPoints = Object.values(persistedSeeds)
-          .filter((seed): seed is NonNullable<typeof seed> => Boolean(seed))
-          .map((seed) => ({ latitude: seed.latitude, longitude: seed.longitude }));
-        if (persistedSeedPoints.length > 0) {
-          await warmGsiDeviceTilesFromPersistentCache(persistedSeedPoints);
-          if (cancelled || controller.signal.aborted) return;
+      beginOperationTag("calculateTripodCandidates");
+      void calculateTripodCandidates(
+        subjectPoint,
+        enabledPoints,
+        cameraSettings,
+        selectedDate,
+        calculationMode,
+        undefined,
+        controller.signal,
+        previewAspectRatio,
+        undefined,
+        undefined,
+        previewRefractionWeather,
+        preferredDistancesById,
+        resolveTripodCandidateRefractionWeather,
+        precisionSettings.tripodCandidateDoubleCheckEnabled,
+        tripodPointRef.current
+          ? withLensCenterHeight(
+              tripodPointRef.current,
+              cameraSettings.lensCenterHeightMeters,
+              "三脚候補初期方向観測点"
+            )
+          : undefined,
+        (preliminary) => {
+          if (cancelled) return;
+          setPreliminaryTripodCandidates((current) => ({
+            ...current,
+            [preliminary.id]: preliminary,
+          }));
         }
-
-        beginOperationTag("calculateTripodCandidates");
-        try {
-          const candidates = await calculateTripodCandidates(
-            subjectPoint,
-            enabledPoints,
-            cameraSettings,
-            selectedDate,
-            calculationMode,
-            undefined,
-            controller.signal,
-            previewAspectRatio,
-            undefined,
-            undefined,
-            previewRefractionWeather,
-            mergedPreferredDistances,
-            resolveTripodCandidateRefractionWeather,
-            precisionSettings.tripodCandidateDoubleCheckEnabled,
-            initialDirectionObserver,
-            (preliminary) => {
-              if (cancelled) return;
-              setPreliminaryTripodCandidates((current) => ({
-                ...current,
-                [preliminary.id]: preliminary,
-              }));
-            }
-          );
+      )
+        .then((candidates) => {
           endOperationTag("calculateTripodCandidates");
-          tripodCalculationInFlightKeyRef.current = null;
           if (!cancelled) {
+            // 精密解が0件でも、天体方位そのものは有効なので確認用の
+            // direction-only候補を残す。これにより「候補点が消える」回帰を防ぐ。
+            // aligned候補が1件以上ある場合は、確認用候補を混在させず精密解だけを表示する。
             const displayedCandidates = candidates;
             tripodCandidatesRef.current = displayedCandidates;
             setTripodCandidates(displayedCandidates);
+            // 全天体の精密計算が完了したため、暫定（計算中）表示は不要になる。
             setPreliminaryTripodCandidates({});
             setTripodCandidateCalculationStatus(
               candidates.length > 0 ? "complete" : "no-solution"
             );
-            // Persist only final aligned candidates as future search seeds. A seed
-            // can only narrow the first search window; it can never bypass final
-            // convergence/refinement or the wide-scan fallback.
-            void savePersistentTripodSeeds(subjectPoint, enabledPoints, candidates);
-            if (exactCacheKey) setExactTripodCandidates(exactCacheKey, candidates);
           }
-        } catch (error) {
+        })
+        .catch((error) => {
           endOperationTag("calculateTripodCandidates");
-          tripodCalculationInFlightKeyRef.current = null;
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
           if (!cancelled) {
+            // 計算失敗時も固定距離の仮候補は表示しない。
             tripodCandidatesRef.current = [];
             setTripodCandidates([]);
             setPreliminaryTripodCandidates({});
@@ -1532,8 +1441,7 @@ function App() {
               onAction: () => setTripodCandidateRetrySequence((current) => current + 1),
             });
           }
-        }
-      })();
+        });
     }, 0);
 
     return () => {

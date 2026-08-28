@@ -67,9 +67,7 @@
     "verify:karney-edge-cases": "node scripts/verify-karney-edge-cases.mjs",
     "verify:coordinate-serialization": "node scripts/verify-coordinate-serialization.mjs",
     "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs",
-    "verify:r2-safety-all-paths": "node scripts/verify-r2-safety-all-paths-20260824.mjs",
-    "verify:device-dem-tile-cache": "node --experimental-strip-types scripts/verify-device-dem-tile-cache-20260829.mjs",
-    "verify:tripod-speed-cache": "node --experimental-strip-types scripts/verify-tripod-speed-cache-20260829.mjs"
+    "verify:r2-safety-all-paths": "node scripts/verify-r2-safety-all-paths-20260824.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
