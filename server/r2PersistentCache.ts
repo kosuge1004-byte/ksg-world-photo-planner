@@ -21,7 +21,30 @@ import {
  * functions/api/gsi-elevation.ts（対話的な三脚候補計算）と
  * workers/spot-search-consumer.ts（バックグラウンドのスポット検索）の
  * 両方から、それぞれのenv.NETWORK_CACHEを渡して使う。
+ *
+ * 2026-08-28追記: 国土地理院への外部通信（fetchGsiTileWithTimeout）には
+ * 明示的に8秒のタイムアウトが設定されているのに対し、R2への内部アクセス
+ * （bucket.get/put）には、これまでタイムアウト保護が一切なかった。
+ * R2が一時的に通常より遅くなった場合、無期限に待ち続けてしまう
+ * リスクがあったため、R2アクセスにも明示的なタイムアウトを設ける。
+ * タイムアウトした場合は、既存のフェイルクローズ設計と一貫して
+ * 「キャッシュなし」として扱い、国土地理院への直接取得へ安全に
+ * フォールバックする（精度には一切影響しない）。
  */
+const R2_ACCESS_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("R2アクセスがタイムアウトしました")), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId!);
+  }
+}
+
 export function persistentCacheFromR2(
   bucket: R2Bucket | undefined,
   safetyKv?: R2SafetyKv,
@@ -34,13 +57,23 @@ export function persistentCacheFromR2(
       // Fail closed: once the conservative Class B budget is reached,
       // bypass R2 entirely so the normal upstream path can run.
       if (!await allowR2Read(safetyKv, requestIdentity)) return null;
-      const object = await bucket.get(key);
-      return object ? await object.arrayBuffer() : null;
+      try {
+        const object = await withTimeout(bucket.get(key), R2_ACCESS_TIMEOUT_MS);
+        return object ? await withTimeout(object.arrayBuffer(), R2_ACCESS_TIMEOUT_MS) : null;
+      } catch {
+        // タイムアウト、またはR2側の一時的な問題。キャッシュなしとして
+        // 扱い、呼び出し元は通常どおり国土地理院への直接取得へ進む。
+        return null;
+      }
     },
     async put(key, value) {
       const newBytes = valueBytes(value as ArrayBuffer | Uint8Array | string);
       if (!await reserveR2Write(safetyKv, key, newBytes, requestIdentity, budgetDb)) return;
-      await bucket.put(key, value);
+      try {
+        await withTimeout(bucket.put(key, value), R2_ACCESS_TIMEOUT_MS);
+      } catch {
+        // 保存の失敗は探索結果に影響させない（次回また通常取得へフォールバック）。
+      }
     },
   };
 }

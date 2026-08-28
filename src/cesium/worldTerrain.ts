@@ -40,9 +40,15 @@ type PendingGsiRequest = {
   resolve: (samples: GsiElevationApiSample[]) => void;
   reject: (error: unknown) => void;
 };
+// 2026-08-28追記: interpolationMode（los-safe/neutral）ごとに別々の
+// バッチへ分ける。同じsignal（同じ検索セッション）内でも、モードが
+// 違うリクエストを1つのバッチに混ぜてしまうと、地形によっては数十cm～
+// 数m異なりうる、精度に直結する値が誤って共有されるリスクがある。
+// signalはオブジェクト参照のため文字列化できず、interpolationModeとの
+// 複合キーには「signal→(mode→requests)」のネストしたMapを使う。
 const pendingGsiRequests = new Map<
   AbortSignal | undefined,
-  PendingGsiRequest[]
+  Map<"los-safe" | "neutral", PendingGsiRequest[]>
 >();
 
 // 同じ被写体周辺を再検索した際にDEM通信を繰り返さない。
@@ -119,12 +125,20 @@ function getIndexedDbFactory(): KsgIndexedDbFactory | null {
 
 function terrainCacheKey(
   point: Cartographic,
-  maximumDetail?: GsiMaximumDetail
+  maximumDetail?: GsiMaximumDetail,
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): string {
   return [
     CesiumMath.toDegrees(point.latitude).toFixed(5),
     CesiumMath.toDegrees(point.longitude).toFixed(5),
     maximumDetail ?? "auto",
+    // 2026-08-28追記: los-safe（バイリニア/バイキュービックの高い方を
+    // 採用する安全側の補間）とneutral（バイキュービックの値をそのまま
+    // 使う中立な補間）は、地形によっては数十cm～数m異なりうる、精度に
+    // 直結する別の値。キャッシュキーに含めず混用すると、三脚探索の
+    // 精度が気づかないうちに劣化する重大なリスクがあるため、必ず
+    // キーに含めて区別する。
+    interpolationMode,
   ].join(",");
 }
 
@@ -161,12 +175,13 @@ function openTerrainCache(): Promise<KsgIdbDatabase | null> {
 
 async function readTerrainCache(
   points: Cartographic[],
-  maximumDetails?: GsiMaximumDetail[]
+  maximumDetails?: GsiMaximumDetail[],
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<Array<number | null>> {
   const values = points.map((point, index) =>
     readMemoryCache(
       terrainHeightMemoryCache,
-      terrainCacheKey(point, maximumDetails?.[index])
+      terrainCacheKey(point, maximumDetails?.[index], interpolationMode)
     ) ?? null
   );
   const missing = values.map((value, index) => value === null ? index : -1).filter((index) => index >= 0);
@@ -180,7 +195,7 @@ async function readTerrainCache(
   const transaction = database.transaction(TERRAIN_CACHE_STORE, "readonly");
   const store = transaction.objectStore(TERRAIN_CACHE_STORE);
   await Promise.all(missing.map((index) => new Promise<void>((resolve) => {
-    const key = terrainCacheKey(points[index], maximumDetails?.[index]);
+    const key = terrainCacheKey(points[index], maximumDetails?.[index], interpolationMode);
     const request = store.get(key);
     request.onsuccess = () => {
       const record = request.result as TerrainCacheRecord | undefined;
@@ -202,11 +217,12 @@ async function readTerrainCache(
 
 async function writeTerrainCache(
   points: Cartographic[],
-  maximumDetails?: GsiMaximumDetail[]
+  maximumDetails?: GsiMaximumDetail[],
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<void> {
   const records = points.flatMap((point, index) => Number.isFinite(point.height)
     ? [{
-        key: terrainCacheKey(point, maximumDetails?.[index]),
+        key: terrainCacheKey(point, maximumDetails?.[index], interpolationMode),
         height: point.height,
         updatedAt: Date.now(),
       }]
@@ -232,10 +248,11 @@ async function writeTerrainCache(
 async function sampleTerrainCached(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<Cartographic[]> {
   if (points.length === 0) return [];
-  const cachedHeights = await readTerrainCache(points, maximumDetails);
+  const cachedHeights = await readTerrainCache(points, maximumDetails, interpolationMode);
   abortIfRequested(signal);
   const result = points.map((point) => Cartographic.clone(point));
   const missingIndexes: number[] = [];
@@ -247,7 +264,8 @@ async function sampleTerrainCached(
     const sampled = await sampleTerrainWithGsiPriority(
       missingIndexes.map((index) => points[index]),
       maximumDetails ? missingIndexes.map((index) => maximumDetails[index]) : undefined,
-      signal
+      signal,
+      interpolationMode
     );
     sampled.forEach((point, sampledIndex) => {
       result[missingIndexes[sampledIndex]] = point;
@@ -256,7 +274,8 @@ async function sampleTerrainCached(
       sampled,
       maximumDetails
         ? missingIndexes.map((index) => maximumDetails[index])
-        : undefined
+        : undefined,
+      interpolationMode
     );
   }
   return result;
@@ -280,7 +299,8 @@ function abortIfRequested(signal?: AbortSignal): void {
 async function fetchGsiElevations(
   points: Cartographic[],
   maximumDetails?: Array<GsiMaximumDetail | undefined>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<GsiElevationApiSample[]> {
   if (Date.now() < gsiUnavailableUntil) {
     return points.map(() => ({ heightMeters: null, source: null }));
@@ -291,6 +311,7 @@ async function fetchGsiElevations(
         latitude: CesiumMath.toDegrees(point.latitude),
         longitude: CesiumMath.toDegrees(point.longitude),
         maximumDetail: maximumDetails?.[index],
+        interpolationMode,
       })),
       signal
     );
@@ -341,15 +362,21 @@ function finerGsiDetail(
     : current;
 }
 
-function exactGsiPointKey(point: Cartographic): string {
+function exactGsiPointKey(point: Cartographic, interpolationMode: "los-safe" | "neutral"): string {
   // 丸めによる別地点の混同を避けるため、Cesiumが保持するラジアン値をそのまま使用する。
   // 同じ数値座標だけを重複要求として扱い、検索精度は変更しない。
-  return `${point.latitude}:${point.longitude}`;
+  // interpolationModeが違えば、地形によっては数十cm～数m異なりうる別の
+  // 値になるため、同じ座標でも必ず別のキーとして扱う。
+  return `${point.latitude}:${point.longitude}:${interpolationMode}`;
 }
 
-async function flushGsiRequests(signal?: AbortSignal): Promise<void> {
-  const requests = pendingGsiRequests.get(signal) ?? [];
-  pendingGsiRequests.delete(signal);
+async function flushGsiRequests(signal: AbortSignal | undefined, interpolationMode: "los-safe" | "neutral"): Promise<void> {
+  const bySignal = pendingGsiRequests.get(signal);
+  const requests = bySignal?.get(interpolationMode) ?? [];
+  if (bySignal) {
+    bySignal.delete(interpolationMode);
+    if (bySignal.size === 0) pendingGsiRequests.delete(signal);
+  }
   if (requests.length === 0) return;
   try {
     abortIfRequested(signal);
@@ -362,7 +389,7 @@ async function flushGsiRequests(signal?: AbortSignal): Promise<void> {
     for (const request of requests) {
       const resultIndexes: number[] = [];
       request.points.forEach((point, pointIndex) => {
-        const key = exactGsiPointKey(point);
+        const key = exactGsiPointKey(point, interpolationMode);
         let uniqueIndex = uniqueIndexByKey.get(key);
         if (uniqueIndex === undefined) {
           uniqueIndex = uniquePoints.length;
@@ -384,7 +411,8 @@ async function flushGsiRequests(signal?: AbortSignal): Promise<void> {
     const uniqueSamples = await fetchGsiElevations(
       uniquePoints,
       hasMaximumDetails ? uniqueMaximumDetails : undefined,
-      signal
+      signal,
+      interpolationMode
     );
 
     requests.forEach((request, requestIndex) => {
@@ -400,18 +428,24 @@ async function flushGsiRequests(signal?: AbortSignal): Promise<void> {
 function fetchGsiElevationsBatched(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<GsiElevationApiSample[]> {
   return new Promise((resolve, reject) => {
-    const requests = pendingGsiRequests.get(signal);
+    let bySignal = pendingGsiRequests.get(signal);
+    if (!bySignal) {
+      bySignal = new Map();
+      pendingGsiRequests.set(signal, bySignal);
+    }
+    const requests = bySignal.get(interpolationMode);
     const request = { points, maximumDetails, resolve, reject };
     if (requests) {
       requests.push(request);
       return;
     }
-    pendingGsiRequests.set(signal, [request]);
+    bySignal.set(interpolationMode, [request]);
     // 同一検索フレームの候補をまとめ、座標やDEM詳細度は一切間引かず通信往復だけを減らす。
-    queueMicrotask(() => void flushGsiRequests(signal));
+    queueMicrotask(() => void flushGsiRequests(signal, interpolationMode));
   });
 }
 
@@ -684,71 +718,30 @@ export async function sampleWorldTerrain(
  * GSI 1m DEMの補間でLOS用の上方バイアス(max(bilinear,bicubic))を使わず、
  * 制約付きBicubicの中立補間値を使用する。GSI欠測時のWorld Terrain
  * フォールバック、ジオイド→楕円体高変換は通常sampleWorldTerrainと同一。
+ *
+ * 2026-08-28追記: 以前はsampleTerrainCached（端末IndexedDB永続キャッシュ）
+ * を経由せず、毎回直接fetchGsiElevationSamplesへ問い合わせていたため、
+ * 過去に検索したことのある地点でも、三脚探索では通信が毎回発生していた。
+ * sampleTerrainWithGsiPriorityは、通常のsampleWorldTerrainと完全に
+ * 同じ処理（GSI標高取得→ジオイド変換→World Terrainフォールバック）を、
+ * interpolationModeを引数として受け取れる形で持っているため、それを
+ * そのまま呼ぶ形に置き換える。interpolationMode（los-safe/neutral）は
+ * キャッシュキーに含まれるため（terrainCacheKey参照）、既存の
+ * sampleWorldTerrain用のキャッシュと混同されることはない。
  */
 export async function sampleWorldTerrainNeutral(
   points: Cartographic[],
   signal?: AbortSignal,
   maximumDetail?: GsiMaximumDetail
 ): Promise<Cartographic[]> {
-  if (points.length === 0) return [];
-  abortIfRequested(signal);
-
-  const result = points.map((point) => Cartographic.clone(point));
-  const details = maximumDetail ? points.map(() => maximumDetail) : undefined;
-  let elevations: GsiElevationApiSample[];
-  try {
-    const response = await fetchGsiElevationSamples(
-      result.map((point, index) => ({
-        latitude: CesiumMath.toDegrees(point.latitude),
-        longitude: CesiumMath.toDegrees(point.longitude),
-        maximumDetail: details?.[index],
-        interpolationMode: "neutral" as const,
-      })),
-      signal
-    );
-    elevations = response.samples;
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    elevations = result.map(() => ({ heightMeters: null, source: null }));
-  }
-
-  const eligibleIndexes = elevations.map((sample, index) =>
-    sample.source !== null && typeof sample.heightMeters === "number" && Number.isFinite(sample.heightMeters)
-      ? index
-      : -1
-  ).filter((index) => index >= 0);
-  const geoidHeightByRegion = await fetchRegionalGeoidHeights(result, eligibleIndexes, signal);
-
-  const unresolvedIndexes: number[] = [];
-  for (let index = 0; index < result.length; index += 1) {
-    const sample = elevations[index];
-    const geoidHeightMeters = geoidHeightByRegion.get(geoidRegionKey(result[index]));
-    if (
-      sample?.source &&
-      typeof sample.heightMeters === "number" &&
-      Number.isFinite(sample.heightMeters) &&
-      typeof geoidHeightMeters === "number"
-    ) {
-      result[index].height = sample.heightMeters + geoidHeightMeters;
-      terrainSourceBySample.set(result[index], GSI_SOURCE_NAMES[sample.source]);
-      geoidHeightBySample.set(result[index], geoidHeightMeters);
-    } else {
-      unresolvedIndexes.push(index);
-    }
-  }
-
-  if (unresolvedIndexes.length > 0) {
-    const fallback = await sampleWorldTerrainFallbackWithRecovery(
-      unresolvedIndexes.map((index) => result[index]),
-      signal
-    );
-    fallback.forEach((sample, fallbackIndex) => {
-      const resultIndex = unresolvedIndexes[fallbackIndex];
-      result[resultIndex] = sample;
-      terrainSourceBySample.set(sample, "CESIUM_WORLD_TERRAIN");
-    });
-  }
-  return result;
+  return sampleTerrainCached(
+    points,
+    maximumDetail
+      ? points.map(() => maximumDetail)
+      : undefined,
+    signal,
+    "neutral"
+  );
 }
 
 export async function sampleWorldTerrainHighestPrecision(
@@ -892,7 +885,8 @@ async function sampleWorldTerrainFallbackWithRecovery(
 async function sampleTerrainWithGsiPriority(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  interpolationMode: "los-safe" | "neutral" = "los-safe"
 ): Promise<Cartographic[]> {
   if (points.length === 0) return [];
   abortIfRequested(signal);
@@ -900,7 +894,8 @@ async function sampleTerrainWithGsiPriority(
   const gsiSamples = await fetchGsiElevationsBatched(
     result,
     maximumDetails,
-    signal
+    signal,
+    interpolationMode
   );
   const gsiEligibleIndexes = gsiSamples.map((sample, index) =>
     sample.source !== null &&
