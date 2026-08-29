@@ -1,4 +1,4 @@
-import type { CameraSettings, CalculationMode } from "../types/camera";
+import type { CameraSettings, CalculationMode, CameraViewCorrection } from "../types/camera";
 import type { CelestialScreenPoint, TripodCandidate } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
@@ -9,7 +9,7 @@ import type { RefractionWeatherContext } from "../search/refractionWeatherModel"
  * weather APIs do not expose immutable source-version fingerprints. Keeping the
  * cache process-local prevents an old result surviving an app restart/data update.
  */
-const CACHE_VERSION = "tripod-exact-session-20260829-v1";
+const CACHE_VERSION = "tripod-exact-session-20260829-preview-truth-v2";
 const MAX_ENTRIES = 64;
 const memory = new Map<string, TripodCandidate[]>();
 
@@ -40,6 +40,7 @@ export type ExactTripodCacheInputs = {
   date: Date;
   calculationMode: CalculationMode;
   previewAspectRatio: number;
+  viewCorrection?: CameraViewCorrection;
   refractionWeather?: RefractionWeatherContext;
   doubleCheckEnabled: boolean;
   initialDirectionObserver?: GroundPoint;
@@ -68,6 +69,9 @@ export function exactTripodCacheKey(input: ExactTripodCacheInputs): string {
     dateMs: input.date.getTime(),
     calculationMode: input.calculationMode,
     aspect: n(input.previewAspectRatio),
+    viewCorrection: input.viewCorrection
+      ? [n(input.viewCorrection.azimuthDegrees), n(input.viewCorrection.altitudeDegrees)]
+      : null,
     weather: weatherKey(input.refractionWeather),
     doubleCheckEnabled: input.doubleCheckEnabled,
     observer: input.initialDirectionObserver
