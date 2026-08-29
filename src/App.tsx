@@ -855,9 +855,28 @@ function App() {
   // 自身の操作でも即座にリセットできるようにする。
   const [tripodSeedResetState, setTripodSeedResetState] =
     useState<"idle" | "done" | "failed">("idle");
+  // 2026-08-29追記（「V11〜V20の変更を見直せば分かるだろ」というご指摘を
+  // 受けて発見）: 「三脚候補の記憶をリセット」ボタンは端末の永続seed
+  // キャッシュ（tripodCandidateSeedCache.ts、IndexedDB）だけを消去して
+  // いたが、V11の設計は「現セッションの直前確定候補が存在する場合は、
+  // そちらを永続seedより優先する」ことを明記しており、実際に
+  // tripodCandidatesRef.current（前回の確定候補、誤った候補も含む）が
+  // preferredDistancesByIdとして毎回優先的に使われ続けていた。永続層だけ
+  // 消しても、この優先度がより高いセッション内の記憶は残ったままだった
+  // ため、リセットが不完全だった。
+  // また、リセットボタンは検索を再実行するトリガー
+  // （tripodCandidateRetrySequence、「検索」ボタンや通知の「再試行」と
+  // 同じ仕組み）を何も更新していなかったため、リセット後に表示される
+  // 内容は「たまたま最後に完了していた検索結果」のままで、リセットが
+  // 反映された新しい検索が自動的には走らなかった。
   const handleResetTripodSeedCache = useCallback(async () => {
     try {
       await clearPersistentTripodSeeds();
+      tripodCandidatesRef.current = [];
+      tripodHintSubjectRef.current = null;
+      setTripodCandidates([]);
+      setPreliminaryTripodCandidates({});
+      setTripodCandidateRetrySequence((current) => current + 1);
       setTripodSeedResetState("done");
     } catch {
       setTripodSeedResetState("failed");
