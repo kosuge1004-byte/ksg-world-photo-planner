@@ -12,7 +12,7 @@ import type {
 } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import { ellipsoidalHeightMeters, withLensCenterHeight } from "../types/points";
-import type { CalculationMode, CameraSettings } from "../types/camera";
+import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import {
   calculateCelestialHorizontalCoordinates,
   createCameraProjection,
@@ -826,6 +826,8 @@ type TerrainSolution = {
   cartographic: Cartographic;
   distanceMeters: number;
   altitudeErrorDegrees: number;
+  /** seedの由来。最終採否には使わず、幾何レイ再収束を適用するかの制御だけに使う。 */
+  seedKind?: "geometric-ray" | "apparent-preview";
 };
 
 async function scanTerrainDistanceRange(
@@ -1437,18 +1439,10 @@ async function solveTerrainDistance(
 }
 
 /**
- * 仕様3-G Round-trip検証: 候補地点を既存プレビューと同じCameraModel/
- * Projection経路（createCameraProjection → projectHorizontalToPreview、
- * celestial.ts経由でcameraModelFactory.tsを使用）へ逆投入し、天体中心と
- * 被写体中心のスクリーン座標差を測る。
- *
- * viewCorrection（現地校正用の手動視線補正）は意図的に渡さない。
- * viewCorrectionはプレビュー全体（天体・被写体の投影基底そのもの）へ
- * 均等に加算されるため、天体中心と被写体中心の「相対」位置には現れない
- * （両者が同じだけシフトし打ち消し合う）。したがってここへ混ぜると、
- * 物理的に正しい三脚座標を歪めるリスクだけが生じ、round-trip判定の
- * 意味を変えない。UI表示だけの補正と物理座標を分離するという仕様3-2の
- * 要請に従い、ここでは常にviewCorrectionなしで検証する。
+ * 仕様3-G Round-trip検証: 候補地点を通常プレビューと同じCameraModel/Projectionへ
+ * 逆投入し、同じ投影基底で計算した「天体中心」と「被写体中心」の画面差を測る。
+ * viewCorrectionが非ゼロなら被写体中心も50/50から移動するため、50/50固定を
+ * 正解とせず、必ず被写体自身を投影して相対差を取る。
  */
 function verifyRoundTripProjection(
   candidatePoint: GroundPoint,
@@ -1456,27 +1450,52 @@ function verifyRoundTripProjection(
   cameraSettings: CameraSettings,
   previewAspectRatio: number,
   calculationMode: CalculationMode,
-  finalHorizontal: { azimuthDegrees: number; altitudeDegrees: number }
+  finalHorizontal: { azimuthDegrees: number; altitudeDegrees: number },
+  viewCorrection?: CameraViewCorrection
 ): { dxPercent: number; dyPercent: number; inFront: boolean } | null {
   try {
+    // 最終検証は通常プレビューと完全に同じCameraModelを使う。
+    // viewCorrectionが非ゼロなら被写体自身も画面中央から移動するため、
+    // 「天体-50,50」ではなく、同じ投影基底で投影した被写体中心との差を測る。
     const projection = createCameraProjection(
       candidatePoint,
       subject,
       cameraSettings,
       previewAspectRatio,
-      calculationMode
+      calculationMode,
+      viewCorrection
     );
     const screen = projectHorizontalToPreview(
-      { azimuthDegrees: finalHorizontal.azimuthDegrees, altitudeDegrees: finalHorizontal.altitudeDegrees, geometricAltitudeDegrees: finalHorizontal.altitudeDegrees },
+      {
+        azimuthDegrees: finalHorizontal.azimuthDegrees,
+        altitudeDegrees: finalHorizontal.altitudeDegrees,
+        geometricAltitudeDegrees: finalHorizontal.altitudeDegrees,
+      },
       projection
     );
-    // createCameraProjectionのforwardは常に被写体方向（viewCorrectionなし）を
-    // 向くよう構成されるため、被写体自身は常に画面中央(50%,50%)に投影される。
-    // よって天体のスクリーン座標と中央との差が、そのまま両者のずれになる。
+    const lensObserver = withLensCenterHeight(
+      candidatePoint,
+      cameraSettings.lensCenterHeightMeters,
+      "三脚候補round-trip被写体観測点"
+    );
+    const subjectLine = calculateKarneyLineMetrics(candidatePoint, subject);
+    const subjectElevation = computeApparentElevation(
+      lensObserver,
+      subject,
+      calculationMode
+    );
+    const subjectScreen = projectHorizontalToPreview(
+      {
+        azimuthDegrees: subjectLine.bearingDegrees,
+        altitudeDegrees: subjectElevation.apparentAltitudeDegrees,
+        geometricAltitudeDegrees: subjectElevation.geometricAltitudeDegrees,
+      },
+      projection
+    );
     return {
-      dxPercent: screen.xPercent - 50,
-      dyPercent: screen.yPercent - 50,
-      inFront: screen.inFront,
+      dxPercent: screen.xPercent - subjectScreen.xPercent,
+      dyPercent: screen.yPercent - subjectScreen.yPercent,
+      inFront: screen.inFront && subjectScreen.inFront,
     };
   } catch (error) {
     console.warn("[tripod-candidate] round-trip投影を計算できませんでした", error);
@@ -1511,7 +1530,8 @@ function evaluateManualEquivalentCandidate(
   previewAspectRatio: number,
   date: Date,
   calculationMode: CalculationMode,
-  refractionWeather?: RefractionWeatherContext
+  refractionWeather?: RefractionWeatherContext,
+  viewCorrection?: CameraViewCorrection
 ): ManualEquivalentEvaluation | null {
   const lensObserver = withLensCenterHeight(
     candidatePoint,
@@ -1534,7 +1554,8 @@ function evaluateManualEquivalentCandidate(
     cameraSettings,
     previewAspectRatio,
     calculationMode,
-    horizontal
+    horizontal,
+    viewCorrection
   );
   if (!roundTrip || !roundTrip.inFront || !Number.isFinite(roundTrip.dxPercent) || !Number.isFinite(roundTrip.dyPercent)) {
     return null;
@@ -1565,7 +1586,8 @@ async function refineWithManualEquivalentProjection(
   terrainSampler: TerrainSampler,
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
-  refractionWeather?: RefractionWeatherContext
+  refractionWeather?: RefractionWeatherContext,
+  viewCorrection?: CameraViewCorrection
 ): Promise<RefinementResultWithDiagnostics | null> {
   const coarsePoint = buildCandidateGroundPoint(
     coarseCartographic,
@@ -1735,7 +1757,8 @@ async function refineWithManualEquivalentProjection(
         previewAspectRatio,
         date,
         calculationMode,
-        refractionWeather
+        refractionWeather,
+        viewCorrection
       );
       if (!evaluated) continue;
       const request = requests[index];
@@ -1875,7 +1898,8 @@ async function refineWithManualEquivalentProjection(
           previewAspectRatio,
           date,
           calculationMode,
-          refractionWeather
+          refractionWeather,
+          viewCorrection
         );
         if (!evaluated) continue;
         // 既存の貪欲収束結果を明確に上回る場合だけ採用する。
@@ -1912,7 +1936,8 @@ async function refineWithManualEquivalentProjection(
     previewAspectRatio,
     date,
     calculationMode,
-    refractionWeather
+    refractionWeather,
+    viewCorrection
   );
   // 診断用のパス数・1パス目スコアは、最終再評価の成否に関わらず呼び出し
   // 側（診断記録）へ伝える必要があるため、finalEvaluationがnullの場合は
@@ -1955,6 +1980,7 @@ async function calculateOneCandidates(
   refractionWeatherResolver?: RefractionWeatherResolver,
   doubleCheckEnabled = false,
   initialDirectionObserver?: GroundPoint,
+  viewCorrection?: CameraViewCorrection,
   onPreliminaryCandidate?: (candidate: TripodCandidate) => void
 ): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
@@ -2144,6 +2170,35 @@ async function calculateOneCandidates(
     effectiveSeedDistance,
     doubleCheckEnabled
   );
+  for (const solution of initialSolutions) solution.seedKind = "geometric-ray";
+
+  // 根本修正 2026-08-30:
+  // 幾何高度で作るECEF直線は「真空中の直線」のseedとしては有用だが、
+  // 実プレビューの成立条件は apparent celestial と apparent subject の一致。
+  // 低高度では大気差・地表屈折の差が0.1度級になり得るため、幾何レイ交点の
+  // 近傍だけを後段で探すと、実プレビュー上の正解が数百m離れていて到達不能に
+  // なる。そこで、プレビューと同じ見かけ被写体仰角を使う逆解を独立seedとして
+  // 必ず追加する。これは最終解ではなくseedであり、採否は従来どおり
+  // CameraModel round-tripで決めるため、経験的オフセットは一切導入しない。
+  const apparentSeed = await scanTerrainDistanceRange(
+    subject,
+    initialBearing,
+    point.altitudeDegrees,
+    lensCenterHeightMeters,
+    calculationMode,
+    terrainSampler,
+    signal,
+    distanceRange,
+    searchProfile
+  );
+  if (apparentSeed && Number.isFinite(apparentSeed.cartographic.height)) {
+    const duplicate = initialSolutions.some(
+      (solution) => Math.abs(solution.distanceMeters - apparentSeed.distanceMeters) < 0.5
+    );
+    if (!duplicate) initialSolutions.push({ ...apparentSeed, seedKind: "apparent-preview" });
+  }
+  initialSolutions.sort((a, b) => b.distanceMeters - a.distanceMeters);
+
   initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
     recordDiagnostics(point.label, {
@@ -2260,16 +2315,13 @@ async function calculateOneCandidates(
     // 分けて計測し、「謎の時間」の所在を特定できるようにする。
     const convergenceLoopStartedAt = performance.now();
 
-    // 各交点は独立に、候補地点で再計算した天体方位・高度へ最大3回だけ収束させる。
-    // 全距離旧探索へは戻らない。重要なのは、候補地点のaz/altを被写体地点の
-    // ENUへ数値のまま移さず、候補地点自身のENUでECEF方向へ変換した後に
-    // 被写体を通る平行レイとして再評価すること。
-    //
-    // 過去に反復回数・サンプル数・探索窓を増やす変更を試したが、自作の
-    // 回帰テストで効果が確認できず（同じ結果しか出なかった）、その上で
-    // 実機では地形サーバーへのリクエストが増えて処理が固まる問題を
-    // 引き起こしたため、根拠のない変更として撤回し元の値へ戻した。
-    for (let iteration = 0; iteration < 3; iteration += 1) {
+    // 幾何ECEFレイ由来のseedだけは、従来どおり候補地点の最新天体方向へ
+    // 最大3回再収束させる。一方、apparent-preview seedは実プレビューと同じ
+    // 見かけ高度の逆解から得た点なので、ここで幾何レイへ強制的に戻すと
+    // せっかく得た正解側seedを再び真空幾何交点へ引き戻してしまう。
+    // apparent-preview seedはそのままCameraModel詳細探索へ渡す。
+    if (initialSolution.seedKind !== "apparent-preview") {
+      for (let iteration = 0; iteration < 3; iteration += 1) {
       const candidatePoint = buildCandidateGroundPoint(
         solution.cartographic,
         subject,
@@ -2345,6 +2397,7 @@ async function calculateOneCandidates(
           ? candidate
           : nearest
       );
+      }
     }
 
     if (!Number.isFinite(solution.cartographic.height)) {
@@ -2371,7 +2424,8 @@ async function calculateOneCandidates(
         terrainSampler,
         signal,
         distanceRange,
-        activeRefractionWeather
+        activeRefractionWeather,
+        viewCorrection
       );
     } catch (error) {
       // 2026-08-29修正（実機診断より）: 中止（AbortError）は、新しい検索が
@@ -2678,7 +2732,9 @@ export async function calculateTripodCandidates(
   onCelestialCandidatesResolved?: (
     id: CelestialScreenPoint["id"],
     candidates: TripodCandidate[]
-  ) => void
+  ) => void,
+  /** 通常プレビューと同一のCameraModel指向補正。最終round-tripで被写体と天体の相対投影を比較する。 */
+  viewCorrection?: CameraViewCorrection
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -2756,6 +2812,7 @@ export async function calculateTripodCandidates(
         refractionWeatherResolver,
         doubleCheckEnabled,
         initialDirectionObserver,
+        viewCorrection,
         onPreliminaryCandidate
       );
       if (onCelestialCandidatesResolved) {

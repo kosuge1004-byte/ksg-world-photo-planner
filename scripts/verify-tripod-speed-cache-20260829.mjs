@@ -27,6 +27,7 @@ assert.deepEqual(getExactTripodCandidates(key), [candidate]);
 assert.notEqual(exactTripodCacheKey({ ...base, date: new Date(base.date.getTime() + 1) }), key);
 assert.notEqual(exactTripodCacheKey({ ...base, cameraSettings: { ...base.cameraSettings, focalLengthMm: 401 } }), key);
 assert.notEqual(exactTripodCacheKey({ ...base, cameraSettings: { ...base.cameraSettings, lensCenterHeightMeters: 1.7 } }), key);
+assert.notEqual(exactTripodCacheKey({ ...base, viewCorrection: { azimuthDegrees: 0.1, altitudeDegrees: 0 } }), key);
 const otherKey = exactTripodCacheKey({ ...base, subject: { ...base.subject, latitude: 35.000000001 } });
 assert.notEqual(otherKey, key);
 setExactTripodCandidates(otherKey, [{ ...candidate, solutionType: 'preliminary' }]);

@@ -1,0 +1,79 @@
+AstroSight 三脚候補 / プレビュー逆問題 根本修正
+作成日: 2026-08-30
+
+目的
+- プレビュー側は変更しない。
+- 経験的な角度・距離オフセットで合わせない。
+- 三脚候補を、実プレビューで成立している見かけの構図モデルの逆問題として解く。
+
+今回の実機診断から確認した問題
+1. 現行主探索は celestial geometric altitude からECEF直線を作り、その直線とDEMの交点を初期候補としていた。
+2. 最終詳細判定は apparent celestial / apparent subject をCameraModelで比較していた。
+3. したがって「初期候補=真空幾何」「最終正解=見かけ構図」という異なる目的関数が直列になっていた。
+4. 低高度の太陽では大気差等による角度差が無視できず、正しいapparent解がgeometric交点近傍の詳細探索窓外にあると、正解候補が最終CameraModel評価まで到達できない。
+5. 2026-08-29実機ログでは粗探索が1250〜1280m側だけを交点として扱い、現地/プレビューで正しい約968m側を入口段階で外していた。
+
+実装変更
+A. apparent-preview seedを追加
+- src/cesium/tripodCandidates.ts
+- 幾何ECEFレイ探索とは独立に、既存scanTerrainDistanceRange()を使い、
+  subject apparent elevation と point.altitudeDegrees（プレビューで使う見かけ天体高度）の逆解をseedとして追加。
+- 経験的補正値は追加していない。
+- apparent seedは最終解ではなく、後段CameraModel詳細探索への入口だけに使用。
+
+B. apparent seedを幾何レイへ引き戻さない
+- seedKind = geometric-ray / apparent-preview を追加。
+- geometric-ray seedだけ従来のECEF再収束を行う。
+- apparent-preview seedは幾何レイ再収束を通さず、直接CameraModel詳細探索へ渡す。
+- これにより正しいapparent側seedが再びgeometric交点へ戻される経路を遮断。
+
+C. round-tripを本当の「天体中心 vs 被写体中心」に変更
+旧:
+  dx = celestialScreen.x - 50
+  dy = celestialScreen.y - 50
+新:
+  subjectScreenも同じCameraModelで投影し、
+  dx = celestialScreen.x - subjectScreen.x
+  dy = celestialScreen.y - subjectScreen.y
+
+- previewViewCorrectionが非ゼロの場合、被写体自身も50/50固定ではないため、固定中央比較を廃止。
+- 通常プレビューと同じviewCorrectionをcreateCameraProjection()へ渡す。
+- これは候補に補正を足す処理ではなく、同じForward Model入力を共有する変更。
+
+D. exact cache keyを更新
+- previewViewCorrectionのazimuth/altitudeをキーへ追加。
+- CACHE_VERSIONをtripod-exact-session-20260830-v2へ更新。
+- 異なるプレビュー指向条件で古い候補を完全一致結果として再利用しない。
+
+E. App.tsx
+- calculateTripodCandidates()へpreviewViewCorrectionを渡す。
+- candidate calculation useEffect依存にもpreviewViewCorrectionを追加。
+
+静的回帰検査
+PASS:
+- node scripts/verify-tripod-preview-forward-model-20260830.mjs
+- node scripts/verify-tripod-preview-inverse-root-fix-20260830.mjs
+
+新規検査が確認する内容
+- apparent-preview seedが独立して存在すること
+- apparent seedをgeometric-ray再収束へ戻さないこと
+- round-tripが50/50固定ではなくsubjectScreenとの差になっていること
+- previewViewCorrectionが候補CameraModelへ渡ること
+- previewViewCorrectionがexact cache keyへ入ること
+
+TypeScript/Build
+- node_modules無しの状態でtscの構文読み取りを実施し、今回変更箇所に構文エラーは確認されなかった。
+- フル npm ci は実行環境の依存取得が120秒を超えて停止したため中止。
+- したがって npm run build 成功は未確認。ビルド成功とは断定しない。
+
+重要な実機確認項目
+同じ「実証」プロジェクト、2026/08/09 18:06、250mm、カメラ高1.6mで再検索する。
+確認したい診断:
+- 初期交点内訳に約968m側由来の候補が追加されるか
+- 最終確定距離が1252mから正しい側へ移るか
+- confirmed-alignedのdx/dy
+- 候補選択後のプレビューが既知の正しいプレビューと一致するか
+
+未確認
+- 実機の正確なプロジェクト座標/localStorageはこの環境に無いため、約968mへ実際に戻ること自体は未実証。
+- 今回はログと実コードから確認できた「geometric seedでapparent解を入口から排除する構造」を修正した段階。

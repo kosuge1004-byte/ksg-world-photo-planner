@@ -1519,6 +1519,7 @@ function App() {
       date: selectedDate,
       calculationMode,
       previewAspectRatio,
+      viewCorrection: previewViewCorrection,
       refractionWeather: previewRefractionWeather,
       doubleCheckEnabled: precisionSettings.tripodCandidateDoubleCheckEnabled,
       initialDirectionObserver,
@@ -1652,7 +1653,8 @@ function App() {
                 delete next[resolvedId];
                 return next;
               });
-            }
+            },
+            previewViewCorrection
           );
           if (!cancelled) {
             const displayedCandidates = candidates;
@@ -1724,6 +1726,7 @@ function App() {
     calculationMode,
     previewAspectRatio,
     previewRefractionWeather,
+    previewViewCorrection,
     resolveTripodCandidateRefractionWeather,
     timelineInteracting,
     precisionSettings.accuracyMode,
