@@ -1,0 +1,47 @@
+AstroSight 三脚候補・物理経路監査 2026-08-30
+
+目的
+現在の三脚ピン（現地実証で正しい約968m地点）を探索結果とは独立した基準点として、
+三脚候補計算へ入る前の物理量を一括記録する。
+この変更は候補位置・プレビュー・補正値・探索条件を変更しない診断専用。
+
+診断へ追加した項目
+- カメラ高（m）
+- 基準観測点の緯度経度
+- legacy height / WGS84楕円体高 / 標高(orthometric) / geoid
+- カメラ高を引いた地表高の逆算値
+- 観測点ECEF XYZ
+- 被写体の緯度経度
+- 被写体 legacy / ellipsoid / orthometric / geoid / heightSource
+- 被写体ECEF XYZ
+- 測地線距離、ECEF斜距離、方位
+- ellipsoid/orthometricの高さ差
+- 球面曲率落差 d^2/(2R)
+- k=0.13 の有効曲率落差
+- 地上屈折補正角
+- 被写体 geometric/apparent 仰角と屈折差
+- 天体 geometric/apparent 高度と天体大気差
+- 被写体と天体の方位差・仰角差
+- 仰角差の距離換算垂直差
+- 気象モード、データソース、気温°C、気圧hPa、湿度%
+
+重要
+initialDirectionObserver は App.tsx で既に withLensCenterHeight() 済みなので、
+監査関数内ではカメラ高を再加算していない。
+このため 1.6m→3.2m の二重加算があるかどうかもログで判別できる。
+
+利用方法
+正しい三脚ピン（実証ケース約968m）を置いた状態で三脚候補検索を実行し、
+「この検索の診断情報をコピー」を押す。
+新しい「物理経路監査（現在の三脚ピン＝実証基準点、探索結果には不使用）」部分を
+そのまま共有する。
+
+検証
+PASS scripts/verify-tripod-physics-audit-20260830.mjs
+PASS TypeScript transpile syntax: src/cesium/tripodCandidates.ts
+PASS TypeScript transpile syntax: src/App.tsx
+
+フルビルド
+未確認。npm ci が実行環境で途中タイムアウトし、geo-tz が不完全展開となったため
+prebuildで依存関係エラーになった。今回変更コード由来のTypeScriptビルドエラーとは
+確認されていないが、フルbuild成功とは断定しない。

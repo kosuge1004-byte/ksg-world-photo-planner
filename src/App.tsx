@@ -129,6 +129,7 @@ import {
   getLastTripodSearchDiagnostics,
   getLastCoarseScanSamples,
   getLastCenterlineScanSamples,
+  getLastTripodPhysicsAudits,
 } from "./cesium/tripodCandidates";
 import {
   loadPersistentTripodSeeds,
@@ -867,6 +868,56 @@ function App() {
           )
           .join(" ")
       );
+    }
+
+    const physicsAudits = getLastTripodPhysicsAudits();
+    if (physicsAudits.length > 0) {
+      lines.push("物理経路監査（現在の三脚ピン＝実証基準点、探索結果には不使用）:");
+      for (const audit of physicsAudits) {
+        lines.push(
+          `  ${audit.celestialLabel}: mode=${audit.calculationMode} date=${audit.dateIso}`,
+          `    カメラ高=${audit.lensCenterHeightMeters.toFixed(3)}m`,
+          `    観測点(lat,lon)=(${audit.referenceObserver.latitude.toFixed(8)},${audit.referenceObserver.longitude.toFixed(8)})` +
+            ` legacy=${audit.referenceObserver.legacyHeightMeters.toFixed(3)}m` +
+            ` ellipsoid=${audit.referenceObserver.ellipsoidalHeightMeters.toFixed(3)}m` +
+            ` orthometric=${audit.referenceObserver.orthometricHeightMeters.toFixed(3)}m` +
+            ` geoid=${audit.referenceObserver.geoidHeightMeters !== null ? audit.referenceObserver.geoidHeightMeters.toFixed(3) : "-"}m`,
+          `    観測地表逆算: ellipsoid=${audit.referenceObserver.inferredGroundEllipsoidalHeightMeters.toFixed(3)}m` +
+            ` orthometric=${audit.referenceObserver.inferredGroundOrthometricHeightMeters.toFixed(3)}m`,
+          `    観測点ECEF=(${audit.referenceObserver.ecefX.toFixed(3)},${audit.referenceObserver.ecefY.toFixed(3)},${audit.referenceObserver.ecefZ.toFixed(3)})m`,
+          `    被写体(lat,lon)=(${audit.subject.latitude.toFixed(8)},${audit.subject.longitude.toFixed(8)})` +
+            ` legacy=${audit.subject.legacyHeightMeters.toFixed(3)}m` +
+            ` ellipsoid=${audit.subject.ellipsoidalHeightMeters.toFixed(3)}m` +
+            ` orthometric=${audit.subject.orthometricHeightMeters.toFixed(3)}m` +
+            ` geoid=${audit.subject.geoidHeightMeters !== null ? audit.subject.geoidHeightMeters.toFixed(3) : "-"}m` +
+            ` source=${audit.subject.heightSource ?? "-"}`,
+          `    被写体ECEF=(${audit.subject.ecefX.toFixed(3)},${audit.subject.ecefY.toFixed(3)},${audit.subject.ecefZ.toFixed(3)})m`,
+          `    距離: 測地線=${audit.line.geodesicDistanceMeters.toFixed(3)}m` +
+            ` 斜距離=${audit.line.slantDistanceMeters.toFixed(3)}m bearing=${audit.line.bearingDegrees.toFixed(6)}°`,
+          `    高さ差: ellipsoid=${audit.line.ellipsoidalHeightDifferenceMeters.toFixed(3)}m` +
+            ` orthometric=${audit.line.orthometricHeightDifferenceMeters.toFixed(3)}m`,
+          `    地球曲率診断: 球面落差=${audit.line.sphericalCurvatureDropMeters.toFixed(4)}m` +
+            ` k=0.13有効落差=${audit.line.effectiveCurvatureDropK013Meters.toFixed(4)}m` +
+            ` 地表屈折角=${audit.line.terrestrialRefractionCorrectionDegrees.toFixed(6)}°` +
+            ` （ECEF幾何には曲率を追加適用しない）`,
+          `    被写体仰角: geometric=${audit.subjectElevation.geometricDegrees.toFixed(6)}°` +
+            ` apparent=${audit.subjectElevation.apparentDegrees.toFixed(6)}°` +
+            ` terrestrialRefraction=${audit.subjectElevation.refractionCorrectionDegrees.toFixed(6)}°`,
+          `    天体高度: geometric=${audit.celestialElevation.geometricDegrees.toFixed(6)}°` +
+            ` apparent=${audit.celestialElevation.apparentDegrees.toFixed(6)}°` +
+            ` astronomicalRefraction=${audit.celestialElevation.astronomicalRefractionCorrectionDegrees.toFixed(6)}°` +
+            ` azimuth=${audit.celestialElevation.azimuthDegrees.toFixed(6)}°`,
+          `    中心線差: az=${audit.centerline.azimuthErrorDegrees.toFixed(6)}°` +
+            ` alt=${audit.centerline.altitudeErrorDegrees.toFixed(6)}°` +
+            ` 距離換算垂直差=${audit.centerline.equivalentVerticalErrorMeters.toFixed(3)}m`,
+          `    気象: requested=${audit.weather.requestedMode ?? "-"}` +
+            ` effective=${audit.weather.effectiveMode ?? "-"}` +
+            ` source=${audit.weather.source ?? "-"}` +
+            ` temp=${audit.weather.temperatureCelsius !== null ? audit.weather.temperatureCelsius.toFixed(2) : "-"}°C` +
+            ` pressure=${audit.weather.surfacePressureHpa !== null ? audit.weather.surfacePressureHpa.toFixed(2) : "-"}hPa` +
+            ` humidity=${audit.weather.relativeHumidityPercent !== null ? audit.weather.relativeHumidityPercent.toFixed(1) : "-"}%`
+        );
+      }
     }
 
     const coarseScanSamples = getLastCoarseScanSamples();

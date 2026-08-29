@@ -11,7 +11,7 @@ import type {
   TripodCandidate,
 } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import { ellipsoidalHeightMeters, withLensCenterHeight } from "../types/points";
+import { ellipsoidalHeightMeters, orthometricHeightMeters, withLensCenterHeight } from "../types/points";
 import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import {
   calculateCelestialHorizontalCoordinates,
@@ -33,6 +33,14 @@ import {
   getGsiElevationCacheStats,
 } from "./gsiElevationClient";
 import { computeApparentElevation } from "../apparent/apparentElevation";
+import { calculateGeometricElevation } from "./geometry";
+import {
+  EARTH_MEAN_RADIUS_METERS,
+  STANDARD_TERRESTRIAL_K_FACTOR,
+  effectiveEarthCurvatureDropMeters,
+  terrestrialRefractionCorrectionDegrees,
+} from "../geodesy/terrestrialRefraction";
+import { weatherForDate } from "../search/refractionWeatherModel";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
 const ABSOLUTE_MIN_DISTANCE_METERS = 8;
@@ -244,6 +252,204 @@ export type TripodSearchDiagnostics = {
 };
 
 let lastSearchDiagnostics: TripodSearchDiagnostics | null = null;
+
+export type TripodPhysicsAudit = {
+  celestialLabel: string;
+  calculationMode: CalculationMode;
+  dateIso: string;
+  lensCenterHeightMeters: number;
+  referenceObserver: {
+    latitude: number;
+    longitude: number;
+    legacyHeightMeters: number;
+    ellipsoidalHeightMeters: number;
+    orthometricHeightMeters: number;
+    geoidHeightMeters: number | null;
+    inferredGroundEllipsoidalHeightMeters: number;
+    inferredGroundOrthometricHeightMeters: number;
+    ecefX: number;
+    ecefY: number;
+    ecefZ: number;
+  };
+  subject: {
+    latitude: number;
+    longitude: number;
+    legacyHeightMeters: number;
+    ellipsoidalHeightMeters: number;
+    orthometricHeightMeters: number;
+    geoidHeightMeters: number | null;
+    heightSource: string | null;
+    ecefX: number;
+    ecefY: number;
+    ecefZ: number;
+  };
+  line: {
+    geodesicDistanceMeters: number;
+    slantDistanceMeters: number;
+    bearingDegrees: number;
+    ellipsoidalHeightDifferenceMeters: number;
+    orthometricHeightDifferenceMeters: number;
+    sphericalCurvatureDropMeters: number;
+    effectiveCurvatureDropK013Meters: number;
+    terrestrialRefractionCorrectionDegrees: number;
+  };
+  subjectElevation: {
+    geometricDegrees: number;
+    apparentDegrees: number;
+    refractionCorrectionDegrees: number;
+  };
+  celestialElevation: {
+    geometricDegrees: number;
+    apparentDegrees: number;
+    astronomicalRefractionCorrectionDegrees: number;
+    azimuthDegrees: number;
+  };
+  centerline: {
+    azimuthErrorDegrees: number;
+    altitudeErrorDegrees: number;
+    equivalentVerticalErrorMeters: number;
+  };
+  weather: {
+    requestedMode: string | null;
+    effectiveMode: string | null;
+    source: string | null;
+    temperatureCelsius: number | null;
+    surfacePressureHpa: number | null;
+    relativeHumidityPercent: number | null;
+  };
+};
+
+let lastPhysicsAudits: TripodPhysicsAudit[] = [];
+
+export function getLastTripodPhysicsAudits(): TripodPhysicsAudit[] {
+  return lastPhysicsAudits;
+}
+
+function finiteOrNull(value: number | undefined): number | null {
+  return Number.isFinite(value) ? (value as number) : null;
+}
+
+function buildTripodPhysicsAudit(
+  subject: GroundPoint,
+  point: CelestialScreenPoint,
+  referenceLensObserver: GroundPoint,
+  lensCenterHeightMeters: number,
+  date: Date,
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
+): TripodPhysicsAudit {
+  // referenceLensObserver は App.tsx で既に withLensCenterHeight() 済み。
+  // ここでカメラ高をもう一度加えない。二重加算の有無も、地表高を逆算して
+  // 診断へ出すことで実機ログだけで判定できるようにする。
+  const observerEllipsoidal = ellipsoidalHeightMeters(referenceLensObserver);
+  const observerOrthometric = orthometricHeightMeters(referenceLensObserver);
+  const subjectEllipsoidal = ellipsoidalHeightMeters(subject);
+  const subjectOrthometric = orthometricHeightMeters(subject);
+  const observerEcef = Cartesian3.fromDegrees(
+    referenceLensObserver.longitude,
+    referenceLensObserver.latitude,
+    observerEllipsoidal
+  );
+  const subjectEcef = Cartesian3.fromDegrees(
+    subject.longitude,
+    subject.latitude,
+    subjectEllipsoidal
+  );
+  const line = calculateKarneyLineMetrics(referenceLensObserver, subject);
+  const geometric = calculateGeometricElevation(referenceLensObserver, subject);
+  const subjectElevation = computeApparentElevation(referenceLensObserver, subject, calculationMode);
+  const celestial = calculateCelestialHorizontalCoordinates(
+    point.id,
+    date,
+    referenceLensObserver,
+    calculationMode,
+    refractionWeather
+  );
+  const azimuthErrorDegrees = signedAngularDifferenceDegrees(
+    line.bearingDegrees,
+    celestial.azimuthDegrees
+  );
+  const altitudeErrorDegrees =
+    subjectElevation.apparentAltitudeDegrees - celestial.altitudeDegrees;
+  const weather = refractionWeather ? weatherForDate(refractionWeather, date) : null;
+  const sphericalCurvatureDropMeters =
+    line.distanceMeters * line.distanceMeters / (2 * EARTH_MEAN_RADIUS_METERS);
+  return {
+    celestialLabel: point.label,
+    calculationMode,
+    dateIso: date.toISOString(),
+    lensCenterHeightMeters,
+    referenceObserver: {
+      latitude: referenceLensObserver.latitude,
+      longitude: referenceLensObserver.longitude,
+      legacyHeightMeters: referenceLensObserver.height,
+      ellipsoidalHeightMeters: observerEllipsoidal,
+      orthometricHeightMeters: observerOrthometric,
+      geoidHeightMeters: finiteOrNull(referenceLensObserver.geoidHeightMeters),
+      inferredGroundEllipsoidalHeightMeters: observerEllipsoidal - lensCenterHeightMeters,
+      inferredGroundOrthometricHeightMeters: observerOrthometric - lensCenterHeightMeters,
+      ecefX: observerEcef.x,
+      ecefY: observerEcef.y,
+      ecefZ: observerEcef.z,
+    },
+    subject: {
+      latitude: subject.latitude,
+      longitude: subject.longitude,
+      legacyHeightMeters: subject.height,
+      ellipsoidalHeightMeters: subjectEllipsoidal,
+      orthometricHeightMeters: subjectOrthometric,
+      geoidHeightMeters: finiteOrNull(subject.geoidHeightMeters),
+      heightSource: subject.heightSource ?? null,
+      ecefX: subjectEcef.x,
+      ecefY: subjectEcef.y,
+      ecefZ: subjectEcef.z,
+    },
+    line: {
+      geodesicDistanceMeters: line.distanceMeters,
+      slantDistanceMeters: geometric.slantDistanceMeters,
+      bearingDegrees: line.bearingDegrees,
+      ellipsoidalHeightDifferenceMeters: subjectEllipsoidal - observerEllipsoidal,
+      orthometricHeightDifferenceMeters: subjectOrthometric - observerOrthometric,
+      sphericalCurvatureDropMeters,
+      effectiveCurvatureDropK013Meters: effectiveEarthCurvatureDropMeters(
+        line.distanceMeters,
+        STANDARD_TERRESTRIAL_K_FACTOR
+      ),
+      terrestrialRefractionCorrectionDegrees: terrestrialRefractionCorrectionDegrees(
+        geometric.slantDistanceMeters,
+        STANDARD_TERRESTRIAL_K_FACTOR
+      ),
+    },
+    subjectElevation: {
+      geometricDegrees: subjectElevation.geometricAltitudeDegrees,
+      apparentDegrees: subjectElevation.apparentAltitudeDegrees,
+      refractionCorrectionDegrees:
+        subjectElevation.apparentAltitudeDegrees - subjectElevation.geometricAltitudeDegrees,
+    },
+    celestialElevation: {
+      geometricDegrees: celestial.geometricAltitudeDegrees,
+      apparentDegrees: celestial.altitudeDegrees,
+      astronomicalRefractionCorrectionDegrees:
+        celestial.altitudeDegrees - celestial.geometricAltitudeDegrees,
+      azimuthDegrees: celestial.azimuthDegrees,
+    },
+    centerline: {
+      azimuthErrorDegrees,
+      altitudeErrorDegrees,
+      equivalentVerticalErrorMeters:
+        Math.tan(CesiumMath.toRadians(altitudeErrorDegrees)) * line.distanceMeters,
+    },
+    weather: {
+      requestedMode: refractionWeather?.requestedMode ?? null,
+      effectiveMode: refractionWeather?.effectiveMode ?? null,
+      source: refractionWeather?.source ?? null,
+      temperatureCelsius: weather?.temperatureCelsius ?? null,
+      surfacePressureHpa: weather?.surfacePressureHpa ?? null,
+      relativeHumidityPercent: weather?.relativeHumidityPercent ?? null,
+    },
+  };
+}
+
 
 /**
  * 2026-08-26追記: 旧ECEFレイ一次探索が「一次探索(狭い範囲)」
@@ -2159,6 +2365,28 @@ async function calculateOneCandidates(
     abortIfRequested(signal);
     if (resolvedWeather) activeRefractionWeather = resolvedWeather;
   }
+
+  // 2026-08-30 物理経路監査: 現在の三脚ピンが存在する場合、そのレンズ中心を
+  // 「実証基準点」として、三脚候補探索を動かす前に全物理量を同時記録する。
+  // 探索結果には一切使用しない診断専用。これにより、正しいプレビュー地点で
+  // 被写体と天体が一致しているのに候補計算では約2.2°ずれる問題について、
+  // 高さ基準・ECEF・曲率・地表屈折・天体大気差・気象のどの段で初めて差が
+  // 発生するかを1回の実機ログから特定できる。
+  if (initialDirectionObserver) {
+    try {
+      lastPhysicsAudits.push(buildTripodPhysicsAudit(
+        subject,
+        point,
+        initialDirectionObserver,
+        lensCenterHeightMeters,
+        date,
+        calculationMode,
+        activeRefractionWeather
+      ));
+    } catch (error) {
+      console.warn(`[tripod-candidate] ${point.label}: 物理経路監査ログの生成に失敗`, error);
+    }
+  }
   // 2026-08-27追記: 「実際に地面を確認して見つかった、前回の確かな
   // 答え」（searchProfile.preferredDistanceMeters）よりも、「地面を
   // 一切見ていない、机上の幾何学的な見積もり」（directSeedDistance）が
@@ -2759,6 +2987,7 @@ export async function calculateTripodCandidates(
   resetGsiElevationCacheStats();
   lastCoarseScanSamples = null;
   lastCenterlineScanSamples = null;
+  lastPhysicsAudits = [];
   lastSearchDiagnostics = {
     startedAtMs: Date.now(),
     finishedAtMs: null,
