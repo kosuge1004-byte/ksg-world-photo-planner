@@ -33,6 +33,7 @@ type Props = {
   tripodSearchLines: TripodSearchBaseLine[];
   foregroundObject: ForegroundObject | null;
   foregroundEditing: boolean;
+  tripodCandidatesCalculating: boolean;
   onMoveForeground: (coordinates: { latitude: number; longitude: number }) => void;
   onSelectCandidate: (candidate: TripodCandidate) => void;
 };
@@ -196,6 +197,7 @@ export function Map2DOverlay({
   tripodSearchLines,
   foregroundObject,
   foregroundEditing,
+  tripodCandidatesCalculating,
   onMoveForeground,
   onSelectCandidate,
 }: Props) {
@@ -475,7 +477,9 @@ export function Map2DOverlay({
               candidate.solutionType === "direction-only"
                 ? `${candidate.label}の三脚方位候補（要確認）`
                 : candidate.solutionType === "preliminary"
-                  ? `${candidate.label}の三脚概算候補（地形確認中）`
+                  ? (tripodCandidatesCalculating
+                      ? `${candidate.label}の三脚概算候補（地形確認中）`
+                      : `${candidate.label}の三脚概算候補（確定解なし・地形未確認のまま）`)
                   : `${candidate.label}の三脚位置`
             }
           >
@@ -484,7 +488,7 @@ export function Map2DOverlay({
             {candidate.solutionType === "direction-only"
               ? "三脚方位候補"
               : candidate.solutionType === "preliminary"
-                ? "三脚概算候補"
+                ? (tripodCandidatesCalculating ? "三脚概算候補（計算中）" : "三脚概算候補（確定解なし）")
                 : "三脚候補"}
             {candidate.intersectionCount && candidate.intersectionCount > 1
               ? ` ${candidate.intersectionIndex}/${candidate.intersectionCount}`

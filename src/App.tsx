@@ -2273,7 +2273,8 @@ function App() {
         tripodSearchLines,
         celestialOcclusion,
         mapViewMode,
-        cameraSettings.lensCenterHeightMeters
+        cameraSettings.lensCenterHeightMeters,
+        tripodCandidateCalculationStatus === "calculating"
       );
       endOperationTag("updateCelestialMapEntities");
     } catch (error) {
@@ -2296,6 +2297,7 @@ function App() {
     cameraSettings.lensCenterHeightMeters,
     setSearchMessage,
     timelineInteracting,
+    tripodCandidateCalculationStatus,
   ]);
 
   useEffect(() => {
@@ -4443,6 +4445,7 @@ ${diagnosticMessage}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
               foregroundEditing={foregroundPlacementActive}
+              tripodCandidatesCalculating={tripodCandidateCalculationStatus === "calculating"}
               onMoveForeground={(coordinates) => {
                 const requestId = ++foregroundTerrainRequestRef.current;
                 setSearchMessage("人物移動先の地形高度を取得しています…");

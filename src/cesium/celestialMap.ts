@@ -129,7 +129,8 @@ function updateTripodCandidateEntities(
   viewer: Viewer,
   subject: GroundPoint | null,
   candidates: TripodCandidate[],
-  visibility: CelestialVisibility
+  visibility: CelestialVisibility,
+  isCalculating: boolean
 ): void {
   let states = tripodCandidateEntityStates.get(viewer);
   if (!states) {
@@ -149,11 +150,18 @@ function updateTripodCandidateEntities(
         candidate.latitude,
         candidate.height + 0.2
       );
+      // 2026-08-29修正: 以前はsolutionType==="preliminary"であれば常に
+      // 「候補点計算中」と表示していた。しかしv20の仕様により、精密計算が
+      // 「確定解なし」「通信失敗」で終わった天体は、暫定候補（solutionType
+      // はpreliminaryのまま）を消さずに残す設計になっている。そのため
+      // 計算が実際には完了しているのに、ラベルは「計算中」のまま止まって
+      // 見え、ユーザーから見ると「候補点が出ない・止まっている」ように
+      // 見えるバグになっていた（isCalculatingで実際の計算状態を区別する）。
       const candidateKind =
         candidate.solutionType === "direction-only"
           ? "三脚方位候補（要確認）"
           : candidate.solutionType === "preliminary"
-            ? "候補点計算中"
+            ? (isCalculating ? "候補点計算中" : "概算候補（確定解なし）")
             : "三脚候補";
       const candidateNumber = candidate.intersectionCount && candidate.intersectionCount > 1
         ? ` ${candidateIndex}/${candidate.intersectionCount}`
@@ -324,7 +332,8 @@ export function updateCelestialMapEntities(
   tripodSearchLines: TripodSearchBaseLine[],
   occlusion: CelestialOcclusionMap,
   mapViewMode: "2d" | "3d",
-  lensCenterHeightMeters: number
+  lensCenterHeightMeters: number,
+  tripodCandidatesCalculating: boolean
 ): void {
   // tracksは呼び出し側useMemoで内容変更時だけ参照が変わる。
   // 数千点の軌道配列を毎更新JSON.stringifyするのをやめ、参照と小さな
@@ -377,7 +386,8 @@ export function updateCelestialMapEntities(
     viewer,
     subject,
     tripodCandidates,
-    visibility
+    visibility,
+    tripodCandidatesCalculating
   );
 
   if (!tripod) {

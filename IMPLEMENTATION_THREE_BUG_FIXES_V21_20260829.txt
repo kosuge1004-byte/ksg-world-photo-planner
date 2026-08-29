@@ -103,3 +103,40 @@ PERCENT（画面比0.5%）は焦点距離に関わらず固定値だが、同じ
 - 望遠レンズ設定・従来「確定解なし」になっていた地点・日時で、三脚候補が
   確定すること。処理時間が有意に伸びていないこと（早期収束が機能している
   こと）。
+
+---
+
+追記（同日）: 4件目 — 三脚候補点が「候補点計算中」のまま止まって見える
+
+報告された実機診断（1600mm・138タワー・09:27、太陽の交点候補1件→確定0件、
+roundtrip-vertical-outside-tolerance、所要時間3.6秒）を確認した結果、
+計算自体は3.6秒で完了・却下されていたにもかかわらず、地図上の候補点
+ラベルは「候補点計算中」の表示のまま変化していなかった。
+
+原因: src/cesium/celestialMap.ts のupdateTripodCandidateEntities()と
+src/components/Map2DOverlay.tsx の候補ラベルが、いずれも
+candidate.solutionType === "preliminary" だけを見て「計算中」表示を
+出していた。v20の仕様により、精密計算が「確定解なし」「通信失敗」で
+終わった天体の暫定候補（solutionTypeはpreliminaryのまま）はあえて
+消さずに残す設計になっているため、計算が実際には終わっているのに
+ラベルだけが「計算中」で固定されたままになっていた。ユーザーからは
+「三脚候補点が表示されない（＝いつまでも出てこない）」ように見える。
+
+修正: src/cesium/celestialMap.ts, src/App.tsx, src/components/Map2DOverlay.tsx
+- updateCelestialMapEntities() / updateTripodCandidateEntities() に、
+  実際に計算中かどうか（tripodCandidateCalculationStatus === "calculating"）
+  を新しい引数として渡すようにした。
+- solutionType==="preliminary"のラベルを、計算中は従来通り「候補点計算中」、
+  計算が完了（確定解なし・失敗）した後は「概算候補（確定解なし）」と表示を
+  分けた。
+- Map2DOverlay.tsx にも同じ区別を持つtripodCandidatesCalculatingを追加。
+- 候補データ自体（位置・座標・破棄理由等）は一切変更していない。表示文言
+  のみの修正。
+
+検証
+- npm install（node_modules導入）した上で以下を実行し全てPASS:
+  - npx tsc -b（型チェック込みフルビルド）
+  - npm run build（Vite本番ビルド）
+  - npm run test:regression（33グループ、全PASS）
+  - npm run lint（エラー0、警告は既存の無関係なスクリプトのみ）
+
