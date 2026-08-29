@@ -1327,7 +1327,25 @@ async function refineWithManualEquivalentProjection(
   let lateralRadiusMeters = radialRadiusMeters;
   let best: ManualEquivalentEvaluation | null = null;
 
-  for (let pass = 0; pass < 3; pass += 1) {
+  // 2026-08-29修正: 以前はここを固定3回で打ち切っていた。しかし
+  // ROUND_TRIP_SCREEN_TOLERANCE_PERCENT（画面比0.5%）は画角に依存しない
+  // 固定値である一方、同じ0.5%が要求する実距離の位置精度は焦点距離が
+  // 長くなる（画角が狭くなる）ほど厳しくなる。固定3回終了後の格子間隔は
+  // 約1.5m前後までしか縮まらず、望遠での構図では0.5%以内に収まる前に
+  // 探索が尽きて「候補は実在するのに確定解なしになる」（本レポートの症状）
+  // ことがあった。人がプレビューを見ながら手動でピンをドラッグ調整する
+  // 場合はこの格子の粗さに制約されないため、同じ地点でも手動なら見つかる。
+  // 格子間隔が要求精度に対して十分細かくなるか、既に十分collapseした
+  // 最良候補が得られるまでパスを継続する（暴走防止に上限を設ける）。
+  const MAX_REFINEMENT_PASSES = 8;
+  // スクリーン許容誤差(0.5%)に対して十分な余裕（1/5）を持って収束した
+  // ら、それ以上格子を細かくしても最終判定を変えないため打ち切る。
+  const CONVERGED_SCORE_PERCENT = ROUND_TRIP_SCREEN_TOLERANCE_PERCENT * 0.2;
+  // 格子間隔がこれより小さくなれば、GSI 1m DEM・座標倍精度の実用限界に
+  // 達しているとみなし、これ以上縮めても実質的な精度向上が無いため打ち切る。
+  const MIN_USEFUL_GRID_SPACING_METERS = 0.05;
+
+  for (let pass = 0; pass < MAX_REFINEMENT_PASSES; pass += 1) {
     abortIfRequested(signal);
     const segments = 8;
     const requests: Array<{ distance: number; bearing: number; cartographic: Cartographic }> = [];
@@ -1387,12 +1405,28 @@ async function refineWithManualEquivalentProjection(
     }
     if (!passBest) break;
 
+    // 既に許容誤差に十分な余裕を持って収束していれば、これ以上格子を
+    // 細かくしても最終判定（0.5%以内か否か）は変わらないため打ち切る。
+    if (passBest.score <= CONVERGED_SCORE_PERCENT) break;
+
     const passMetrics = calculateKarneyLineMetrics(subject, passBest.candidatePoint);
     centerDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
     centerBearing = passMetrics.bearingDegrees;
     // One grid spacing from the preceding pass becomes the next search radius.
-    radialRadiusMeters = Math.max(0.5, (2 * radialRadiusMeters) / segments);
-    lateralRadiusMeters = Math.max(0.5, (2 * lateralRadiusMeters) / segments);
+    // 2026-08-29修正: 以前は0.5m未満へ縮まらないよう下限を設けていたため、
+    // 望遠構図で必要な実距離精度（時にセンチメートル単位）に届く前に
+    // 格子が縮み止まっていた。DEM・測地計算の実用限界（MIN_USEFUL_GRID_
+    // SPACING_METERS=5cm換算の半径）までは縮小を続ける。
+    const nextRadialRadius = (2 * radialRadiusMeters) / segments;
+    const nextLateralRadius = (2 * lateralRadiusMeters) / segments;
+    if (
+      nextRadialRadius < MIN_USEFUL_GRID_SPACING_METERS / 2 &&
+      nextLateralRadius < MIN_USEFUL_GRID_SPACING_METERS / 2
+    ) {
+      break;
+    }
+    radialRadiusMeters = Math.max(MIN_USEFUL_GRID_SPACING_METERS / 2, nextRadialRadius);
+    lateralRadiusMeters = Math.max(MIN_USEFUL_GRID_SPACING_METERS / 2, nextLateralRadius);
   }
 
   if (!best) return null;

@@ -1,0 +1,105 @@
+AstroSight v21 - 3件のバグ修正
+実装日: 2026-08-29
+基準: AstroSight-tripod-reliability-progressive-v20-20260829.zip
+
+対応した報告
+1. 手動で被写体ピンを立てる際のメッセージが画面外に表示される
+2. 被写体検索（例:「138タワー」）でピンがタワーの頂上ではなく下に立つ
+3. 三脚候補点が「確定解なし」で終わることが多い（マニュアルでは候補が見つかる）
+
+---
+
+1. 被写体ピン操作メッセージが画面外に表示される問題
+
+原因: src/App.css の
+  .preview-load-status, .app-status { display: none; }
+というルールが、廃止済みのプレビュー読込表示(.preview-load-status)と、
+setSearchMessage() が書き込む一般ステータスバー(.app-status)を誤って
+一緒に隠していた。.app-status にはposition指定も無く、非表示を外しても
+フル画面高の3D地図<section>の後ろ（通常の文書フロー最下部）に描画され、
+実質的に画面外へ押し出される状態だった。
+手動被写体ピン配置（「被写体ピンを配置しました：緯度,経度」等）を含む、
+setSearchMessage()を使う全ての案内がこの影響を受けていた。
+
+修正: src/App.css
+- .preview-load-status は引き続き非表示のまま（PreviewStatusコンポーネントに
+  置き換え済みのため）。
+- .app-status は position: fixed で画面下部（env(safe-area-inset-bottom)考慮）
+  に収まる独立ルールへ分離。空文字時は .app-status:empty で非表示。
+
+---
+
+2. 被写体検索でピンがタワー頂上でなく下に立つ問題
+
+原因: src/cesium/plateauBuildingVerification.ts の
+resolvePlateauRoofGroundPoint() で、局所探索（半径20m以内）で候補が
+見つからない場合の広域フォールバック（鉄塔・タワー等、半径30-50m）が、
+「最も高い候補」ではなく「候補リストの中で最初に見つかった候補」
+（offset→bearing順に機械的に並んだ配列の先頭）を採用していた。
+双輪アーチ型の構造物（例:138タワー＝ツインアーチ138）や脚部が広がる
+鉄塔では、探索半径内の交点が構造物の低い部分（脚・梁）にも生じるため、
+「最初に見つかった」交点がしばしば低い位置になり、頂上ではなく構造物の
+下寄りの高さが被写体ピンとして採用されていた。
+さらに、広域フォールバックで見つかった候補にはStage3の精密化
+（直近だけをより細かく再探索する処理）が適用されておらず、粗い8方位
+サンプリングの精度のままだった。
+
+修正: src/cesium/plateauBuildingVerification.ts
+- 広域フォールバックも局所探索と同じ highestOf()（最も高い候補）を採用。
+- 見つかった頂上候補の由来（局所探索/広域フォールバックいずれか）に
+  関わらず、Stage3の精密化を必ず適用するよう統一。
+- 探索半径・PLATEAU建物データそのもの・高さ妥当性チェック
+  (MAX_PLAUSIBLE_STRUCTURE_HEIGHT_METERS等)は変更していない。
+
+---
+
+3. 三脚候補点が実在するのに「確定解なし」になる問題
+
+前提: v19でrefineWithManualEquivalentProjection()の1次元（距離のみ）探索を
+2次元（距離+方位）探索へ修正済み。今回はその上でなお残っていた原因。
+
+原因: 同関数の格子探索が固定3パスで打ち切られ、各パス後の探索半径縮小にも
+0.5m未満へは縮まない下限があった。最終判定 ROUND_TRIP_SCREEN_TOLERANCE_
+PERCENT（画面比0.5%）は焦点距離に関わらず固定値だが、同じ0.5%が要求する
+「実距離での位置精度」は焦点距離が長く（画角が狭く）なるほど厳しくなる。
+固定3パス後の格子間隔は約1.5m前後までしか縮まらず、望遠での構図では
+0.5%以内に収まる前に探索が尽きていた。人がプレビューを見ながら手動で
+ピンをドラッグ調整する場合はこの格子解像度に制約されないため、同じ地点
+でも手動なら見つかる、という報告内容と一致する。
+
+修正: src/cesium/tripodCandidates.ts refineWithManualEquivalentProjection()
+- パス数の固定上限を3→8（安全上限。無駄な通信を防ぐための上限であり、
+  通常は下記の収束条件で先に終了する）。
+- 各パスのベストスコアがROUND_TRIP_SCREEN_TOLERANCE_PERCENTの1/5以内に
+  収まった時点で、それ以上格子を細かくしても最終判定が変わらないため
+  早期終了する収束条件を追加（画角が広く元々精度が出やすいケースでは
+  従来通り早期に終わり、DEM通信量は増えない）。
+- 探索半径縮小の下限を0.5m→0.025m（格子間隔換算で約5cm）に緩和し、
+  望遠構図で必要なセンチメートル単位の位置精度まで格子を縮小できるように
+  した。
+- CameraModel投影経路・0.5%round-trip判定・DEM解像度（1m固定）・
+  収束角度条件・wide fallback・double-checkは変更していない。
+
+---
+
+変更していない精度条件（全修正共通）
+- GSI DEM1A -> DEM5A -> DEM5B -> DEM5C -> DEM10Bの優先順位
+- PLATEAU建物データそのもの、高さ妥当性の上限(1000m)
+- CameraModel round-trip 0.5% dx/dy判定
+- 収束角度条件(CONVERGED_HORIZONTAL_DEGREES=0.002)
+
+検証
+- npx esbuild によるTypeScript構文チェック: PASS
+  (src/cesium/tripodCandidates.ts, src/cesium/plateauBuildingVerification.ts)
+- CSS括弧対応チェック: PASS (src/App.css)
+- node_modulesが同梱されていないため、フルTypeScript型チェック
+  (tsc -b) およびnpm run buildは未実行。次回、依存関係を導入した環境で
+  実行することを推奨。
+
+実機確認推奨
+- 手動被写体ピン配置後、案内メッセージが画面内（下部）に表示されること。
+- 「138タワー」等、局所探索半径を超える構造物の検索で、被写体ピンが
+  構造物の頂上付近に立つこと。
+- 望遠レンズ設定・従来「確定解なし」になっていた地点・日時で、三脚候補が
+  確定すること。処理時間が有意に伸びていないこと（早期収束が機能している
+  こと）。

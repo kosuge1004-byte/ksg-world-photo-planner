@@ -362,7 +362,33 @@ button { cursor: pointer; }
 }
 
 .preview-empty-state strong { color: #fff; font-size: 18px; line-height: 1.1; white-space: nowrap; }
-.preview-load-status, .app-status { display: none; }
+.preview-load-status { display: none; }
+
+/* 2026-08-29修正: このルールが .preview-load-status と一緒に .app-status も
+   display:none にしていたうえ、.app-status 自体に position 指定が無かった
+   ため、たとえ表示されても等身大の3Dマップ<section>の後ろ（通常の文書
+   フローの最下部）に描画され、実質的に画面外へ押し出されていた。
+   被写体ピンの手動配置など setSearchMessage() を使う全ての案内が見えなく
+   なっていたため、画面内に収まる固定位置表示へ修正する。 */
+.app-status {
+  position: fixed;
+  z-index: 12000;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  width: min(420px, calc(100% - 24px));
+  padding: 7px 12px;
+  color: #eef4fb;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 8px;
+  background: rgba(4, 8, 13, .88);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.app-status:empty { display: none; }
 
 .user-notice {
   position: fixed;

@@ -335,15 +335,31 @@ export async function resolvePlateauRoofGroundPoint(
   let peak = highestOf(localResults);
 
   if (!peak) {
-    // Stage 2で何も見つからない場合だけ、鉄塔等向けに範囲を広げる。
-    // 範囲が広いぶん無関係な構造物を拾うリスクがあるため、最も高い候補では
-    // なく、検索座標に最も近い（＝リストの先頭から見て最初に見つかった）
-    // 有効な候補を採用する。
+    // Stage 2で何も見つからない場合だけ、鉄塔・展望タワー・双輪アーチ状の
+    // モニュメント等向けに範囲を広げる。
+    //
+    // 2026-08-29修正: 以前はここで「最も高い候補」ではなく「検索座標に最も
+    // 近い（＝候補リストの先頭から見て最初に見つかった）有効な候補」を
+    // 採用していた。しかし候補リストはoffset→bearingの順で機械的に並んで
+    // いるだけで、「最初に見つかった」ことは「検索座標に最も近い」ことを
+    // 意味しない。この結果、脚部が広がる鉄塔や、双輪アーチのように構造の
+    // 途中（低い脚部や梁）でも表面と交差してしまう形状の場合、頂上ではなく
+    // 構造物のごく低い部分（＝見た目には「タワーの下」）を被写体ピンの
+    // 高さとして採用してしまっていた（例:「138タワー」検索）。
+    // 探索半径はここでも最大50mまでに限定されており、無関係な高層構造物を
+    // 拾うリスクはStage 2と同程度のため、Stage 2と同じく「最も高い候補」を
+    // 採用するよう統一する。
     const wideCandidates = ringCandidates(origin, WIDE_FALLBACK_OFFSETS_METERS, SAMPLING_BEARINGS_DEGREES, label);
     const wideResults = await clampAndValidate(viewer, wideCandidates, label, signal);
-    peak = wideResults[0] ?? null;
-  } else {
-    // Stage 3: Stage 2の頂上候補の直近だけを、より細かい角度刻みで精密化する。
+    peak = highestOf(wideResults);
+  }
+
+  if (peak) {
+    // Stage 3: 見つかった頂上候補（Stage 2 or 広域フォールバックいずれの
+    // 由来でも）の直近だけを、より細かい角度刻みで精密化する。
+    // 2026-08-29修正: 以前は広域フォールバックで見つかった候補（鉄塔・
+    // タワー等）にはこの精密化が適用されず、粗い8方位サンプリングの精度の
+    // ままだった。頂上候補の由来にかかわらず精密化を行うようにする。
     const refineCandidates = ringCandidates(peak.point, REFINE_OFFSETS_METERS, REFINE_BEARINGS_DEGREES, label);
     const refineResults = await clampAndValidate(viewer, refineCandidates, label, signal);
     const refinedPeak = highestOf(refineResults);
