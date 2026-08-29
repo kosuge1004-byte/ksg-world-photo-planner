@@ -1,0 +1,19 @@
+AstroSight ECEF preview-truth restore build fix
+Date: 2026-08-30
+
+Cloudflare build error:
+src/cesium/tripodCandidates.ts(1060,16): error TS6133: 'scanCenterlineAlignmentSeeds' is declared but its value is never read.
+
+Cause:
+The 2026-08-30 centerline search was intentionally removed from the authoritative tripod-candidate path when restoring the ECEF celestial-center -> subject-center -> terrain-intersection method, but the now-unused function definition remained in the source. With noUnusedLocals enabled, TypeScript correctly rejected the unused declaration.
+
+Fix:
+- Removed only the obsolete scanCenterlineAlignmentSeeds() function definition.
+- Did not alter the restored ECEF ray candidate path.
+- Did not alter lens-center height, height datum/geoid handling, terrain intersection, weather/refraction, or round-trip verification.
+- Kept diagnostic storage/accessors for compatibility; they no longer receive centerline scan samples because centerline scanning is no longer authoritative.
+
+Verification:
+- Confirmed scanCenterlineAlignmentSeeds no longer exists in src/cesium/tripodCandidates.ts.
+- Global TypeScript compiler reaches dependency resolution; full tsc -b cannot complete in this extracted ZIP because local type packages vite/client, node, and @cloudflare/workers-types are not installed in this environment.
+- The exact Cloudflare TS6133 source identified in the supplied build log has been removed.

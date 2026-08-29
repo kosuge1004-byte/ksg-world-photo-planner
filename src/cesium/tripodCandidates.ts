@@ -1043,151 +1043,6 @@ async function candidateSubjectLineOfSightClear(
   return { clear: true, obstructionDistanceMeters: null, obstructionHeightMeters: null };
 }
 
-/**
- * 天体中心－被写体中心の整列条件を、従来の「被写体から天体方向へ引いた
- * ECEFレイと地形の交点」とは独立に解く一次探索。
- *
- * 理論条件は候補三脚のレンズ中心 O から見た
- *   1) 被写体中心 S の見かけ方位・仰角
- *   2) 同じ O / 同じ日時で再計算した天体中心 C の見かけ方位・仰角
- * が一致すること。天体は実質無限遠なので「天体の有限ECEF座標」を仮定しない。
- * また初期観測点で計算した高度を距離全域へ固定しない。各候補点で天体水平座標を
- * 再計算し、プレビューと同じ computeApparentElevation() を被写体側へ使用する。
- *
- * この一次探索は全距離範囲を25m以下の間隔で直接評価し、角距離の局所最小を
- * seedとして返す。最終座標は後段の1m DEM + 2D CameraModel詳細探索で確定する。
- */
-/**
- * 2026-08-30修正（フルビルド検証により判明）: この関数は「診断/比較用に
- * コード上残すが、確定候補の主経路からは呼ばない」という意図で実装されて
- * いたが、モジュール内から一切参照されなくなったためTypeScriptの未使用
- * 判定（TS6133）でビルドが失敗していた（元の実装メモも「フルビルド
- * 未確認」と正直に記載しており、この問題を検知できていなかった）。
- * 実行経路・判定条件は一切変更せず、外部の診断・比較スクリプトから
- * 呼び出せるようexportするだけで、意図通り「主経路からは呼ばないが
- * コード上には残す」を維持したままビルドを通す。
- */
-export async function scanCenterlineAlignmentSeeds(
-  subject: GroundPoint,
-  point: CelestialScreenPoint,
-  cameraSettings: CameraSettings,
-  date: Date,
-  calculationMode: CalculationMode,
-  terrainSampler: TerrainSampler,
-  signal: AbortSignal | undefined,
-  distanceRange: TripodDistanceRange | undefined,
-  searchProfile: TripodSearchProfile | undefined,
-  refractionWeather?: RefractionWeatherContext
-): Promise<TerrainSolution[]> {
-  const baseDistances = logarithmicDistances(
-    distanceRange,
-    Math.max(DEFAULT_SAMPLE_COUNT, searchProfile?.sampleCount ?? DEFAULT_SAMPLE_COUNT)
-  );
-  const distances = densifyDistanceIntervals(baseDistances, 25, 320);
-  if (distances.length === 0) return [];
-
-  // 初期方位は探索格子を置くためだけに使用する。最終評価では候補地点ごとに
-  // celestial azimuth と subject bearing を再計算するため、この値を正解条件にはしない。
-  const reverseBearing = (point.azimuthDegrees + 180) % 360;
-  const requests = distances.map((distance) =>
-    destinationCartographic(subject, reverseBearing, distance)
-  );
-  const sampled = await terrainSampler(requests, signal, "10m");
-  abortIfRequested(signal);
-
-  type Scored = {
-    solution: TerrainSolution;
-    angularScoreDegrees: number;
-    azimuthErrorDegrees: number;
-    altitudeErrorDegrees: number;
-  };
-  const scored: Scored[] = [];
-  for (let index = 0; index < sampled.length; index += 1) {
-    const cartographic = sampled[index];
-    if (!cartographic || !Number.isFinite(cartographic.height)) continue;
-    const candidatePoint = buildCandidateGroundPoint(
-      cartographic,
-      subject,
-      `${point.label}中心線一次候補`
-    );
-    const lensObserver = withLensCenterHeight(
-      candidatePoint,
-      cameraSettings.lensCenterHeightMeters,
-      `${point.label}中心線一次候補レンズ中心`
-    );
-    const celestial = calculateCelestialHorizontalCoordinates(
-      point.id,
-      date,
-      lensObserver,
-      calculationMode,
-      refractionWeather
-    );
-    if (!Number.isFinite(celestial.altitudeDegrees) || celestial.altitudeDegrees <= 0.25) continue;
-
-    const subjectLine = calculateKarneyLineMetrics(candidatePoint, subject);
-    const subjectElevation = computeApparentElevation(
-      lensObserver,
-      subject,
-      calculationMode
-    );
-    const azimuthErrorDegrees = signedAngularDifferenceDegrees(
-      subjectLine.bearingDegrees,
-      celestial.azimuthDegrees
-    );
-    const altitudeErrorDegrees =
-      subjectElevation.apparentAltitudeDegrees - celestial.altitudeDegrees;
-    // 方位差は高仰角ほど同じ角度差が球面上で短くなるため cos(alt) で
-    // 接平面の角距離へ変換する。経験補正ではなく球面方向ベクトルの一次近似。
-    const meanAltitudeRadians = CesiumMath.toRadians(
-      (subjectElevation.apparentAltitudeDegrees + celestial.altitudeDegrees) / 2
-    );
-    const angularScoreDegrees = Math.hypot(
-      azimuthErrorDegrees * Math.cos(meanAltitudeRadians),
-      altitudeErrorDegrees
-    );
-    if (!Number.isFinite(angularScoreDegrees)) continue;
-    scored.push({
-      solution: {
-        cartographic,
-        distanceMeters: distances[index],
-        altitudeErrorDegrees,
-        seedKind: "centerline",
-      },
-      angularScoreDegrees,
-      azimuthErrorDegrees,
-      altitudeErrorDegrees,
-    });
-  }
-  lastCenterlineScanSamples = scored.map((entry) => ({
-    distanceMeters: entry.solution.distanceMeters,
-    angularScoreDegrees: entry.angularScoreDegrees,
-    azimuthErrorDegrees: entry.azimuthErrorDegrees,
-    altitudeErrorDegrees: entry.altitudeErrorDegrees,
-  }));
-  if (scored.length === 0) return [];
-
-  // 距離順の局所最小を優先し、単調区間しかない場合にも全体最小を必ず残す。
-  const localMinima = scored.filter((entry, index, all) => {
-    const previous = index > 0 ? all[index - 1].angularScoreDegrees : Number.POSITIVE_INFINITY;
-    const next = index + 1 < all.length ? all[index + 1].angularScoreDegrees : Number.POSITIVE_INFINITY;
-    return entry.angularScoreDegrees <= previous && entry.angularScoreDegrees <= next;
-  });
-  const ranked = (localMinima.length > 0 ? localMinima : scored)
-    .slice()
-    .sort((a, b) => a.angularScoreDegrees - b.angularScoreDegrees);
-
-  const selected: TerrainSolution[] = [];
-  for (const entry of ranked) {
-    if (selected.some((existing) =>
-      Math.abs(existing.distanceMeters - entry.solution.distanceMeters) < 40
-    )) continue;
-    selected.push(entry.solution);
-    if (selected.length >= 4) break;
-  }
-  if (selected.length === 0) selected.push(ranked[0].solution);
-  return selected.sort((a, b) => b.distanceMeters - a.distanceMeters);
-}
-
 type TerrainSolution = {
   cartographic: Cartographic;
   distanceMeters: number;
@@ -2446,7 +2301,7 @@ async function calculateOneCandidates(
   // ECEF 3DレイとDEM地形の全交点へ戻す。Karney地表測地線や距離総当たりの
   // centerline solverを最終候補座標の生成器にはしない。ここで得た交点はseedであり、
   // 後段の候補地点再計算・1m DEM・CameraModel round-tripを必ず通す。
-  const initialSolutions: TerrainSolution[] = (await scanRayTerrainIntersections(
+  const initialSolutions = (await scanRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
     terrainSampler,
@@ -2456,44 +2311,6 @@ async function calculateOneCandidates(
     directSeedDistance ?? searchProfile?.preferredDistanceMeters,
     true
   )).map((solution) => ({ ...solution, seedKind: "geometric-ray" as const }));
-
-  // 2026-08-30追記（未完成だった実装を完成させる）: 「幾何ECEFレイ×DEM
-  // 地形の交点」だけを主seedにすると、低高度の天体では幾何高度と見かけ
-  // 高度の差（大気差等）により、レイ自体が実証で正しい地点の近傍を
-  // 一切通らないことがある（2026-08-29実機ログで、粗探索が1250〜1280m側
-  // だけを交点として扱い、約968m側を入口段階で除外していたことを確認
-  // 済み）。この場合、いくら精密化・安全網・スライドの上限を改善しても、
-  // 最初から候補にすら挙がっていない地点は見つけようがない。
-  // 幾何ECEFレイの構成とは独立に、被写体からの見かけ仰角
-  // （elevationAngleDegrees、prawview/round-tripと同じApparent層）が
-  // 天体の見かけ高度（point.altitudeDegrees）と一致する距離を、既存の
-  // 全距離走査ソルバ（scanTerrainDistanceRange、交点が無くても最も近い
-  // 点を返す安全策込み）で独立に求め、"apparent-preview"というseedとして
-  // 追加する。このseedは（下のprocessInitialSolutionInner内の分岐で）
-  // 幾何レイへの再収束を経由せず、既存の1m DEM・2D CameraModel詳細探索
-  // （round-trip判定を含む、精度条件は一切変更しない）へ直接渡される。
-  // 経験的な角度・距離オフセット、968mへ合わせるための固定補正は一切
-  // 追加していない。
-  try {
-    const apparentPreviewBearing = (point.azimuthDegrees + 180) % 360;
-    const apparentSeed = await scanTerrainDistanceRange(
-      subject,
-      apparentPreviewBearing,
-      point.altitudeDegrees,
-      lensCenterHeightMeters,
-      calculationMode,
-      terrainSampler,
-      signal,
-      distanceRange,
-      searchProfile
-    );
-    if (apparentSeed) {
-      initialSolutions.push({ ...apparentSeed, seedKind: "apparent-preview" as const });
-    }
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    console.warn(`[tripod-candidate] ${point.label}: apparent-preview seedの算出に失敗（幾何レイseedのみで続行）`, error);
-  }
 
   initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
@@ -2616,11 +2433,7 @@ async function calculateOneCandidates(
     // 見かけ高度の逆解から得た点なので、ここで幾何レイへ強制的に戻すと
     // せっかく得た正解側seedを再び真空幾何交点へ引き戻してしまう。
     // apparent-preview seedはそのままCameraModel詳細探索へ渡す。
-    // apparent-preview seed以外（geometric-ray・将来のcenterline等）は
-    // 従来どおり幾何レイへの再収束を行う。apparent-preview seedだけを
-    // 明示的に除外する書き方にすることで、seedKindの種類が増えても
-    // 「apparent-preview以外は再収束する」という意図を保つ。
-    if (initialSolution.seedKind !== "apparent-preview") {
+    if (initialSolution.seedKind === "geometric-ray") {
       for (let iteration = 0; iteration < 3; iteration += 1) {
       const candidatePoint = buildCandidateGroundPoint(
         solution.cartographic,

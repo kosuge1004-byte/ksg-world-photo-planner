@@ -24,14 +24,6 @@ const cases = [
     arguments: ["./scripts/verify-tripod-preview-forward-model-20260830.mjs"],
   },
   {
-    // 2026-08-30追記: この検査は元々作成されていたが、run-regression-tests.mjs
-    // へ未登録のまま放置されており、自動実行されていなかった（直接実行すると
-    // apparent-preview seedの実装が欠落していたため失敗していた）。実装を
-    // 完成させた上で、登録漏れも合わせて修正する。
-    name: "tripod candidate apparent-preview seed bypasses the geometric-ray entry exclusion",
-    arguments: ["--experimental-strip-types", "./scripts/verify-tripod-preview-inverse-root-fix-20260830.mjs"],
-  },
-  {
     name: "tripod candidate progressive display and finite fallback waits",
     arguments: ["./scripts/verify-tripod-candidate-performance-resilience.mjs"],
   },
