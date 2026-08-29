@@ -2322,22 +2322,33 @@ async function calculateOneCandidates(
     lensCenterHeightMeters,
     `${point.label}初期方向観測点`
   );
-  // ECEFレイは幾何直線なので、天体計算が既に返している幾何高度を直接使う。
-  // 見かけ天体高度から「地上物体の屈折量」を差し引くのは物理的に別の補正を
-  // 混同するため禁止する。geometricAltitudeDegrees が無い互換入力だけ apparent を
-  // 使用し、通常の太陽/月/天の川計算では必ず幾何高度が使われる。
-  const initialGeometricRayAltitudeDegrees =
-    Number.isFinite(point.geometricAltitudeDegrees)
-      ? (point.geometricAltitudeDegrees as number)
-      : point.altitudeDegrees;
+  // 2026-08-30復元: プレビューを正とする逆問題では、天体の真空幾何高度を
+  // そのまま被写体通過レイへ使わない。プレビューで使われている天体の見かけ高度
+  // point.altitudeDegrees から、同じ観測点での被写体視線に含まれる地表屈折分だけを
+  // 戻し、ECEF幾何直線へ変換する。2026-08-23 bae177a で実証ケース約968mに
+  // 合わせていた定義を、後続のカメラ高/高さ基準修正を維持したまま復元する。
+  const initialSubjectElevation = computeApparentElevation(
+    rayDirectionObserver,
+    subject,
+    calculationMode
+  );
+  const initialGroundRefractionDegrees =
+    initialSubjectElevation.apparentAltitudeDegrees -
+    initialSubjectElevation.geometricAltitudeDegrees;
+  const initialRayAltitudeDegrees =
+    point.altitudeDegrees - initialGroundRefractionDegrees;
 
-  // 旧ECEFレイは確定探索には使用しない。directSeedDistanceは、精密探索を
-  // 待っている間の暫定表示と診断用の理論距離に限定する。ここで計算不能でも
-  // 新しい中心線ソルバは独立して続行する。
+  const initialRay = buildCelestialBackwardRay(
+    subject,
+    point.azimuthDegrees,
+    initialRayAltitudeDegrees,
+    rayDirectionObserver
+  );
+  if (!initialRay) return [];
   const directSeedDistance = directSightlineSeedDistanceMeters(
     subject,
     point.azimuthDegrees,
-    initialGeometricRayAltitudeDegrees,
+    initialRayAltitudeDegrees,
     rayDirectionObserver
   );
   // 2026-08-28追記: 地形（建物・山などの凹凸）を確認する精密計算には
@@ -2421,22 +2432,20 @@ async function calculateOneCandidates(
         : "none";
   const initialScanStartedAt = performance.now();
 
-  // 2026-08-30 根本再設計:
-  // 三脚候補の本計算から「天体幾何レイ×地形交点」を外す。天体中心と被写体中心が
-  // 同じ視線方向になるという本来の条件を、候補地点ごとの見かけ方位・見かけ仰角で
-  // 全探索する。旧ECEFレイは暫定表示の理論値にのみ残し、確定候補seedには使わない。
-  const initialSolutions = await scanCenterlineAlignmentSeeds(
-    subject,
-    point,
-    cameraSettings,
-    date,
-    calculationMode,
+  // 2026-08-30復元: 本計算の主seedを「天体中心→被写体中心→後方」の
+  // ECEF 3DレイとDEM地形の全交点へ戻す。Karney地表測地線や距離総当たりの
+  // centerline solverを最終候補座標の生成器にはしない。ここで得た交点はseedであり、
+  // 後段の候補地点再計算・1m DEM・CameraModel round-tripを必ず通す。
+  const initialSolutions = (await scanRayTerrainIntersections(
+    initialRay,
+    lensCenterHeightMeters,
     terrainSampler,
     signal,
     distanceRange,
     searchProfile,
-    activeRefractionWeather
-  );
+    directSeedDistance ?? searchProfile?.preferredDistanceMeters,
+    true
+  )).map((solution) => ({ ...solution, seedKind: "geometric-ray" as const }));
 
   initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
@@ -2595,16 +2604,20 @@ async function calculateOneCandidates(
         currentAzimuthError <= CONVERGED_HORIZONTAL_DEGREES
       ) break;
 
-      // 被写体を起点に、候補地点自身のENUで求めた最新の天体ECEF方向へ
-      // レイを引き直す。ECEFレイは幾何直線なので天体の幾何高度を直接使用する。
-      const geometricRayAltitudeDegrees =
-        Number.isFinite(horizontal.geometricAltitudeDegrees)
-          ? (horizontal.geometricAltitudeDegrees as number)
-          : horizontal.altitudeDegrees;
+      // 候補地点で再計算したプレビューの見かけ天体方向を、その候補地点自身の
+      // ENUでECEF方向へ変換する。ECEFは幾何直線なので、同じ候補地点から被写体へ
+      // 向く地表視線の apparent-geometric 差だけを戻してレイ高度へ変換する。
+      // これは2026-08-23 bae177aの再収束定義で、天体のgeometricAltitudeDegreesを
+      // 直接使う後続変更（485d023）を撤回する。
+      const groundRefractionDegrees =
+        candidateSubjectElevation.apparentAltitudeDegrees -
+        candidateSubjectElevation.geometricAltitudeDegrees;
+      const refinedRayAltitudeDegrees =
+        horizontal.altitudeDegrees - groundRefractionDegrees;
       const refinedRay = buildCelestialBackwardRay(
         subject,
         horizontal.azimuthDegrees,
-        geometricRayAltitudeDegrees,
+        refinedRayAltitudeDegrees,
         candidateLensObserver
       );
       if (!refinedRay) break;

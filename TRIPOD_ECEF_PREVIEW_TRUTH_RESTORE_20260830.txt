@@ -1,0 +1,34 @@
+AstroSight 三脚候補 ECEF「天体中心→被写体中心→後方」主計算 復元
+2026-08-30
+
+目的
+- 実地検証で正しいプレビュー側を変更しない。
+- 2026-08-30に入れたcenterline距離総当たりを確定候補の主seedから外す。
+- 2026-08-23 bae177ab4d9cefed3b340f0a1b3e3e9ede7aae2d の
+  「天体中心方向を観測点ENU→ECEF化し、被写体中心を通して後方へ延長する」方式を主計算へ復元する。
+- ただし後続の正しい改善（withLensCenterHeight、高さdatum分離、地点別geoid、DEM、気象、round-trip、診断）は維持する。
+
+復元内容
+1. 初期レイ
+   - プレビューの天体見かけ高度 point.altitudeDegrees を使用。
+   - 同じ観測点から被写体を見る地表視線について
+     groundRefraction = subject apparent - subject geometric
+     を計算。
+   - rayAltitude = celestial apparent - groundRefraction
+   - 観測地点自身のENUでECEF方向へ変換し、その方向を被写体ECEF中心へ平行移動して反転。
+2. 主seed
+   - scanCenterlineAlignmentSeeds() を主計算から外した。
+   - scanRayTerrainIntersections() によるECEFレイ×DEM地形の全交点を主seedに復元。
+3. 再収束
+   - 候補地点で天体見かけ方向を再計算。
+   - 候補地点から被写体を見る地表屈折分だけ戻してECEF幾何レイを再生成。
+   - 天体 geometricAltitudeDegrees の直接投入は撤回。
+4. 最終確定
+   - 現行の1m DEM詳細探索、地点別geoid、CameraModel/Projection round-trip、方位/高度判定を維持。
+
+撤回した主経路
+- 2026-08-30 centerline solver（距離格子上で subject apparent - celestial apparent を直接0にする方式）は確定候補の主seedに使用しない。
+- 関数自体は診断/比較用にコード上残るが、calculateOneCandidates() の正式経路からは呼ばない。
+
+禁止
+- 968mへ合わせる固定距離補正、経験オフセット、係数補正は追加していない。
