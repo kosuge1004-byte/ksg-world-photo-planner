@@ -246,7 +246,7 @@ export type TripodSearchDiagnostics = {
 let lastSearchDiagnostics: TripodSearchDiagnostics | null = null;
 
 /**
- * 2026-08-26追記: scanInitialRayTerrainIntersectionsが「一次探索(狭い範囲)」
+ * 2026-08-26追記: 旧ECEFレイ一次探索が「一次探索(狭い範囲)」
  * と「二次探索(ほぼ全距離範囲)」のどちらに落ちたかを、直近1回分だけ
  * 記録する診断用変数。天体ごとに複数回呼ばれるため、都度recordDiagnostics
  * 呼び出し時点の最新値を使う（同一天体内で複数交点があると上書きされるが、
@@ -1389,121 +1389,9 @@ async function scanRayTerrainIntersections(
 
 
 /**
- * 初回レイ探索の高速経路。
- *
- * 直線計算ですでにWGS84楕円体との第一候補距離が得られている場合、
- * まず被写体からその距離+安全余裕までだけを10m DEMで探索する。
- * そこで交点が得られなかった場合だけ、残りの距離を段階拡張する。
- *
- * 明示的なdistanceRange指定時と最高精度のダブルチェック時は、呼び出し側の
- * 「指定範囲をすべて調べる」という意味を変えないため従来の全範囲探索を維持する。
- * したがって最終1m精密化・round-trip検証の精度条件は一切変更しない。
- *
- * 2026-08-29修正（実機の現地確認より）: 探索範囲の上限（primaryMax、ひいては
- * 対数サンプルの密度）を、rangeSizingDistanceMeters（常にその場で計算される
- * 幾何学的estimate＝directSeedDistance）だけから決めるようにした。以前は
- * ここに「前回の確かな答え」（preferredDistanceMeters、被写体・日付が同じ
- * 場合にApp.tsx側からキャッシュされ再利用される値）を使っていたが、これは
- * ・被写体は同じでも日時が変わると天体の方位・仰角が変わるため、キャッシュ
- * 時点では正しかった距離が現在の検索では別の（誤った）地形交点に近い座標に
- * なってしまうことがある
- * ・range上限が変わるとログ間隔サンプルの密度も変わるため、真の交点
- * （地形が複雑な場所では複数の交点が近接して存在しうる）を探索範囲の
- * サンプルが拾えなくなることがある
- * という問題があり、実機で「ヒント値に近い、しかし現地確認では誤っている
- * 交点」が“確定”として返される事例が確認された。
- * rangeSizing用の値と、探索へ追加注入する“このあたりを重点的に見てほしい”
- * ヒント（injectedSampleDistanceMeters、以前どおりpreferredDistanceMeters
- * 由来でよい）を分離する。注入は「追加の1点」でしかなく、既存の対数サンプル
- * 密度・範囲を削ったり動かしたりしないため、注入だけなら他の真の交点を
- * 取りこぼすリスクはない。
+ * 2026-08-30: 旧「初回ECEFレイ×地形交点」の高速経路は、
+ * 中心線ソルバへの全面切替に伴い削除。確定候補のseed生成には使用しない。
  */
-async function scanInitialRayTerrainIntersections(
-  ray: CelestialSubjectRay,
-  lensCenterHeightMeters: number,
-  terrainSampler: TerrainSampler,
-  signal: AbortSignal | undefined,
-  distanceRange: TripodDistanceRange | undefined,
-  searchProfile: TripodSearchProfile | undefined,
-  rangeSizingDistanceMeters: number | undefined,
-  injectedSampleDistanceMeters: number | undefined,
-  exhaustive: boolean
-): Promise<TerrainSolution[]> {
-  if (
-    exhaustive ||
-    distanceRange !== undefined ||
-    !Number.isFinite(rangeSizingDistanceMeters)
-  ) {
-    return scanRayTerrainIntersections(
-      ray,
-      lensCenterHeightMeters,
-      terrainSampler,
-      signal,
-      distanceRange,
-      searchProfile,
-      injectedSampleDistanceMeters
-    );
-  }
-
-  const rangeSizingDistance = Math.min(
-    ABSOLUTE_MAX_DISTANCE_METERS,
-    Math.max(ABSOLUTE_MIN_DISTANCE_METERS, rangeSizingDistanceMeters!)
-  );
-
-  // 近距離では最低1km、遠距離では第一候補の35%を余裕として持たせる。
-  // ただし余裕だけで5kmを超えて広がらないよう制限する。
-  // この範囲内では従来どおり全交点を返すため、途中の山稜交点も保持される。
-  const safetyMarginMeters = Math.max(
-    1_000,
-    Math.min(5_000, rangeSizingDistance * 0.35)
-  );
-  const primaryMax = Math.min(
-    ABSOLUTE_MAX_DISTANCE_METERS,
-    rangeSizingDistance + safetyMarginMeters
-  );
-  const primaryRange: TripodDistanceRange = {
-    minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
-    maxMeters: primaryMax,
-  };
-
-  const primarySolutions = await scanRayTerrainIntersections(
-    ray,
-    lensCenterHeightMeters,
-    terrainSampler,
-    signal,
-    primaryRange,
-    searchProfile,
-    injectedSampleDistanceMeters
-  );
-  if (primarySolutions.length > 0 || primaryMax >= ABSOLUTE_MAX_DISTANCE_METERS) {
-    lastScanFallbackInfo = { usedFallback: false, primaryMaxMeters: primaryMax };
-    return primarySolutions;
-  }
-
-  // 第一候補周辺で解が無かったときだけ残りを探索する。境界直上の交点を
-  // 取りこぼさないよう500m重複させるが、先頭8mからの全再走査は行わない。
-  const fallbackRange: TripodDistanceRange = {
-    minMeters: Math.max(
-      ABSOLUTE_MIN_DISTANCE_METERS,
-      primaryMax - ADAPTIVE_COARSE_MAX_SPAN_METERS
-    ),
-    maxMeters: ABSOLUTE_MAX_DISTANCE_METERS,
-  };
-  // 2026-08-26追記: 診断用。一次探索（seed±余裕の狭い範囲）で解が
-  // 見つからず、この広い二次探索（ほぼ8m〜50km全域）に落ちたことを記録
-  // する。地形取得点数が多い（実機で395点）原因が、この二次探索への
-  // 分岐にあるのかを確定するため。
-  lastScanFallbackInfo = { usedFallback: true, primaryMaxMeters: primaryMax };
-  return scanRayTerrainIntersections(
-    ray,
-    lensCenterHeightMeters,
-    terrainSampler,
-    signal,
-    fallbackRange,
-    searchProfile,
-    injectedSampleDistanceMeters
-  );
-}
 
 async function solveTerrainDistance(
   subject: GroundPoint,
@@ -2767,9 +2655,11 @@ async function calculateOneCandidates(
   // 本計算の候補を置換・除外しない（仕様3-H）。
   if (doubleCheckEnabled && unique.length > 0) {
     const doubleCheckStartedAt = performance.now();
+    // 旧方式の独立ダブルチェック専用。新しい中心線本計算には使用しない。
+    const legacyInitialBearing = (point.azimuthDegrees + 180) % 360;
     const verification = await solveTerrainDistance(
       subject,
-      initialBearing,
+      legacyInitialBearing,
       point.altitudeDegrees,
       lensCenterHeightMeters,
       calculationMode,

@@ -1,0 +1,14 @@
+AstroSight 三脚中心線再構築版 ビルドエラー修正 2026-08-30
+
+Cloudflare build logで確認したTypeScriptエラー:
+1. TS6133: scanInitialRayTerrainIntersections is declared but its value is never read.
+2. TS2304: Cannot find name 'initialBearing'.
+
+原因:
+中心線ソルバへの全面切替時に、旧ECEF初回探索関数が未使用のまま残った。
+一方、ユーザーが明示的にONにした場合だけ動く旧方式ダブルチェックは、旧initialBearing変数を参照したままだった。
+
+修正:
+- 未使用になった scanInitialRayTerrainIntersections() を削除。
+- 旧方式ダブルチェック内だけで legacyInitialBearing=(point.azimuthDegrees+180)%360 を局所生成。
+- 新しい中心線本計算、プレビュー側、候補評価式には変更なし。
