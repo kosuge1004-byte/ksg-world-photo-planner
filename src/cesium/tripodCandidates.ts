@@ -2066,6 +2066,38 @@ async function calculateOneCandidates(
   async function processInitialSolution(
     initialSolution: TerrainSolution
   ): Promise<TripodCandidate | null> {
+    // 2026-08-29追記（実機診断より）: 「交点候補3件→確定1件」なのに
+    // 「除外理由: なし」（reject()による正式な棄却が0件）という、数が
+    // 合わない状態が実機で確認された。これは、残り2件のいずれかで
+    // reject()を経由しない生の例外（このtry/catchで囲まれていない
+    // 箇所での例外）が発生し、Promise.allSettledの「rejected」経路へ
+    // 落ちて、finalEvaluations（診断の「最終判定詳細」）に一切記録され
+    // ないままconsole.warnだけで静かに失われていたことを示唆する
+        // （利用者からは何も見えない）。粗探索の密度を上げた22件目の修正で、
+    // 以前は見つからなかった交点が新たに見つかるようになった結果、
+    // その候補の処理中に想定していなかった経路の例外が起きている
+    // 可能性がある。原因を推測せず特定できるよう、この関数全体を
+    // 診断用のtry/catchで囲み、既存のreject()を経由しない例外も
+    // 「processing-exception」として必ず記録するようにする
+    // （挙動・精度は変更せず、診断の可視性だけを上げる）。
+    try {
+      return await processInitialSolutionInner(initialSolution);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      reject("processing-exception", {
+        distanceMeters: initialSolution.distanceMeters,
+      });
+      console.warn(
+        `[tripod-candidate] ${point.label}: 交点候補の処理中に想定外の例外（reject()を経由しない経路）`,
+        { distanceMeters: initialSolution.distanceMeters, error }
+      );
+      return null;
+    }
+  }
+
+  async function processInitialSolutionInner(
+    initialSolution: TerrainSolution
+  ): Promise<TripodCandidate | null> {
     abortIfRequested(signal);
     let solution = initialSolution;
     // 2026-08-27追記: 地形通信自体は高速化できたが、依然として体感の
