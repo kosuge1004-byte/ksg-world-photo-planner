@@ -87,8 +87,16 @@ export async function findOsmSubjectHeightHint(
       distanceMeters: building.distanceMeters,
     }));
 
-  const best = [...structureCandidates, ...buildingCandidates]
-    .sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
+  // 2026-08-29修正: 東京タワーの脚元にはフットタウン等、別の低い建物が
+  // 隣接しており、単純な「最も近い候補」だけでは、塔本体（nearbyStructures）
+  // より僅かに近い低層の建物（nearbyBuildings）を誤って選んでしまうことが
+  // あった。man_made=tower等の「構造物」区分は、この機能が主に対象とする
+  // 塔・展望塔そのものである可能性が高いため、閾値内に構造物候補が1件でも
+  // あれば、それらの中で最も近いものを優先し、建物候補は構造物候補が
+  // 1件も無い場合にのみ使う。
+  const best = structureCandidates.length > 0
+    ? structureCandidates.sort((a, b) => a.distanceMeters - b.distanceMeters)[0]
+    : buildingCandidates.sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
   if (!best) return null;
   return { heightMeters: best.heightMeters, source: best.source, name: best.name };
 }

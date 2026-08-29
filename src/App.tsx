@@ -195,7 +195,7 @@ import {
   isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
-import { withLensCenterHeight, withVerticalOffset } from "./types/points";
+import { withLensCenterHeight, withVerticalOffset, ellipsoidalHeightMeters } from "./types/points";
 import {
   DEFAULT_FOREGROUND_HEIGHT_CM,
   normalizeForegroundHeightCm,
@@ -2515,16 +2515,15 @@ function App() {
     longitude: number,
     label: string
   ): Promise<GroundPoint> {
-    // 検索・URL・座標入力では、DEM（地面）確定と建物屋根面への合わせ込み判定を
-    // 並行して行う。屋根判定はDEM値そのものを使わず、両者とも入力の緯度経度
-    // だけから独立に求まるため、直列に待つ必要がない（結果の使い分けだけ
-    // 両方が揃ってから行う）。標準モードは表示用に読み込まれているPLATEAU
-    // 建物へclampToHeightMostDetailed（Cesium標準の表面クランプAPI。手動3D
-    // タップと同じ方式）を1回のバッチ呼び出しで通す。Googleタイルモードは
-    // その形状データを規約上読み取れないため、この判定専用に完全透明な
-    // PLATEAU建物を別途読み込んでから同じ判定を行う（画面の見た目はGoogle
-    // タイルのまま）。建物が無い・検証できない場合は、DEM地面の値のまま
-    // 変更しない。
+    // 検索・URL・座標入力では、DEM（地面）確定・建物屋根面への合わせ込み・
+    // OSM高さ推定の3つを並行して行う（互いに入力の緯度経度だけから独立に
+    // 求まるため、直列に待つ必要がない）。標準モードは表示用に読み込まれて
+    // いるPLATEAU建物へclampToHeightMostDetailed（Cesium標準の表面クランプ
+    // API。手動3Dタップと同じ方式）を1回のバッチ呼び出しで通す。Googleタイル
+    // モードはその形状データを規約上読み取れないため、この判定専用に完全
+    // 透明なPLATEAU建物を別途読み込んでから同じ判定を行う（画面の見た目は
+    // Googleタイルのまま）。建物が無い・検証できない場合は、DEM地面の値の
+    // まま変更しない。
     const viewer = mapViewerRef.current;
     const groundPointPromise = resolveGroundPoint(latitude, longitude, label);
     const roofPointPromise: Promise<GroundPoint | null> = (async () => {
@@ -2540,26 +2539,32 @@ function App() {
         return null;
       }
     })();
-    const [groundPoint, roofPoint] = await Promise.all([groundPointPromise, roofPointPromise]);
-    if (roofPoint) return roofPoint;
-
-    // 2026-08-29追記: 東京スカイツリー・138タワー等、国交省PLATEAUの
-    // 全国建物3Dデータセットに構造物そのものが収録されていない（鉄塔・
-    // 展望塔は通常の建築物とは別区分のため、収録されないことがある）場合、
-    // 上のroofPointは探索半径やアルゴリズムに関わらず原理的にnullのまま
-    // となる。この場合は被写体ピンが構造物の根元に立ってしまうため、
-    // OSMのheight/building:levelsタグから構造物の高さを推定し、DEM地面高
-    // から上空へ配置するフォールバックを試みる（既存のsite-context機能を
-    // 流用。実測でなく推定のため、PLATEAU頂上合わせ込みより優先度は下）。
-    try {
-      const hint = await findOsmSubjectHeightHint(latitude, longitude);
-      if (hint) {
-        return applyOsmSubjectHeightHint(groundPoint, hint, label);
-      }
-    } catch (error) {
+    // 2026-08-29追記: 東京タワー等では、探索座標の近傍（塔の脚元にある
+    // 低層のフットタウン等の別建物）にPLATEAUの建物データが存在するため、
+    // roofPointがnullにならず、しかし塔本体よりずっと低い高さで「見つかって
+    // しまう」ことがあった。以前はroofPointが非nullなら即採用していたため、
+    // OSM高さ推定（findOsmSubjectHeightHint）が一度も実行されず、
+    // 「タワーの根元（正確には隣接する低い建物の屋上）」にピンが立つ不具合が
+    // 残っていた。roofPointの有無で早期returnせず、OSM高さ推定も必ず
+    // 並行して取得し、両方が得られた場合はより高い（＝構造物の本体をより
+    // よく捉えている可能性が高い）方を採用するよう修正する。
+    const osmHintPromise = findOsmSubjectHeightHint(latitude, longitude).catch((error) => {
       console.warn("被写体地点のOSM高さ推定に失敗しました", error);
-    }
-    return groundPoint;
+      return null;
+    });
+    const [groundPoint, roofPoint, osmHint] = await Promise.all([
+      groundPointPromise,
+      roofPointPromise,
+      osmHintPromise,
+    ]);
+    const osmPoint = osmHint ? applyOsmSubjectHeightHint(groundPoint, osmHint, label) : null;
+    const candidates = [roofPoint, osmPoint].filter(
+      (point): point is GroundPoint => point !== null
+    );
+    if (candidates.length === 0) return groundPoint;
+    return candidates.reduce((tallest, current) =>
+      ellipsoidalHeightMeters(current) > ellipsoidalHeightMeters(tallest) ? current : tallest
+    );
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -2887,33 +2892,41 @@ ${diagnosticMessage}
     // PLATEAU建物をclampToHeightMostDetailedで1回のバッチ呼び出しにより
     // 屋根面へ合わせる（建物が無い・検証できない場合はDEM地面のまま変更
     // しない）。
+    // 2026-08-29修正: 東京タワー等、塔の脚元にある別の低い建物（フット
+    // タウン等）がPLATEAUに収録されているために roofPoint が非nullかつ
+    // 塔本体よりずっと低い高さで「見つかってしまう」ケースがあった。
+    // 以前は roofPoint が非nullなら即採用しOSM高さ推定を試さなかったため、
+    // 塔の根元付近にピンが立つ不具合が残っていた。roofPointの有無で早期
+    // 分岐せず、OSM高さ推定も必ず取得し、得られた高さのうちより高い方を
+    // 採用する。
     if (precisionSettings.accuracyMode !== "highest") {
       try {
-        const roofPoint = await resolvePlateauRoofGroundPoint(
-          viewer,
-          appliedResult.subject.latitude,
-          appliedResult.subject.longitude,
-          appliedResult.subject.label
-        );
-        if (roofPoint) {
-          appliedResult = { ...appliedResult, subject: roofPoint };
-        } else {
-          // PLATEAUに構造物が収録されていない塔（東京スカイツリー・138タワー等）
-          // 向けのOSM高さ推定フォールバック。resolveSearchSubject()と同じ経路。
-          const hint = await findOsmSubjectHeightHint(
+        const [roofPoint, osmHint] = await Promise.all([
+          resolvePlateauRoofGroundPoint(
+            viewer,
+            appliedResult.subject.latitude,
+            appliedResult.subject.longitude,
+            appliedResult.subject.label
+          ),
+          findOsmSubjectHeightHint(
             appliedResult.subject.latitude,
             appliedResult.subject.longitude
+          ).catch((error) => {
+            console.warn("被写体地点のOSM高さ推定に失敗しました", error);
+            return null;
+          }),
+        ]);
+        const osmPoint = osmHint
+          ? applyOsmSubjectHeightHint(appliedResult.subject, osmHint, appliedResult.subject.label)
+          : null;
+        const candidates = [roofPoint, osmPoint].filter(
+          (point): point is GroundPoint => point !== null
+        );
+        if (candidates.length > 0) {
+          const tallest = candidates.reduce((current, next) =>
+            ellipsoidalHeightMeters(next) > ellipsoidalHeightMeters(current) ? next : current
           );
-          if (hint) {
-            appliedResult = {
-              ...appliedResult,
-              subject: applyOsmSubjectHeightHint(
-                appliedResult.subject,
-                hint,
-                appliedResult.subject.label
-              ),
-            };
-          }
+          appliedResult = { ...appliedResult, subject: tallest };
         }
       } catch (error) {
         console.warn("被写体の建物屋根への合わせ込みに失敗しました", error);
