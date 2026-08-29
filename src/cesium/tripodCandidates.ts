@@ -299,9 +299,9 @@ export type TripodPhysicsAudit = {
     refractionCorrectionDegrees: number;
   };
   celestialElevation: {
-    geometricDegrees: number;
+    geometricDegrees: number | null;
     apparentDegrees: number;
-    astronomicalRefractionCorrectionDegrees: number;
+    astronomicalRefractionCorrectionDegrees: number | null;
     azimuthDegrees: number;
   };
   centerline: {
@@ -427,10 +427,11 @@ function buildTripodPhysicsAudit(
         subjectElevation.apparentAltitudeDegrees - subjectElevation.geometricAltitudeDegrees,
     },
     celestialElevation: {
-      geometricDegrees: celestial.geometricAltitudeDegrees,
+      geometricDegrees: finiteOrNull(celestial.geometricAltitudeDegrees),
       apparentDegrees: celestial.altitudeDegrees,
-      astronomicalRefractionCorrectionDegrees:
-        celestial.altitudeDegrees - celestial.geometricAltitudeDegrees,
+      astronomicalRefractionCorrectionDegrees: Number.isFinite(celestial.geometricAltitudeDegrees)
+        ? celestial.altitudeDegrees - (celestial.geometricAltitudeDegrees as number)
+        : null,
       azimuthDegrees: celestial.azimuthDegrees,
     },
     centerline: {

@@ -1,0 +1,19 @@
+AstroSight physics audit build fix 2026-08-30
+
+Cloudflare build errors fixed:
+- src/cesium/tripodCandidates.ts around line 430: TS2322 number | undefined -> number
+- src/cesium/tripodCandidates.ts around line 433: TS18048 celestial.geometricAltitudeDegrees possibly undefined
+
+Cause:
+CelestialScreenPoint.geometricAltitudeDegrees is optional (number | undefined), but the newly added diagnostics typed its output as mandatory number and subtracted it unconditionally.
+
+Fix:
+- TripodPhysicsAudit.celestialElevation.geometricDegrees is now number | null.
+- astronomicalRefractionCorrectionDegrees is now number | null.
+- finiteOrNull() is used for geometric altitude.
+- astronomical refraction delta is calculated only when geometricAltitudeDegrees is finite; otherwise null is logged.
+
+No centerline search equations, terrain sampling, camera height, curvature, weather/refraction calculations, or preview behavior were changed by this build fix.
+
+Validation limitation:
+Full npm build could not be completed in the ChatGPT container because npm ci timed out while downloading dependencies. The two TypeScript errors shown in the supplied Cloudflare log are fixed at their source locations.
