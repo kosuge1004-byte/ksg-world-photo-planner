@@ -1,0 +1,67 @@
+AstroSight 三脚候補点 / プレビュー Forward Model 統一修正
+Date: 2026-08-30
+
+目的
+- プレビュー側を正解基準として変更しない。
+- 三脚候補側の補正値・高さ差し戻しで帳尻を合わせず、理論計算経路を統一する。
+
+確認済みの旧不整合
+1. 手動三脚/プレビュー
+   resolveGroundPoint()
+   -> groundPointFromCoordinates()
+   -> sampleWorldTerrain()
+   -> los-safe DEM interpolation
+
+2. 三脚候補探索
+   calculateTripodCandidates() / sampleDirectionalTripodCandidates()
+   -> default terrainSampler = sampleWorldTerrainNeutral
+   -> neutral DEM interpolation
+
+同じ緯度経度でも地形補間値が異なり得るため、探索時の観測点ECEFと
+実プレビュー時の観測点ECEFが一致しない構造だった。
+
+実装
+A. src/cesium/tripodCandidates.ts
+- calculateTripodCandidates() の既定terrainSamplerを
+  sampleWorldTerrainNeutral -> sampleWorldTerrain に変更。
+- sampleDirectionalTripodCandidates()も同様に変更。
+- これにより粗探索、詳細2D refinement、round-trip評価へ渡される候補地表高が
+  通常プレビュー/手動三脚と同一のDEM定義になる。
+- CameraModel/Projectionによるround-trip最終判定は既存のまま維持。
+
+B. src/App.tsx
+- aligned候補だけcandidate.heightをresolveGroundPoint()結果へ差し戻していた
+  2026-08-29の暫定的整合処理を削除。
+- 候補選択後は全solutionTypeでresolveGroundPoint()の結果をそのまま使用。
+- 探索側と表示側が同一Forward Modelになったため、候補種別固有の高さ補正が不要。
+
+C. 回帰検査
+- scripts/verify-tripod-preview-forward-model-20260830.mjs を追加。
+- scripts/run-regression-tests.mjsへ登録。
+- 以下を静的契約として検査:
+  * preview ground -> groundPointFromCoordinates -> sampleWorldTerrain
+  * exact tripod search default -> sampleWorldTerrain
+  * directional tripod search default -> sampleWorldTerrain
+  * neutral samplerが三脚探索のdefaultになっていない
+  * aligned候補でcandidate.heightを後付け上書きしない
+  * 候補選択後もresolveGroundPointを使用
+  * round-tripはcreateCameraProjection/projectHorizontalToPreviewを維持
+
+D. 既存neutral DEM検査更新
+- scripts/verify-tripod-neutral-dem-20260823.mjsを新設計に合わせて更新。
+- neutral補間機能そのものは削除していない。他用途から明示指定可能。
+- ただし三脚探索の既定値としては使わない。
+
+検証結果
+PASS: verify-tripod-preview-forward-model-20260830.mjs 全8項目
+PASS: verify-tripod-neutral-dem-20260823.mjs 更新後全項目
+
+未確認
+- npm run build: この実行環境ではZIPにnode_modulesが含まれず、npm ciによる依存復元が
+  TransportTimeout/ServerErrorで完了しなかったため、フルビルド成功は未確認。
+- 実機の既知ケース（約968m/979m/1252mの症状）の再実測はこの環境では未実施。
+
+重要
+- previewViewCorrectionには変更を加えていない。
+- プレビュー側の計算コード自体は変更していない。
+- +角度、+距離、経験係数などの位置合わせ補正は追加していない。

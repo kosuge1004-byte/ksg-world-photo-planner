@@ -12,9 +12,8 @@ import type {
 } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import { ellipsoidalHeightMeters, withLensCenterHeight } from "../types/points";
-import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
+import type { CalculationMode, CameraSettings } from "../types/camera";
 import {
-  calculateSubjectScreenPoint,
   calculateCelestialHorizontalCoordinates,
   createCameraProjection,
   projectHorizontalToPreview,
@@ -26,7 +25,7 @@ import {
 import {
   fetchGsiGeoidHeightPointSpecific,
   geoidHeightMetersForTerrainSample,
-  sampleWorldTerrainNeutral,
+  sampleWorldTerrain,
   terrainDataSource,
 } from "./worldTerrain";
 import {
@@ -1443,10 +1442,13 @@ async function solveTerrainDistance(
  * celestial.ts経由でcameraModelFactory.tsを使用）へ逆投入し、天体中心と
  * 被写体中心のスクリーン座標差を測る。
  *
- * viewCorrectionも実プレビューと同じ値を渡す。ただし補正後の画面中央を
- * 被写体位置とはみなさず、天体中心と被写体中心の両方を同じ投影へ通した
- * 相対差だけを検証する。これにより物理座標へ表示補正を混ぜず、かつ実際に
- * ユーザーが見るプレビューと同一のround-tripになる。
+ * viewCorrection（現地校正用の手動視線補正）は意図的に渡さない。
+ * viewCorrectionはプレビュー全体（天体・被写体の投影基底そのもの）へ
+ * 均等に加算されるため、天体中心と被写体中心の「相対」位置には現れない
+ * （両者が同じだけシフトし打ち消し合う）。したがってここへ混ぜると、
+ * 物理的に正しい三脚座標を歪めるリスクだけが生じ、round-trip判定の
+ * 意味を変えない。UI表示だけの補正と物理座標を分離するという仕様3-2の
+ * 要請に従い、ここでは常にviewCorrectionなしで検証する。
  */
 function verifyRoundTripProjection(
   candidatePoint: GroundPoint,
@@ -1454,8 +1456,7 @@ function verifyRoundTripProjection(
   cameraSettings: CameraSettings,
   previewAspectRatio: number,
   calculationMode: CalculationMode,
-  finalHorizontal: { azimuthDegrees: number; altitudeDegrees: number },
-  viewCorrection?: CameraViewCorrection
+  finalHorizontal: { azimuthDegrees: number; altitudeDegrees: number }
 ): { dxPercent: number; dyPercent: number; inFront: boolean } | null {
   try {
     const projection = createCameraProjection(
@@ -1463,25 +1464,19 @@ function verifyRoundTripProjection(
       subject,
       cameraSettings,
       previewAspectRatio,
-      calculationMode,
-      viewCorrection
+      calculationMode
     );
     const screen = projectHorizontalToPreview(
       { azimuthDegrees: finalHorizontal.azimuthDegrees, altitudeDegrees: finalHorizontal.altitudeDegrees, geometricAltitudeDegrees: finalHorizontal.altitudeDegrees },
       projection
     );
-    const subjectScreen = calculateSubjectScreenPoint(
-      candidatePoint,
-      subject,
-      cameraSettings,
-      previewAspectRatio,
-      calculationMode,
-      viewCorrection
-    );
+    // createCameraProjectionのforwardは常に被写体方向（viewCorrectionなし）を
+    // 向くよう構成されるため、被写体自身は常に画面中央(50%,50%)に投影される。
+    // よって天体のスクリーン座標と中央との差が、そのまま両者のずれになる。
     return {
-      dxPercent: screen.xPercent - subjectScreen.xPercent,
-      dyPercent: screen.yPercent - subjectScreen.yPercent,
-      inFront: screen.inFront && subjectScreen.inFront,
+      dxPercent: screen.xPercent - 50,
+      dyPercent: screen.yPercent - 50,
+      inFront: screen.inFront,
     };
   } catch (error) {
     console.warn("[tripod-candidate] round-trip投影を計算できませんでした", error);
@@ -1516,8 +1511,7 @@ function evaluateManualEquivalentCandidate(
   previewAspectRatio: number,
   date: Date,
   calculationMode: CalculationMode,
-  refractionWeather?: RefractionWeatherContext,
-  viewCorrection?: CameraViewCorrection
+  refractionWeather?: RefractionWeatherContext
 ): ManualEquivalentEvaluation | null {
   const lensObserver = withLensCenterHeight(
     candidatePoint,
@@ -1540,8 +1534,7 @@ function evaluateManualEquivalentCandidate(
     cameraSettings,
     previewAspectRatio,
     calculationMode,
-    horizontal,
-    viewCorrection
+    horizontal
   );
   if (!roundTrip || !roundTrip.inFront || !Number.isFinite(roundTrip.dxPercent) || !Number.isFinite(roundTrip.dyPercent)) {
     return null;
@@ -1572,8 +1565,7 @@ async function refineWithManualEquivalentProjection(
   terrainSampler: TerrainSampler,
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
-  refractionWeather?: RefractionWeatherContext,
-  viewCorrection?: CameraViewCorrection
+  refractionWeather?: RefractionWeatherContext
 ): Promise<RefinementResultWithDiagnostics | null> {
   const coarsePoint = buildCandidateGroundPoint(
     coarseCartographic,
@@ -1743,8 +1735,7 @@ async function refineWithManualEquivalentProjection(
         previewAspectRatio,
         date,
         calculationMode,
-        refractionWeather,
-        viewCorrection
+        refractionWeather
       );
       if (!evaluated) continue;
       const request = requests[index];
@@ -1884,8 +1875,7 @@ async function refineWithManualEquivalentProjection(
           previewAspectRatio,
           date,
           calculationMode,
-          refractionWeather,
-          viewCorrection
+          refractionWeather
         );
         if (!evaluated) continue;
         // 既存の貪欲収束結果を明確に上回る場合だけ採用する。
@@ -1922,8 +1912,7 @@ async function refineWithManualEquivalentProjection(
     previewAspectRatio,
     date,
     calculationMode,
-    refractionWeather,
-    viewCorrection
+    refractionWeather
   );
   // 診断用のパス数・1パス目スコアは、最終再評価の成否に関わらず呼び出し
   // 側（診断記録）へ伝える必要があるため、finalEvaluationがnullの場合は
@@ -1966,9 +1955,7 @@ async function calculateOneCandidates(
   refractionWeatherResolver?: RefractionWeatherResolver,
   doubleCheckEnabled = false,
   initialDirectionObserver?: GroundPoint,
-  onPreliminaryCandidate?: (candidate: TripodCandidate) => void,
-  previewTerrainSampler?: TerrainSampler,
-  viewCorrection?: CameraViewCorrection
+  onPreliminaryCandidate?: (candidate: TripodCandidate) => void
 ): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
   if (point.altitudeDegrees <= 0.25) return [];
@@ -2384,8 +2371,7 @@ async function calculateOneCandidates(
         terrainSampler,
         signal,
         distanceRange,
-        activeRefractionWeather,
-        viewCorrection
+        activeRefractionWeather
       );
     } catch (error) {
       // 2026-08-29修正（実機診断より）: 中止（AbortError）は、新しい検索が
@@ -2409,43 +2395,6 @@ async function calculateOneCandidates(
     if (!manualRefined) {
       reject("manual-refinement-no-valid-evaluation", { distanceMeters: solution.distanceMeters });
       return null;
-    }
-
-    // 初期探索はneutral補間で高速・安定に位置を絞るが、確定候補は実際の
-    // 手動三脚と同じ地形補間方式へ切り替え、同じプレビュー投影で再収束する。
-    if (previewTerrainSampler) {
-      let previewRefractionWeather = activeRefractionWeather;
-      if (refractionWeatherResolver) {
-        const resolved = await refractionWeatherResolver(manualRefined.candidatePoint, signal);
-        abortIfRequested(signal);
-        if (resolved) previewRefractionWeather = resolved;
-      }
-      const previewSeed = Cartographic.fromDegrees(
-        manualRefined.candidatePoint.longitude,
-        manualRefined.candidatePoint.latitude,
-        ellipsoidalHeightMeters(manualRefined.candidatePoint)
-      );
-      const previewRefined = await refineWithManualEquivalentProjection(
-        previewSeed,
-        subject,
-        point,
-        cameraSettings,
-        previewAspectRatio,
-        date,
-        calculationMode,
-        previewTerrainSampler,
-        signal,
-        distanceRange,
-        previewRefractionWeather,
-        viewCorrection
-      );
-      if (!previewRefined) {
-        reject("preview-terrain-refinement-no-valid-evaluation", {
-          distanceMeters: manualRefined.distanceMeters,
-        });
-        return null;
-      }
-      manualRefined = previewRefined;
     }
 
     const finalCandidatePoint = manualRefined.candidatePoint;
@@ -2700,7 +2649,7 @@ export async function calculateTripodCandidates(
   cameraSettingsOrLensHeight: CameraSettings | number,
   date: Date,
   calculationMode: CalculationMode,
-  terrainSampler: TerrainSampler = sampleWorldTerrainNeutral,
+  terrainSampler: TerrainSampler = sampleWorldTerrain,
   signal?: AbortSignal,
   previewAspectRatio = 3 / 2,
   distanceRange?: TripodDistanceRange,
@@ -2729,11 +2678,7 @@ export async function calculateTripodCandidates(
   onCelestialCandidatesResolved?: (
     id: CelestialScreenPoint["id"],
     candidates: TripodCandidate[]
-  ) => void,
-  /** 手動三脚・実プレビューと同じ最終地形サンプラー。省略時は探索用と同じ。 */
-  previewTerrainSampler: TerrainSampler = terrainSampler,
-  /** 実プレビューに適用中の構図補正。被写体中心も同じ投影で比較する。 */
-  viewCorrection?: CameraViewCorrection
+  ) => void
 ): Promise<TripodCandidate[]> {
   const cameraSettings: CameraSettings = typeof cameraSettingsOrLensHeight === "number"
     ? {
@@ -2778,21 +2723,6 @@ export async function calculateTripodCandidates(
     ).length;
     return result;
   };
-  const usesDistinctPreviewTerrain = previewTerrainSampler !== terrainSampler;
-  const instrumentedPreviewTerrainSampler: TerrainSampler | undefined = usesDistinctPreviewTerrain
-    ? async (samplePoints, sampleSignal, maximumDetail) => {
-        const result = await previewTerrainSampler(samplePoints, sampleSignal, maximumDetail);
-        if (lastSearchDiagnostics) {
-          lastSearchDiagnostics.liveRoundTripCount += 1;
-          lastSearchDiagnostics.liveLastRoundTripFinishedAtMs = Date.now();
-        }
-        terrainRequestedCount += result.length;
-        terrainFailedCount += result.filter(
-          (sample) => !sample || !Number.isFinite(sample.height)
-        ).length;
-        return result;
-      }
-    : undefined;
 
   // 太陽・月に限定すると、同じ候補計算を共有する天の川・北極星が
   // アプリ全体から消えるため、地平線上にある有効な天体をすべて対象にする。
@@ -2826,9 +2756,7 @@ export async function calculateTripodCandidates(
         refractionWeatherResolver,
         doubleCheckEnabled,
         initialDirectionObserver,
-        onPreliminaryCandidate,
-        instrumentedPreviewTerrainSampler,
-        viewCorrection
+        onPreliminaryCandidate
       );
       if (onCelestialCandidatesResolved) {
         try {
@@ -2941,7 +2869,7 @@ export function buildDirectionalTripodCandidates(
 export async function sampleDirectionalTripodCandidates(
   subject: GroundPoint,
   points: CelestialScreenPoint[],
-  terrainSampler: TerrainSampler = sampleWorldTerrainNeutral,
+  terrainSampler: TerrainSampler = sampleWorldTerrain,
   signal?: AbortSignal,
   distanceMeters = DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS
 ): Promise<TripodCandidate[]> {

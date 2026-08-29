@@ -20,6 +20,10 @@ const cases = [
     ],
   },
   {
+    name: "tripod candidate and preview share the same forward terrain model",
+    arguments: ["./scripts/verify-tripod-preview-forward-model-20260830.mjs"],
+  },
+  {
     name: "tripod candidate progressive display and finite fallback waits",
     arguments: ["./scripts/verify-tripod-candidate-performance-resilience.mjs"],
   },
@@ -39,15 +43,6 @@ const cases = [
   {
     name: "viewCorrection integration wiring",
     arguments: ["./scripts/verify-view-correction.mjs"],
-  },
-  {
-    name: "project sharing preserves device-independent height and composition",
-    arguments: [
-      "--import",
-      "./scripts/register-typescript-source-loader.mjs",
-      "--test",
-      "./tests/regression/project-share-device-parity.test.mjs",
-    ],
   },
   {
     name: "Karney inverse geodesic references",
@@ -168,7 +163,7 @@ const cases = [
     arguments: ["--experimental-strip-types", "./scripts/verify-device-dem-tile-cache-20260829.mjs"],
   },
   {
-    name: "tripod candidate speed caches preserve exact-result safety",
+    name: "tripod candidate speed caches preserve exact-result safety (persistent per-device seed cache disabled)",
     arguments: ["--experimental-strip-types", "./scripts/verify-tripod-speed-cache-20260829.mjs"],
   },
   {

@@ -30,8 +30,9 @@ const checks = [
   // 検証パターンを更新する。
   ['neutral terrain sampler requests neutral GSI (2026-08-28: via sampleTerrainCached)',
     /export async function sampleWorldTerrainNeutral[\s\S]*sampleTerrainCached[\s\S]*"neutral"/.test(terrain)],
-  ['tripod calculator defaults to neutral terrain sampler', /terrainSampler: TerrainSampler = sampleWorldTerrainNeutral/.test(tripod)],
-  ['tripod imports no ordinary sampleWorldTerrain fallback as default', !/import \{ sampleWorldTerrain, terrainDataSource \}/.test(tripod)],
+  ['tripod calculator defaults to the same terrain sampler as manual preview placement', /terrainSampler: TerrainSampler = sampleWorldTerrain/.test(tripod)],
+  ['tripod candidate module imports the preview terrain sampler', /sampleWorldTerrain,/.test(tripod)],
+  ['neutral sampler remains available only as an explicit non-default terrain utility', /export async function sampleWorldTerrainNeutral/.test(terrain)],
 ];
 for (const [name, ok] of checks) {
   console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`);

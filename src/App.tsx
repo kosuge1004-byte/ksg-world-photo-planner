@@ -67,7 +67,7 @@ import {
   decodeProjectShareCode,
   encodeProjectShareCode,
   ProjectShareCodeError,
-  type SharedProjectPayload,
+  type SharedProjectPayloadV1,
 } from "./sharing/projectShareCode";
 import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
@@ -115,7 +115,6 @@ import {
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
-  calculateSubjectScreenPoint,
 } from "./cesium/celestial";
 import { updateCelestialMapEntities } from "./cesium/celestialMap";
 import {
@@ -141,7 +140,6 @@ import {
   setExactTripodCandidates,
 } from "./cesium/tripodCandidateExactCache";
 import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache";
-import { sampleWorldTerrain } from "./cesium/worldTerrain";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
@@ -178,7 +176,7 @@ import {
   FOCAL_LENGTH_MAX,
   FOCAL_LENGTH_MIN,
 } from "./types/camera";
-import { DEFAULT_PRECISION_SETTINGS, type PrecisionSettings } from "./types/precision";
+import type { PrecisionSettings } from "./types/precision";
 
 import type {
   CalculationMode,
@@ -569,7 +567,7 @@ function App() {
     useState<{ token: number; id: string } | null>(null);
   const favoriteRegistrationTokenRef = useRef(0);
   const [sharedImportPayload, setSharedImportPayload] =
-    useState<SharedProjectPayload | null>(null);
+    useState<SharedProjectPayloadV1 | null>(null);
   const [sharedImportBusy, setSharedImportBusy] = useState(false);
   const [sharedImportError, setSharedImportError] = useState<string | null>(null);
   const [qrShareUrl, setQrShareUrl] = useState<string | null>(null);
@@ -1121,30 +1119,6 @@ function App() {
     previewRefractionWeather,
   ]);
 
-  const previewSubjectScreenPoint = useMemo(() => {
-    if (!tripodPoint || !subjectPoint) return null;
-    try {
-      return calculateSubjectScreenPoint(
-        tripodPoint,
-        subjectPoint,
-        cameraSettings,
-        previewAspectRatio,
-        calculationMode,
-        previewViewCorrection
-      );
-    } catch (error) {
-      console.warn("プレビューの被写体中心を投影できませんでした", error);
-      return null;
-    }
-  }, [
-    tripodPoint,
-    subjectPoint,
-    cameraSettings,
-    previewAspectRatio,
-    calculationMode,
-    previewViewCorrection,
-  ]);
-
   const celestialOcclusionDirections = useMemo(
     () => {
       if (
@@ -1454,9 +1428,6 @@ function App() {
           label: point.label,
           latitude: destination.latitude,
           longitude: destination.longitude,
-          // 時刻操作中は緯度経度だけを軽量再投影しており、移動先のDEM高と
-          // round-tripをまだ再検証していない。確定候補として選択させない。
-          solutionType: "preliminary" as const,
         };
       });
     });
@@ -1470,9 +1441,7 @@ function App() {
   ]);
 
   const selectableDisplayedTripodCandidates = useMemo(
-    () => displayedTripodCandidates.filter(
-      (candidate) => candidate.solutionType === "aligned"
-    ),
+    () => displayedTripodCandidates,
     [displayedTripodCandidates]
   );
 
@@ -1550,7 +1519,6 @@ function App() {
       date: selectedDate,
       calculationMode,
       previewAspectRatio,
-      viewCorrection: previewViewCorrection,
       refractionWeather: previewRefractionWeather,
       doubleCheckEnabled: precisionSettings.tripodCandidateDoubleCheckEnabled,
       initialDirectionObserver,
@@ -1684,9 +1652,7 @@ function App() {
                 delete next[resolvedId];
                 return next;
               });
-            },
-            sampleWorldTerrain,
-            previewViewCorrection
+            }
           );
           if (!cancelled) {
             const displayedCandidates = candidates;
@@ -1757,7 +1723,6 @@ function App() {
     selectedDate,
     calculationMode,
     previewAspectRatio,
-    previewViewCorrection,
     previewRefractionWeather,
     resolveTripodCandidateRefractionWeather,
     timelineInteracting,
@@ -3143,10 +3108,7 @@ ${diagnosticMessage}
       createdAtIso: now.toISOString(), updatedAtIso: now.toISOString(),
       shootingDateTimeLocal: dateTimeLocal, timeZone, calendarRegistered,
       subject: subjectPoint, tripod: effectiveTripod, foregroundObjects,
-      cameraSettings, celestialVisibility, previewFrameMode,
-      viewCorrection: previewViewCorrection,
-      precisionSettings,
-      mapViewMode, mapZoom, mapCenter,
+      cameraSettings, celestialVisibility, previewFrameMode, mapViewMode, mapZoom, mapCenter,
       displaySettings: { celestialMenuOpen },
     };
     setProjects(upsertProject(project));
@@ -3248,9 +3210,6 @@ ${diagnosticMessage}
     }
     setCameraSettings(project.cameraSettings);
     setCelestialVisibility(project.celestialVisibility); setPreviewFrameMode(project.previewFrameMode);
-    // 旧形式で未保存の場合も、端末固有のLocalStorage値を残さず0補正へ統一する。
-    setPreviewViewCorrection(project.viewCorrection ?? DEFAULT_CAMERA_VIEW_CORRECTION);
-    setPrecisionSettings(project.precisionSettings ?? DEFAULT_PRECISION_SETTINGS);
     setMapZoom(project.mapZoom); setMapCenter(project.mapCenter); mapCenterRef.current = project.mapCenter;
     setCelestialMenuOpen(project.displaySettings.celestialMenuOpen);
     timeZoneRef.current = project.timeZone; setTimeZone(project.timeZone);
@@ -3284,14 +3243,21 @@ ${diagnosticMessage}
   }
 
   function shareProject(project: PlannerProject): void {
-    // V2は塔頂・屋上・3Dピックと検証済み三脚の高さをそのまま共有する。
-    // 受信端末でDEMを取り直すと、同一プロジェクトが端末別の結果になる。
+    // 緯度経度・カメラ設定・表示設定だけを載せる。高度は受信側で必ず取り直すため含めない。
     const code = encodeProjectShareCode({
       name: project.name,
       shootingDateTimeLocal: project.shootingDateTimeLocal,
       timeZone: project.timeZone,
-      subject: project.subject,
-      tripod: project.tripod,
+      subject: {
+        latitude: project.subject.latitude,
+        longitude: project.subject.longitude,
+        label: project.subject.label,
+      },
+      tripod: {
+        latitude: project.tripod.latitude,
+        longitude: project.tripod.longitude,
+        label: project.tripod.label,
+      },
       foregroundObjects: (project.foregroundObjects ?? []).map((object) => ({
         type: object.type,
         latitude: object.latitude,
@@ -3302,8 +3268,6 @@ ${diagnosticMessage}
       cameraSettings: project.cameraSettings,
       celestialVisibility: project.celestialVisibility,
       previewFrameMode: project.previewFrameMode,
-      viewCorrection: project.viewCorrection ?? DEFAULT_CAMERA_VIEW_CORRECTION,
-      precisionSettings: project.precisionSettings ?? DEFAULT_PRECISION_SETTINGS,
     });
     const url = `${window.location.origin}${window.location.pathname}#share=${code}`;
     setQrShareProjectName(project.name);
@@ -3339,24 +3303,19 @@ ${diagnosticMessage}
     setSharedImportBusy(true);
     setSharedImportError(null);
     try {
-      // V2は送信側で確定した塔頂・屋上・三脚の3D高さをそのまま使用する。
-      // 旧V1だけは高さを持たないため、互換読込としてこの端末で解決する。
-      const hasSharedHeights = sharedImportPayload.v === 2;
+      // 高度はこの端末のHeightResolverで必ず取り直す。送信側の値は使わない。
+      // どれか1つでも失敗したら全体を中止する（部分的な取り込みはしない）。
       const [subject, tripod, resolvedForegroundHeights] = await Promise.all([
-        hasSharedHeights
-          ? Promise.resolve({ ...sharedImportPayload.subject })
-          : resolveGroundPoint(
-              sharedImportPayload.subject.latitude,
-              sharedImportPayload.subject.longitude,
-              sharedImportPayload.subject.label
-            ),
-        hasSharedHeights
-          ? Promise.resolve({ ...sharedImportPayload.tripod })
-          : resolveGroundPoint(
-              sharedImportPayload.tripod.latitude,
-              sharedImportPayload.tripod.longitude,
-              sharedImportPayload.tripod.label
-            ),
+        resolveGroundPoint(
+          sharedImportPayload.subject.latitude,
+          sharedImportPayload.subject.longitude,
+          sharedImportPayload.subject.label
+        ),
+        resolveGroundPoint(
+          sharedImportPayload.tripod.latitude,
+          sharedImportPayload.tripod.longitude,
+          sharedImportPayload.tripod.label
+        ),
         Promise.all(
           sharedImportPayload.foregroundObjects.map((object) =>
             resolveGroundPoint(object.latitude, object.longitude, "人物・前景オブジェクト")
@@ -3392,14 +3351,6 @@ ${diagnosticMessage}
       setCameraSettings(sharedImportPayload.cameraSettings);
       setCelestialVisibility(sharedImportPayload.celestialVisibility);
       setPreviewFrameMode(sharedImportPayload.previewFrameMode);
-      const importedViewCorrection = sharedImportPayload.v === 2
-        ? sharedImportPayload.viewCorrection
-        : DEFAULT_CAMERA_VIEW_CORRECTION;
-      setPreviewViewCorrection(importedViewCorrection);
-      const importedPrecisionSettings = sharedImportPayload.v === 2
-        ? sharedImportPayload.precisionSettings
-        : DEFAULT_PRECISION_SETTINGS;
-      setPrecisionSettings(importedPrecisionSettings);
       timeZoneRef.current = sharedImportPayload.timeZone;
       setTimeZone(sharedImportPayload.timeZone);
       dateTimeLocalRef.current = sharedImportPayload.shootingDateTimeLocal;
@@ -3430,8 +3381,6 @@ ${diagnosticMessage}
         cameraSettings: sharedImportPayload.cameraSettings,
         celestialVisibility: sharedImportPayload.celestialVisibility,
         previewFrameMode: sharedImportPayload.previewFrameMode,
-        viewCorrection: importedViewCorrection,
-        precisionSettings: importedPrecisionSettings,
         mapViewMode, mapZoom, mapCenter,
         displaySettings: { celestialMenuOpen },
       };
@@ -3440,11 +3389,7 @@ ${diagnosticMessage}
       setSharedImportPayload(null);
       setSharedImportBusy(false);
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      setSearchMessage(
-        hasSharedHeights
-          ? "共有された撮影計画を、同一の被写体・三脚高さと構図補正で取り込みました"
-          : "旧形式の撮影計画を取り込みました（高さ情報がないため、この端末で再取得しました）"
-      );
+      setSearchMessage("共有された撮影計画を取り込み、プリセットに保存しました（高度はこの端末で取得し直しました）");
     } catch (error) {
       console.warn("共有された撮影計画の高度を取得できませんでした", error);
       setSharedImportBusy(false);
@@ -4335,12 +4280,19 @@ ${diagnosticMessage}
     setTripodCandidateSelectionOpen(true);
   }
 
+  const [pendingPreliminaryCandidate, setPendingPreliminaryCandidate] =
+    useState<TripodCandidate | null>(null);
+
   function selectTripodCandidate(candidate: TripodCandidate) {
-    // プレビュー一致を保証できるのはround-trip済みのaligned候補だけ。
-    // 概算点は高速表示を維持するが、三脚として確定することは許可しない。
-    if (candidate.solutionType !== "aligned") {
+    // 2026-08-28追記: 「候補点計算中」の暫定候補（地形未確認の理論値）を
+    // そのまま設置すると、実際には建物や崖の上など、不正確な場所を
+    // 指している可能性がある。確認を一度挟み、同意した場合だけ設置する。
+    // 三脚を設置しても、裏側で進行中の精密計算（calculateTripodCandidates）
+    // は止めない（このダイアログは表示だけの分岐で、計算処理には一切
+    // 触れていないため、自然に両立する）。
+    if (candidate.solutionType === "preliminary") {
       setTripodCandidateSelectionOpen(false);
-      setSearchMessage("この地点はまだ概算です。精密計算が完了してから選択してください");
+      setPendingPreliminaryCandidate(candidate);
       return;
     }
     placeTripodAtCandidateConfirmed(candidate);
@@ -4373,34 +4325,19 @@ ${diagnosticMessage}
         ? `${candidate.label}の概算地点へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。精密な地形確認が完了次第、位置が自動で更新されます`
         : `${candidate.label}の地形交点候補へ移動しました（距離 ${Math.round(candidate.distanceMeters)}m）。構図はプレビューで確認してください`
     );
-    // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
-    // ここで確定後に正式なDEM/ジオイド解決へ差し替える
-    // （loadPlannerProjectの旧形式データ補正と同じ考え方）。
-    // candidate.heightをそのまま信用しない：方位のみ候補はDEM取得に失敗
-    // した場合「仮の0m」のまま返ってくることがある（B-09）ため、位置・
-    // 高さの両方をここで正式に再解決する。
-    //
-    // aligned候補は、確定直前にresolveGroundPoint()と同じlos-safe地形経路で
-    // 再収束し、実プレビューのround-tripを通過した高さを保持している。
-    // 非同期の正式ジオイド解決で座標・N値を補完しても、検証済み高さを別値で
-    // 上書きせず、候補計算時と設置後のプレビュー入力を同一に保つ。
+    // 三脚候補の最終配置は、通常の手動三脚ピン／プレビューと同じ
+    // resolveGroundPoint() を唯一の地表高解決経路として使用する。
+    // 2026-08-30: 探索側も既定 terrainSampler を sampleWorldTerrain に統一したため、
+    // aligned候補だけ candidate.height を優先して差し戻す補正は廃止した。
+    // これにより「探索時の高さ」と「実プレビュー時の高さ」を同じForward Model
+    // から得る。direction-only / preliminary の0mフォールバックもここで正式解決する。
     const requestId = ++geoidBackfillRequestRef.current;
     void resolveGroundPoint(candidate.latitude, candidate.longitude, candidate.label)
       .then((resolved) => {
         if (requestId !== geoidBackfillRequestRef.current) return;
-        const finalResolved = candidate.solutionType === "aligned"
-          ? {
-              ...resolved,
-              height: candidate.height,
-              ellipsoidalHeightMeters: candidate.height,
-              orthometricHeightMeters: Number.isFinite(resolved.geoidHeightMeters)
-                ? candidate.height - (resolved.geoidHeightMeters as number)
-                : resolved.orthometricHeightMeters,
-            }
-          : resolved;
         setTripodPoint((current) =>
           current && current.latitude === point.latitude && current.longitude === point.longitude
-            ? finalResolved
+            ? resolved
             : current
         );
       })
@@ -4518,15 +4455,8 @@ ${diagnosticMessage}
             viewCorrection={previewViewCorrection}
           />
 
-          {previewReady && previewSubjectScreenPoint?.inFront && !foregroundOverlapsSubjectPin && (
-            <div
-              className="preview-subject-center"
-              style={{
-                left: `${previewSubjectScreenPoint.xPercent}%`,
-                top: `${previewSubjectScreenPoint.yPercent}%`,
-              }}
-              aria-hidden="true"
-            >
+          {previewReady && !foregroundOverlapsSubjectPin && (
+            <div className="preview-subject-center" aria-hidden="true">
               <svg viewBox="0 0 28 40">
                 <path d="M14 39C11 32 2 24 2 14A12 12 0 0 1 26 14c0 10-9 18-12 25Z" />
                 <circle cx="14" cy="14" r="4.5" />
@@ -4800,13 +4730,13 @@ ${diagnosticMessage}
               <button
                 type="button"
                 className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus} ${
-                  selectableDisplayedTripodCandidates.length > 0 ? "tappable" : ""
+                  displayedTripodCandidates.length > 0 ? "tappable" : ""
                 }`}
-                role={selectableDisplayedTripodCandidates.length > 0 ? undefined : "status"}
+                role={displayedTripodCandidates.length > 0 ? undefined : "status"}
                 aria-live="polite"
-                disabled={selectableDisplayedTripodCandidates.length === 0}
+                disabled={displayedTripodCandidates.length === 0}
                 onClick={
-                  selectableDisplayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined
+                  displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined
                 }
               >
                 {tripodCandidateCalculationStatus === "calculating"
@@ -5206,6 +5136,34 @@ ${diagnosticMessage}
         onConfirm={handleConfirmCesiumIonConsent}
         onCancel={() => setCesiumIonConsentOpen(false)}
       />
+      {pendingPreliminaryCandidate && (
+        <>
+          <div
+            className="user-notice-backdrop"
+            onClick={() => setPendingPreliminaryCandidate(null)}
+          />
+          <aside className="user-notice warning prominent" role="alertdialog" aria-live="assertive">
+            <span>
+              まだ計算中の、概算の場所です。地形（建物・崖など）を確認しきれていないため、実際の位置とズレる可能性があります。ここに三脚を設置しますか？（計算は裏側で続き、正確な位置が分かり次第、自動的に更新されます）
+            </span>
+            <div className="user-notice-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  const candidate = pendingPreliminaryCandidate;
+                  setPendingPreliminaryCandidate(null);
+                  placeTripodAtCandidateConfirmed(candidate);
+                }}
+              >
+                概算のまま設置する
+              </button>
+              <button type="button" onClick={() => setPendingPreliminaryCandidate(null)}>
+                やめる
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
     </main>
   );
 }

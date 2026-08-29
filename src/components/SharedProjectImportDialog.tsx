@@ -1,8 +1,8 @@
-import type { SharedProjectPayload } from "../sharing/projectShareCode";
+import type { SharedProjectPayloadV1 } from "../sharing/projectShareCode";
 
 type Props = {
   open: boolean;
-  payload: SharedProjectPayload | null;
+  payload: SharedProjectPayloadV1 | null;
   importing: boolean;
   errorMessage: string | null;
   onCancel: () => void;
