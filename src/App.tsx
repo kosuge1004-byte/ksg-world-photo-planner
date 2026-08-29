@@ -4328,19 +4328,44 @@ ${diagnosticMessage}
     // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
     // ここで確定後に正式なDEM/ジオイド解決へ差し替える
     // （loadPlannerProjectの旧形式データ補正と同じ考え方）。
-    // TripodCandidateはジオイド高・標高基準を持たない軽量な型のため、
-    // ここで確定後に正式なDEM/ジオイド解決へ差し替える
-    // （loadPlannerProjectの旧形式データ補正と同じ考え方）。
     // candidate.heightをそのまま信用しない：方位のみ候補はDEM取得に失敗
     // した場合「仮の0m」のまま返ってくることがある（B-09）ため、位置・
     // 高さの両方をここで正式に再解決する。
+    //
+    // 2026-08-29修正（外部レビューにより判明した確認済みの不整合への
+    // 対応）: resolveGroundPoint()は標準のlos-safe補間（LOS判定用に、
+    // 意図的に高め側を採用する）でDEM高さを取得する。一方、探索で
+    // "aligned"（confirmed）となった候補は、探索内部のneutral補間で
+    // 取得した高さで、既にround-trip判定（画面上での天体・被写体一致）
+    // を通過済みである。以前はこの区別をせず、確定済みでround-trip
+    // 検証済みの高さを、未検証のlos-safe高さへ無条件に差し替えていた
+    // ため、「探索が確定と言った高さ」と「実際にプレビューへ反映される
+    // 高さ」が一致しない経路があった（地形が局所的に複雑な場所では
+    // 両補間方式の差が無視できない大きさになることを、20件目の検証時に
+    // 実測で確認済み）。solutionType==="aligned"の場合だけは、
+    // resolveGroundPoint()による座標・ジオイド分解（緯度経度・N値の
+    // 算出）は引き続き利用しつつ、高さ（ellipsoidalHeightMeters/height/
+    // orthometricHeightMeters）はround-trip検証済みのcandidate.heightを
+    // 優先し、無条件の上書きをしない。方位のみ候補・概算候補は、確定
+    // 済みの検証を経ていないため、従来どおりresolveGroundPoint()の結果を
+    // そのまま使う。
     const requestId = ++geoidBackfillRequestRef.current;
     void resolveGroundPoint(candidate.latitude, candidate.longitude, candidate.label)
       .then((resolved) => {
         if (requestId !== geoidBackfillRequestRef.current) return;
+        const finalResolved = candidate.solutionType === "aligned"
+          ? {
+              ...resolved,
+              height: candidate.height,
+              ellipsoidalHeightMeters: candidate.height,
+              orthometricHeightMeters: Number.isFinite(resolved.geoidHeightMeters)
+                ? candidate.height - (resolved.geoidHeightMeters as number)
+                : resolved.orthometricHeightMeters,
+            }
+          : resolved;
         setTripodPoint((current) =>
           current && current.latitude === point.latitude && current.longitude === point.longitude
-            ? resolved
+            ? finalResolved
             : current
         );
       })

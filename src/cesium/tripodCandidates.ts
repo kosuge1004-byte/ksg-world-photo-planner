@@ -985,7 +985,21 @@ async function scanRayTerrainIntersections(
   signal: AbortSignal | undefined,
   distanceRange: TripodDistanceRange | undefined,
   searchProfile: TripodSearchProfile | undefined,
-  preferredDistanceMeters?: number
+  preferredDistanceMeters?: number,
+  // 2026-08-29修正（外部レビューにより判明）: この関数は「天体ごとに1回だけ
+  // 行う一次の全域探索（8m〜primaryMax）」と「各初期交点候補ごとに、その
+  // 候補付近だけを見直す局所再探索（processInitialSolutionInner内、
+  // Promise.allSettledで複数候補を並列処理）」の両方から呼ばれる。
+  // どちらの呼び出しも診断用グローバル変数lastCoarseScanSamplesへ同じ
+  // ように書き込んでいたため、複数の初期交点がある場合、最後に完了した
+  // 局所再探索（＝どれか1つの候補の狭い範囲だけ）のデータで上書きされ、
+  // 「一次の全域探索で968m付近に交点の兆候があったかどうか」を診断コピー
+  // から一切確認できない状態になっていた（実機診断の生データ範囲を
+  // 逆算したところ、初期交点候補#1（1280.6m）自身の局所再探索の範囲と
+  // 完全に一致していたことで判明）。一次の全域探索の呼び出しだけを
+  // true、局所再探索側はfalseにして、診断が常に一次探索のデータを
+  // 保持するようにする。探索の挙動・精度には一切影響しない。
+  recordDiagnosticSamples = true
 ): Promise<TerrainSolution[]> {
   let baseDistances = logarithmicDistances(
     distanceRange,
@@ -1069,10 +1083,16 @@ async function scanRayTerrainIntersections(
     }
   }
   // 診断専用: 精密化前の粗探索サンプル（距離・レイ高との差[m]）を記録する。
-  lastCoarseScanSamples = distances.map((distance, index) => ({
-    distanceMeters: distance,
-    heightErrorMeters: errors[index],
-  }));
+  // 2026-08-29修正: 一次の全域探索（recordDiagnosticSamples=true）の
+  // データだけを記録し、各初期交点候補ごとの局所再探索（false）では
+  // 上書きしないようにする。詳細は関数シグネチャのrecordDiagnosticSamples
+  // 引数コメント参照。
+  if (recordDiagnosticSamples) {
+    lastCoarseScanSamples = distances.map((distance, index) => ({
+      distanceMeters: distance,
+      heightErrorMeters: errors[index],
+    }));
+  }
   if (brackets.length === 0) {
     // 2026-08-29修正（2026-08-07頃の旧実装との比較検証により判明）:
     // 現行方式は「符号が反転する交点（明確な交差）が1つも見つからなければ
@@ -1978,6 +1998,32 @@ async function calculateOneCandidates(
       refinementPassTrace: evaluation?.refinementPassTrace ?? null,
     });
   };
+  // 2026-08-29追記（外部レビューにより判明した確認済みの不整合への対応）:
+  // 従来finalEvaluations（診断コピーの「最終判定詳細」）には、reject()を
+  // 経由した棄却候補しか記録されなかった。確定（aligned）した候補自身の
+  // 方位誤差・仰角誤差・dx/dy・スコアは、console.warn（ブラウザの開発者
+  // コンソール、利用者には見えない）にしか出力されず、しかもその
+  // console.warnは棄却分岐の中にしか無いため、確定候補では一切呼ばれず、
+  // 実質的にどこにも残っていなかった。confirmed-alignedという専用の
+  // reasonで、確定候補についても同じ形式で記録し、「約何%の誤差で
+  // 合格したか」を次回以降の診断コピーから確認できるようにする。
+  // rejectionReasonsのカウントには加算しない（実際には棄却されていない
+  // ため）。
+  const recordConfirmed = (evaluation: Partial<TripodSearchDiagnostics["perCelestialBody"][string]["finalEvaluations"][number]>) => {
+    finalEvaluations.push({
+      distanceMeters: evaluation.distanceMeters ?? null,
+      reason: "confirmed-aligned",
+      azimuthErrorDegrees: evaluation.azimuthErrorDegrees ?? null,
+      altitudeErrorDegrees: evaluation.altitudeErrorDegrees ?? null,
+      dxPercent: evaluation.dxPercent ?? null,
+      dyPercent: evaluation.dyPercent ?? null,
+      inFront: evaluation.inFront ?? null,
+      refinementPassesUsed: evaluation.refinementPassesUsed ?? null,
+      firstPassScorePercent: evaluation.firstPassScorePercent ?? null,
+      finalScorePercent: evaluation.finalScorePercent ?? null,
+      refinementPassTrace: evaluation.refinementPassTrace ?? null,
+    });
+  };
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
     const startedAt = performance.now();
     const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
@@ -2286,7 +2332,11 @@ async function calculateOneCandidates(
           ...searchProfile,
           sampleCount: Math.min(20, searchProfile?.sampleCount ?? 20),
         },
-        solution.distanceMeters
+        solution.distanceMeters,
+        // この呼び出しは特定の初期交点候補1件だけを対象にした局所再探索
+        // であり、天体全体の一次探索ではない。診断用の生データダンプを
+        // ここで上書きしない。
+        false
       );
       if (localSolutions.length === 0) break;
       solution = localSolutions.reduce((nearest, candidate) =>
@@ -2436,6 +2486,23 @@ async function calculateOneCandidates(
       });
       return null;
     }
+
+    // 2026-08-29追記（外部レビューにより判明した確認済みの不整合への
+    // 対応）: ここまで到達した候補は確定（aligned）となる。従来はここで
+    // 診断への記録が一切無かったため、確定候補自身の誤差・スコアが
+    // どこにも残らなかった（詳細はrecordConfirmed宣言部のコメント参照）。
+    recordConfirmed({
+      distanceMeters: manualRefined.distanceMeters,
+      azimuthErrorDegrees: Number.isFinite(finalAzimuthError) ? finalAzimuthError : null,
+      altitudeErrorDegrees: Number.isFinite(finalAltitudeError) ? finalAltitudeError : null,
+      dxPercent: roundTrip && Number.isFinite(roundTrip.dxPercent) ? roundTrip.dxPercent : null,
+      dyPercent: roundTrip && Number.isFinite(roundTrip.dyPercent) ? roundTrip.dyPercent : null,
+      inFront: roundTrip?.inFront ?? null,
+      refinementPassesUsed: manualRefined.refinementPassesUsed,
+      firstPassScorePercent: manualRefined.firstPassScorePercent,
+      finalScorePercent: manualRefined.score,
+      refinementPassTrace: manualRefined.passTrace,
+    });
 
     // 2026-08-29追記: round-trip投影条件だけでは検出できない「途中の
     // 地形に被写体への視線を遮られている」可能性を確認する（詳細は
