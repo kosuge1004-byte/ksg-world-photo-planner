@@ -181,4 +181,58 @@ candidate.solutionType === "preliminary" だけを見て「計算中」表示を
   未実施。報告いただいた2つの実機診断（138タワー・1600mm、250mm・979m）
   の場面で、今回の修正後に確定解へ到達するかどうかの再確認を推奨する。
 
+---
+
+追記（同日）: 6件目 — 東京スカイツリー検索でピンが根元に立つ（2件目の
+再発）。2件目の修正（highestOf採用・Stage3精密化統一）だけでは、根本
+原因が別にあるケースが残っていることが実機再現で判明した。
+
+原因: resolvePlateauRoofGroundPoint()は国交省PLATEAUの「全国建物3Dデータ
+セット（all-bldg-maxlod2-latest）」だけを頂上判定に使っている。この
+データセットは建築基準法上の「建築物」を対象としており、東京スカイツリー
+や138タワーのような鉄塔・展望塔は、通常の建物とは別区分のため、この
+データセットに構造物そのものが収録されていないことがある。この場合、
+探索半径・「最も高い候補を採用」等のアルゴリズム側をどれだけ改善しても、
+そもそもクランプ対象の3D形状がシーンに存在しないため、原理的に頂上を
+検出できない（2件目の修正はこの原因には対応していなかった）。
+
+修正: 新規 src/height/osmSubjectHeightFallback.ts
+- PLATEAU建物頂上合わせ込みが失敗した場合の追加フォールバックとして、
+  OSM（OpenStreetMap）のheight / building:levelsタグから構造物・建物の
+  高さを推定し、検索座標のDEM地面高からその高さぶん上空へ被写体ピンを
+  配置する。
+- 新しいAPI・Overpassクエリは追加せず、三脚探索のsite constraints判定
+  向けに既に実装済みの仕組み（server/osmSiteContext.ts の
+  nearbyStructures/nearbyBuildings、/api/osm-site-context、
+  src/search/siteContext.ts の fetchSiteContexts）をそのまま流用した。
+  東京スカイツリーの実際のOSMタグ（height=634, man_made=tower）で
+  estimateHeightFromTags()が634m・surveyed（実測値）を正しく返すことを
+  Node単体で確認済み。
+- 検索座標から60m以内（PLATEAU側の局所探索20m＋広域フォールバック
+  30-50mと同程度）にある、名前付きで高さ情報を持つ構造物・建物のうち
+  最も近いものだけを採用し、無関係な別の構造物には反応しない。
+- 高さはOSMコミュニティ入力の実測値/推定値であり、PLATEAU頂上合わせ込み
+  （3d-picked、実表面）ほど確実ではないため、heightSourceに新しい値
+  （osm-surveyed-height / osm-levels-estimate）を設け、由来を区別できる
+  ようにした。
+- PLATEAU・OSMいずれからも情報が得られない場合は、従来通りDEM地面高の
+  まま変更しない（新たな0m代替・推測配置は行わない）。
+- src/App.tsx resolveSearchSubject()（通常のスポット検索・被写体検索
+  経路）と、標準モードのスポットプリセット適用経路の両方に同じ
+  フォールバックを追加した。
+
+検証
+- npm install後、npx tsc -b / npm run build / npm run test:regression
+  （33グループ）/ npm run lint、全てPASS。
+- estimateHeightFromTags()の単体動作をNode.js単体で確認（東京スカイツリー
+  の実際のOSMタグでheight=634m・surveyedを正しく返すこと、
+  building:levelsのみの場合は3m/階の推定値になること、タグが無い場合は
+  nullを返すこと）。
+- 実際のOverpass API呼び出し・実機での東京スカイツリー再検索は未確認。
+  ネットワーク制約上、このサンドボックスからOverpass API
+  （overpass-api.de等）・GSI・Cesium ionへ到達できないため。次回、
+  実機で「東京スカイツリー」「138タワー」を再検索し、ピンが構造物上方
+  （東京スカイツリーなら地表+634m付近）に立つことを確認いただきたい。
+
+
 

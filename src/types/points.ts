@@ -1,4 +1,11 @@
-export type HeightSource = "dem" | "terrain" | "3d-picked" | "manual" | "legacy";
+export type HeightSource =
+  | "dem"
+  | "terrain"
+  | "3d-picked"
+  | "manual"
+  | "osm-surveyed-height"
+  | "osm-levels-estimate"
+  | "legacy";
 
 export type GroundPoint = {
   latitude: number;

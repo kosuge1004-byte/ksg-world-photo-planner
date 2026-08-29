@@ -165,6 +165,7 @@ import {
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
 import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
+import { findOsmSubjectHeightHint, applyOsmSubjectHeightHint } from "./height/osmSubjectHeightFallback";
 import { cartesianToForegroundCoordinates, enableForegroundObjectDrag, updateForegroundObjectEntity } from "./cesium/foregroundObject";
 
 import {
@@ -2537,7 +2538,25 @@ function App() {
       }
     })();
     const [groundPoint, roofPoint] = await Promise.all([groundPointPromise, roofPointPromise]);
-    return roofPoint ?? groundPoint;
+    if (roofPoint) return roofPoint;
+
+    // 2026-08-29追記: 東京スカイツリー・138タワー等、国交省PLATEAUの
+    // 全国建物3Dデータセットに構造物そのものが収録されていない（鉄塔・
+    // 展望塔は通常の建築物とは別区分のため、収録されないことがある）場合、
+    // 上のroofPointは探索半径やアルゴリズムに関わらず原理的にnullのまま
+    // となる。この場合は被写体ピンが構造物の根元に立ってしまうため、
+    // OSMのheight/building:levelsタグから構造物の高さを推定し、DEM地面高
+    // から上空へ配置するフォールバックを試みる（既存のsite-context機能を
+    // 流用。実測でなく推定のため、PLATEAU頂上合わせ込みより優先度は下）。
+    try {
+      const hint = await findOsmSubjectHeightHint(latitude, longitude);
+      if (hint) {
+        return applyOsmSubjectHeightHint(groundPoint, hint, label);
+      }
+    } catch (error) {
+      console.warn("被写体地点のOSM高さ推定に失敗しました", error);
+    }
+    return groundPoint;
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -2875,6 +2894,23 @@ ${diagnosticMessage}
         );
         if (roofPoint) {
           appliedResult = { ...appliedResult, subject: roofPoint };
+        } else {
+          // PLATEAUに構造物が収録されていない塔（東京スカイツリー・138タワー等）
+          // 向けのOSM高さ推定フォールバック。resolveSearchSubject()と同じ経路。
+          const hint = await findOsmSubjectHeightHint(
+            appliedResult.subject.latitude,
+            appliedResult.subject.longitude
+          );
+          if (hint) {
+            appliedResult = {
+              ...appliedResult,
+              subject: applyOsmSubjectHeightHint(
+                appliedResult.subject,
+                hint,
+                appliedResult.subject.label
+              ),
+            };
+          }
         }
       } catch (error) {
         console.warn("被写体の建物屋根への合わせ込みに失敗しました", error);
