@@ -1337,7 +1337,12 @@ async function refineWithManualEquivalentProjection(
   // 場合はこの格子の粗さに制約されないため、同じ地点でも手動なら見つかる。
   // 格子間隔が要求精度に対して十分細かくなるか、既に十分collapseした
   // 最良候補が得られるまでパスを継続する（暴走防止に上限を設ける）。
-  const MAX_REFINEMENT_PASSES = 8;
+  // 格子の外縁で最良候補が見つかった場合は、実際の解に到達するまで半径を
+  // 縮めず窓をスライドさせる（詳細は下記ループ内コメント参照）。これにより
+  // 必要なパス数が増えることがあるため、従来の3回・後の8回よりさらに余裕を
+  // 持たせる。1パスあたり最大81点のDEM取得で足止めしても通信コストは
+  // 限定的（キャッシュ・バッチ取得あり）なため、暴走防止の上限として妥当。
+  const MAX_REFINEMENT_PASSES = 12;
   // スクリーン許容誤差(0.5%)に対して十分な余裕（1/5）を持って収束した
   // ら、それ以上格子を細かくしても最終判定を変えないため打ち切る。
   const CONVERGED_SCORE_PERCENT = ROUND_TRIP_SCREEN_TOLERANCE_PERCENT * 0.2;
@@ -1348,7 +1353,13 @@ async function refineWithManualEquivalentProjection(
   for (let pass = 0; pass < MAX_REFINEMENT_PASSES; pass += 1) {
     abortIfRequested(signal);
     const segments = 8;
-    const requests: Array<{ distance: number; bearing: number; cartographic: Cartographic }> = [];
+    const requests: Array<{
+      distance: number;
+      bearing: number;
+      cartographic: Cartographic;
+      radialIndex: number;
+      lateralIndex: number;
+    }> = [];
     const dedupe = new Set<string>();
 
     for (let radialIndex = 0; radialIndex <= segments; radialIndex += 1) {
@@ -1369,6 +1380,8 @@ async function refineWithManualEquivalentProjection(
           distance,
           bearing,
           cartographic: destinationCartographic(subject, bearing, distance),
+          radialIndex,
+          lateralIndex,
         });
       }
     }
@@ -1381,6 +1394,7 @@ async function refineWithManualEquivalentProjection(
     abortIfRequested(signal);
 
     let passBest: ManualEquivalentEvaluation | null = null;
+    let passBestOnEdge = false;
     for (let index = 0; index < sampled.length; index += 1) {
       const cartographic = sampled[index];
       if (!cartographic || !Number.isFinite(cartographic.height)) continue;
@@ -1400,7 +1414,13 @@ async function refineWithManualEquivalentProjection(
         refractionWeather
       );
       if (!evaluated) continue;
-      if (!passBest || evaluated.score < passBest.score) passBest = evaluated;
+      const request = requests[index];
+      const onEdge = request.radialIndex === 0 || request.radialIndex === segments ||
+        request.lateralIndex === 0 || request.lateralIndex === segments;
+      if (!passBest || evaluated.score < passBest.score) {
+        passBest = evaluated;
+        passBestOnEdge = onEdge;
+      }
       if (!best || evaluated.score < best.score) best = evaluated;
     }
     if (!passBest) break;
@@ -1412,6 +1432,20 @@ async function refineWithManualEquivalentProjection(
     const passMetrics = calculateKarneyLineMetrics(subject, passBest.candidatePoint);
     centerDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
     centerBearing = passMetrics.bearingDegrees;
+
+    // 2026-08-29修正（実機診断より）: このパスの最良候補が探索窓の外縁
+    // （格子の端）で見つかった場合、真の最適解は窓の外側にまだ残っている
+    // 可能性が高い。この状態でいつも通り半径を縮めてしまうと、以前は
+    // 「候補は実在するのに窓の外だったため見つからない」まま収束して
+    // しまっていた（実機診断: 距離979m・仰角誤差0.096°・dy=-1.75%で
+    // roundtrip-vertical-outside-tolerance却下、必要な補正量が探索半径
+    // 約39mを超えていたケースを確認）。外縁で最良だった場合は、その地点を
+    // 新しい中心として同じ半径のまま探索窓をスライドさせ、最良点が窓の
+    // 内側（外縁ではない）で見つかるまでは縮小しない。
+    if (passBestOnEdge) {
+      continue;
+    }
+
     // One grid spacing from the preceding pass becomes the next search radius.
     // 2026-08-29修正: 以前は0.5m未満へ縮まらないよう下限を設けていたため、
     // 望遠構図で必要な実距離精度（時にセンチメートル単位）に届く前に
