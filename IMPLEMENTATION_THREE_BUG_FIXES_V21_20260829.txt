@@ -838,3 +838,33 @@ required to prove that this was the only cause」（実機での検証が
 検証
 - npm install後、npx tsc -b / npm run build / npm run test:regression
   （33グループ）/ npm run lint、全てPASS。
+
+追記（同日）: 18件目 —「三脚候補の記憶をリセット」ボタンが
+「診断情報をコピー」ボタンと完全に重なり、コピーできない
+
+原因: 15件目で「三脚候補の記憶をリセット」ボタンを追加した際、既存の
+「この検索の診断情報をコピー」ボタンと同じCSSクラス
+（.map-tripod-diagnostics-copy）をそのまま使い回した。このクラスには
+position: absolute; top: 78px; left: 50%; transform: translateX(-50%)
+という「画面上の絶対位置」が指定されていたため、2つのボタンが完全に
+同じ座標へ重なって描画されてしまい、後から描画される方（リセット
+ボタン）が常に手前になって、コピー ボタンをタップできなくなっていた。
+
+修正: src/App.tsx, src/App.css
+- 2つのボタンを新しいラッパー要素（.map-tripod-diagnostics-actions、
+  display:flex・横並び・折り返し対応）で囲み、位置指定はこのラッパー
+  側だけに持たせた。
+- .map-tripod-diagnostics-copy自体からposition/top/left/transformを
+  外し、ラッパー内で横に並ぶ通常のボタンへ変更した。
+- 画面幅が狭い場合はflex-wrapで自動的に折り返す。
+
+検証
+- npm install後、npx tsc -b / npm run build / npm run test:regression
+  （33グループ）/ npm run lint、全てPASS。CSSの括弧対応も確認済み。
+
+なお、ご報告いただいた「三脚候補点の表示もない」点について: 今回の
+「記憶をリセット」後の検索では、地形未確認の理論値（太陽概算候補
+1404m）のみが表示され、実地形に基づく確定/未確定いずれの候補点も
+出ていないように見える。これがリセット直後特有の一時的な状態
+（探索がまだ完走していない）なのか、別の不具合なのかは、今回のボタン
+修正で診断コピーが取得できるようになった後、内容を確認して切り分ける。

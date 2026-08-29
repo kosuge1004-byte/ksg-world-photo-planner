@@ -951,12 +951,19 @@ button { cursor: pointer; }
 .map-tripod-candidate-status.complete { color: #d9ffe0; border-color: rgba(73,214,111,.64); }
 .map-tripod-candidate-status.no-solution,
 .map-tripod-candidate-status.error { color: #ffe6b3; border-color: rgba(255,184,77,.68); }
-.map-tripod-diagnostics-copy {
+.map-tripod-diagnostics-actions {
   position: absolute;
   z-index: 18;
   top: 78px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+}
+.map-tripod-diagnostics-copy {
   padding: 3px 8px;
   color: rgba(238, 247, 255, .82);
   border: 1px solid rgba(120, 150, 175, .4);
@@ -967,6 +974,7 @@ button { cursor: pointer; }
   font-weight: 700;
   line-height: 1.3;
   touch-action: manipulation;
+  white-space: nowrap;
 }
 .map-tripod-diagnostics-copy:active { background: rgba(2, 8, 14, .55); }
 .map-tripod-progress-snapshot {

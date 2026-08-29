@@ -4732,7 +4732,7 @@ ${diagnosticMessage}
 
             {tripodCandidateCalculationStatus !== "idle" &&
               tripodCandidateCalculationStatus !== "calculating" && (
-                <>
+                <div className="map-tripod-diagnostics-actions">
                   <button
                     type="button"
                     className="map-tripod-diagnostics-copy"
@@ -4757,7 +4757,7 @@ ${diagnosticMessage}
                         ? "リセットできませんでした"
                         : "三脚候補の記憶をリセット"}
                   </button>
-                </>
+                </div>
               )}
 
             {mapMeasuring && (
