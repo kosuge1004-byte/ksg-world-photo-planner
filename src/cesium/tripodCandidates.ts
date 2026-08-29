@@ -473,18 +473,40 @@ async function buildPointSpecificFinalCandidateGroundPoint(
   signal?: AbortSignal
 ): Promise<GroundPoint> {
   const base = buildCandidateGroundPoint(cartographic, subject, label);
-  const exactGeoid = await fetchGsiGeoidHeightPointSpecific(cartographic, signal);
   const sampledGeoid = geoidHeightMetersForTerrainSample(cartographic);
-  const orthometric = Number.isFinite(sampledGeoid)
-    ? cartographic.height - (sampledGeoid as number)
-    : cartographic.height - exactGeoid;
-  const ellipsoidal = orthometric + exactGeoid;
+  // 2026-08-29修正（実機診断より）: 国土地理院ジオイドCGIは応答が不安定
+  // （タイムアウト実績あり、GEOID_FETCH_TIMEOUT_MS=15秒）で、この
+  // "候補点1点だけの高精度取得"がここで失敗・タイムアウトすると、以前は
+  // それだけで候補全体が「manual-refinement-exception」として棄却されて
+  // いた（実機診断: 天体総時間15.1〜15.2秒、内訳と矛盾する長さ）。
+  // 同じ検索の中で、この探索過程で既に取得できている地域代表値
+  // （sampledGeoid、0.01度単位・ミリ未満の精度差しかない滑らかな量）が
+  // 使える場合は、それを使ってでも候補を成立させることを優先し、点別の
+  // より精密な値の取得は「取れれば使う、失敗しても候補自体は失わない」
+  // ベストエフォートに格下げする。
+  let exactGeoid: number | null = null;
+  try {
+    exactGeoid = await fetchGsiGeoidHeightPointSpecific(cartographic, signal);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    if (!Number.isFinite(sampledGeoid)) throw error;
+    console.warn(
+      `[tripod-candidate] ${label}: 候補点別ジオイド高の取得に失敗したため、地域代表値で代替します`,
+      error
+    );
+  }
+  const geoidForOrthometric = Number.isFinite(sampledGeoid)
+    ? (sampledGeoid as number)
+    : (exactGeoid as number);
+  const geoidForEllipsoidal = exactGeoid ?? geoidForOrthometric;
+  const orthometric = cartographic.height - geoidForOrthometric;
+  const ellipsoidal = orthometric + geoidForEllipsoidal;
   return {
     ...base,
     height: ellipsoidal,
     ellipsoidalHeightMeters: ellipsoidal,
     orthometricHeightMeters: orthometric,
-    geoidHeightMeters: exactGeoid,
+    geoidHeightMeters: geoidForEllipsoidal,
     label,
   };
 }
