@@ -128,6 +128,7 @@ import {
   calculateTripodCandidates,
   getLastTripodSearchDiagnostics,
   getLastCoarseScanSamples,
+  getLastRefinementPassTrace,
 } from "./cesium/tripodCandidates";
 import {
   loadPersistentTripodSeeds,
@@ -836,6 +837,23 @@ function App() {
         "粗探索の生データ（精密化前・距離昇順、距離m:レイ高との差m）:",
         coarseScanSamples
           .map((sample) => `${Math.round(sample.distanceMeters)}:${sample.heightErrorMeters.toFixed(1)}`)
+          .join(" ")
+      );
+    }
+    // 2026-08-29追記: 精密化の各パスがどこへ向かって収束したかを直接確認
+    // できるよう、パスごとの中心距離・半径・最良スコア・外縁ヒットの有無を
+    // そのまま添付する。探索結果には影響しない診断専用の情報。
+    const refinementPassTrace = getLastRefinementPassTrace();
+    if (refinementPassTrace && refinementPassTrace.length > 0) {
+      lines.push(
+        "精密化パスの推移（パス番号:中心距離m/半径m→最良距離m@最良スコア%/外縁):",
+        refinementPassTrace
+          .map((entry) =>
+            `${entry.pass}:${entry.centerDistanceMeters.toFixed(1)}/${entry.radialRadiusMeters.toFixed(1)}` +
+            `→${entry.bestDistanceMeters !== null ? entry.bestDistanceMeters.toFixed(2) : "-"}` +
+            `@${entry.bestScorePercent !== null ? entry.bestScorePercent.toFixed(4) : "-"}%` +
+            `${entry.onEdge ? "(edge)" : ""}`
+          )
           .join(" ")
       );
     }

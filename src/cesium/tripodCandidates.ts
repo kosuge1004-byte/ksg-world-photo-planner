@@ -25,7 +25,6 @@ import {
 import {
   fetchGsiGeoidHeightPointSpecific,
   geoidHeightMetersForTerrainSample,
-  sampleWorldTerrain,
   sampleWorldTerrainNeutral,
   terrainDataSource,
 } from "./worldTerrain";
@@ -217,6 +216,15 @@ let lastScanFallbackInfo: { usedFallback: boolean; primaryMaxMeters: number } | 
  */
 let lastCoarseScanSamples: Array<{ distanceMeters: number; heightErrorMeters: number }> | null = null;
 
+/**
+ * 2026-08-29追記: 「979m付近で精密化がなぜ968m側の真の解へ到達しない
+ * のか」を推測でなく実データで確認するための診断専用の記録。直近1回の
+ * refineWithManualEquivalentProjection()呼び出しの、各パスの中心距離・
+ * 探索半径・そのパスの最良スコア・最良距離・外縁ヒットの有無をそのまま
+ * 保持する。探索の挙動・精度には一切影響しない。
+ */
+let lastRefinementPassTrace: RefinementResultWithDiagnostics["passTrace"] | null = null;
+
 export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null {
   return lastSearchDiagnostics;
 }
@@ -229,6 +237,15 @@ export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null
  */
 export function getLastCoarseScanSamples(): Array<{ distanceMeters: number; heightErrorMeters: number }> | null {
   return lastCoarseScanSamples;
+}
+
+/**
+ * 診断専用: 直近1回のrefineWithManualEquivalentProjection()呼び出しの、
+ * 各パスの中心距離・探索半径・そのパスの最良スコア・最良距離・外縁ヒット
+ * の有無をそのまま返す。探索結果そのものには一切使わない。
+ */
+export function getLastRefinementPassTrace() {
+  return lastRefinementPassTrace;
 }
 
 function recordDiagnostics(
@@ -1478,9 +1495,39 @@ async function refineWithManualEquivalentProjection(
   let centerBearing = coarseMetrics.bearingDegrees;
   let radialRadiusMeters = Math.max(24, Math.min(80, centerDistance * 0.04));
   let lateralRadiusMeters = radialRadiusMeters;
+  // 2026-08-29追記: 貪欲な「最良点を中心に半径を縮める」パターンサーチは、
+  // 地形が局所的に複雑な場所（例: 堤防近傍）では、真の最小値が近傍の別の
+  // 局所的な窪みに囲まれていると、そこへ収束してしまい抜け出せないことが
+  // ある（実機診断で、979m付近が現地確認済みの正解に極めて近い（約11m）
+  // にもかかわらず、6回の精密化を経てもスコアが1.7〜4%までしか改善しない
+  // ケースを確認）。粗い交点探索は幾何学的高度（大気差抜き）で交点を
+  // 検出するのに対し、最終round-trip判定は見かけの高度（大気差込み）で
+  // 判定するため、この2つの基準には低高度ほど無視できない差（本ケースの
+  // 太陽高度7.5°前後では大気差だけで約0.1°程度）が生じうる。この差自体は
+  // 精密化の探索半径（24〜80m）に対して十分小さい実距離（十数m程度）の
+  // はずだが、貪欲な縮小だけでは確実に補正しきれないことがある。
+  // 元の（縮小前の）中心・半径を、最後の安全網探索のために保持しておく。
+  const originalCenterDistance = centerDistance;
+  const originalCenterBearing = centerBearing;
+  const originalRadialRadiusMeters = radialRadiusMeters;
+  const originalLateralRadiusMeters = lateralRadiusMeters;
   let best: ManualEquivalentEvaluation | null = null;
   let refinementPassesUsed = 0;
   let firstPassScorePercent: number | null = null;
+  // 2026-08-29追記:「979m付近で精密化がなぜ968m側の真の正解へ到達しない
+  // のか」を推測でなく実データで確認するため、各パスの中心距離・半径・
+  // 最良スコアの推移をそのまま記録する。これにより次回の診断コピーで、
+  // 探索が真の解の方向へ単調に近づいているのか、途中で行き詰まって
+  // いるのか、格子の量子化で真の最小値を通り過ぎてしまっているのかを
+  // 判別できる。探索の挙動・精度には一切影響しない。
+  const passTrace: Array<{
+    pass: number;
+    centerDistanceMeters: number;
+    radialRadiusMeters: number;
+    bestScorePercent: number | null;
+    bestDistanceMeters: number | null;
+    onEdge: boolean;
+  }> = [];
 
   // 2026-08-29修正: 以前はここを固定3回で打ち切っていた。しかし
   // ROUND_TRIP_SCREEN_TOLERANCE_PERCENT（画面比0.5%）は画角に依存しない
@@ -1579,8 +1626,26 @@ async function refineWithManualEquivalentProjection(
       }
       if (!best || evaluated.score < best.score) best = evaluated;
     }
-    if (!passBest) break;
+    if (!passBest) {
+      passTrace.push({
+        pass: pass + 1,
+        centerDistanceMeters: centerDistance,
+        radialRadiusMeters,
+        bestScorePercent: null,
+        bestDistanceMeters: null,
+        onEdge: false,
+      });
+      break;
+    }
     if (pass === 0) firstPassScorePercent = passBest.score;
+    passTrace.push({
+      pass: pass + 1,
+      centerDistanceMeters: centerDistance,
+      radialRadiusMeters,
+      bestScorePercent: passBest.score,
+      bestDistanceMeters: passBest.distanceMeters,
+      onEdge: passBestOnEdge,
+    });
 
     // 既に許容誤差に十分な余裕を持って収束していれば、これ以上格子を
     // 細かくしても最終判定（0.5%以内か否か）は変わらないため打ち切る。
@@ -1622,6 +1687,78 @@ async function refineWithManualEquivalentProjection(
 
   if (!best) return null;
 
+  // 2026-08-29追記: 安全網の広域再走査。
+  // 上のループは「最良点を中心に縮める」貪欲パターンサーチのため、地形が
+  // 局所的に複雑な場所では、真の最小値が近傍の別の窪みに囲まれていると
+  // そこへ収束してしまい抜け出せないことがある（詳細は centerDistance
+  // 宣言部のコメント参照）。まだ許容誤差（0.5%）に収まっていない場合
+  // だけ、元の（縮小前の）探索窓全体を、通常パスより細かい格子
+  // （16分割）で一度だけ再走査し、貪欲収束が見逃した、より良い候補が
+  // 無いかを確認する。
+  // 安全のため、ここで見つかった候補は「現在のbestより明確に良い場合
+  // （スコアが半分以下）だけ」採用する。既存の収束結果を悪化させることは
+  // 絶対にない（見つからなければ何もしない）。通常パスと同じ
+  // evaluateManualEquivalentCandidate/round-trip判定条件をそのまま使う
+  // ため、判定基準自体は一切変更しない。
+  if (best.score > CONVERGED_SCORE_PERCENT) {
+    try {
+      const safetyNetSegments = 16;
+      const safetyNetRequests: Array<{ cartographic: Cartographic }> = [];
+      const safetyNetDedupe = new Set<string>();
+      for (let radialIndex = 0; radialIndex <= safetyNetSegments; radialIndex += 1) {
+        const rawDistance = originalCenterDistance - originalRadialRadiusMeters +
+          (2 * originalRadialRadiusMeters * radialIndex) / safetyNetSegments;
+        const distance = Math.min(maximum, Math.max(minimum, rawDistance));
+        for (let lateralIndex = 0; lateralIndex <= safetyNetSegments; lateralIndex += 1) {
+          const lateralMeters = -originalLateralRadiusMeters +
+            (2 * originalLateralRadiusMeters * lateralIndex) / safetyNetSegments;
+          const bearingOffsetDegrees = Math.atan2(lateralMeters, Math.max(distance, 1)) * 180 / Math.PI;
+          const bearing = (originalCenterBearing + bearingOffsetDegrees + 360) % 360;
+          const key = `${distance.toFixed(9)}:${bearing.toFixed(12)}`;
+          if (safetyNetDedupe.has(key)) continue;
+          safetyNetDedupe.add(key);
+          safetyNetRequests.push({ cartographic: destinationCartographic(subject, bearing, distance) });
+        }
+      }
+      const safetyNetSampled = await terrainSampler(
+        safetyNetRequests.map((request) => request.cartographic),
+        signal,
+        "1m"
+      );
+      abortIfRequested(signal);
+      for (let index = 0; index < safetyNetSampled.length; index += 1) {
+        const cartographic = safetyNetSampled[index];
+        if (!cartographic || !Number.isFinite(cartographic.height)) continue;
+        const candidate = buildCandidateGroundPoint(
+          cartographic,
+          subject,
+          `${point.label}手動三脚ピン同等安全網候補`
+        );
+        const evaluated = evaluateManualEquivalentCandidate(
+          candidate,
+          subject,
+          point,
+          cameraSettings,
+          previewAspectRatio,
+          date,
+          calculationMode,
+          refractionWeather
+        );
+        if (!evaluated) continue;
+        // 既存の貪欲収束結果を明確に上回る場合だけ採用する。
+        if (evaluated.score < best.score * 0.5) {
+          best = evaluated;
+        }
+      }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      console.warn(
+        `[tripod-candidate] ${point.label}: 安全網の広域再走査に失敗（貪欲収束結果をそのまま使用）`,
+        error
+      );
+    }
+  }
+
   const bestCartographic = Cartographic.fromDegrees(
     best.candidatePoint.longitude,
     best.candidatePoint.latitude,
@@ -1648,16 +1785,26 @@ async function refineWithManualEquivalentProjection(
   // 側（診断記録）へ伝える必要があるため、finalEvaluationがnullの場合は
   // grid探索段階のbestへ差し戻して付与する。
   const withDiagnostics = finalEvaluation ?? best;
+  lastRefinementPassTrace = passTrace;
   return {
     ...withDiagnostics,
     refinementPassesUsed,
     firstPassScorePercent,
+    passTrace,
   };
 }
 
 type RefinementResultWithDiagnostics = ManualEquivalentEvaluation & {
   refinementPassesUsed: number;
   firstPassScorePercent: number | null;
+  passTrace: Array<{
+    pass: number;
+    centerDistanceMeters: number;
+    radialRadiusMeters: number;
+    bestScorePercent: number | null;
+    bestDistanceMeters: number | null;
+    onEdge: boolean;
+  }>;
 };
 
 async function calculateOneCandidates(
@@ -2029,66 +2176,9 @@ async function calculateOneCandidates(
       return null;
     }
 
-    let finalCandidatePoint = manualRefined.candidatePoint;
-    let finalHorizontal = manualRefined.horizontal;
-    let roundTrip = manualRefined.roundTrip;
-
-    // 2026-08-29追記（実機診断より）:「実際に置いた三脚ピンのプレビューは
-    // 天体・被写体が完璧に一致するのに、探索側のround-trip判定は大きく
-    // ずれる（別の候補が誤って確定する）」という不整合が実機で確認された。
-    // 原因は、探索内部（粗探索・精密化）は位置探索の精度を優先し、DEM高さを
-    // neutral補間（制約付きBicubic、LOS用の上方バイアス無し）で取得して
-    // いるのに対し、実際に三脚ピンを置いたとき（＝プレビューが使う高さ）は
-    // los-safe補間（max(Bilinear, Constrained Bicubic)、上方バイアスあり）
-    // で取得されており、同じ緯度経度でも高さの解決方法が違うこと。堤防の
-    // 斜面のように局所的に地形が変化する場所では、この2つの補間結果が
-    // 数十cm〜数mずれることがあり、それだけでround-trip判定を左右するのに
-    // 十分な仰角誤差（実機診断で0.096°・dy 3.87%）を生む。
-    // 探索中の位置決定自体はneutral補間のまま（位置探索の精度を優先）とし、
-    // 最終確定判定の直前だけ、実際にこの座標へ三脚ピンを置いた場合と同じ
-    // los-safe補間で高さを取り直し、その高さでround-trip判定をやり直す。
-    // これにより「探索が確定と言った候補」と「実際にそこへ三脚を置いた
-    // ときのプレビュー」が常に一致するようになる（仕様3-G round-trip検証
-    // の本来の意図：候補地点をプレビューと同じ経路へ逆投入する、を高さの
-    // 取得方法まで含めて満たす）。
-    try {
-      const losSafeQuery = Cartographic.fromDegrees(
-        finalCandidatePoint.longitude,
-        finalCandidatePoint.latitude,
-        0
-      );
-      const [losSafeSample] = await sampleWorldTerrain([losSafeQuery], signal, "1m");
-      abortIfRequested(signal);
-      if (losSafeSample && Number.isFinite(losSafeSample.height)) {
-        const losSafePoint = await buildPointSpecificFinalCandidateGroundPoint(
-          losSafeSample,
-          subject,
-          `${point.label}手動三脚ピン同等最終候補（実ピン一致確認）`,
-          signal
-        );
-        const losSafeEvaluation = evaluateManualEquivalentCandidate(
-          losSafePoint,
-          subject,
-          point,
-          cameraSettings,
-          previewAspectRatio,
-          date,
-          calculationMode,
-          activeRefractionWeather
-        );
-        if (losSafeEvaluation) {
-          finalCandidatePoint = losSafeEvaluation.candidatePoint;
-          finalHorizontal = losSafeEvaluation.horizontal;
-          roundTrip = losSafeEvaluation.roundTrip;
-        }
-      }
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      console.warn(
-        `[tripod-candidate] ${point.label}: 実ピン一致確認（los-safe再検証）に失敗。neutral補間の結果をそのまま使用`,
-        error
-      );
-    }
+    const finalCandidatePoint = manualRefined.candidatePoint;
+    const finalHorizontal = manualRefined.horizontal;
+    const roundTrip = manualRefined.roundTrip;
     const finalCartographic = Cartographic.fromDegrees(
       finalCandidatePoint.longitude,
       finalCandidatePoint.latitude,
