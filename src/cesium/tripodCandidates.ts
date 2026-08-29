@@ -1007,6 +1007,25 @@ async function scanRayTerrainIntersections(
  * 明示的なdistanceRange指定時と最高精度のダブルチェック時は、呼び出し側の
  * 「指定範囲をすべて調べる」という意味を変えないため従来の全範囲探索を維持する。
  * したがって最終1m精密化・round-trip検証の精度条件は一切変更しない。
+ *
+ * 2026-08-29修正（実機の現地確認より）: 探索範囲の上限（primaryMax、ひいては
+ * 対数サンプルの密度）を、rangeSizingDistanceMeters（常にその場で計算される
+ * 幾何学的estimate＝directSeedDistance）だけから決めるようにした。以前は
+ * ここに「前回の確かな答え」（preferredDistanceMeters、被写体・日付が同じ
+ * 場合にApp.tsx側からキャッシュされ再利用される値）を使っていたが、これは
+ * ・被写体は同じでも日時が変わると天体の方位・仰角が変わるため、キャッシュ
+ * 時点では正しかった距離が現在の検索では別の（誤った）地形交点に近い座標に
+ * なってしまうことがある
+ * ・range上限が変わるとログ間隔サンプルの密度も変わるため、真の交点
+ * （地形が複雑な場所では複数の交点が近接して存在しうる）を探索範囲の
+ * サンプルが拾えなくなることがある
+ * という問題があり、実機で「ヒント値に近い、しかし現地確認では誤っている
+ * 交点」が“確定”として返される事例が確認された。
+ * rangeSizing用の値と、探索へ追加注入する“このあたりを重点的に見てほしい”
+ * ヒント（injectedSampleDistanceMeters、以前どおりpreferredDistanceMeters
+ * 由来でよい）を分離する。注入は「追加の1点」でしかなく、既存の対数サンプル
+ * 密度・範囲を削ったり動かしたりしないため、注入だけなら他の真の交点を
+ * 取りこぼすリスクはない。
  */
 async function scanInitialRayTerrainIntersections(
   ray: CelestialSubjectRay,
@@ -1015,13 +1034,14 @@ async function scanInitialRayTerrainIntersections(
   signal: AbortSignal | undefined,
   distanceRange: TripodDistanceRange | undefined,
   searchProfile: TripodSearchProfile | undefined,
-  preferredDistanceMeters: number | undefined,
+  rangeSizingDistanceMeters: number | undefined,
+  injectedSampleDistanceMeters: number | undefined,
   exhaustive: boolean
 ): Promise<TerrainSolution[]> {
   if (
     exhaustive ||
     distanceRange !== undefined ||
-    !Number.isFinite(preferredDistanceMeters)
+    !Number.isFinite(rangeSizingDistanceMeters)
   ) {
     return scanRayTerrainIntersections(
       ray,
@@ -1030,13 +1050,13 @@ async function scanInitialRayTerrainIntersections(
       signal,
       distanceRange,
       searchProfile,
-      preferredDistanceMeters
+      injectedSampleDistanceMeters
     );
   }
 
-  const preferred = Math.min(
+  const rangeSizingDistance = Math.min(
     ABSOLUTE_MAX_DISTANCE_METERS,
-    Math.max(ABSOLUTE_MIN_DISTANCE_METERS, preferredDistanceMeters!)
+    Math.max(ABSOLUTE_MIN_DISTANCE_METERS, rangeSizingDistanceMeters!)
   );
 
   // 近距離では最低1km、遠距離では第一候補の35%を余裕として持たせる。
@@ -1044,11 +1064,11 @@ async function scanInitialRayTerrainIntersections(
   // この範囲内では従来どおり全交点を返すため、途中の山稜交点も保持される。
   const safetyMarginMeters = Math.max(
     1_000,
-    Math.min(5_000, preferred * 0.35)
+    Math.min(5_000, rangeSizingDistance * 0.35)
   );
   const primaryMax = Math.min(
     ABSOLUTE_MAX_DISTANCE_METERS,
-    preferred + safetyMarginMeters
+    rangeSizingDistance + safetyMarginMeters
   );
   const primaryRange: TripodDistanceRange = {
     minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
@@ -1062,7 +1082,7 @@ async function scanInitialRayTerrainIntersections(
     signal,
     primaryRange,
     searchProfile,
-    preferred
+    injectedSampleDistanceMeters
   );
   if (primarySolutions.length > 0 || primaryMax >= ABSOLUTE_MAX_DISTANCE_METERS) {
     lastScanFallbackInfo = { usedFallback: false, primaryMaxMeters: primaryMax };
@@ -1090,7 +1110,7 @@ async function scanInitialRayTerrainIntersections(
     signal,
     fallbackRange,
     searchProfile,
-    preferred
+    injectedSampleDistanceMeters
   );
 }
 
@@ -1663,9 +1683,21 @@ async function calculateOneCandidates(
   // ほぼ常に何らかの値を返すため、結果として前回の確かな答えが実質的に
   // 一度も使われていなかった。被写体が変わっていない場合の距離ヒントは
   // App.tsx側で「同一被写体か」を確認した上でのみ渡されるため信頼でき、
-  // 優先すべきなのはこちらである。仮にヒントが外れていても、一次探索の
-  // 範囲を超えた場合は自動的に全距離走査へフォールバックする安全弁が
-  // 既にあるため、優先順位を入れ替えても精度・安全性は変わらない。
+  // 探索へ追加注入する1点としては優先すべきである。
+  //
+  // 2026-08-29修正（実機の現地確認より）: 上記の「仮にヒントが外れていても
+  // 安全弁がある」という前提が誤りだった。preferredDistanceMeters
+  // （前回の答え）は被写体が同じでも日時が変われば天体の方位・仰角が
+  // 変わるため、真の交点とは無関係な別の地点に近い値になっていることが
+  // ある。この値で一次探索の範囲（ひいてはサンプル密度）まで決めて
+  // しまうと、範囲外に落ちて安全弁（全距離走査）が働くのではなく、
+  // 範囲内の「ヒントに近いが誤った」別の交点を拾って一見正常に確定して
+  // しまう（安全弁が働かない失敗モード）ことが実機で確認された。この
+  // ため、探索範囲・サンプル密度を決める値（rangeSizingDistance）には
+  // 必ずその場で新しく計算されるdirectSeedDistanceのみを使い、
+  // preferredDistanceMetersは「注入する追加の1点」（injectedSample
+  // DistanceMeters、既存の対数サンプル密度・範囲を一切変えない）としてだけ
+  // 使うよう分離した。
   const effectiveSeedDistance = searchProfile?.preferredDistanceMeters ?? directSeedDistance ?? undefined;
   const seedDistanceSource: "direct-geometric" | "preferred-hint" | "none" =
     searchProfile?.preferredDistanceMeters !== undefined
@@ -1681,6 +1713,7 @@ async function calculateOneCandidates(
     signal,
     distanceRange,
     searchProfile,
+    directSeedDistance ?? undefined,
     effectiveSeedDistance,
     doubleCheckEnabled
   );
