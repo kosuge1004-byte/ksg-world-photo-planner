@@ -903,9 +903,9 @@ function App() {
           `    被写体仰角: geometric=${audit.subjectElevation.geometricDegrees.toFixed(6)}°` +
             ` apparent=${audit.subjectElevation.apparentDegrees.toFixed(6)}°` +
             ` terrestrialRefraction=${audit.subjectElevation.refractionCorrectionDegrees.toFixed(6)}°`,
-          `    天体高度: geometric=${audit.celestialElevation.geometricDegrees.toFixed(6)}°` +
+          `    天体高度: geometric=${audit.celestialElevation.geometricDegrees !== null ? audit.celestialElevation.geometricDegrees.toFixed(6) : "-"}°` +
             ` apparent=${audit.celestialElevation.apparentDegrees.toFixed(6)}°` +
-            ` astronomicalRefraction=${audit.celestialElevation.astronomicalRefractionCorrectionDegrees.toFixed(6)}°` +
+            ` astronomicalRefraction=${audit.celestialElevation.astronomicalRefractionCorrectionDegrees !== null ? audit.celestialElevation.astronomicalRefractionCorrectionDegrees.toFixed(6) : "-"}°` +
             ` azimuth=${audit.celestialElevation.azimuthDegrees.toFixed(6)}°`,
           `    中心線差: az=${audit.centerline.azimuthErrorDegrees.toFixed(6)}°` +
             ` alt=${audit.centerline.altitudeErrorDegrees.toFixed(6)}°` +

@@ -1,0 +1,22 @@
+AstroSight tripod physics audit App.tsx null build fix
+Date: 2026-08-30
+
+Cloudflare build errors addressed:
+- src/App.tsx: audit.celestialElevation.geometricDegrees is possibly null (TS18047)
+- src/App.tsx: audit.celestialElevation.astronomicalRefractionCorrectionDegrees is possibly null (TS18047)
+
+Fix:
+- Guard both nullable diagnostics fields before calling toFixed().
+- Emit '-' when the corresponding value is null.
+
+No tripod centerline geometry, preview calculation, terrain calculation, camera-height calculation,
+weather/refraction calculation, or search behavior was changed in this fix.
+
+Verification performed:
+- Confirmed the two nullable fields are typed as number | null in TripodPhysicsAudit.
+- Confirmed App.tsx now checks !== null before toFixed().
+- Confirmed no remaining unguarded direct `.toFixed()` calls on these two fields in src/.
+
+Full local npm build could not be completed in this sandbox because the pre-existing node_modules
+copy is incomplete (geo-tz/index.js and several type-definition packages are missing). This is an
+environment/dependency limitation, not reported as a successful full build.
