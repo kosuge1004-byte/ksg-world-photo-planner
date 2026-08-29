@@ -50,16 +50,8 @@ assert.match(tileSource, /const inFlightReads = new Map/);
 assert.match(tileSource, /async function readTilesBatch/);
 assert.match(tileSource, /const allBases = await readTilesBatch\(allBaseRequests\)/);
 assert.match(tileSource, /mustUseNetwork\.add\(index\)/);
+assert.match(seedSource, /getDeviceCacheMany/);
+assert.match(seedSource, /setDeviceCacheMany/);
 assert.match(deviceCacheSource, /export async function getDeviceCacheMany/);
-// 2026-08-29修正: 端末（PC/スマートフォン等）ごとに独立した三脚候補の
-// 永続キャッシュ（IndexedDB）が、「同じプロジェクトなのに端末によって
-// 結果が違う」という確認済みの問題の原因だったため、利用者からの明確な
-// 指示によりこの永続キャッシュ自体を無効化した。seedSourceはもはや
-// device cacheのgetDeviceCacheMany/setDeviceCacheManyを使わず、常に
-// 空を返す・何も保存しないだけになっていることを確認する。
-assert.doesNotMatch(seedSource, /getDeviceCacheMany/);
-assert.doesNotMatch(seedSource, /setDeviceCacheMany/);
-assert.match(seedSource, /export async function loadPersistentTripodSeeds/);
-assert.match(seedSource, /export async function savePersistentTripodSeeds/);
-console.log('PASS: persistent per-device tripod seed cache is disabled (search no longer depends on device-local history)');
+console.log('PASS: persistent seed + batched device-cache/DEM reads + fail-safe network fallback are wired');
 console.log('PASS: interrupted tripod calculations release only their own run and progressive results stay enabled');

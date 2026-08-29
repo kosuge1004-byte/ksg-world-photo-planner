@@ -1,17 +1,18 @@
-import type { CameraSettings, PreviewFrameMode } from "../types/camera";
+import type { CameraSettings, CameraViewCorrection, PreviewFrameMode } from "../types/camera";
 import type { CelestialVisibility } from "../types/celestial";
 import type { ForegroundObjectType } from "../types/foreground";
+import type { GroundPoint } from "../types/points";
+import type { PrecisionSettings } from "../types/precision";
 
 /**
  * 共有URLに載せるプロジェクトの中身。
  *
- * 緯度経度・カメラ設定・表示設定だけを含み、高度（ellipsoidalHeightMeters /
- * orthometricHeightMeters / geoidHeightMeters / height）は一切含めない。
- * 送信側の環境（DEM取得タイミング・3Dピック結果）を無条件に信頼すると
- * 標高と楕円体高の混在や、地形データ更新後の食い違いにつながるため、
- * 高度は受信側でHeightResolverを通して必ず取り直す（0mフォールバックはしない）。
+ * V2は、塔頂・屋上・3Dピックとround-trip検証済み三脚の完全な高さ基準を
+ * 共有する。受信端末でDEMを取り直すと建物頂上が地面へ落ちたり、端末ごとの
+ * DEM応答差で同一プロジェクトが別結果になるためである。旧V1のみ互換読込時に
+ * 高さを受信端末で解決する。
  */
-export const PROJECT_SHARE_CODE_VERSION = 1;
+export const PROJECT_SHARE_CODE_VERSION = 2;
 
 export type SharedForegroundObject = {
   type: ForegroundObjectType;
@@ -34,6 +35,25 @@ export type SharedProjectPayloadV1 = {
   previewFrameMode: PreviewFrameMode;
 };
 
+export type SharedProjectPayloadV2 = {
+  v: 2;
+  name: string;
+  shootingDateTimeLocal: string;
+  timeZone: string;
+  /** 塔頂・屋上・3Dピックを含む確定3D座標を端末間で同一に保つ。 */
+  subject: GroundPoint;
+  /** round-trip検証済みの三脚高さを端末間で同一に保つ。 */
+  tripod: GroundPoint;
+  foregroundObjects: SharedForegroundObject[];
+  cameraSettings: CameraSettings;
+  celestialVisibility: CelestialVisibility;
+  previewFrameMode: PreviewFrameMode;
+  viewCorrection: CameraViewCorrection;
+  precisionSettings: PrecisionSettings;
+};
+
+export type SharedProjectPayload = SharedProjectPayloadV1 | SharedProjectPayloadV2;
+
 export class ProjectShareCodeError extends Error {
   constructor(message: string) {
     super(message);
@@ -53,8 +73,8 @@ function fromBase64Url(code: string): string {
 }
 
 /** 現在の撮影計画を共有コード（URLのhashにそのまま載せられる文字列）へ変換する。 */
-export function encodeProjectShareCode(payload: Omit<SharedProjectPayloadV1, "v">): string {
-  const full: SharedProjectPayloadV1 = { v: PROJECT_SHARE_CODE_VERSION, ...payload };
+export function encodeProjectShareCode(payload: Omit<SharedProjectPayloadV2, "v">): string {
+  const full: SharedProjectPayloadV2 = { v: PROJECT_SHARE_CODE_VERSION, ...payload };
   return toBase64Url(JSON.stringify(full));
 }
 
@@ -74,11 +94,28 @@ function assertPoint(value: unknown, label: string): asserts value is { latitude
   }
 }
 
+function assertGroundPoint(value: unknown, label: string): asserts value is GroundPoint {
+  assertPoint(value, label);
+  const point = value as Partial<GroundPoint>;
+  if (!isFiniteNumber(point.height)) {
+    throw new ProjectShareCodeError(`共有リンクの${label}の高さが不正です`);
+  }
+  for (const height of [
+    point.ellipsoidalHeightMeters,
+    point.orthometricHeightMeters,
+    point.geoidHeightMeters,
+  ]) {
+    if (height !== undefined && !isFiniteNumber(height)) {
+      throw new ProjectShareCodeError(`共有リンクの${label}の高さ基準が不正です`);
+    }
+  }
+}
+
 /**
  * 共有コードを検証しながら復号する。壊れたリンク・未対応バージョンは
  * 例外にする（部分的に読み込んで先へ進めない）。
  */
-export function decodeProjectShareCode(code: string): SharedProjectPayloadV1 {
+export function decodeProjectShareCode(code: string): SharedProjectPayload {
   let json: string;
   try {
     json = fromBase64Url(code);
@@ -91,17 +128,36 @@ export function decodeProjectShareCode(code: string): SharedProjectPayloadV1 {
   } catch {
     throw new ProjectShareCodeError("共有リンクの内容を解釈できませんでした");
   }
-  const value = parsed as Partial<SharedProjectPayloadV1> | null;
+  const value = parsed as Partial<SharedProjectPayloadV1> | Partial<SharedProjectPayloadV2> | null;
   if (!value || typeof value !== "object") {
     throw new ProjectShareCodeError("共有リンクの内容が不正です");
   }
-  if (value.v !== 1) {
+  if (value.v !== 1 && value.v !== 2) {
     throw new ProjectShareCodeError(
       "このリンクは対応していないバージョンの撮影計画です。アプリを最新にしてから開いてください"
     );
   }
   assertPoint(value.subject, "被写体");
   assertPoint(value.tripod, "三脚");
+  if (value.v === 2) {
+    assertGroundPoint(value.subject, "被写体");
+    assertGroundPoint(value.tripod, "三脚");
+    if (
+      !value.viewCorrection ||
+      !isFiniteNumber(value.viewCorrection.azimuthDegrees) ||
+      !isFiniteNumber(value.viewCorrection.altitudeDegrees)
+    ) {
+      throw new ProjectShareCodeError("共有リンクの構図補正が不正です");
+    }
+    if (
+      !value.precisionSettings ||
+      (value.precisionSettings.accuracyMode !== "standard" && value.precisionSettings.accuracyMode !== "highest") ||
+      (value.precisionSettings.refractionCorrectionMode !== "standard" && value.precisionSettings.refractionCorrectionMode !== "auto") ||
+      typeof value.precisionSettings.tripodCandidateDoubleCheckEnabled !== "boolean"
+    ) {
+      throw new ProjectShareCodeError("共有リンクの精度設定が不正です");
+    }
+  }
   if (!Array.isArray(value.foregroundObjects)) {
     throw new ProjectShareCodeError("共有リンクの人物・前景情報が不正です");
   }
@@ -124,5 +180,5 @@ export function decodeProjectShareCode(code: string): SharedProjectPayloadV1 {
   ) {
     throw new ProjectShareCodeError("共有リンクの内容が不正です");
   }
-  return value as SharedProjectPayloadV1;
+  return value as SharedProjectPayload;
 }

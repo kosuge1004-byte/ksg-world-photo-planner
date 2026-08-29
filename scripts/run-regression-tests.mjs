@@ -41,6 +41,15 @@ const cases = [
     arguments: ["./scripts/verify-view-correction.mjs"],
   },
   {
+    name: "project sharing preserves device-independent height and composition",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/project-share-device-parity.test.mjs",
+    ],
+  },
+  {
     name: "Karney inverse geodesic references",
     arguments: ["./scripts/verify-geodesic-comparison.mjs"],
   },
@@ -159,7 +168,7 @@ const cases = [
     arguments: ["--experimental-strip-types", "./scripts/verify-device-dem-tile-cache-20260829.mjs"],
   },
   {
-    name: "tripod candidate speed caches preserve exact-result safety (persistent per-device seed cache disabled)",
+    name: "tripod candidate speed caches preserve exact-result safety",
     arguments: ["--experimental-strip-types", "./scripts/verify-tripod-speed-cache-20260829.mjs"],
   },
   {

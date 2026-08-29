@@ -79,6 +79,25 @@ function isValidPlannerProject(value: unknown): value is PlannerProject {
     project.previewFrameMode !== "landscape-3-2" &&
     project.previewFrameMode !== "portrait-3-2"
   ) return false;
+  if (project.viewCorrection !== undefined) {
+    if (
+      !isFiniteNumber(project.viewCorrection.azimuthDegrees) ||
+      !isFiniteNumber(project.viewCorrection.altitudeDegrees)
+    ) return false;
+  }
+  if (project.precisionSettings !== undefined) {
+    if (
+      project.precisionSettings.accuracyMode !== "standard" &&
+      project.precisionSettings.accuracyMode !== "highest"
+    ) return false;
+    if (
+      project.precisionSettings.refractionCorrectionMode !== "standard" &&
+      project.precisionSettings.refractionCorrectionMode !== "auto"
+    ) return false;
+    if (typeof project.precisionSettings.tripodCandidateDoubleCheckEnabled !== "boolean") {
+      return false;
+    }
+  }
   if (project.mapViewMode !== "2d" && project.mapViewMode !== "3d") return false;
   if (!isFiniteNumber(project.mapZoom)) return false;
 
