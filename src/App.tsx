@@ -128,6 +128,7 @@ import {
   calculateTripodCandidates,
   getLastTripodSearchDiagnostics,
   getLastCoarseScanSamples,
+  getLastCenterlineScanSamples,
 } from "./cesium/tripodCandidates";
 import {
   loadPersistentTripodSeeds,
@@ -855,6 +856,19 @@ function App() {
     // 粗探索段階（精密化前）の生の(距離, レイ高との差[m])サンプルを
     // そのまま添付する。符号が変わる（＝交点の兆候がある）箇所を目視で
     // 確認できるようにするための診断専用の情報で、探索結果には影響しない。
+    const centerlineSamples = getLastCenterlineScanSamples();
+    if (centerlineSamples && centerlineSamples.length > 0) {
+      lines.push(
+        "中心線一次探索（距離m:角距離°[方位差°,仰角差°]）:",
+        centerlineSamples
+          .map((sample) =>
+            `${Math.round(sample.distanceMeters)}:${sample.angularScoreDegrees.toFixed(5)}` +
+            `[${sample.azimuthErrorDegrees.toFixed(5)},${sample.altitudeErrorDegrees.toFixed(5)}]`
+          )
+          .join(" ")
+      );
+    }
+
     const coarseScanSamples = getLastCoarseScanSamples();
     if (coarseScanSamples && coarseScanSamples.length > 0) {
       lines.push(

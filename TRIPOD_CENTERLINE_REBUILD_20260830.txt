@@ -1,0 +1,63 @@
+AstroSight 三脚候補「天体中心－被写体中心」計算 根本再構築
+2026-08-30
+
+目的
+- 正しいプレビュー側は変更しない。
+- 経験的オフセット／距離補正で合わせない。
+- 三脚候補側の「天体中心→被写体中心」の成立条件をゼロから再構築する。
+
+旧主計算の問題
+- 被写体を起点に、ある観測地点で得た天体の幾何az/altからECEF直線を作り、
+  その直線とDEM地形の交点を候補seedとしていた。
+- そのため、正しい候補が旧レイ交点から離れていると、後段のCameraModel精密化へ
+  到達できない構造だった。
+- 過去候補距離ヒントも探索補助に残っていた。
+
+今回の新しい主計算
+1. 天体を有限距離のECEF点として扱わない。
+2. 候補三脚のレンズ中心 O ごとに天体中心の水平座標を再計算する。
+3. 同じ O から被写体中心 S の方位をKarney測地線で計算する。
+4. 同じ O から被写体中心 S の見かけ仰角を、プレビューと共通の
+   computeApparentElevation() で計算する。
+5. 下記2成分を直接ゼロにする。
+   - 方位差 = subject bearing - celestial azimuth
+   - 仰角差 = subject apparent altitude - celestial apparent altitude
+6. 一次探索は全距離範囲を25m以下の間隔で直接評価する。
+7. 局所最小を最大4件seedとして保持する。
+8. seed後は既存の1m DEM + 2D CameraModel詳細探索で最終座標を確定する。
+
+重要
+- scanInitialRayTerrainIntersections() は確定候補の主seed生成から外した。
+- 旧ECEFレイは「計算中」の暫定表示用理論値にだけ残る。
+- 旧レイが計算不能でも新しい中心線探索は停止しない。
+- preferredDistanceMeters（過去候補距離）は新中心線探索の探索範囲・順位付けに使用しない。
+- プレビュー側コードは変更していない。
+
+追加診断
+診断コピーへ以下を追加:
+  中心線一次探索（距離m:角距離°[方位差°,仰角差°]）
+次回実機ログで968m付近と1252m付近のどちらが中心線残差0へ近いか直接確認できる。
+
+変更ファイル
+- src/cesium/tripodCandidates.ts
+- src/App.tsx
+- scripts/verify-tripod-centerline-rebuild-20260830.mjs
+- TRIPOD_CENTERLINE_REBUILD_20260830.txt
+
+検証
+PASS:
+- 新centerline solverの存在
+- 確定候補主探索がcenterline solverを使用
+- scanInitialRayTerrainIntersectionsを主seedから除外
+- 候補地点ごとの天体水平座標再計算
+- 被写体見かけ仰角がプレビュー共通モデル
+- 方位差／仰角差の直接評価
+- 旧geometric rayが新solverを停止させない
+- 距離ヒントをcenterline順位付けへ混入させない
+- centerline診断出力
+- TypeScript transpile syntax check PASS
+
+未確認
+- フル npm test / npm run build は、このZIPにnode_modulesが含まれず、依存packageを
+  この環境で解決できないため未確認。npm testはtypescript package missingで停止。
+- 実機「実証」ケースで968mへ戻ることは未確認。次回実機診断が必要。
