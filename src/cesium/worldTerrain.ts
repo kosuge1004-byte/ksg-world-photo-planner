@@ -21,7 +21,6 @@ let terrainPromise: ReturnType<typeof createWorldTerrainAsync> | null = null;
 const terrainSourceBySample = new WeakMap<Cartographic, TerrainDataSource>();
 const geoidHeightBySample = new WeakMap<Cartographic, number>();
 let gsiUnavailableUntil = 0;
-let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
 const GEOID_FETCH_TIMEOUT_MS = 15_000;
 const WORLD_TERRAIN_MAX_ATTEMPTS = 3;
@@ -30,14 +29,8 @@ const WORLD_TERRAIN_RETRY_DELAYS_MS = [250, 700] as const;
 // タイムアウトもない。GSIフォールバック時に1要求が永久待ちにならないよう、
 // 各試行の「待機」だけを制限し、同じ最詳細データ・同じ座標で再試行する。
 const WORLD_TERRAIN_OPERATION_TIMEOUT_MS = 30_000;
-const geoidHeightCache = new Map<string, Promise<number>>();
-const GEOID_MEMORY_CACHE_MAX_ENTRIES = 4_096;
-const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
-const GEOID_CACHE_STORE = "geoid";
-const GEOID_CACHE_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
 // 約1kmグリッド。地点ごとの精度を保ちつつ、近接点のAPI要求をまとめる。
 const GEOID_REGION_DECIMALS = 2;
-type GeoidCacheRecord = { key: string; height: number; updatedAt: number };
 type GsiMaximumDetail = "1m" | "5m" | "10m";
 type PendingGsiRequest = {
   points: Cartographic[];
@@ -493,73 +486,6 @@ function geoidRegionKey(point: Cartographic): string {
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
   return `${latitude.toFixed(GEOID_REGION_DECIMALS)},${longitude.toFixed(GEOID_REGION_DECIMALS)}`;
-}
-
-let geoidCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
-
-function openGeoidCache(): Promise<KsgIdbDatabase | null> {
-  const indexedDb = getIndexedDbFactory();
-  if (!indexedDb) return Promise.resolve(null);
-  // 同じ計算中に地域ごとにDBをopen/closeすると、IndexedDBの接続確立イベントが
-  // メインスレッドへ大量に戻る。DB接続だけを共有し、保存値・キー・有効期限は
-  // 従来のまま維持するため、地形/ジオイド精度には影響しない。
-  geoidCacheDatabasePromise ??= new Promise((resolve) => {
-    const request = indexedDb.open(GEOID_CACHE_DB, 1);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(GEOID_CACHE_STORE)) {
-        database.createObjectStore(GEOID_CACHE_STORE, { keyPath: "key" });
-      }
-    };
-    request.onsuccess = () => {
-      const database = request.result;
-      database.onversionchange = () => {
-        database.close();
-        geoidCacheDatabasePromise = null;
-      };
-      resolve(database);
-    };
-    request.onerror = () => {
-      geoidCacheDatabasePromise = null;
-      resolve(null);
-    };
-  });
-  return geoidCacheDatabasePromise;
-}
-
-async function readGeoidPersistentCache(key: string): Promise<number | null> {
-  const database = await openGeoidCache();
-  if (!database) return null;
-  const value = await new Promise<number | null>((resolve) => {
-    const request = database.transaction(GEOID_CACHE_STORE, "readonly")
-      .objectStore(GEOID_CACHE_STORE).get(key);
-    request.onsuccess = () => {
-      const record = request.result as GeoidCacheRecord | undefined;
-      if (
-        record &&
-        Date.now() - record.updatedAt <= GEOID_CACHE_MAX_AGE_MS &&
-        Number.isFinite(record.height)
-      ) {
-        resolve(record.height);
-      } else {
-        resolve(null);
-      }
-    };
-    request.onerror = () => resolve(null);
-  });
-  return value;
-}
-
-async function writeGeoidPersistentCache(key: string, height: number): Promise<void> {
-  const database = await openGeoidCache();
-  if (!database) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(GEOID_CACHE_STORE, "readwrite");
-    transaction.objectStore(GEOID_CACHE_STORE).put({ key, height, updatedAt: Date.now() });
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
 }
 
 async function fetchGsiGeoidHeightOnce(
