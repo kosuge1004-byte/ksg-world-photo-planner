@@ -176,6 +176,16 @@ export type TripodSearchDiagnostics = {
         dxPercent: number | null;
         dyPercent: number | null;
         inFront: boolean | null;
+        // 2026-08-29追記: 実機診断で「dx/dyがしきい値に近いのに惜しいの
+        // か、探索が全く進んでいないのか」を区別できるようにするため、
+        // refineWithManualEquivalentProjection()が実際に何パス実行し、
+        // 1パス目と最終パスでスコア（dx/dyのhypot、%）がどう変化したかを
+        // 記録する。パス数が少ない・スコアが改善していない場合は、
+        // 探索窓の外に真の解がある/そもそも近傍に解が無い可能性が高いと
+        // 判断できる。
+        refinementPassesUsed: number | null;
+        firstPassScorePercent: number | null;
+        finalScorePercent: number | null;
       }>;
     }
   >;
@@ -1222,6 +1232,9 @@ type ManualEquivalentEvaluation = {
   roundTrip: { dxPercent: number; dyPercent: number; inFront: boolean };
   score: number;
   distanceMeters: number;
+  // 2026-08-29追記: この評価がrefineWithManualEquivalentProjection()の
+  // 何パス目で得られたか。診断出力（1パス目と最終のスコア比較）に使う。
+  refinementPass?: number;
 };
 
 /**
@@ -1293,7 +1306,7 @@ async function refineWithManualEquivalentProjection(
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
   refractionWeather?: RefractionWeatherContext
-): Promise<ManualEquivalentEvaluation | null> {
+): Promise<RefinementResultWithDiagnostics | null> {
   const coarsePoint = buildCandidateGroundPoint(
     coarseCartographic,
     subject,
@@ -1326,6 +1339,8 @@ async function refineWithManualEquivalentProjection(
   let radialRadiusMeters = Math.max(24, Math.min(80, centerDistance * 0.04));
   let lateralRadiusMeters = radialRadiusMeters;
   let best: ManualEquivalentEvaluation | null = null;
+  let refinementPassesUsed = 0;
+  let firstPassScorePercent: number | null = null;
 
   // 2026-08-29修正: 以前はここを固定3回で打ち切っていた。しかし
   // ROUND_TRIP_SCREEN_TOLERANCE_PERCENT（画面比0.5%）は画角に依存しない
@@ -1352,6 +1367,7 @@ async function refineWithManualEquivalentProjection(
 
   for (let pass = 0; pass < MAX_REFINEMENT_PASSES; pass += 1) {
     abortIfRequested(signal);
+    refinementPassesUsed = pass + 1;
     const segments = 8;
     const requests: Array<{
       distance: number;
@@ -1424,6 +1440,7 @@ async function refineWithManualEquivalentProjection(
       if (!best || evaluated.score < best.score) best = evaluated;
     }
     if (!passBest) break;
+    if (pass === 0) firstPassScorePercent = passBest.score;
 
     // 既に許容誤差に十分な余裕を持って収束していれば、これ以上格子を
     // 細かくしても最終判定（0.5%以内か否か）は変わらないため打ち切る。
@@ -1477,7 +1494,7 @@ async function refineWithManualEquivalentProjection(
     signal
   );
   abortIfRequested(signal);
-  return evaluateManualEquivalentCandidate(
+  const finalEvaluation = evaluateManualEquivalentCandidate(
     exactPoint,
     subject,
     point,
@@ -1487,7 +1504,21 @@ async function refineWithManualEquivalentProjection(
     calculationMode,
     refractionWeather
   );
+  // 診断用のパス数・1パス目スコアは、最終再評価の成否に関わらず呼び出し
+  // 側（診断記録）へ伝える必要があるため、finalEvaluationがnullの場合は
+  // grid探索段階のbestへ差し戻して付与する。
+  const withDiagnostics = finalEvaluation ?? best;
+  return {
+    ...withDiagnostics,
+    refinementPassesUsed,
+    firstPassScorePercent,
+  };
 }
+
+type RefinementResultWithDiagnostics = ManualEquivalentEvaluation & {
+  refinementPassesUsed: number;
+  firstPassScorePercent: number | null;
+};
 
 async function calculateOneCandidates(
   subject: GroundPoint,
@@ -1541,6 +1572,9 @@ async function calculateOneCandidates(
       dxPercent: evaluation?.dxPercent ?? null,
       dyPercent: evaluation?.dyPercent ?? null,
       inFront: evaluation?.inFront ?? null,
+      refinementPassesUsed: evaluation?.refinementPassesUsed ?? null,
+      firstPassScorePercent: evaluation?.firstPassScorePercent ?? null,
+      finalScorePercent: evaluation?.finalScorePercent ?? null,
     });
   };
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
@@ -1803,7 +1837,7 @@ async function calculateOneCandidates(
     // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
     // 詳細探索し、画面中心誤差が最小の地点を正解候補とする。
     const refinementStartedAt = performance.now();
-    let manualRefined: ManualEquivalentEvaluation | null;
+    let manualRefined: RefinementResultWithDiagnostics | null;
     try {
       manualRefined = await refineWithManualEquivalentProjection(
         solution.cartographic,
@@ -1908,6 +1942,9 @@ async function calculateOneCandidates(
         dxPercent: roundTrip && Number.isFinite(roundTrip.dxPercent) ? roundTrip.dxPercent : null,
         dyPercent: roundTrip && Number.isFinite(roundTrip.dyPercent) ? roundTrip.dyPercent : null,
         inFront: roundTrip?.inFront ?? null,
+        refinementPassesUsed: manualRefined.refinementPassesUsed,
+        firstPassScorePercent: manualRefined.firstPassScorePercent,
+        finalScorePercent: manualRefined.score,
       });
       console.warn(`[tripod-candidate] ${point.label}: 最終幾何収束条件（round-trip含む）を満たさない候補を除外`, {
         distanceMeters: manualRefined.distanceMeters,

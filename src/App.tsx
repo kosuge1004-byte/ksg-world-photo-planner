@@ -815,7 +815,10 @@ function App() {
                 ` 仰角誤差=${evaluation.altitudeErrorDegrees !== null ? evaluation.altitudeErrorDegrees.toFixed(6) : "-"}°` +
                 ` dx=${evaluation.dxPercent !== null ? evaluation.dxPercent.toFixed(4) : "-"}%` +
                 ` dy=${evaluation.dyPercent !== null ? evaluation.dyPercent.toFixed(4) : "-"}%` +
-                ` 前方=${evaluation.inFront === null ? "-" : evaluation.inFront ? "yes" : "no"}`
+                ` 前方=${evaluation.inFront === null ? "-" : evaluation.inFront ? "yes" : "no"}` +
+                ` 精密化パス=${evaluation.refinementPassesUsed ?? "-"}` +
+                ` 1パス目スコア=${evaluation.firstPassScorePercent !== null ? evaluation.firstPassScorePercent.toFixed(4) : "-"}%` +
+                ` 最終スコア=${evaluation.finalScorePercent !== null ? evaluation.finalScorePercent.toFixed(4) : "-"}%`
               ).join(" | ")}）`
             : "");
       }),
