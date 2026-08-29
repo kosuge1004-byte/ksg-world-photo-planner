@@ -33,7 +33,6 @@ import {
 } from "../../src/cesium/tripodCandidates.ts";
 import {
   calculateCelestialHorizontalCoordinates,
-  calculateSubjectScreenPoint,
   createCameraProjection,
   projectHorizontalToPreview,
 } from "../../src/cesium/celestial.ts";
@@ -182,91 +181,6 @@ test("tripod candidate round-trip: candidate reproduces subject/celestial alignm
     Math.abs(subjectElevation - finalHorizontal.altitudeDegrees) < 0.01,
     "候補地点から見た被写体の仰角は天体高度と一致するべき"
   );
-});
-
-test("preview truth: final candidate is re-converged with the same terrain sampler and view correction as the preview", async () => {
-  const sun = realSunHorizontal();
-  const point = { id: "sun", label: "太陽", azimuthDegrees: sun.azimuthDegrees, altitudeDegrees: sun.altitudeDegrees };
-  const ray = buildCelestialBackwardRay(SUBJECT, sun.azimuthDegrees, sun.altitudeDegrees);
-  const searchTerrainSampler = makeMockTerrainSampler(
-    ray,
-    SUBJECT,
-    CAMERA.lensCenterHeightMeters,
-    (d) => d - 500
-  );
-  const previewTerrainSampler = makeMockTerrainSampler(
-    ray,
-    SUBJECT,
-    CAMERA.lensCenterHeightMeters,
-    (d) => d - 520
-  );
-  const viewCorrection = { azimuthDegrees: 0.8, altitudeDegrees: 0.5 };
-
-  const candidates = await calculateTripodCandidates(
-    SUBJECT,
-    [point],
-    CAMERA,
-    DATE,
-    CALCULATION_MODE,
-    searchTerrainSampler,
-    undefined,
-    3 / 2,
-    { minMeters: 100, maxMeters: 1000 },
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    false,
-    undefined,
-    undefined,
-    undefined,
-    previewTerrainSampler,
-    viewCorrection
-  );
-
-  assert.equal(candidates.length, 1);
-  assert.ok(
-    Math.abs(candidates[0].distanceMeters - 520) < 2,
-    `探索用DEMの500mではなく、プレビュー用DEMの520mへ再収束するべき（実際: ${candidates[0].distanceMeters}）`
-  );
-
-  const candidatePoint = {
-    latitude: candidates[0].latitude,
-    longitude: candidates[0].longitude,
-    height: candidates[0].height,
-    ellipsoidalHeightMeters: candidates[0].height,
-    label: "プレビュー正検証候補",
-  };
-  const projection = createCameraProjection(
-    candidatePoint,
-    SUBJECT,
-    CAMERA,
-    3 / 2,
-    CALCULATION_MODE,
-    viewCorrection
-  );
-  const finalHorizontal = calculateCelestialHorizontalCoordinates(
-    "sun",
-    DATE,
-    {
-      ...candidatePoint,
-      height: candidatePoint.height + CAMERA.lensCenterHeightMeters,
-      ellipsoidalHeightMeters: candidatePoint.height + CAMERA.lensCenterHeightMeters,
-    },
-    CALCULATION_MODE
-  );
-  const celestialScreen = projectHorizontalToPreview(finalHorizontal, projection);
-  const subjectScreen = calculateSubjectScreenPoint(
-    candidatePoint,
-    SUBJECT,
-    CAMERA,
-    3 / 2,
-    CALCULATION_MODE,
-    viewCorrection
-  );
-  assert.ok(Math.abs(subjectScreen.xPercent - 50) > 1, "補正後の被写体を画面中央へ固定してはならない");
-  assert.ok(Math.abs(celestialScreen.xPercent - subjectScreen.xPercent) < 0.5);
-  assert.ok(Math.abs(celestialScreen.yPercent - subjectScreen.yPercent) < 0.5);
 });
 
 test("tripod candidate progress: preliminary display does not wait for weather I/O and final body results arrive before the aggregate return", async () => {

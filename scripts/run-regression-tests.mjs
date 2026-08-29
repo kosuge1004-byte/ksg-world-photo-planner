@@ -159,7 +159,7 @@ const cases = [
     arguments: ["--experimental-strip-types", "./scripts/verify-device-dem-tile-cache-20260829.mjs"],
   },
   {
-    name: "tripod candidate speed caches preserve exact-result safety",
+    name: "tripod candidate speed caches preserve exact-result safety (persistent per-device seed cache disabled)",
     arguments: ["--experimental-strip-types", "./scripts/verify-tripod-speed-cache-20260829.mjs"],
   },
   {

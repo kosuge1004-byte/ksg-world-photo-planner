@@ -248,45 +248,6 @@ export function projectHorizontalToPreview(
   };
 }
 
-/**
- * プレビューに実際に描画される被写体中心のスクリーン座標を返す。
- * viewCorrection がある場合、カメラは被写体中心から外れるため、被写体を
- * 常に (50%, 50%) とみなしてはならない。天体と被写体の round-trip 検証、
- * および赤い被写体ピン表示の双方がこの関数を使用する。
- */
-export function calculateSubjectScreenPoint(
-  tripod: GroundPoint,
-  subject: GroundPoint,
-  settings: CameraSettings,
-  previewAspectRatio: number,
-  calculationMode: CalculationMode,
-  viewCorrection?: CameraViewCorrection
-): ReturnType<typeof projectHorizontalToPreview> {
-  const correctedProjection = createCameraProjection(
-    tripod,
-    subject,
-    settings,
-    previewAspectRatio,
-    calculationMode,
-    viewCorrection
-  );
-  const { apparent: subjectDirection } = createCameraModel(
-    tripod,
-    subject,
-    settings,
-    previewAspectRatio,
-    calculationMode
-  );
-  return projectHorizontalToPreview(
-    {
-      azimuthDegrees: subjectDirection.azimuthDegrees,
-      altitudeDegrees: subjectDirection.altitudeDegrees,
-      geometricAltitudeDegrees: subjectDirection.altitudeDegrees,
-    },
-    correctedProjection
-  );
-}
-
 export function angularDistanceFromCameraCenterDegrees(
   horizontal: HorizontalCoordinates,
   projection: CameraProjection
