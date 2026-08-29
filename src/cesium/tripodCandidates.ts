@@ -58,6 +58,17 @@ const DEFAULT_SAMPLE_COUNT = 32;
 // 約62点へ増える程度（ADAPTIVE_MAX_TOTAL_SAMPLES=640の上限に対して
 // 十分小さい）。10m DEMのままで1m化はしないため、通信量・精度条件は
 // 変更していない。
+//
+// 2026-08-29追記（重要な訂正）: 30m版でも実機の症状が解消しなかった
+// ことを受けて、根拠なく10mへさらに縮めようとしたが、これは「実際の
+// 地形の起伏幅を確認しないまま、数値を当てずっぽうに動かしただけ」で
+// あり、理論的な裏付けのない対症療法だと指摘を受け、撤回した。30mという
+// 値自体も、実データで確認できた「幅40〜80m規模の起伏」に対する
+// 一つの安全マージンでしかなく、実際の起伏がこれより狭い場合に本当に
+// 十分かどうかは、まだ検証できていない。この先の対応は、根拠のない
+// 数値変更ではなく、23件目で追加した「初期交点の内訳」診断で実際に
+// 何が起きているか（候補がそもそも見つからないのか、見つかった上で
+// 別の理由で失敗しているのか）を確認してから判断する。
 const ADAPTIVE_COARSE_MAX_SPAN_METERS = 30;
 const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
 // 2026-08-26追記: 以前は「距離に比例して広がる」高さ差の許容値
@@ -1062,7 +1073,38 @@ async function scanRayTerrainIntersections(
     distanceMeters: distance,
     heightErrorMeters: errors[index],
   }));
-  if (brackets.length === 0) return [];
+  if (brackets.length === 0) {
+    // 2026-08-29修正（2026-08-07頃の旧実装との比較検証により判明）:
+    // 現行方式は「符号が反転する交点（明確な交差）が1つも見つからなければ
+    // 候補ゼロ」という設計だった。しかし2026-08-07頃の実装
+    // （ECEFレイ・複数交点対応への書き直し以前のもの）は、交差が見つから
+    // なくても「その時点で最も0に近かったサンプル」をそのまま後段の精密化
+    // （手動ピン相当の詳細探索）へ渡し、そこから真の解へ近づける設計に
+        // なっていた。実際に、その旧実装を今回問題になっている実地形パターン
+    // （被写体からの距離1050〜1511mの実測データに968m付近の地形起伏を
+    // 加えたもの）で再現テストしたところ、この「見つからなくても最も近い
+    // 点から精密化する」設計のおかげで、密度の調整を一切行わなくても
+    // 968m付近の正しい交点を発見・確定できることを確認した。
+    // この安全策は、後のECEFレイ・複数交点対応への書き直しのどこかで
+    // 失われていた。
+    // 粗探索の密度不足（30m間隔化で対応済み）を補う、独立した二重の
+    // 安全策として復元する。以降の精密化・round-trip判定条件（0.5%
+    // 許容誤差）は一切変更していないため、ここで見つかった「最も近い点」
+    // が実際には不正解であれば、従来どおり最終判定で正しく棄却される
+    // （偽陽性を許すものではない）。
+    const finiteIndexes = errors
+      .map((error, index) => ({ error, index }))
+      .filter(({ error }) => Number.isFinite(error));
+    if (finiteIndexes.length === 0) return [];
+    const closest = finiteIndexes.reduce((best, current) =>
+      Math.abs(current.error) < Math.abs(best.error) ? current : best
+    );
+    return [{
+      cartographic: sampled[closest.index],
+      distanceMeters: distances[closest.index],
+      altitudeErrorDegrees: closest.error,
+    }];
+  }
 
   const refinementPasses = Math.max(0, Math.floor(
     searchProfile?.refinementPasses ?? DEFAULT_ROOT_REFINEMENT_PASSES
