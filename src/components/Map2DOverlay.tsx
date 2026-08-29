@@ -480,7 +480,9 @@ export function Map2DOverlay({
                   ? (tripodCandidatesCalculating
                       ? `${candidate.label}の三脚概算候補（地形確認中）`
                       : `${candidate.label}の三脚概算候補（確定解なし・地形未確認のまま）`)
-                  : `${candidate.label}の三脚位置`
+                  : candidate.lineOfSightPossiblyObstructed
+                    ? `${candidate.label}の三脚位置（幾何学的条件は満たすが、途中の地形に被写体への視界を遮られている可能性があります）`
+                    : `${candidate.label}の三脚位置`
             }
           >
             <span aria-hidden="true">●</span>
@@ -494,6 +496,7 @@ export function Map2DOverlay({
               ? ` ${candidate.intersectionIndex}/${candidate.intersectionCount}`
               : ""}{" "}
             {Math.round(candidate.distanceMeters)}m
+            {candidate.lineOfSightPossiblyObstructed ? " ⚠視界不良の可能性" : ""}
           </button>
         );
       })}

@@ -202,8 +202,32 @@ let lastSearchDiagnostics: TripodSearchDiagnostics | null = null;
  */
 let lastScanFallbackInfo: { usedFallback: boolean; primaryMaxMeters: number } | null = null;
 
+/**
+ * 2026-08-29追記: 「探索は完了して確定/棄却されたが、その結論自体が
+ * 現地確認と食い違う」という報告（推測での修正では解決できなかった）を
+ * 受け、原因を推測ではなく実データで特定できるようにする診断専用の
+ * 記録。scanRayTerrainIntersections()の粗探索段階（密度補完後・精密化前）
+ * で実際に計算された「距離ごとのレイ高と地形高の差（m）」を、直近1回分
+ * だけ保持する。これにより、"確定/現地の位置"に対応する距離の近くで
+ * 符号が変化している（＝交点の兆候がある）のに検出漏れしているのか、
+ * それとも本当にその付近では符号変化が起きていない（＝この計算モデル
+ * では別の場所が正解になっている）のかを、次回の診断コピーで直接
+ * 判別できるようにする。探索の挙動・精度には一切影響しない。
+ */
+let lastCoarseScanSamples: Array<{ distanceMeters: number; heightErrorMeters: number }> | null = null;
+
 export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null {
   return lastSearchDiagnostics;
+}
+
+/**
+ * 診断専用: 直近の粗探索（scanRayTerrainIntersections、精密化前）で実際に
+ * 計算された「距離ごとのレイ高と地形高の差[m]」の生データを返す。
+ * 複数の天体・複数の交点候補がある場合は最後に処理されたものの値。
+ * 探索結果そのものには一切使わない（診断コピー用の読み取り専用）。
+ */
+export function getLastCoarseScanSamples(): Array<{ distanceMeters: number; heightErrorMeters: number }> | null {
+  return lastCoarseScanSamples;
 }
 
 function recordDiagnostics(
@@ -660,6 +684,74 @@ async function sampleRayTerrainErrors(
   return { rayPoints, samples, errors };
 }
 
+/**
+ * 2026-08-29追記（「仕様が目的と違っている可能性」というご指摘を受けて追加）:
+ * 2026-08-23のCLAUDE_HANDOFF仕様は「天体中心→被写体→後方の3Dレイと地形の
+ * 交点であること」「round-trip投影で天体・被写体中心が一致すること」を
+ * 確定条件として定義していたが、「候補地点から実際に被写体が見えるか
+ * （途中の地形に遮られていないか）」は確定条件に含まれていなかった。
+ *
+ * 同じ被写体・同じ天体方位のレイは、地形が起伏していれば複数回地表と
+ * 交差しうる（例: 川の堤防の被写体側斜面と反対側斜面）。近い方の交点
+ * （堤防の被写体側斜面）は被写体への視線が通るが、遠い方の交点（堤防の
+ * 反対側斜面）は、その堤防自体に視線を遮られ、実際には被写体がまったく
+ * 見えない場所になりうる。round-trip投影条件だけではこれを区別できない
+ * （ある点が幾何学的にレイ上にあれば、途中に何があろうと投影条件は
+ * 満たしてしまうため）。
+ *
+ * これは実機で報告された「現地確認済みの正しい三脚位置（近い方の交点）
+ * ではなく、より遠い交点が誤って確定として表示される」症状と整合する
+ * （近い方の交点上の地形が、遠い方の交点から見た被写体への視線を遮る
+ * 位置関係になっているケース）。
+ *
+ * 候補地点の高さ（カメラ高込み）から被写体の高さまでの直線上に、途中の
+ * 地形が実際に飛び出していないかを、候補・被写体間を数点サンプリングして
+ * 確認する。地球曲率・大気差はこの判定の目的（数百m〜数kmスケールの
+ * 明白な地形遮蔽の検出）には無視できる大きさのため、単純な直線補間で
+ * 判定する（±1mの余裕を持たせ、DEMノイズによる誤検出を避ける）。
+ */
+const LINE_OF_SIGHT_CHECK_POINT_COUNT = 9;
+const LINE_OF_SIGHT_CLEARANCE_MARGIN_METERS = 1;
+
+async function candidateSubjectLineOfSightClear(
+  candidate: GroundPoint,
+  subject: GroundPoint,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal?: AbortSignal
+): Promise<{ clear: boolean; obstructionDistanceMeters: number | null; obstructionHeightMeters: number | null }> {
+  const metrics = calculateKarneyLineMetrics(candidate, subject);
+  const totalDistance = metrics.distanceMeters;
+  if (!Number.isFinite(totalDistance) || totalDistance <= 0) {
+    return { clear: true, obstructionDistanceMeters: null, obstructionHeightMeters: null };
+  }
+  const cameraHeight = ellipsoidalHeightMeters(candidate) + lensCenterHeightMeters;
+  const subjectHeight = ellipsoidalHeightMeters(subject);
+  const fractions = Array.from(
+    { length: LINE_OF_SIGHT_CHECK_POINT_COUNT },
+    (_, index) => (index + 1) / (LINE_OF_SIGHT_CHECK_POINT_COUNT + 1)
+  );
+  const checkPoints = fractions.map((fraction) =>
+    destinationCartographic(candidate, metrics.bearingDegrees, totalDistance * fraction)
+  );
+  const sampled = await terrainSampler(checkPoints, signal, "10m");
+  abortIfRequested(signal);
+  for (let index = 0; index < sampled.length; index += 1) {
+    const sample = sampled[index];
+    if (!sample || !Number.isFinite(sample.height)) continue;
+    const fraction = fractions[index];
+    const sightLineHeight = cameraHeight + fraction * (subjectHeight - cameraHeight);
+    if (sample.height > sightLineHeight + LINE_OF_SIGHT_CLEARANCE_MARGIN_METERS) {
+      return {
+        clear: false,
+        obstructionDistanceMeters: totalDistance * fraction,
+        obstructionHeightMeters: sample.height - sightLineHeight,
+      };
+    }
+  }
+  return { clear: true, obstructionDistanceMeters: null, obstructionHeightMeters: null };
+}
+
 type TerrainSolution = {
   cartographic: Cartographic;
   distanceMeters: number;
@@ -906,6 +998,11 @@ async function scanRayTerrainIntersections(
       brackets.push({ lowIndex: index - 1, highIndex: index });
     }
   }
+  // 診断専用: 精密化前の粗探索サンプル（距離・レイ高との差[m]）を記録する。
+  lastCoarseScanSamples = distances.map((distance, index) => ({
+    distanceMeters: distance,
+    heightErrorMeters: errors[index],
+  }));
   if (brackets.length === 0) return [];
 
   const refinementPasses = Math.max(0, Math.floor(
@@ -2020,6 +2117,48 @@ async function calculateOneCandidates(
       return null;
     }
 
+    // 2026-08-29追記: round-trip投影条件だけでは検出できない「途中の
+    // 地形に被写体への視線を遮られている」可能性を確認する（詳細は
+    // candidateSubjectLineOfSightClear()のコメント参照）。
+    //
+    // 2026-08-23仕様（D. 地形との複数交点）は「レイが地形と複数回交差
+    // する場合、全交点を候補として保持する。遠い候補を勝手に1点へ絞ら
+    // ない」ことを明確に要求している。実際、既存の回帰テスト
+    // （tests/regression/tripod-candidate-round-trip.test.mjs）は
+    // 「2つの交点はどちらも候補として保持されるべき」ことを検証しており、
+    // 視線が遮られている可能性がある交点であっても、それだけを理由に
+    // 除外してはならない（DEM誤差・見落としている経路等により、実際には
+    // 見える場合もあるため、最終判断はユーザーに委ねる）。
+    // したがって、この判定は候補を除外するためではなく、候補に「視界を
+    // 確認してください」という注意フラグを付与するためだけに使う。
+    let lineOfSightPossiblyObstructed = false;
+    let obstructionDistanceMeters: number | undefined;
+    try {
+      const lineOfSight = await candidateSubjectLineOfSightClear(
+        finalCandidatePoint,
+        subject,
+        lensCenterHeightMeters,
+        terrainSampler,
+        signal
+      );
+      if (!lineOfSight.clear) {
+        lineOfSightPossiblyObstructed = true;
+        obstructionDistanceMeters = lineOfSight.obstructionDistanceMeters ?? undefined;
+        console.warn(
+          `[tripod-candidate] ${point.label}: 幾何学的には条件を満たすが、` +
+          `手前の地形（約${lineOfSight.obstructionDistanceMeters?.toFixed(0)}m地点、` +
+          `視線より約${lineOfSight.obstructionHeightMeters?.toFixed(1)}m高い）に` +
+          `被写体への視線を遮られている可能性があるため注意フラグを付与（候補自体は保持）`,
+          { distanceMeters: manualRefined.distanceMeters, ...diagnostics }
+        );
+      }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      // 視線判定自体が取得できない場合は、判定できないだけで候補を握り
+      // つぶさない（round-trip等の他の確定条件は既に満たしているため）。
+      console.warn(`[tripod-candidate] ${point.label}: 視線遮蔽判定に失敗（候補はそのまま採用）`, error);
+    }
+
     return {
       id: point.id,
       label: point.label,
@@ -2028,6 +2167,9 @@ async function calculateOneCandidates(
       height: ellipsoidalHeightMeters(finalCandidatePoint),
       distanceMeters: manualRefined.distanceMeters,
       solutionType: "aligned",
+      ...(lineOfSightPossiblyObstructed
+        ? { lineOfSightPossiblyObstructed: true, obstructionDistanceMeters }
+        : {}),
     };
   }
 

@@ -164,4 +164,15 @@ export type TripodCandidate = {
   intersectionIndex?: number;
   /** 同一天体で検出された有効地形交点の総数。 */
   intersectionCount?: number;
+  /**
+   * 2026-08-29追記: round-trip投影条件は満たすが、候補地点から被写体への
+   * 視線が途中の地形（同じレイ上の別の交点の地形など）に遮られている
+   * 可能性がある場合にtrue。2026-08-23仕様「複数交点は全て候補として
+   * 保持し、遠い候補を勝手に1点へ絞らない」を尊重し、このフラグが立って
+   * いても候補からは除外しない。表示側で「視界を確認してください」等の
+   * 注意喚起に使う。
+   */
+  lineOfSightPossiblyObstructed?: boolean;
+  /** 視線を遮っている疑いのある地形までの、候補地点からの概算距離(m)。 */
+  obstructionDistanceMeters?: number;
 };

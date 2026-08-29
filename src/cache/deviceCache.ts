@@ -208,6 +208,38 @@ async function scheduleNamespacePrune(policy: DeviceCachePolicy): Promise<void> 
   return pruning;
 }
 
+/**
+ * 2026-08-29追記: 三脚候補の永続seedキャッシュ（tripodCandidateSeedCache.ts）
+ * が、一度誤って確定した候補を「seed」として保存し続け、以後の検索へ
+ * 繰り返し悪影響を与える事例が実機で確認された。TTL（最大30日）を
+ * 待たずに、該当namespaceの永続データを利用者の操作で即座に消せるよう、
+ * 名前空間単位の完全削除を用意する。値そのものを解釈しないため、
+ * どのキャッシュ用途にも汎用的に使える。
+ */
+export async function clearDeviceCacheNamespace(namespace: string): Promise<void> {
+  for (const id of Array.from(memory.keys())) {
+    if (memory.get(id)?.namespace === namespace) memory.delete(id);
+  }
+  const database = await openDatabase();
+  if (!database) return;
+  const ids = await new Promise<string[]>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const index = transaction.objectStore(STORE_NAME).index("namespace");
+    const request = index.getAllKeys(namespace);
+    request.onsuccess = () => resolve((request.result as string[]) ?? []);
+    request.onerror = () => resolve([]);
+  });
+  if (ids.length === 0) return;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    ids.forEach((id) => store.delete(id));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+}
+
 export async function setDeviceCache<T>(
   policy: DeviceCachePolicy,
   key: string,

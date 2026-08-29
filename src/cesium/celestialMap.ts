@@ -166,8 +166,16 @@ function updateTripodCandidateEntities(
       const candidateNumber = candidate.intersectionCount && candidate.intersectionCount > 1
         ? ` ${candidateIndex}/${candidate.intersectionCount}`
         : "";
+      // 2026-08-29追記: round-trip投影条件は満たすが、途中の地形（同じ
+      // レイ上の別の交点の地形等）に被写体への視線を遮られている可能性が
+      // ある候補には、その旨をラベルへ明記する。候補としては除外しない
+      // （2026-08-23仕様「複数交点は全て保持」を尊重）が、そのまま現地へ
+      // 行っても被写体が見えない可能性があることをユーザーに伝える。
+      const obstructionWarning = candidate.lineOfSightPossiblyObstructed
+        ? "\n⚠視界不良の可能性"
+        : "";
       const text =
-        `${candidate.label} ${candidateKind}${candidateNumber}\n${Math.round(candidate.distanceMeters)}m`;
+        `${candidate.label} ${candidateKind}${candidateNumber}\n${Math.round(candidate.distanceMeters)}m${obstructionWarning}`;
       const existing = states.get(id);
       if (existing) {
         // 時間軸ドラッグ中はEntityを作り直さず、参照中の座標だけを更新する。

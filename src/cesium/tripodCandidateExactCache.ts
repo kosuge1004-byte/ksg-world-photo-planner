@@ -45,6 +45,16 @@ export type ExactTripodCacheInputs = {
   initialDirectionObserver?: GroundPoint;
   accuracyMode: string;
   refractionMode: string;
+  // 2026-08-29追記（V11〜V20の精度関連変更を網羅的に検査した結果判明）:
+  // 永続seedキャッシュ・現セッション確定候補由来の「距離ヒント」
+  // （calculateTripodCandidates()のsearchProfile.preferredDistanceMeters
+  // へ渡る値）は、実際に最終確定候補の選択へ影響する（同じ被写体・同じ
+  // 日時・同じカメラ設定でも、ヒント値が異なれば異なる交点が確定
+  // しうることを本レポートの一連の調査で確認済み）。以前はこの値が
+  // 完全一致キャッシュ・重複探索抑止のキーに含まれておらず、ヒント値
+  // だけが異なる2回の呼び出しを「同一」と誤認し、古い（別ヒント下での）
+  // 結果を誤って再利用しうる欠落があったため、キーへ追加する。
+  preferredDistancesById?: Partial<Record<string, number>>;
 };
 
 export function exactTripodCacheKey(input: ExactTripodCacheInputs): string {
@@ -65,6 +75,11 @@ export function exactTripodCacheKey(input: ExactTripodCacheInputs): string {
       : null,
     accuracyMode: input.accuracyMode,
     refractionMode: input.refractionMode,
+    preferredDistances: input.preferredDistancesById
+      ? Object.entries(input.preferredDistancesById)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([id, distance]) => [id, n(distance)])
+      : null,
   });
 }
 

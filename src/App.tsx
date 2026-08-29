@@ -127,10 +127,12 @@ import {
   buildPreliminaryTripodCandidates,
   calculateTripodCandidates,
   getLastTripodSearchDiagnostics,
+  getLastCoarseScanSamples,
 } from "./cesium/tripodCandidates";
 import {
   loadPersistentTripodSeeds,
   savePersistentTripodSeeds,
+  clearPersistentTripodSeeds,
 } from "./cesium/tripodCandidateSeedCache";
 import {
   exactTripodCacheKey,
@@ -823,6 +825,20 @@ function App() {
             : "");
       }),
     ];
+    // 2026-08-29追記: 「確定/棄却の結論そのものが現地確認と食い違う」
+    // 報告を受け、推測での修正ではなく実データで原因を特定できるよう、
+    // 粗探索段階（精密化前）の生の(距離, レイ高との差[m])サンプルを
+    // そのまま添付する。符号が変わる（＝交点の兆候がある）箇所を目視で
+    // 確認できるようにするための診断専用の情報で、探索結果には影響しない。
+    const coarseScanSamples = getLastCoarseScanSamples();
+    if (coarseScanSamples && coarseScanSamples.length > 0) {
+      lines.push(
+        "粗探索の生データ（精密化前・距離昇順、距離m:レイ高との差m）:",
+        coarseScanSamples
+          .map((sample) => `${Math.round(sample.distanceMeters)}:${sample.heightErrorMeters.toFixed(1)}`)
+          .join(" ")
+      );
+    }
     try {
       await navigator.clipboard.writeText(lines.join("\n"));
       setTripodDiagnosticsCopyState("copied");
@@ -831,6 +847,24 @@ function App() {
     }
     window.setTimeout(() => setTripodDiagnosticsCopyState("idle"), 3_000);
   }, []);
+
+  // 2026-08-29追記: 誤って「確定」扱いになった候補が端末の永続キャッシュへ
+  // 保存され、以後の検索へ自己強化的に悪影響を与え続けることが実機で
+  // 確認された（詳細はtripodCandidateSeedCache.tsのコメント参照）。この
+  // 更新自体でも既存の永続seedは自動的に無効化されるが、念のため利用者
+  // 自身の操作でも即座にリセットできるようにする。
+  const [tripodSeedResetState, setTripodSeedResetState] =
+    useState<"idle" | "done" | "failed">("idle");
+  const handleResetTripodSeedCache = useCallback(async () => {
+    try {
+      await clearPersistentTripodSeeds();
+      setTripodSeedResetState("done");
+    } catch {
+      setTripodSeedResetState("failed");
+    }
+    window.setTimeout(() => setTripodSeedResetState("idle"), 3_000);
+  }, []);
+
   const [dateTimeLocal, setDateTimeLocal] = useState(
     loadCelestialDateTime
   );
@@ -1446,6 +1480,7 @@ function App() {
       initialDirectionObserver,
       accuracyMode: precisionSettings.accuracyMode,
       refractionMode: precisionSettings.refractionCorrectionMode,
+      preferredDistancesById,
     });
     const exactCacheKey = exactCacheEnabled ? calculationKey : null;
     const exactCachedCandidates = exactCacheKey
@@ -4697,18 +4732,32 @@ ${diagnosticMessage}
 
             {tripodCandidateCalculationStatus !== "idle" &&
               tripodCandidateCalculationStatus !== "calculating" && (
-                <button
-                  type="button"
-                  className="map-tripod-diagnostics-copy"
-                  onClick={handleCopyTripodDiagnostics}
-                  title="所要時間・見つかった交点候補数などをコピーします（開発者への報告用）"
-                >
-                  {tripodDiagnosticsCopyState === "copied"
-                    ? "診断情報をコピーしました"
-                    : tripodDiagnosticsCopyState === "failed"
-                      ? "コピーできませんでした"
-                      : "この検索の診断情報をコピー"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="map-tripod-diagnostics-copy"
+                    onClick={handleCopyTripodDiagnostics}
+                    title="所要時間・見つかった交点候補数などをコピーします（開発者への報告用）"
+                  >
+                    {tripodDiagnosticsCopyState === "copied"
+                      ? "診断情報をコピーしました"
+                      : tripodDiagnosticsCopyState === "failed"
+                        ? "コピーできませんでした"
+                        : "この検索の診断情報をコピー"}
+                  </button>
+                  <button
+                    type="button"
+                    className="map-tripod-diagnostics-copy"
+                    onClick={handleResetTripodSeedCache}
+                    title="この端末に保存された三脚候補の記憶（前回距離のヒント）を消去します。誤った候補が繰り返し出る場合にお試しください"
+                  >
+                    {tripodSeedResetState === "done"
+                      ? "三脚候補の記憶をリセットしました"
+                      : tripodSeedResetState === "failed"
+                        ? "リセットできませんでした"
+                        : "三脚候補の記憶をリセット"}
+                  </button>
+                </>
               )}
 
             {mapMeasuring && (
