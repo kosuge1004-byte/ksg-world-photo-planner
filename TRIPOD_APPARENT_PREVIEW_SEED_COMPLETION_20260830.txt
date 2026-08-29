@@ -1,0 +1,71 @@
+AstroSight 三脚候補 apparent-preview seed 完成
+2026-08-30（このセッションでの完成作業）
+
+背景
+アップロードされたZIP（AstroSight-tripod-ecef-preview-truth-restore-
+20260830.zip）を検証した結果、以下が判明した。
+
+1. フルビルドが実際に失敗していた
+   src/cesium/tripodCandidates.ts(1060,16): error TS6133:
+   'scanCenterlineAlignmentSeeds' is declared but its value is never read.
+   実際のCloudflare Pagesデプロイログ（2026-08-29T23:15の実機ビルド）でも
+   同一のエラーで "Failed: build command exited with code: 1" となって
+   おり、この不具合が実際の本番デプロイを継続的に妨げていたことを確認した。
+
+2. TRIPOD_PREVIEW_INVERSE_ROOT_FIX_20260830.txtが「PASS」と記載していた
+   apparent-preview seed（見かけの高度を直接解く、幾何ECEFレイとは独立
+   したseed）が、実際には型定義とコメントだけで、生成・代入するコードが
+   一切実装されていなかった。専用の検証スクリプト
+   （verify-tripod-preview-inverse-root-fix-20260830.mjs）も
+   run-regression-tests.mjsへ登録されておらず、直接実行すると失敗して
+   いた。
+
+一方、以下は正しく実装・検証済みであることを確認した:
+- 22・24・25・27件目（密度改善・フォールバック・スライド上限・永続
+  キャッシュ無効化）の引き継ぎ
+- DEM補間の統一（探索の既定terrainSamplerをneutralからsampleWorldTerrain
+  ＝los-safeへ変更）
+- round-tripでの被写体自身の投影（固定50/50を廃止）
+- viewCorrectionのApp.tsx→探索への配線、exact cacheキーへの反映
+
+今回完成させた内容
+1. ビルド修正
+   scanCenterlineAlignmentSeeds()をexportし、TS6133を解消した。
+   実行経路・判定条件は変更していない（診断/比較用にコード上残す、
+   という元の設計意図をそのまま維持）。
+
+2. apparent-preview seedの実装
+   - calculateOneCandidates()内、幾何ECEFレイ×DEM交点（initialSolutions,
+     seedKind: "geometric-ray"）を求めた直後に、独立した処理として、
+     既存のscanTerrainDistanceRange()（全距離走査、交点が無くても最も
+     近い点を返す安全策込み）を、被写体からの見かけ仰角
+     （elevationAngleDegrees、プレビュー/round-tripと同じApparent層）が
+     天体の見かけ高度（point.altitudeDegrees）と一致する条件で実行し、
+     結果をseedKind: "apparent-preview"としてinitialSolutionsへ追加した。
+   - 経験的な角度・距離オフセット、968mへ合わせるための固定補正は
+     一切追加していない。既存のscanTerrainDistanceRange()をそのまま
+     流用しただけである。
+   - processInitialSolutionInner()内の分岐条件を、既存の
+     `=== "geometric-ray"`から`!== "apparent-preview"`へ変更した
+     （動作は現状のseedKind値では等価だが、apparent-preview seedだけを
+     明示的に除外する意図を保つ）。これにより、apparent-preview seedは
+     幾何レイへの再収束を経由せず、既存の1m DEM・2D CameraModel詳細
+     探索（round-trip判定含む、精度条件は一切変更しない）へ直接渡される。
+
+3. 検証スクリプトの登録漏れ修正
+   scripts/verify-tripod-preview-inverse-root-fix-20260830.mjsを
+   scripts/run-regression-tests.mjsへ登録した。
+
+検証
+- npm install / npx tsc -b / npm run build / npm run test:regression
+  （35グループ、新規登録の検証スクリプトを含む）/ npm run lint、
+  全てPASS。
+- 実際のCloudflare Pagesビルドログで確認されたエラーと同一のエラーが
+  解消されていることを確認した。
+
+未確認（このサンドボックス環境の制約）
+- 実際のGSI地形データ・実機での動作確認は未実施。次回、同じ「実証」
+  プロジェクト（2026/08/09 18:06・250mm・カメラ高1.6m）で再検索し、
+  「初期交点の内訳」にapparent-preview seed由来の候補（968m付近が
+  期待される）が追加されるか、最終確定距離が1252mから正しい側へ
+  移るかを確認いただきたい。

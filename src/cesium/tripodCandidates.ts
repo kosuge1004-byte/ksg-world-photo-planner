@@ -1057,7 +1057,17 @@ async function candidateSubjectLineOfSightClear(
  * この一次探索は全距離範囲を25m以下の間隔で直接評価し、角距離の局所最小を
  * seedとして返す。最終座標は後段の1m DEM + 2D CameraModel詳細探索で確定する。
  */
-async function scanCenterlineAlignmentSeeds(
+/**
+ * 2026-08-30修正（フルビルド検証により判明）: この関数は「診断/比較用に
+ * コード上残すが、確定候補の主経路からは呼ばない」という意図で実装されて
+ * いたが、モジュール内から一切参照されなくなったためTypeScriptの未使用
+ * 判定（TS6133）でビルドが失敗していた（元の実装メモも「フルビルド
+ * 未確認」と正直に記載しており、この問題を検知できていなかった）。
+ * 実行経路・判定条件は一切変更せず、外部の診断・比較スクリプトから
+ * 呼び出せるようexportするだけで、意図通り「主経路からは呼ばないが
+ * コード上には残す」を維持したままビルドを通す。
+ */
+export async function scanCenterlineAlignmentSeeds(
   subject: GroundPoint,
   point: CelestialScreenPoint,
   cameraSettings: CameraSettings,
@@ -2436,7 +2446,7 @@ async function calculateOneCandidates(
   // ECEF 3DレイとDEM地形の全交点へ戻す。Karney地表測地線や距離総当たりの
   // centerline solverを最終候補座標の生成器にはしない。ここで得た交点はseedであり、
   // 後段の候補地点再計算・1m DEM・CameraModel round-tripを必ず通す。
-  const initialSolutions = (await scanRayTerrainIntersections(
+  const initialSolutions: TerrainSolution[] = (await scanRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
     terrainSampler,
@@ -2446,6 +2456,44 @@ async function calculateOneCandidates(
     directSeedDistance ?? searchProfile?.preferredDistanceMeters,
     true
   )).map((solution) => ({ ...solution, seedKind: "geometric-ray" as const }));
+
+  // 2026-08-30追記（未完成だった実装を完成させる）: 「幾何ECEFレイ×DEM
+  // 地形の交点」だけを主seedにすると、低高度の天体では幾何高度と見かけ
+  // 高度の差（大気差等）により、レイ自体が実証で正しい地点の近傍を
+  // 一切通らないことがある（2026-08-29実機ログで、粗探索が1250〜1280m側
+  // だけを交点として扱い、約968m側を入口段階で除外していたことを確認
+  // 済み）。この場合、いくら精密化・安全網・スライドの上限を改善しても、
+  // 最初から候補にすら挙がっていない地点は見つけようがない。
+  // 幾何ECEFレイの構成とは独立に、被写体からの見かけ仰角
+  // （elevationAngleDegrees、prawview/round-tripと同じApparent層）が
+  // 天体の見かけ高度（point.altitudeDegrees）と一致する距離を、既存の
+  // 全距離走査ソルバ（scanTerrainDistanceRange、交点が無くても最も近い
+  // 点を返す安全策込み）で独立に求め、"apparent-preview"というseedとして
+  // 追加する。このseedは（下のprocessInitialSolutionInner内の分岐で）
+  // 幾何レイへの再収束を経由せず、既存の1m DEM・2D CameraModel詳細探索
+  // （round-trip判定を含む、精度条件は一切変更しない）へ直接渡される。
+  // 経験的な角度・距離オフセット、968mへ合わせるための固定補正は一切
+  // 追加していない。
+  try {
+    const apparentPreviewBearing = (point.azimuthDegrees + 180) % 360;
+    const apparentSeed = await scanTerrainDistanceRange(
+      subject,
+      apparentPreviewBearing,
+      point.altitudeDegrees,
+      lensCenterHeightMeters,
+      calculationMode,
+      terrainSampler,
+      signal,
+      distanceRange,
+      searchProfile
+    );
+    if (apparentSeed) {
+      initialSolutions.push({ ...apparentSeed, seedKind: "apparent-preview" as const });
+    }
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    console.warn(`[tripod-candidate] ${point.label}: apparent-preview seedの算出に失敗（幾何レイseedのみで続行）`, error);
+  }
 
   initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
@@ -2568,7 +2616,11 @@ async function calculateOneCandidates(
     // 見かけ高度の逆解から得た点なので、ここで幾何レイへ強制的に戻すと
     // せっかく得た正解側seedを再び真空幾何交点へ引き戻してしまう。
     // apparent-preview seedはそのままCameraModel詳細探索へ渡す。
-    if (initialSolution.seedKind === "geometric-ray") {
+    // apparent-preview seed以外（geometric-ray・将来のcenterline等）は
+    // 従来どおり幾何レイへの再収束を行う。apparent-preview seedだけを
+    // 明示的に除外する書き方にすることで、seedKindの種類が増えても
+    // 「apparent-preview以外は再収束する」という意図を保つ。
+    if (initialSolution.seedKind !== "apparent-preview") {
       for (let iteration = 0; iteration < 3; iteration += 1) {
       const candidatePoint = buildCandidateGroundPoint(
         solution.cartographic,
