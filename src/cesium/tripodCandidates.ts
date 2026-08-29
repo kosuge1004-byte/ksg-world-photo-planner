@@ -25,6 +25,7 @@ import {
 import {
   fetchGsiGeoidHeightPointSpecific,
   geoidHeightMetersForTerrainSample,
+  sampleWorldTerrain,
   sampleWorldTerrainNeutral,
   terrainDataSource,
 } from "./worldTerrain";
@@ -2028,9 +2029,66 @@ async function calculateOneCandidates(
       return null;
     }
 
-    const finalCandidatePoint = manualRefined.candidatePoint;
-    const finalHorizontal = manualRefined.horizontal;
-    const roundTrip = manualRefined.roundTrip;
+    let finalCandidatePoint = manualRefined.candidatePoint;
+    let finalHorizontal = manualRefined.horizontal;
+    let roundTrip = manualRefined.roundTrip;
+
+    // 2026-08-29追記（実機診断より）:「実際に置いた三脚ピンのプレビューは
+    // 天体・被写体が完璧に一致するのに、探索側のround-trip判定は大きく
+    // ずれる（別の候補が誤って確定する）」という不整合が実機で確認された。
+    // 原因は、探索内部（粗探索・精密化）は位置探索の精度を優先し、DEM高さを
+    // neutral補間（制約付きBicubic、LOS用の上方バイアス無し）で取得して
+    // いるのに対し、実際に三脚ピンを置いたとき（＝プレビューが使う高さ）は
+    // los-safe補間（max(Bilinear, Constrained Bicubic)、上方バイアスあり）
+    // で取得されており、同じ緯度経度でも高さの解決方法が違うこと。堤防の
+    // 斜面のように局所的に地形が変化する場所では、この2つの補間結果が
+    // 数十cm〜数mずれることがあり、それだけでround-trip判定を左右するのに
+    // 十分な仰角誤差（実機診断で0.096°・dy 3.87%）を生む。
+    // 探索中の位置決定自体はneutral補間のまま（位置探索の精度を優先）とし、
+    // 最終確定判定の直前だけ、実際にこの座標へ三脚ピンを置いた場合と同じ
+    // los-safe補間で高さを取り直し、その高さでround-trip判定をやり直す。
+    // これにより「探索が確定と言った候補」と「実際にそこへ三脚を置いた
+    // ときのプレビュー」が常に一致するようになる（仕様3-G round-trip検証
+    // の本来の意図：候補地点をプレビューと同じ経路へ逆投入する、を高さの
+    // 取得方法まで含めて満たす）。
+    try {
+      const losSafeQuery = Cartographic.fromDegrees(
+        finalCandidatePoint.longitude,
+        finalCandidatePoint.latitude,
+        0
+      );
+      const [losSafeSample] = await sampleWorldTerrain([losSafeQuery], signal, "1m");
+      abortIfRequested(signal);
+      if (losSafeSample && Number.isFinite(losSafeSample.height)) {
+        const losSafePoint = await buildPointSpecificFinalCandidateGroundPoint(
+          losSafeSample,
+          subject,
+          `${point.label}手動三脚ピン同等最終候補（実ピン一致確認）`,
+          signal
+        );
+        const losSafeEvaluation = evaluateManualEquivalentCandidate(
+          losSafePoint,
+          subject,
+          point,
+          cameraSettings,
+          previewAspectRatio,
+          date,
+          calculationMode,
+          activeRefractionWeather
+        );
+        if (losSafeEvaluation) {
+          finalCandidatePoint = losSafeEvaluation.candidatePoint;
+          finalHorizontal = losSafeEvaluation.horizontal;
+          roundTrip = losSafeEvaluation.roundTrip;
+        }
+      }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      console.warn(
+        `[tripod-candidate] ${point.label}: 実ピン一致確認（los-safe再検証）に失敗。neutral補間の結果をそのまま使用`,
+        error
+      );
+    }
     const finalCartographic = Cartographic.fromDegrees(
       finalCandidatePoint.longitude,
       finalCandidatePoint.latitude,
