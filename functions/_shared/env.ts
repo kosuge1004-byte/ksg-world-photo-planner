@@ -27,17 +27,20 @@ export function spotSearchJobKv(env: CloudflareEnv): SpotSearchJobKv {
 }
 
 export function configureCloudflareServerRuntime(
-  context: EventContext<CloudflareEnv, string, unknown>
+  context: EventContext<CloudflareEnv, string, unknown>,
+  disablePersistentCache = false
 ): void {
   configureServerRuntime({
     cesiumIonToken:
       context.env.CESIUM_ION_TOKEN ?? context.env.VITE_CESIUM_ION_TOKEN,
-    persistentCache: persistentCacheFromR2(
-      context.env.NETWORK_CACHE,
-      context.env.SPOT_SEARCH_JOBS,
-      context.request,
-      context.env.R2_WRITE_BUDGET_DB,
-    ),
+    persistentCache: disablePersistentCache
+      ? undefined
+      : persistentCacheFromR2(
+          context.env.NETWORK_CACHE,
+          context.env.SPOT_SEARCH_JOBS,
+          context.request,
+          context.env.R2_WRITE_BUDGET_DB,
+        ),
     waitUntil: (promise) => context.waitUntil(promise),
     r2WriteBudgetDb: context.env.R2_WRITE_BUDGET_DB,
   });

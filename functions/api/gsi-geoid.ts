@@ -25,7 +25,7 @@ function parseBatch(body: unknown): { points: GeoidPoint[]; pointSpecific: boole
 }
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
-  configureCloudflareServerRuntime(context);
+  configureCloudflareServerRuntime(context, true);
   const { request } = context;
   // 地点固有(point)モードのキャッシュキーは4桁（約11m）へ量子化する。
   // 詳細は server/gsiGeoid.ts の同名定数のコメントを参照（三脚探索の候補
@@ -44,6 +44,10 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         longitude: Number(longitude.toFixed(pointSpecific ? POINT_SPECIFIC_CACHE_KEY_DECIMALS : 2)),
         pointSpecific,
       };
+      if (url.searchParams.get("cache") === "off" || request.headers.get("X-AstroSight-Cache-Bypass") === "1") {
+        const geoidHeightMeters = await lookupGsiGeoidHeight(latitude, longitude, request.signal, pointSpecific);
+        return jsonResponse({ geoidHeightMeters, cache: "bypass" }, 200, "no-store");
+      }
       const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, normalized, {
         namespace: "gsi-geoid", version: "v2", ttlSeconds: null,
       }, async () => ({

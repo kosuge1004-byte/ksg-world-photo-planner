@@ -40,7 +40,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
   }
-  configureCloudflareServerRuntime(context);
+  configureCloudflareServerRuntime(context, true);
   try {
     const points = requestPoints(await context.request.json());
     if (!points) {
@@ -74,7 +74,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         tileCacheBypass: tileCacheCounter.bypass,
       },
       200,
-      "public, max-age=86400"
+      "no-store"
     );
   } catch (error) {
     // エラー応答は公開キャッシュしない（失敗を1時間キャッシュして再試行を妨げない）。
