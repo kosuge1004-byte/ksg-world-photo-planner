@@ -26,7 +26,8 @@ type NativeGoogleMapsHttpResult = {
 
 type NativeGoogleMapsHttpRequest = (
   url: string,
-  disableRedirects: boolean
+  disableRedirects: boolean,
+  signal?: AbortSignal
 ) => Promise<NativeGoogleMapsHttpResult>;
 
 const GOOGLE_REQUEST_HEADERS = {
@@ -99,25 +100,64 @@ function coordinatesFromResponse(
   return fromData ? { ...fromData, resolvedUrl } : null;
 }
 
+// 2026-08-29追記: サーバー側（server/googleMaps.ts）にGoogleの429対策
+// （指数バックオフ再試行）を追加したのに合わせ、ネイティブ経路（端末
+// 自身のIPで通信するため通常は共有IP起因の429は起きにくいが、念のため
+// 同じ考え方で対応する）にも同様の再試行を用意する。
+const RATE_LIMIT_MAX_RETRIES = 3;
+const RATE_LIMIT_BASE_DELAY_MS = 1_500;
+const RATE_LIMIT_MAX_DELAY_MS = 6_000;
+
+function rateLimitRetryDelayMs(attempt: number): number {
+  const exponential = RATE_LIMIT_BASE_DELAY_MS * 2 ** (attempt - 1);
+  const capped = Math.min(exponential, RATE_LIMIT_MAX_DELAY_MS);
+  const jitterRatio = 0.8 + Math.random() * 0.4;
+  return Math.round(capped * jitterRatio);
+}
+
+async function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
+}
+
 async function capacitorGoogleMapsRequest(
   url: string,
-  disableRedirects: boolean
+  disableRedirects: boolean,
+  signal?: AbortSignal
 ): Promise<NativeGoogleMapsHttpResult> {
-  const response: HttpResponse = await CapacitorHttp.get({
-    url,
-    headers: GOOGLE_REQUEST_HEADERS,
-    connectTimeout: 10_000,
-    readTimeout: 18_000,
-    disableRedirects,
-    responseType: "text",
-    shouldEncodeUrlParams: false,
-  });
-  return {
-    data: response.data as unknown,
-    headers: response.headers,
-    status: response.status,
-    url: response.url,
+  const fetchOnce = async (): Promise<NativeGoogleMapsHttpResult> => {
+    const response: HttpResponse = await CapacitorHttp.get({
+      url,
+      headers: GOOGLE_REQUEST_HEADERS,
+      connectTimeout: 10_000,
+      readTimeout: 18_000,
+      disableRedirects,
+      responseType: "text",
+      shouldEncodeUrlParams: false,
+    });
+    return {
+      data: response.data as unknown,
+      headers: response.headers,
+      status: response.status,
+      url: response.url,
+    };
   };
+
+  let result = await fetchOnce();
+  for (let attempt = 1; attempt <= RATE_LIMIT_MAX_RETRIES; attempt += 1) {
+    if (result.status !== 429) return result;
+    if (signal?.aborted) return result;
+    await delay(rateLimitRetryDelayMs(attempt), signal);
+    if (signal?.aborted) return result;
+    result = await fetchOnce();
+  }
+  return result;
 }
 
 async function resolvePlaceQueryNatively(
@@ -184,7 +224,7 @@ export async function resolveGoogleMapsSharedUrlNatively(
 
   try {
     // 通常はネイティブHTTPの自動転送で短縮URLから最終URLまで一度で取得する。
-    lastResponse = await request(sourceUrl, false);
+    lastResponse = await request(sourceUrl, false, signal);
     abortIfRequested(signal);
     const automatic = coordinatesFromResponse(lastResponse, sourceUrl);
     if (automatic) return automatic;
@@ -201,7 +241,7 @@ export async function resolveGoogleMapsSharedUrlNatively(
     }
     visited.add(currentUrl);
 
-    const response = await request(currentUrl, true);
+    const response = await request(currentUrl, true, signal);
     lastResponse = response;
     const coordinates = coordinatesFromResponse(response, currentUrl);
     if (coordinates) return coordinates;

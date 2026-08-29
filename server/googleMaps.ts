@@ -547,26 +547,55 @@ async function responseText(response: Response): Promise<string> {
 // 失敗する事例が実機で確認された。Cloudflareのエッジは共有IPアドレスを
 // 使うため、他の利用者・他サイトのトラフィックと合算されてGoogle側の
 // 一時的な制限に触れることがある。429は多くの場合すぐに解消される一時的な
-// ものなので、これだけは短い間隔を空けて1回だけ自動的に再試行する
+// ものなので、これだけは短い間隔を空けて自動的に再試行する
 // （他のHTTPエラーは従来どおり即座に失敗として扱う。無条件リトライは
 // 429を悪化させる恐れがあるため対象を絞る）。
-const RATE_LIMIT_RETRY_DELAY_MS = 1_500;
+//
+// 2026-08-29修正: 実機で「1回だけ・固定1.5秒後の再試行」では解消しきれない
+// 429が確認された（診断: Googleマップ共有リンク通信エラー：429）。
+// Cloudflareの共有IPが混雑している時間帯は、1.5秒程度ではGoogle側の
+// 制限が解けないことがある。指数バックオフ＋乱数ジッター（他利用者の
+// 再試行タイミングが重ならないようにする）で最大3回まで再試行するよう
+// 強化する。合計待機時間の上限を設け、体感の遅さと成功率のバランスを取る
+// （1回目失敗後の待機だけで最大約8秒、2回目失敗後の待機を含めても
+// 合計で十数秒程度に収まるようにする）。
+const RATE_LIMIT_MAX_RETRIES = 3;
+const RATE_LIMIT_BASE_DELAY_MS = 1_500;
+const RATE_LIMIT_MAX_DELAY_MS = 6_000;
+
+function rateLimitRetryDelayMs(attempt: number): number {
+  // attempt: 1回目の再試行が1、2回目が2、...
+  const exponential = RATE_LIMIT_BASE_DELAY_MS * 2 ** (attempt - 1);
+  const capped = Math.min(exponential, RATE_LIMIT_MAX_DELAY_MS);
+  // ±20%のジッターを加え、同時に再試行している他のリクエストと
+  // タイミングが重なって429を再発させる（thundering herd）のを避ける。
+  const jitterRatio = 0.8 + Math.random() * 0.4;
+  return Math.round(capped * jitterRatio);
+}
+
+async function delay(ms: number, signal?: AbortSignal | null): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
+}
 
 function withRateLimitRetry(fetcher: typeof fetch): typeof fetch {
   return (async (input, init) => {
-    const response = await fetcher(input, init);
-    if (response.status !== 429) return response;
+    let response = await fetcher(input, init);
     const signal = init?.signal;
-    if (signal?.aborted) return response;
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS);
-      signal?.addEventListener("abort", () => {
-        clearTimeout(timeout);
-        resolve();
-      }, { once: true });
-    });
-    if (signal?.aborted) return response;
-    return fetcher(input, init);
+    for (let attempt = 1; attempt <= RATE_LIMIT_MAX_RETRIES; attempt += 1) {
+      if (response.status !== 429) return response;
+      if (signal?.aborted) return response;
+      await delay(rateLimitRetryDelayMs(attempt), signal);
+      if (signal?.aborted) return response;
+      response = await fetcher(input, init);
+    }
+    return response;
   }) as typeof fetch;
 }
 
