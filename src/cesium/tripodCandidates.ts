@@ -217,6 +217,17 @@ export type TripodSearchDiagnostics = {
           onEdge: boolean;
         }> | null;
       }>;
+      // 2026-08-29追記: 「交点候補3件→確定1件・除外理由なし」のように
+      // 数が合わない実機報告があった。原因を推測せず特定できるよう、
+      // 見つかった全ての初期交点候補（粗探索の段階のもの）について、
+      // 最終的にどうなったか（確定/棄却/重複として除去）を1件ずつ
+      // 記録する。reject()を経由しない失敗（重複除去等）も含めて
+      // 全件の行方を追える。
+      intersectionOutcomes: Array<{
+        initialDistanceMeters: number;
+        outcome: "aligned" | "rejected" | "deduplicated" | "processing-failed";
+        finalDistanceMeters: number | null;
+      }>;
     }
   >;
 };
@@ -2036,6 +2047,7 @@ async function calculateOneCandidates(
       totalBodyMs: performance.now() - bodyStartedAt,
       rejectionReasons,
       finalEvaluations,
+      intersectionOutcomes: [],
     });
     return [];
   }
@@ -2054,12 +2066,36 @@ async function calculateOneCandidates(
     )
   );
   const converged: TripodCandidate[] = [];
-  for (const result of convergedResults) {
+  // 2026-08-29追記: 各初期交点候補（initialSolutions[index]）が最終的に
+  // どうなったかを、reject()を経由しない失敗（Promise.allSettledの
+  // rejected）も含めて1件ずつ記録する。
+  const intersectionOutcomes: TripodSearchDiagnostics["perCelestialBody"][string]["intersectionOutcomes"] = [];
+  for (let index = 0; index < convergedResults.length; index += 1) {
+    const result = convergedResults[index];
+    const initialDistanceMeters = initialSolutions[index]?.distanceMeters ?? Number.NaN;
     if (result.status === "fulfilled" && result.value) {
       converged.push(result.value);
+      intersectionOutcomes.push({
+        initialDistanceMeters,
+        outcome: "aligned",
+        finalDistanceMeters: result.value.distanceMeters,
+      });
+    } else if (result.status === "fulfilled" && !result.value) {
+      // reject()を経由して正式に棄却された（finalEvaluationsに理由が
+      // 別途記録されている）。
+      intersectionOutcomes.push({
+        initialDistanceMeters,
+        outcome: "rejected",
+        finalDistanceMeters: null,
+      });
     } else if (result.status === "rejected") {
       if (isAbortError(result.reason)) throw result.reason;
       console.warn(`[tripod-candidate] ${point.label}: 交点候補の処理に失敗`, result.reason);
+      intersectionOutcomes.push({
+        initialDistanceMeters,
+        outcome: "processing-failed",
+        finalDistanceMeters: null,
+      });
     }
   }
 
@@ -2396,6 +2432,22 @@ async function calculateOneCandidates(
       intersectionCount: all.length,
     }));
 
+  // 2026-08-29追記: 上のfilterで重複として除去された候補（converged内には
+  // あるがuniqueには残らなかったもの）を、「aligned」から「deduplicated」
+  // へ訂正する。「3件見つかったのに1件しか確定しない」という実機報告が、
+  // 実は複数の初期交点が同じ最終地点へ収束した結果の重複除去なのか、
+  // それとも本当に失敗しているのかを区別できるようにする。
+  const uniqueDistances = new Set(unique.map((candidate) => candidate.distanceMeters));
+  for (const outcome of intersectionOutcomes) {
+    if (
+      outcome.outcome === "aligned" &&
+      outcome.finalDistanceMeters !== null &&
+      !uniqueDistances.has(outcome.finalDistanceMeters)
+    ) {
+      outcome.outcome = "deduplicated";
+    }
+  }
+
   // 旧方式はユーザーがONにした時だけ独立検算として1回実行する。
   // 本計算の候補を置換・除外しない（仕様3-H）。
   if (doubleCheckEnabled && unique.length > 0) {
@@ -2447,6 +2499,7 @@ async function calculateOneCandidates(
     totalBodyMs: performance.now() - bodyStartedAt,
     rejectionReasons,
     finalEvaluations,
+    intersectionOutcomes,
   });
   return unique;
 }

@@ -809,6 +809,18 @@ function App() {
           `（除外理由: ${Object.keys(entry.rejectionReasons).length > 0
             ? Object.entries(entry.rejectionReasons).map(([reason, count]) => `${reason}=${count}`).join(" / ")
             : "なし"}）` +
+          // 2026-08-29追記: 「交点候補N件→確定M件」なのに除外理由が0件、
+          // という数の不整合が実機で報告された。見つかった全ての初期交点
+          // 候補について、確定/棄却/重複除去/処理失敗のいずれになったかを
+          // 1件ずつ示すことで、reject()を経由しない失敗（同じ地点への
+          // 重複収束を含む）も含めて全件の行方を追えるようにする。
+          (entry.intersectionOutcomes.length > 0
+            ? `（初期交点の内訳: ${entry.intersectionOutcomes.map((outcome, index) =>
+                `#${index + 1} 初期距離=${Number.isFinite(outcome.initialDistanceMeters) ? outcome.initialDistanceMeters.toFixed(1) : "-"}m` +
+                ` → ${outcome.outcome}` +
+                `${outcome.finalDistanceMeters !== null ? `(最終${outcome.finalDistanceMeters.toFixed(2)}m)` : ""}`
+              ).join(" | ")}）`
+            : "") +
           (entry.finalEvaluations.length > 0
             ? `（最終判定詳細: ${entry.finalEvaluations.map((evaluation, index) =>
                 `#${index + 1} ${evaluation.reason}` +
