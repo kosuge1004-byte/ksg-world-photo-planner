@@ -41,7 +41,24 @@ const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 const DEFAULT_SAMPLE_COUNT = 32;
 // 交点取りこぼし防止用の補助走査。初期32点は維持しつつ、広すぎる区間だけを
 // 10m DEMで一括補間する。全域を1m化しないため、精度向上と通信量抑制を両立する。
-const ADAPTIVE_COARSE_MAX_SPAN_METERS = 500;
+//
+// 2026-08-29修正（実機の現地確認・過去のCLAUDE_HANDOFF文書「実証ケース
+// 約968m」・実データでの再現テストにより確定）: 従来は500mだった。実際の
+// 生データ診断（1050m〜1511mの範囲で20〜30m間隔）と、テスト
+// （tests/regression配下ではなく、この修正の検証時に一時的に作成した
+// 再現テストで確認）の両方で、幅40〜80m規模の実在する地形の起伏
+// （堤防・土手のような、川沿いでよくある規模の高低差）が、500m間隔の
+// 補完では観測点の間に完全に埋もれてしまい、粗探索の交点候補として
+// 一切検出されないことを確認した。これは978m付近の交点候補が見つかる
+// 一方で、そのすぐ近く（十数〜数十m）にある、より正しい交点（現地確認
+// 済み）が交点候補にすら挙がらない、という実機報告と一致する。
+// 500mを30mへ縮めることで、地形の生データで確認されている規模の起伏を
+// 確実に補足できるようにした。典型的な検索窓（既定の距離ヒント無し、
+// 一次探索範囲8m〜1200m程度）では、これによりサンプル数は約32点から
+// 約62点へ増える程度（ADAPTIVE_MAX_TOTAL_SAMPLES=640の上限に対して
+// 十分小さい）。10m DEMのままで1m化はしないため、通信量・精度条件は
+// 変更していない。
+const ADAPTIVE_COARSE_MAX_SPAN_METERS = 30;
 const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
 // 2026-08-26追記: 以前は「距離に比例して広がる」高さ差の許容値
 // （0.12度 × 距離 × 0.05）を使っており、遠距離の候補ほど「レイに近い」と
@@ -186,6 +203,19 @@ export type TripodSearchDiagnostics = {
         refinementPassesUsed: number | null;
         firstPassScorePercent: number | null;
         finalScorePercent: number | null;
+        // 2026-08-29追記: 複数の交点候補を並行処理すると、パス推移の
+        // グローバル変数（診断専用）は「最後に処理された候補」の値で
+        // 上書きされてしまい、本当に見たい（棄却された）候補の推移が
+        // 別の（確定した）候補のもので上書きされてしまう欠陥があった。
+        // 棄却理由ごとに、その候補自身のパス推移をここへ直接記録する。
+        refinementPassTrace: Array<{
+          pass: number;
+          centerDistanceMeters: number;
+          radialRadiusMeters: number;
+          bestScorePercent: number | null;
+          bestDistanceMeters: number | null;
+          onEdge: boolean;
+        }> | null;
       }>;
     }
   >;
@@ -1862,6 +1892,7 @@ async function calculateOneCandidates(
       refinementPassesUsed: evaluation?.refinementPassesUsed ?? null,
       firstPassScorePercent: evaluation?.firstPassScorePercent ?? null,
       finalScorePercent: evaluation?.finalScorePercent ?? null,
+      refinementPassTrace: evaluation?.refinementPassTrace ?? null,
     });
   };
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
@@ -2257,6 +2288,7 @@ async function calculateOneCandidates(
         refinementPassesUsed: manualRefined.refinementPassesUsed,
         firstPassScorePercent: manualRefined.firstPassScorePercent,
         finalScorePercent: manualRefined.score,
+        refinementPassTrace: manualRefined.passTrace,
       });
       console.warn(`[tripod-candidate] ${point.label}: 最終幾何収束条件（round-trip含む）を満たさない候補を除外`, {
         distanceMeters: manualRefined.distanceMeters,

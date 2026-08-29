@@ -128,7 +128,6 @@ import {
   calculateTripodCandidates,
   getLastTripodSearchDiagnostics,
   getLastCoarseScanSamples,
-  getLastRefinementPassTrace,
 } from "./cesium/tripodCandidates";
 import {
   loadPersistentTripodSeeds,
@@ -821,7 +820,20 @@ function App() {
                 ` 前方=${evaluation.inFront === null ? "-" : evaluation.inFront ? "yes" : "no"}` +
                 ` 精密化パス=${evaluation.refinementPassesUsed ?? "-"}` +
                 ` 1パス目スコア=${evaluation.firstPassScorePercent !== null ? evaluation.firstPassScorePercent.toFixed(4) : "-"}%` +
-                ` 最終スコア=${evaluation.finalScorePercent !== null ? evaluation.finalScorePercent.toFixed(4) : "-"}%`
+                ` 最終スコア=${evaluation.finalScorePercent !== null ? evaluation.finalScorePercent.toFixed(4) : "-"}%` +
+                // 2026-08-29追記: 複数の交点候補を並行処理すると、パス推移を
+                // グローバル1個所に記録する方式では「最後に処理された候補」の
+                // 値で上書きされ、本当に見たい（棄却された）候補自身の推移が
+                // 別の（確定した）候補のもので上書きされてしまっていた
+                // （実機診断で確認）。この候補自身のパス推移をここへ直接出す。
+                (evaluation.refinementPassTrace && evaluation.refinementPassTrace.length > 0
+                  ? ` [パス推移: ${evaluation.refinementPassTrace.map((trace) =>
+                      `${trace.pass}:${trace.centerDistanceMeters.toFixed(1)}/${trace.radialRadiusMeters.toFixed(1)}` +
+                      `→${trace.bestDistanceMeters !== null ? trace.bestDistanceMeters.toFixed(2) : "-"}` +
+                      `@${trace.bestScorePercent !== null ? trace.bestScorePercent.toFixed(4) : "-"}%` +
+                      `${trace.onEdge ? "(edge)" : ""}`
+                    ).join(" ")}]`
+                  : "")
               ).join(" | ")}）`
             : "");
       }),
@@ -837,23 +849,6 @@ function App() {
         "粗探索の生データ（精密化前・距離昇順、距離m:レイ高との差m）:",
         coarseScanSamples
           .map((sample) => `${Math.round(sample.distanceMeters)}:${sample.heightErrorMeters.toFixed(1)}`)
-          .join(" ")
-      );
-    }
-    // 2026-08-29追記: 精密化の各パスがどこへ向かって収束したかを直接確認
-    // できるよう、パスごとの中心距離・半径・最良スコア・外縁ヒットの有無を
-    // そのまま添付する。探索結果には影響しない診断専用の情報。
-    const refinementPassTrace = getLastRefinementPassTrace();
-    if (refinementPassTrace && refinementPassTrace.length > 0) {
-      lines.push(
-        "精密化パスの推移（パス番号:中心距離m/半径m→最良距離m@最良スコア%/外縁):",
-        refinementPassTrace
-          .map((entry) =>
-            `${entry.pass}:${entry.centerDistanceMeters.toFixed(1)}/${entry.radialRadiusMeters.toFixed(1)}` +
-            `→${entry.bestDistanceMeters !== null ? entry.bestDistanceMeters.toFixed(2) : "-"}` +
-            `@${entry.bestScorePercent !== null ? entry.bestScorePercent.toFixed(4) : "-"}%` +
-            `${entry.onEdge ? "(edge)" : ""}`
-          )
           .join(" ")
       );
     }
