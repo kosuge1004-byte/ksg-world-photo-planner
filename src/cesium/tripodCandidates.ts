@@ -1886,6 +1886,18 @@ async function calculateOneCandidates(
         activeRefractionWeather
       );
     } catch (error) {
+      // 2026-08-29修正（実機診断より）: 中止（AbortError）は、新しい検索が
+      // 開始されて古い検索が置き換えられた場合などに発生する正常な動作
+      // であり、本当の失敗ではない。これを他のエラーと同じように
+      // reject()してしまうと、「中止された古い検索の結果」が「確定解なし」
+      // という確定した診断・表示として画面に残ってしまい、実際には別の
+      // （新しい）検索の結果が出ているにもかかわらず古い誤った情報が
+      // ユーザーに見え続ける不具合になる（実機診断で「manual-refinement-
+      // exception」・所要時間15秒という、通信時間の内訳（0.1秒）と
+      // 全く整合しない長い経過時間が確認され、この中止ケースだと判明した）。
+      // 中止は診断へ記録せず、そのまま呼び出し元（Promise.allSettledの
+      // 中止判定）へ伝播させる。
+      if (isAbortError(error)) throw error;
       reject("manual-refinement-exception", { distanceMeters: solution.distanceMeters });
       console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
       return null;
