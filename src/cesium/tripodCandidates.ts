@@ -1594,6 +1594,24 @@ async function refineWithManualEquivalentProjection(
   const originalCenterBearing = centerBearing;
   const originalRadialRadiusMeters = radialRadiusMeters;
   const originalLateralRadiusMeters = lateralRadiusMeters;
+  // 2026-08-29追記（実機診断より判明した重大な副作用への対応）: 「窓を
+  // スライドさせる」仕組み（外縁で最良候補が見つかった場合、半径を縮め
+  // ずに中心だけ動かして再探索する）には、これまで総移動距離の上限が
+  // 無かった。パスを重ねるたびに外縁ヒットが続けば、理論上いくらでも
+  // 遠くまで中心が移動しうる。実機診断で、本来は互いに独立している
+  // はずの複数の交点候補（初期距離1150m・1180m・1280m、100m以上離れて
+  // いる）が、精密化の結果すべて同じ1点（1252m）へ収束し、複数交点の
+  // うち2件が「重複」として消えてしまう事例が確認された。これは
+  // 2026-08-23仕様「D. 地形との複数交点：全交点を候補として保持する」に
+  // 反する動作であり、「窓のスライド」が他の交点の領域まで越境して
+  // しまっていたことが原因と判明した。安全網（原設計時の半径のみに
+  // 制限）は届かない距離（原半径の最大80mに対し100m超）だったため、
+  // スライドの累積移動量そのものに上限が必要である。
+  // 元の探索半径の3倍までを、越境とみなさない妥当な補正範囲の上限とする
+  // （大気差起因の補正量は原半径に対して十分小さい十数m程度で足りるため、
+  // 3倍という余裕を持たせても、別の交点の領域（実機で100m超）まで
+  // 到達することはない）。
+  const MAX_SLIDE_DRIFT_METERS = originalRadialRadiusMeters * 3;
   let best: ManualEquivalentEvaluation | null = null;
   let refinementPassesUsed = 0;
   let firstPassScorePercent: number | null = null;
@@ -1735,7 +1753,18 @@ async function refineWithManualEquivalentProjection(
     if (passBest.score <= CONVERGED_SCORE_PERCENT) break;
 
     const passMetrics = calculateKarneyLineMetrics(subject, passBest.candidatePoint);
-    centerDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
+    const candidateCenterDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
+
+    // 2026-08-29修正（実機診断より判明した重大な副作用への対応）: 中心を
+    // 動かす前に、元の交点位置からの総移動距離が上限（MAX_SLIDE_DRIFT_
+    // METERS）を超えないか確認する。超える場合は、これ以上スライドせず
+    // （＝別の交点の領域へ越境する前に）ここで打ち切り、現時点までの
+    // 最良点を採用する。詳細はMAX_SLIDE_DRIFT_METERS宣言部のコメント
+    // 参照。
+    if (Math.abs(candidateCenterDistance - originalCenterDistance) > MAX_SLIDE_DRIFT_METERS) {
+      break;
+    }
+    centerDistance = candidateCenterDistance;
     centerBearing = passMetrics.bearingDegrees;
 
     // 2026-08-29修正（実機診断より）: このパスの最良候補が探索窓の外縁
@@ -1746,7 +1775,8 @@ async function refineWithManualEquivalentProjection(
     // roundtrip-vertical-outside-tolerance却下、必要な補正量が探索半径
     // 約39mを超えていたケースを確認）。外縁で最良だった場合は、その地点を
     // 新しい中心として同じ半径のまま探索窓をスライドさせ、最良点が窓の
-    // 内側（外縁ではない）で見つかるまでは縮小しない。
+    // 内側（外縁ではない）で見つかるまでは縮小しない（ただし上記の総
+    // 移動距離の上限内に限る）。
     if (passBestOnEdge) {
       continue;
     }
