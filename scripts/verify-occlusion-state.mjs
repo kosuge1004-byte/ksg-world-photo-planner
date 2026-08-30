@@ -13,10 +13,6 @@ const overlay = fs.readFileSync(
   new URL("../src/components/CelestialOverlay.tsx", import.meta.url),
   "utf8"
 );
-const map = fs.readFileSync(
-  new URL("../src/cesium/celestialMap.ts", import.meta.url),
-  "utf8"
-);
 
 for (const state of [
   "checking",
@@ -37,10 +33,11 @@ if (
   throw new Error("progressive DEM to Google 3D state update is missing");
 }
 
-for (const source of [overlay, map]) {
-  if (!source.includes("isCelestialOcclusionConfirmedHidden")) {
-    throw new Error("renderer does not share confirmed-occlusion semantics");
-  }
+if (!overlay.includes("isCelestialOcclusionConfirmedHidden")) {
+  throw new Error("preview renderer does not share confirmed-occlusion semantics");
+}
+if (fs.existsSync(new URL("../src/cesium/celestialMap.ts", import.meta.url))) {
+  throw new Error("removed lower-map celestial 3D renderer still exists");
 }
 if (overlay.includes("occlusion[point.id]?.visible !== true")) {
   throw new Error("pending/unverified state still hides the celestial disc");

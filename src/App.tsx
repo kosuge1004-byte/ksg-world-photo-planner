@@ -10,11 +10,7 @@ import {
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { requestTimeZone } from "./network/timeZoneRequest";
 import {
-  BoundingSphere,
   Cartesian3,
-  Cartographic,
-  HeadingPitchRange,
-  Math as CesiumMath,
 } from "cesium";
 import type { Viewer } from "cesium";
 
@@ -39,7 +35,6 @@ import {
   measurePreviewDistanceMeters,
   type PreviewMeasurementPoint,
 } from "./measurement/previewMeasurement";
-import { enableMapMeasurement } from "./cesium/mapMeasurement";
 import { ForegroundPreviewOverlay } from "./components/ForegroundPreviewOverlay";
 import { ForegroundObjectControls } from "./components/ForegroundObjectControls";
 import { SpotSearchScreen } from "./components/SpotSearchScreen";
@@ -69,7 +64,6 @@ import {
   ProjectShareCodeError,
   type SharedProjectPayloadV1,
 } from "./sharing/projectShareCode";
-import { SubjectEditOverlay } from "./components/SubjectEditOverlay";
 import { TimelinePanel } from "./components/TimelinePanel";
 import type { ArCameraProjection } from "./components/ArCameraScreen";
 const ArCameraScreen = lazy(() =>
@@ -109,14 +103,12 @@ import {
   CESIUM_ION_USAGE_WARNING_THRESHOLD,
 } from "./precision/cesiumIonConnection";
 
-import { flyMapToTarget } from "./cesium/camera";
 import {
   calculateCelestialHorizontalCoordinates,
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
 } from "./cesium/celestial";
-import { updateCelestialMapEntities } from "./cesium/celestialMap";
 import {
   evaluateCelestialLineOfSight,
   invalidateCelestialOcclusionCaches,
@@ -143,17 +135,13 @@ import {
 } from "./cesium/tripodCandidateExactCache";
 import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
-import { updateConnectionLine } from "./cesium/connectionLine";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
-import { setLightPollutionLayerVisible } from "./cesium/lightPollutionLayer";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
   calculateKarneySurfaceDistanceMeters,
 } from "./geodesy/karneyGeodesic";
-import { enableMapPlacement } from "./cesium/mapPlacement";
-import { captureTripodPreview } from "./cesium/previewSnapshot";
-import { pickCenterPosition } from "./cesium/subjectEdit";
+import { captureTripodPreview, pickTripodPreviewSurface } from "./cesium/previewSnapshot";
 import {
   setSubjectPinFromCoordinates,
   getSubjectPinPoint,
@@ -163,14 +151,11 @@ import {
 import {
   setTripodPin,
   setTripodPinFromCoordinates,
-  setTripodPinFromExplicit3dPick,
-  updateTripodDistanceLabel,
 } from "./cesium/tripodPin";
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
 import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
 import { findOsmSubjectHeightHint, applyOsmSubjectHeightHint } from "./height/osmSubjectHeightFallback";
-import { cartesianToForegroundCoordinates, enableForegroundObjectDrag, updateForegroundObjectEntity } from "./cesium/foregroundObject";
 
 import {
   DEFAULT_CAMERA_SETTINGS,
@@ -284,58 +269,20 @@ async function waitForOptionalTripodCache<T>(
   }
 }
 
-function applyMapViewMode(
-  viewer: Viewer,
-  mode: "2d" | "3d",
-  center: { latitude: number; longitude: number },
-  duration = 0.6
-) {
-  const current = viewer.camera.positionCartographic;
-  const height = Math.max(current.height, 800);
-
-  if (mode === "2d") {
-    const destination = Cartesian3.fromDegrees(
-      center.longitude,
-      center.latitude,
-      height
-    );
-    viewer.camera.flyTo({
-      destination,
-      duration,
-      orientation: {
-        heading: 0,
-        pitch: CesiumMath.toRadians(-90),
-        roll: 0,
-      },
-    });
-    return;
-  }
-
-  // A pitched camera placed directly above the 2D center looks past that point,
-  // which pushed the former 2D center toward (or beyond) the bottom edge.
-  // Fly around the center as the target instead, so the same geographic point
-  // remains at the screen center when entering 3D.
-  const pitch = CesiumMath.toRadians(-35);
-  const range = height / Math.sin(Math.abs(pitch));
-  const target = Cartesian3.fromDegrees(center.longitude, center.latitude, 0);
-  viewer.camera.flyToBoundingSphere(new BoundingSphere(target, 0), {
-    duration,
-    offset: new HeadingPitchRange(viewer.camera.heading, pitch, range),
-  });
-}
-
 const LAST_MAP_STATE_STORAGE_KEY = "ksg-last-map-state-v1";
+
+type MapType = "roadmap" | "satellite";
 
 type LastMapState = {
   center: { latitude: number; longitude: number };
   zoom: number;
-  viewMode: "2d" | "3d";
+  mapType: MapType;
 };
 
 const DEFAULT_MAP_STATE: LastMapState = {
   center: { latitude: 35.658581, longitude: 139.745433 },
   zoom: 15,
-  viewMode: "2d",
+  mapType: "roadmap",
 };
 
 function loadLastMapState(): LastMapState {
@@ -346,19 +293,19 @@ function loadLastMapState(): LastMapState {
     const latitude = parsed.center?.latitude;
     const longitude = parsed.center?.longitude;
     const zoom = parsed.zoom;
-    const viewMode = parsed.viewMode;
+    const mapType = parsed.mapType ?? "roadmap";
     if (
       !Number.isFinite(latitude) || latitude! < -90 || latitude! > 90 ||
       !Number.isFinite(longitude) || longitude! < -180 || longitude! > 180 ||
       !Number.isFinite(zoom) || zoom! < 3 || zoom! > 20 ||
-      (viewMode !== "2d" && viewMode !== "3d")
+      (mapType !== "roadmap" && mapType !== "satellite")
     ) {
       return DEFAULT_MAP_STATE;
     }
     return {
       center: { latitude: latitude!, longitude: longitude! },
       zoom: zoom!,
-      viewMode,
+      mapType,
     };
   } catch {
     return DEFAULT_MAP_STATE;
@@ -454,8 +401,6 @@ function App() {
   const map2dStageRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapViewerRef = useRef<Viewer | null>(null);
-  const mapViewModeRef = useRef<"2d" | "3d">(loadLastMapState().viewMode);
-  const disablePlacementRef = useRef<(() => void) | null>(null);
   // Reactの再描画前に連続タップされても、配置対象を一意に判定する同期状態。
   const placementModeRef = useRef<PlacementMode>("none");
   const previewJobRef = useRef(0);
@@ -616,8 +561,7 @@ function App() {
   const [tripodPlacementActive, setTripodPlacementActive] =
     useState(false);
   const [foregroundPlacementActive, setForegroundPlacementActive] = useState(false);
-  const [subjectEditActive, setSubjectEditActive] =
-    useState(false);
+  const [previewSubjectPicking, setPreviewSubjectPicking] = useState(false);
 
   const [cameraSettings, setCameraSettings] =
     useState<CameraSettings>(loadCameraSettings);
@@ -627,7 +571,7 @@ function App() {
   const [previewMeasurePoints, setPreviewMeasurePoints] = useState<PreviewMeasurementPoint[]>([]);
   const [mapMeasuring, setMapMeasuring] = useState(false);
   const [mapMeasureDistanceMeters, setMapMeasureDistanceMeters] = useState<number | null>(null);
-  const disableMapMeasurementRef = useRef<(() => void) | null>(null);
+  const [mapMeasureStart, setMapMeasureStart] = useState<GroundPoint | null>(null);
   const [precisionSettings, setPrecisionSettings] =
     useState<PrecisionSettings>(loadPrecisionSettings);
   // BYOA化: ARカメラ画面（ArCameraScreen経由でArCesiumOverlayへ渡す）でも
@@ -691,9 +635,7 @@ function App() {
 
   const [celestialMenuOpen, setCelestialMenuOpen] = useState(true);
   const initialMapStateRef = useRef<LastMapState>(loadLastMapState());
-  const [mapViewMode, setMapViewMode] = useState<"2d" | "3d">(
-    initialMapStateRef.current.viewMode
-  );
+  const [mapType, setMapType] = useState<MapType>(initialMapStateRef.current.mapType);
   const [mapZoom, setMapZoom] = useState(initialMapStateRef.current.zoom);
   const [mapSize, setMapSize] = useState({ width: 1, height: 1 });
   const [mapCenter, setMapCenter] = useState(
@@ -1100,6 +1042,58 @@ function App() {
     );
   }
 
+  async function handlePreviewSubjectTap(xPercent: number, yPercent: number): Promise<void> {
+    const viewer = mapViewerRef.current;
+    const previewCanvas = previewCanvasRef.current;
+    if (
+      !viewer ||
+      viewer.isDestroyed() ||
+      !previewCanvas ||
+      !tripodPoint ||
+      !subjectPoint
+    ) {
+      setSearchMessage("三脚ピンと被写体周辺位置を設定し、3Dプレビューの読込完了後に指定してください");
+      return;
+    }
+
+    setSearchMessage("プレビューの3D表面位置を取得しています…");
+    const pick = () => Promise.resolve(pickTripodPreviewSurface(
+      viewer,
+      previewCanvas,
+      tripodPoint,
+      subjectPoint,
+      cameraSettings,
+      calculationMode,
+      previewViewCorrection,
+      xPercent,
+      yPercent
+    ));
+    const scheduled = previewRenderQueueRef.current.then(pick, pick);
+    previewRenderQueueRef.current = scheduled.then(() => undefined, () => undefined);
+
+    try {
+      const position = await scheduled;
+      if (!position) {
+        setSearchMessage("タップ位置の3D座標を取得できませんでした。建物・山頂・地形が見える位置でもう一度指定してください");
+        return;
+      }
+      const point = await setSubjectPinFromExplicit3dPick(
+        viewer,
+        position,
+        "プレビュー3D指定地点"
+      );
+      setSubjectPoint(point);
+      setMapCenter({ latitude: point.latitude, longitude: point.longitude });
+      setPreviewSubjectPicking(false);
+      setSearchMessage(
+        `正式な被写体3D位置を登録しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
+      );
+    } catch (error) {
+      console.warn("プレビューから被写体3D位置を取得できませんでした", error);
+      setSearchMessage("被写体の3D表面高度を確定できませんでした。通信状態を確認して再指定してください");
+    }
+  }
+
   const previewImagingFrameStyle = useMemo(() => {
     if (previewFrameMode === "screen") {
       return { width: "100%", height: "100%" };
@@ -1147,8 +1141,9 @@ function App() {
 
   const googleMapUrl = useMemo(() => {
     const centerValue = `${mapCenter.latitude},${mapCenter.longitude}`;
-    return `https://maps.google.com/maps?ll=${encodeURIComponent(centerValue)}&z=${mapZoom}&output=embed&hl=ja&t=m`;
-  }, [mapCenter, mapZoom]);
+    const layer = mapType === "satellite" ? "k" : "m";
+    return `https://maps.google.com/maps?ll=${encodeURIComponent(centerValue)}&z=${mapZoom}&output=embed&hl=ja&t=${layer}`;
+  }, [mapCenter, mapType, mapZoom]);
 
   const previewReady = Boolean(
     mapReady && subjectPoint && tripodPoint
@@ -1864,7 +1859,6 @@ function App() {
 
     let disposed = false;
     let localViewer: Viewer | null = null;
-    let removeCameraSync: (() => void) | null = null;
 
     // 2026-08-25追記: 開発者1人のCesium ionトークンを全ユーザーで共有する
     // 方式（VITE_CESIUM_ION_TOKEN）から、各ユーザーが自分のCesium ion
@@ -1923,19 +1917,11 @@ function App() {
 
         localViewer = viewer;
         mapViewerRef.current = viewer;
-        applyMapViewMode(viewer, mapViewModeRef.current, mapCenterRef.current, 0);
-        removeCameraSync = viewer.camera.moveEnd.addEventListener(() => {
-          if (mapViewModeRef.current !== "3d") return;
-          const position = pickCenterPosition(viewer);
-          if (!position) return;
-          const cartographic = Cartographic.fromCartesian(position);
-          setMapCenter({
-            latitude: CesiumMath.toDegrees(cartographic.latitude),
-            longitude: CesiumMath.toDegrees(cartographic.longitude),
-          });
-        });
+        // Cesiumは上側撮影プレビューの描画・3D pick・既存の精度検証専用。
+        // 下側Google MapsとはDOM上も操作上も接続せず、自動描画ループを止める。
+        viewer.useDefaultRenderLoop = false;
         setMapReady(true);
-        setSearchMessage("3Dマップの読込が完了しました");
+        setSearchMessage("3D撮影プレビューの読込が完了しました");
         setUserNotice((current) =>
           current?.key === "map-initialization" ? null : current
         );
@@ -1955,11 +1941,8 @@ function App() {
 
     return () => {
       disposed = true;
-      disablePlacementRef.current?.();
-      disablePlacementRef.current = null;
       mapViewerRef.current = null;
       setMapReady(false);
-      removeCameraSync?.();
 
       if (localViewer && !localViewer.isDestroyed()) {
         localViewer.destroy();
@@ -1974,62 +1957,10 @@ function App() {
   ]);
 
   useEffect(() => {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed() || !mapReady) return;
-    // 2D表示中はCesiumのデフォルト描画ループを完全停止し、非表示3Dの
-    // タイル処理・描画がGoogle Maps iframeと競合しないようにする。
-    // 3Dへ戻す時は同じViewerを再開し、画質・カメラ・キャッシュを維持する。
-    viewer.useDefaultRenderLoop = mapViewMode === "3d";
-    if (mapViewMode === "3d") viewer.scene.requestRender();
-    return () => {
-      if (!viewer.isDestroyed()) viewer.useDefaultRenderLoop = true;
-    };
-  }, [mapReady, mapViewMode]);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed() || !mapReady) return;
-    // Cesiumの3Dビューアは3D表示を隠している間もopacity:0で裏レンダリングを
-    // 続けているため、mapViewModeを見ずに有効化すると2D表示中でも裏の3D側に
-    // 光害タイルの読込負荷がかかりフリーズ・暗転していた（2026-08-16報告）。
-    // 実際に3Dが表示されているときだけ有効化する。
-    // さらに、highest（Google Photorealistic 3D Tiles）中は、下の
-    // 自動2D切替useEffectが効くのが次のレンダリング以降になるため、
-    // ここでも明示的に除外しないと切替が反映される前の1フレームだけ
-    // 外部WMTSがPhotorealistic 3D Tilesへ重なってしまい、それが
-    // クラッシュ（画面ごと暗転）につながっていた（スクリーンショット報告）。
-    setLightPollutionLayerVisible(
-      viewer,
-      mapViewMode === "3d" &&
-        precisionSettings.accuracyMode !== "highest" &&
-        lightPollutionEnabled &&
-        celestialVisibility.milkyWay
-    );
-  }, [
-    celestialVisibility.milkyWay,
-    lightPollutionEnabled,
-    mapReady,
-    mapViewMode,
-    precisionSettings.accuracyMode,
-  ]);
-
-  useEffect(() => {
     if (!celestialVisibility.milkyWay && lightPollutionEnabled) {
       setLightPollutionEnabled(false);
     }
   }, [celestialVisibility.milkyWay, lightPollutionEnabled]);
-
-  useEffect(() => {
-    // Google Photorealistic 3D Tilesには外部WMTSを直接ドレープできないため、
-    // Googleタイルモードの3D中に光害マップを有効化した場合は、位置が正確に一致する2D表示へ切り替える。
-    if (
-      lightPollutionEnabled &&
-      precisionSettings.accuracyMode === "highest" &&
-      mapViewMode === "3d"
-    ) {
-      setMapViewMode("2d");
-    }
-  }, [lightPollutionEnabled, mapViewMode, precisionSettings.accuracyMode]);
 
   useEffect(() => {
     const element = previewSectionRef.current;
@@ -2092,15 +2023,11 @@ function App() {
 
 
   useEffect(() => {
-    mapViewModeRef.current = mapViewMode;
-  }, [mapViewMode]);
-
-  useEffect(() => {
     localStorage.setItem(
       LAST_MAP_STATE_STORAGE_KEY,
-      JSON.stringify({ center: mapCenter, zoom: mapZoom, viewMode: mapViewMode })
+      JSON.stringify({ center: mapCenter, zoom: mapZoom, mapType })
     );
-  }, [mapCenter, mapZoom, mapViewMode]);
+  }, [mapCenter, mapType, mapZoom]);
 
   useEffect(() => {
     const latitude = tripodPoint?.latitude ?? subjectPoint?.latitude;
@@ -2357,15 +2284,6 @@ function App() {
 
   useEffect(() => {
     const viewer = mapViewerRef.current;
-
-    if (!viewer || viewer.isDestroyed()) {
-      return;
-    }
-    updateConnectionLine(viewer, tripodPoint, subjectPoint);
-  }, [mapReady, tripodPoint, subjectPoint]);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
     if (!mapReady || !viewer || viewer.isDestroyed()) return;
     // 2Dで3D読込より先に配置したピンも、Viewer準備完了時に同じ座標へ同期する。
     if (subjectPoint) {
@@ -2399,111 +2317,6 @@ function App() {
     }
     foregroundTerrainRequestRef.current += 1;
   }, []);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return;
-    updateForegroundObjectEntity(viewer, foregroundObject);
-  }, [mapReady, foregroundObject]);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
-    if (
-      !viewer ||
-      viewer.isDestroyed() ||
-      !foregroundObject ||
-      subjectPlacementActive ||
-      tripodPlacementActive ||
-      foregroundPlacementActive
-    ) {
-      return;
-    }
-    return enableForegroundObjectDrag(
-      viewer,
-      (position) => {
-        const coordinates = cartesianToForegroundCoordinates(position);
-        placeForegroundAtCoordinates(
-          coordinates.latitude,
-          coordinates.longitude,
-          coordinates.groundHeightMeters,
-          false,
-          undefined,
-          "drag-3d"
-        );
-      },
-      () => {
-        setSearchMessage(
-          "人物の移動先となる3D表面を取得できませんでした。床・地面・屋上などが見える位置で再操作してください"
-        );
-      }
-    );
-    // 他のピン配置中は人物ドラッグを無効化し、複数ハンドラが同じタップを処理しない。
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    mapReady,
-    foregroundObject?.id,
-    tripodPoint,
-    subjectPoint,
-    subjectPlacementActive,
-    tripodPlacementActive,
-    foregroundPlacementActive,
-  ]);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return;
-    updateTripodDistanceLabel(viewer, metrics?.distanceMeters ?? null);
-  }, [mapReady, metrics]);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
-
-    if (!viewer || viewer.isDestroyed()) {
-      return;
-    }
-    // 2D表示中のCesiumは非表示なので、3Dへ切り替わるまでEntityを更新しない。
-    if (mapViewMode !== "3d") return;
-
-    try {
-      beginOperationTag("updateCelestialMapEntities");
-      updateCelestialMapEntities(
-        viewer,
-        tripodPoint,
-        subjectPoint,
-        celestialPoints,
-        celestialTracks,
-        visibleMilkyWayPath,
-        celestialVisibility,
-        displayedTripodCandidates,
-        tripodSearchLines,
-        celestialOcclusion,
-        mapViewMode,
-        cameraSettings.lensCenterHeightMeters,
-        tripodCandidateCalculationStatus === "calculating"
-      );
-      endOperationTag("updateCelestialMapEntities");
-    } catch (error) {
-      // 天体オーバーレイの異常だけで地図本体を失わないよう、描画更新を局所的に停止する。
-      console.warn("天体の地図表示を更新できませんでした", error);
-      setSearchMessage("天体表示の更新に失敗しました。日時またはピンを再設定してください");
-    }
-  }, [
-    mapReady,
-    tripodPoint,
-    subjectPoint,
-    celestialPoints,
-    celestialTracks,
-    visibleMilkyWayPath,
-    celestialVisibility,
-    displayedTripodCandidates,
-    tripodSearchLines,
-    celestialOcclusion,
-    mapViewMode,
-    cameraSettings.lensCenterHeightMeters,
-    setSearchMessage,
-    timelineInteracting,
-    tripodCandidateCalculationStatus,
-  ]);
 
   useEffect(() => {
     if (mapTool !== "pin") return;
@@ -2567,7 +2380,7 @@ function App() {
             cameraSettings,
             calculationMode,
             previewViewCorrection,
-            mapViewMode === "3d"
+            false
           );
 
           if (!cancelled && jobId === previewJobRef.current) {
@@ -2642,15 +2455,12 @@ function App() {
     previewFrameMode,
     previewViewCorrection,
     calculationMode,
-    mapViewMode,
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
   ]);
 
   function stopPlacementMode() {
-    disablePlacementRef.current?.();
-    disablePlacementRef.current = null;
     placementModeRef.current = "none";
     setSubjectPlacementActive(false);
     setTripodPlacementActive(false);
@@ -2659,11 +2469,10 @@ function App() {
 
   function stopAllEditModes() {
     stopPlacementMode();
-    setSubjectEditActive(false);
-    if (disableMapMeasurementRef.current) {
-      disableMapMeasurementRef.current();
-      disableMapMeasurementRef.current = null;
+    setPreviewSubjectPicking(false);
+    if (mapMeasuring) {
       setMapMeasuring(false);
+      setMapMeasureStart(null);
       setMapMeasureDistanceMeters(null);
     }
   }
@@ -2968,9 +2777,6 @@ ${diagnosticMessage}
       setTripodPoint(tripod);
       mapCenterRef.current = center;
       setMapCenter(center);
-      if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
-        flyMapToTarget(viewer, center.latitude, center.longitude, tripod.height);
-      }
       setSpotSearchOpen(false);
       setSearchMessage(`${tripod.label}に三脚ピンを設置しました`);
       return;
@@ -3002,9 +2808,6 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, /^https?:\/\//i.test(query.trim()) ? "google-maps-url" : "place"));
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
-      flyMapToTarget(viewer, center.latitude, center.longitude, pinned.height);
-    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
@@ -3024,7 +2827,6 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, record.searchType));
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude, pinned.height);
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
@@ -3165,7 +2967,6 @@ ${diagnosticMessage}
     const center = { latitude: appliedResult.subject.latitude, longitude: appliedResult.subject.longitude };
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapViewMode === "3d") flyMapToTarget(viewer, center.latitude, center.longitude, subject.height);
     setSpotSearchOpen(false);
     setHighestPrecisionProgress(null);
     setSearchMessage(
@@ -3174,6 +2975,12 @@ ${diagnosticMessage}
         : `${appliedResult.celestialLabel}の構図を適用しました`
     );
   }
+
+  // 旧スポット日時・構図検索の計算実装は精度監査用に温存するが、UIからは
+  // 完全に切り離す。日時・天体検索は専用の通過日時検索からのみ利用する。
+  void searchFromSpotScreen;
+  void resumeSpotSearch;
+  void applySpotPreset;
 
   function saveCurrentComposition(): void {
     setProjectSaveTripodOverride(null);
@@ -3230,7 +3037,7 @@ ${diagnosticMessage}
       createdAtIso: now.toISOString(), updatedAtIso: now.toISOString(),
       shootingDateTimeLocal: dateTimeLocal, timeZone, calendarRegistered,
       subject: subjectPoint, tripod: effectiveTripod, foregroundObjects,
-      cameraSettings, celestialVisibility, previewFrameMode, mapViewMode, mapZoom, mapCenter,
+      cameraSettings, celestialVisibility, previewFrameMode, mapViewMode: "2d", mapZoom, mapCenter,
       displaySettings: { celestialMenuOpen },
     };
     setProjects(upsertProject(project));
@@ -3337,7 +3144,6 @@ ${diagnosticMessage}
     timeZoneRef.current = project.timeZone; setTimeZone(project.timeZone);
     dateTimeLocalRef.current = project.shootingDateTimeLocal; setDateTimeLocal(project.shootingDateTimeLocal);
     setSavedPlansOpen(false); setCalendarOpen(false);
-    if (project.mapViewMode !== mapViewMode) changeMapViewMode(project.mapViewMode);
     setSearchMessage(`プロジェクト「${project.name}」を読み込みました`);
   }
 
@@ -3503,7 +3309,7 @@ ${diagnosticMessage}
         cameraSettings: sharedImportPayload.cameraSettings,
         celestialVisibility: sharedImportPayload.celestialVisibility,
         previewFrameMode: sharedImportPayload.previewFrameMode,
-        mapViewMode, mapZoom, mapCenter,
+        mapViewMode: "2d", mapZoom, mapCenter,
         displaySettings: { celestialMenuOpen },
       };
       setProjects(upsertProject(importedProject));
@@ -3562,64 +3368,12 @@ ${diagnosticMessage}
     setMapTool("none");
     setSpotSearchOpen(false);
 
-    if (mapViewMode === "2d") {
-      placementModeRef.current = "subject";
-      setSubjectPlacementActive(true);
-      setSearchMessage("2D地図上で被写体を置く場所をクリックしてください");
-      return;
-    }
-
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage("3Dマップの読込完了後にお試しください");
-      return;
-    }
-
     placementModeRef.current = "subject";
-    disablePlacementRef.current = enableMapPlacement(
-      viewer,
-      (position) => {
-        if (placementModeRef.current !== "subject") return;
-        openPlacementConfirm("subject", async (offsetMeters) => {
-          const rawPoint = await setSubjectPinFromExplicit3dPick(
-            viewer,
-            position,
-            "手動指定地点"
-          );
-          const point = offsetMeters !== 0
-            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
-            : rawPoint;
-          if (offsetMeters !== 0) {
-            setSubjectPinFromPosition(
-              viewer,
-              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-              point.label,
-              point
-            );
-          }
-          setSubjectPoint(point);
-          setMapCenter({ latitude: point.latitude, longitude: point.longitude });
-          setSearchMessage(
-            `被写体ピンを変更しました：${point.latitude.toFixed(
-              6
-            )}, ${point.longitude.toFixed(6)}`
-          );
-        });
-      },
-      () => {
-        setSearchMessage(
-          "被写体の3D表面高度を取得できませんでした。建物・地形など対象面が見える位置で再度クリックしてください"
-        );
-      }
-    );
-
     setSubjectPlacementActive(true);
-    setSearchMessage(
-      "地図上の被写体位置をクリックしてください"
-    );
+    setSearchMessage("2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
   }
 
-  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved" | "map-3d" | "drag-3d";
+  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved";
 
   function placeForegroundAtCoordinates(
     latitude: number,
@@ -3627,7 +3381,7 @@ ${diagnosticMessage}
     preferredGroundHeightMeters?: number,
     allowSubjectEndpoint = false,
     preferredHeightCm?: number,
-    source: ForegroundPlacementSource = "map-3d"
+    source: ForegroundPlacementSource = "map-2d"
   ): boolean {
     if (!tripodPoint || !subjectPoint) {
       setSearchMessage("三脚ピンと被写体ピンを先に配置してください");
@@ -3720,44 +3474,9 @@ ${diagnosticMessage}
     }
     stopAllEditModes();
     setMapTool("pin");
-    if (mapViewMode === "2d") {
-      placementModeRef.current = "foreground";
-      setForegroundPlacementActive(true);
-      setSearchMessage("人物を配置する場所をタップしてください。配置後は人物をドラッグして移動できます");
-      return;
-    }
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage("3Dマップの読込完了後にお試しください");
-      return;
-    }
     placementModeRef.current = "foreground";
-    disablePlacementRef.current = enableMapPlacement(viewer, (position) => {
-      if (placementModeRef.current !== "foreground") return;
-      const coordinates = cartesianToForegroundCoordinates(position);
-      openPlacementConfirm("person", async (offsetMeters) => {
-        if (!Number.isFinite(coordinates.groundHeightMeters)) {
-          throw new Error("人物を置く3D表面高度を取得できませんでした");
-        }
-        const placed = placeForegroundAtCoordinates(
-          coordinates.latitude,
-          coordinates.longitude,
-          (coordinates.groundHeightMeters as number) + offsetMeters,
-          false,
-          undefined,
-          "map-3d"
-        );
-        if (!placed) {
-          throw new Error("人物を配置できませんでした");
-        }
-      });
-    }, () => {
-      setSearchMessage(
-        "人物を置く3D表面高度を取得できませんでした。床・地面・屋上などが見える位置で再度クリックしてください"
-      );
-    });
     setForegroundPlacementActive(true);
-    setSearchMessage("3D地図で人物を配置する場所をクリックしてください");
+    setSearchMessage("人物を配置する場所をタップしてください。配置後は人物をドラッグして移動できます");
   }
 
   function updateForegroundHeight(heightCm: number): void {
@@ -3792,70 +3511,9 @@ ${diagnosticMessage}
     setMapTool("none");
     setSpotSearchOpen(false);
 
-    if (mapViewMode === "2d") {
-      placementModeRef.current = "tripod";
-      setTripodPlacementActive(true);
-      setSearchMessage("2D地図上で三脚を置く場所をクリックしてください");
-      return;
-    }
-
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage("3Dマップの読込完了後にお試しください");
-      return;
-    }
-
     placementModeRef.current = "tripod";
-    disablePlacementRef.current = enableMapPlacement(
-      viewer,
-      (position) => {
-        if (placementModeRef.current !== "tripod") return;
-        // 橋面などDEMに存在しない歩行可能な3D表面も、HeightResolver
-        // （resolveGroundPointFrom3dSurface）を経由してそのまま採用する。
-        openPlacementConfirm("tripod", async (offsetMeters) => {
-          const pickedSurfacePoint = await setTripodPinFromExplicit3dPick(viewer, position);
-          // 0m is an explicit 3D-surface placement (roof/bridge/etc.).
-          // A non-zero "上空" value is defined relative to the ground at the
-          // selected latitude/longitude. This prevents a tower facade or other
-          // photogrammetry mesh picked by scene.pickPosition() from becoming the
-          // accidental +offset baseline (e.g. Tokyo Skytree +640m).
-          const groundPoint = offsetMeters !== 0
-            ? await resolveGroundPoint(
-                pickedSurfacePoint.latitude,
-                pickedSurfacePoint.longitude,
-                "三脚位置（上空オフセット基準地表）"
-              )
-            : pickedSurfacePoint;
-          const point = offsetMeters !== 0
-            ? withVerticalOffset(groundPoint, offsetMeters, "三脚ピン")
-            : pickedSurfacePoint;
-          if (offsetMeters !== 0) {
-            setTripodPin(
-              viewer,
-              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-              point
-            );
-          }
-          setTripodPoint(point);
-          setMapCenter({ latitude: point.latitude, longitude: point.longitude });
-          setSearchMessage(
-            `三脚ピンを配置しました：${point.latitude.toFixed(
-              6
-            )}, ${point.longitude.toFixed(6)}`
-          );
-        });
-      },
-      () => {
-        setSearchMessage(
-          "三脚を置く3D表面高度を取得できませんでした。地面・床・屋上・橋面などが見える位置で再度クリックしてください"
-        );
-      }
-    );
-
     setTripodPlacementActive(true);
-    setSearchMessage(
-      "地図上の三脚を置きたい場所をクリックしてください"
-    );
+    setSearchMessage("2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
   }
 
   function handle2dMapPlacement(
@@ -3958,83 +3616,49 @@ ${diagnosticMessage}
     }
   }
 
-  function cancelSubjectEdit() {
-    setSubjectEditActive(false);
-    setSearchMessage("被写体編集をキャンセルしました");
-  }
+  function handle2dMapMeasurement(event: ReactMouseEvent<HTMLButtonElement>): void {
+    const mapElement = map2dStageRef.current;
+    if (!mapElement) return;
+    const rect = mapElement.getBoundingClientRect();
+    const coordinates = coordinatesAtMapPixel(
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      mapCenter,
+      mapZoom,
+      { width: rect.width, height: rect.height }
+    );
+    const point: GroundPoint = {
+      ...coordinates,
+      height: 0,
+      label: "2D地図計測点",
+    };
 
-  function confirmSubjectEdit() {
-    const viewer = mapViewerRef.current;
-
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage("3Dマップを利用できません");
+    if (!mapMeasureStart || mapMeasureDistanceMeters !== null) {
+      setMapMeasureStart(point);
+      setMapMeasureDistanceMeters(null);
+      setSearchMessage("2点目をタップしてください");
       return;
     }
 
-    const position = pickCenterPosition(viewer);
-
-    if (!position) {
-      setSearchMessage(
-        "十字位置の3D座標を取得できませんでした。建物または地形へ十字を合わせてください"
-      );
-      return;
-    }
-
-    openPlacementConfirm("subject", async (offsetMeters) => {
-      const rawPoint = await setSubjectPinFromExplicit3dPick(
-        viewer,
-        position,
-        "3D指定地点"
-      );
-      const point = offsetMeters !== 0
-        ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
-        : rawPoint;
-      if (offsetMeters !== 0) {
-        setSubjectPinFromPosition(
-          viewer,
-          Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-          point.label,
-          point
-        );
-      }
-      setSubjectPoint(point);
-      setMapCenter({ latitude: point.latitude, longitude: point.longitude });
-      setSubjectEditActive(false);
-      setSearchMessage(
-        `正式な被写体点を登録しました：${point.latitude.toFixed(
-          6
-        )}, ${point.longitude.toFixed(6)}`
-      );
-    });
+    setMapMeasureDistanceMeters(
+      calculateKarneySurfaceDistanceMeters(mapMeasureStart, point)
+    );
+    setMapMeasureStart(null);
   }
 
   function toggleMapMeasurement(): void {
     if (mapMeasuring) {
-      disableMapMeasurementRef.current?.();
-      disableMapMeasurementRef.current = null;
       setMapMeasuring(false);
+      setMapMeasureStart(null);
       setMapMeasureDistanceMeters(null);
-      return;
-    }
-    if (mapViewMode !== "3d") {
-      setSearchMessage("計測は3D表示でのみ利用できます");
-      return;
-    }
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) {
-      setSearchMessage("3Dマップの読込完了後にお試しください");
       return;
     }
     stopAllEditModes();
     setMapTool("none");
+    setMapMeasureStart(null);
     setMapMeasureDistanceMeters(null);
-    disableMapMeasurementRef.current = enableMapMeasurement(
-      viewer,
-      setMapMeasureDistanceMeters,
-      () => setSearchMessage("計測地点の3D表面を取得できませんでした。地形・建物が見える位置でタップしてください")
-    );
     setMapMeasuring(true);
-    setSearchMessage("地図を2回タップして、2点間の距離を計測してください");
+    setSearchMessage("2D地図を2回タップして、地表距離を計測してください");
   }
 
   function openMapFullscreen() {
@@ -4178,11 +3802,6 @@ ${diagnosticMessage}
       // 新しいオブジェクトを必ず設定し、2D iframe・オーバーレイも再描画させる。
       setMapCenter({ latitude: center.latitude, longitude: center.longitude });
 
-      const viewer = mapViewerRef.current;
-      if (mapViewModeRef.current === "3d" && viewer && !viewer.isDestroyed()) {
-        flyMapToTarget(viewer, latitude, longitude);
-      }
-
       const accuracyText = Number.isFinite(accuracy)
         ? `（精度 約${Math.max(1, Math.round(accuracy))}m）`
         : "";
@@ -4232,10 +3851,6 @@ ${diagnosticMessage}
       latitude: subjectPoint.latitude,
       longitude: subjectPoint.longitude,
     });
-    const viewer = mapViewerRef.current;
-    if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
-      flyMapToTarget(viewer, subjectPoint.latitude, subjectPoint.longitude);
-    }
     setSearchMessage("被写体を地図の中心へ移動しました");
   }
 
@@ -4248,10 +3863,6 @@ ${diagnosticMessage}
       latitude: tripodPoint.latitude,
       longitude: tripodPoint.longitude,
     });
-    const viewer = mapViewerRef.current;
-    if (mapViewMode === "3d" && viewer && !viewer.isDestroyed()) {
-      flyMapToTarget(viewer, tripodPoint.latitude, tripodPoint.longitude);
-    }
     setSearchMessage("三脚ピンを地図の中心へ移動しました");
   }
 
@@ -4277,57 +3888,10 @@ ${diagnosticMessage}
     setSearchMessage("三脚ピンの場所をGoogle Mapsへ送りました");
   }
 
-  function changeMapViewMode(mode: "2d" | "3d") {
-    if (mode !== mapViewModeRef.current && placementModeRef.current !== "none") {
-      stopPlacementMode();
-    }
-    const viewer = mapViewerRef.current;
-    if (mode === "3d" && (!mapReady || !viewer || viewer.isDestroyed())) {
-      // 標準モードはCesium ionトークンを必要としないため、以前あった
-      // 「トークン未設定なら2D地図のまま」という分岐は現在の設計と
-      // 合わなくなっていた（標準モードは常に3D表示できる）。
-      setSearchMessage("3Dマップを読み込み中です。準備が完了してからもう一度お試しください");
-      return;
-    }
-    let synchronizedCenter = mapCenter;
-    if (
-      viewer &&
-      !viewer.isDestroyed() &&
-      mapViewModeRef.current === "3d"
-    ) {
-      const position = pickCenterPosition(viewer);
-      if (position) {
-        const cartographic = Cartographic.fromCartesian(position);
-        synchronizedCenter = {
-          latitude: CesiumMath.toDegrees(cartographic.latitude),
-          longitude: CesiumMath.toDegrees(cartographic.longitude),
-        };
-        setMapCenter(synchronizedCenter);
-      }
-    }
-    mapViewModeRef.current = mode;
-    setMapViewMode(mode);
-    if (!viewer || viewer.isDestroyed()) return;
-    applyMapViewMode(viewer, mode, synchronizedCenter);
-  }
-
   function zoomMap(direction: "in" | "out") {
-    if (mapViewMode === "2d") {
-      setMapZoom((current) =>
-        Math.min(20, Math.max(3, current + (direction === "in" ? 1 : -1)))
-      );
-      return;
-    }
-
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return;
-    const amount = Math.max(20, viewer.camera.positionCartographic.height * 0.22);
-    if (direction === "in") {
-      viewer.camera.zoomIn(amount);
-    } else {
-      viewer.camera.zoomOut(amount);
-    }
-    viewer.scene.requestRender();
+    setMapZoom((current) =>
+      Math.min(20, Math.max(3, current + (direction === "in" ? 1 : -1)))
+    );
   }
 
   function changePreviewFocalLength(value: number) {
@@ -4529,6 +4093,7 @@ ${diagnosticMessage}
           className={`preview-imaging-frame frame-${previewFrameMode}`}
           style={previewImagingFrameStyle}
         >
+          <div ref={mapRef} className="preview-renderer" aria-hidden="true" />
           <canvas
             ref={previewCanvasRef}
             className="preview-canvas"
@@ -4551,7 +4116,15 @@ ${diagnosticMessage}
             }}
             measuring={previewMeasuring}
             onMeasureTap={handlePreviewMeasureTap}
+            subjectPicking={previewSubjectPicking}
+            onSubjectTap={(xPercent, yPercent) => void handlePreviewSubjectTap(xPercent, yPercent)}
           />
+
+          {previewSubjectPicking && (
+            <div className="preview-subject-pick-instruction" role="status">
+              正式な被写体にする3D表面をタップ
+            </div>
+          )}
 
           <PreviewMeasurementOverlay
             points={previewMeasurePoints}
@@ -4601,8 +4174,19 @@ ${diagnosticMessage}
           onResetToSubject={() => setPreviewViewCorrection(DEFAULT_CAMERA_VIEW_CORRECTION)}
           measuring={previewMeasuring}
           onToggleMeasuring={() => {
+            setPreviewSubjectPicking(false);
             setPreviewMeasuring((current) => !current);
             setPreviewMeasurePoints([]);
+          }}
+          subjectPicking={previewSubjectPicking}
+          onToggleSubjectPicking={() => {
+            if (!previewReady) {
+              setSearchMessage("三脚ピンと被写体周辺位置を設定してから、正式な3D位置を指定してください");
+              return;
+            }
+            setPreviewMeasuring(false);
+            setPreviewMeasurePoints([]);
+            setPreviewSubjectPicking((current) => !current);
           }}
         />
 
@@ -4648,39 +4232,32 @@ ${diagnosticMessage}
 
       <section ref={mapSectionRef} className="map-section">
         <div
-          ref={mapRef}
-          className={mapViewMode === "3d" ? "map-viewer active" : "map-viewer"}
-        />
-        <div
           ref={map2dStageRef}
-          className={mapViewMode === "2d" ? "map-2d-stage active" : "map-2d-stage"}
+          className="map-2d-stage active"
         >
-          {mapViewMode === "2d" && (
-            <iframe
-              className="google-map-2d"
-              src={googleMapUrl}
-              title="Googleマップ 2D表示"
-              loading="eager"
-              referrerPolicy="no-referrer-when-downgrade"
-              allowFullScreen
-              onLoad={() => {
-                const stage = map2dStageRef.current;
-                if (!stage) return;
-                stage.style.transform = "";
-                stage.style.transformOrigin = "";
-                stage.classList.remove("dragging");
-              }}
-            />
-          )}
-          {mapViewMode === "2d" && lightPollutionEnabled && celestialVisibility.milkyWay && (
+          <iframe
+            className="google-map-2d"
+            src={googleMapUrl}
+            title={mapType === "satellite" ? "Googleマップ 航空写真" : "Googleマップ 通常地図"}
+            loading="eager"
+            referrerPolicy="no-referrer-when-downgrade"
+            allowFullScreen
+            onLoad={() => {
+              const stage = map2dStageRef.current;
+              if (!stage) return;
+              stage.style.transform = "";
+              stage.style.transformOrigin = "";
+              stage.classList.remove("dragging");
+            }}
+          />
+          {lightPollutionEnabled && celestialVisibility.milkyWay && (
             <LightPollutionTileOverlay
               center={mapCenter}
               zoom={mapZoom}
               size={mapSize}
             />
           )}
-          {mapViewMode === "2d" && (
-            <Map2DOverlay
+          <Map2DOverlay
               center={mapCenter}
               zoom={mapZoom}
               size={mapSize}
@@ -4721,13 +4298,12 @@ ${diagnosticMessage}
                 });
               }}
               onSelectCandidate={selectTripodCandidate}
-            />
-          )}
+          />
         </div>
-        {mapViewMode === "2d" &&
-          !subjectPlacementActive &&
+        {!subjectPlacementActive &&
           !tripodPlacementActive &&
-          !foregroundPlacementActive && (
+          !foregroundPlacementActive &&
+          !mapMeasuring && (
             <Map2DInteractionLayer
               stageRef={map2dStageRef}
               center={mapCenter}
@@ -4737,8 +4313,7 @@ ${diagnosticMessage}
               onChangeZoom={setMapZoom}
             />
           )}
-        {mapViewMode === "2d" &&
-          (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (
+        {(subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (
             <button
               type="button"
               className="map-2d-placement-layer"
@@ -4755,15 +4330,24 @@ ${diagnosticMessage}
                 {subjectPlacementActive ? "被写体" : tripodPlacementActive ? "三脚" : "人物"}を置く地面をクリック
               </span>
             </button>
-          )}
+        )}
+        {mapMeasuring && (
+          <button
+            type="button"
+            className="map-2d-placement-layer map-2d-measurement-layer"
+            onClick={handle2dMapMeasurement}
+            aria-label="2D地図の距離を計測"
+          >
+            <span>{mapMeasureStart ? "2点目をタップ" : "1点目をタップ"}</span>
+          </button>
+        )}
 
-        {!subjectEditActive && (
-          <div className={foregroundPlacementActive ? "map-controls-layer foreground-placement-mode" : "map-controls-layer"}>
+        <div className={foregroundPlacementActive ? "map-controls-layer foreground-placement-mode" : "map-controls-layer"}>
             <div className="map-native-top-left-mask" aria-hidden="true" />
             <div className="map-left-controls">
               <div className="map-tool-rail" aria-label="地図表示ツール">
-                <button type="button" data-tutorial-id="map-mode-2d" className={mapViewMode === "2d" ? "active" : ""} onClick={() => changeMapViewMode("2d")}><span>▣</span><small>2D</small></button>
-                <button type="button" data-tutorial-id="map-mode-3d" className={mapViewMode === "3d" ? "active" : ""} onClick={() => changeMapViewMode("3d")}><span>◇</span><small>3D</small></button>
+                <button type="button" className={mapType === "roadmap" ? "active" : ""} aria-pressed={mapType === "roadmap"} onClick={() => setMapType("roadmap")}><span>▣</span><small>通常地図</small></button>
+                <button type="button" className={mapType === "satellite" ? "active" : ""} aria-pressed={mapType === "satellite"} onClick={() => setMapType("satellite")}><span>▧</span><small>航空写真</small></button>
                 <button
                   type="button"
                   ref={pinToolButtonRef}
@@ -5018,8 +4602,7 @@ ${diagnosticMessage}
             )}
 
             {mapTool === "metrics" && <MetricsPanel metrics={metrics} />}
-          </div>
-        )}
+        </div>
         <a
           className="gsi-map-attribution"
           href="https://maps.gsi.go.jp/development/ichiran.html"
@@ -5120,12 +4703,6 @@ ${diagnosticMessage}
         </div>
       )}
 
-      <SubjectEditOverlay
-        active={subjectEditActive}
-        onConfirm={confirmSubjectEdit}
-        onCancel={cancelSubjectEdit}
-      />
-
       {celestialTransitSearchOpen && (
         <Suspense fallback={null}>
           <CelestialTransitSearchDialog
@@ -5161,13 +4738,7 @@ ${diagnosticMessage}
       )}
       <SpotSearchScreen
         open={spotSearchOpen}
-        hasCurrentSubject={Boolean(currentSubjectPoint())}
-        initialFocalLengthMm={cameraSettings.focalLengthMm}
-        initialDate={selectedDate}
-        initialTimeZone={timeZone}
         onBack={() => setSpotSearchOpen(false)}
-        onSearch={searchFromSpotScreen}
-        onResumeSearch={resumeSpotSearch}
         onLocatePin={locatePinFromSpotScreen}
         currentSubject={currentSubjectPoint()}
         history={subjectHistory}
@@ -5178,7 +4749,6 @@ ${diagnosticMessage}
         onToggleFavorite={(record) => setFavoriteSubjects(toggleFavoriteSubject(record))}
         onRenameFavorite={(id, label) => setFavoriteSubjects(renameFavoriteSubject(id, label))}
         justRegisteredFavoriteId={justRegisteredFavorite}
-        onSelect={applySpotPreset}
       />
       {savedPlansOpen && (
         <Suspense fallback={null}>

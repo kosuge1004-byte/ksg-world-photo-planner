@@ -28,17 +28,15 @@ const server = fs.readFileSync(
   new URL("../server/runSpotSearchJob.ts", import.meta.url),
   "utf8"
 );
-const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
 if (!estimator.includes("Math.max(currentPercent, bounded)")) {
   throw new Error("progress estimator does not prevent backward movement");
 }
 if (
   !estimator.includes("updateSearchId !== searchId") ||
-  !spotScreen.includes("progressEstimatorRef.current?.update") ||
   !transitScreen.includes("progressEstimatorRef.current?.update")
 ) {
-  throw new Error("progress estimator is not linked to the active search generation");
+  throw new Error("progress estimator is not linked to the active transit-search generation");
 }
 if (
   !estimator.includes("smoothedMillisecondsPerPercent") ||
@@ -73,10 +71,10 @@ if (
   throw new Error("100% is not reserved for completed search");
 }
 if (
-  !spotScreen.includes("searchGenerationRef.current += 1") ||
-  !spotScreen.includes("progressEstimatorRef.current = null")
+  spotScreen.includes("日時・構図候補も検索") ||
+  !spotScreen.includes("controllerRef.current?.abort()")
 ) {
-  throw new Error("cancelled spot search can retain its progress estimator");
+  throw new Error("place-only spot search contract or cancellation guard is missing");
 }
 
 let current = 0;

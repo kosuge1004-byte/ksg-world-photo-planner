@@ -27,6 +27,7 @@ export function PlacementConfirmDialog({
 }: Props) {
   if (!open || !kind) return null;
   const label = KIND_LABEL[kind];
+  const allowsHeightOffset = kind === "person";
   return (
     <div className="project-dialog-backdrop" role="presentation">
       <section
@@ -36,22 +37,30 @@ export function PlacementConfirmDialog({
         aria-label={`${label}ピンの配置確認`}
       >
         <h2>ここに{label}ピンを置きますか？</h2>
-        <label>
-          選択位置より上空に置く高さ
-          <span className="placement-offset-input">
-            <input
-              type="number"
-              step="0.1"
-              value={heightOffsetMeters}
-              onChange={(event) => onHeightOffsetChange(Number(event.target.value))}
-              disabled={busy}
-            />
-            <b>m</b>
-          </span>
-        </label>
-        <p className="project-dialog-note">
-          三脚で高さを入力した場合は、選択した緯度経度の地表面を基準に、その高さから入力した分だけ上空へ配置します。0mでは選択した3D表面（地面・屋上・橋面など）へ配置します。
-        </p>
+        {allowsHeightOffset ? (
+          <>
+            <label>
+              選択位置より上空に置く高さ
+              <span className="placement-offset-input">
+                <input
+                  type="number"
+                  step="0.1"
+                  value={heightOffsetMeters}
+                  onChange={(event) => onHeightOffsetChange(Number(event.target.value))}
+                  disabled={busy}
+                />
+                <b>m</b>
+              </span>
+            </label>
+            <p className="project-dialog-note">
+              人物の足元となる地表面を基準に配置します。
+            </p>
+          </>
+        ) : (
+          <p className="project-dialog-note">
+            高さは現在のDEM・ジオイド・3D表面解決経路から自動で確定します。
+          </p>
+        )}
         {errorMessage && <p className="project-dialog-error" role="alert">{errorMessage}</p>}
         <div>
           <button type="button" onClick={onCancel} disabled={busy}>

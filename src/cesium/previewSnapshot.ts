@@ -1,4 +1,5 @@
 import {
+  Cartesian2,
   Cartesian3,
   PerspectiveFrustum,
   Viewer,
@@ -7,6 +8,7 @@ import {
 import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import type { GroundPoint } from "../types/points";
 import { setPreviewFromTripodToSubject } from "./camera";
+import { pickSceneSurfacePosition } from "./surfacePicking";
 
 type CameraState = {
   position: Cartesian3;
@@ -144,5 +146,59 @@ export async function captureTripodPreview(
     // 3Dマップが実際に表示されている時だけ復元フレームを即描画する。
     // 2D表示中はCesium自体を休止しているため、不可視の1フレームを描く必要はない。
     if (restoreVisibleScene) viewer.scene.render();
+  }
+}
+
+/**
+ * 上側の三脚視点プレビューでタップした画素から、描画に使ったものと同じ
+ * Cesiumカメラ・フラスタムを再現して3D表面座標を取得する。
+ *
+ * 2D地図の緯度経度や楕円体への代替は行わない。depth pickに失敗した場合は
+ * nullを返し、呼び出し側で再指定を求める。これにより建物先端・屋根・山頂を
+ * 地表へ丸めず、既存の明示的3D pick経路へそのまま渡せる。
+ */
+export function pickTripodPreviewSurface(
+  viewer: Viewer,
+  previewCanvas: HTMLCanvasElement,
+  tripod: GroundPoint,
+  subject: GroundPoint,
+  settings: CameraSettings,
+  calculationMode: CalculationMode,
+  viewCorrection: CameraViewCorrection | undefined,
+  xPercent: number,
+  yPercent: number
+): Cartesian3 | null {
+  if (viewer.isDestroyed()) return null;
+
+  const cssWidth = Math.max(1, previewCanvas.clientWidth);
+  const cssHeight = Math.max(1, previewCanvas.clientHeight);
+  const cameraState = saveCamera(viewer);
+  const defaultDataSource = viewer.dataSourceDisplay.defaultDataSource;
+  const defaultDataSourceWasVisible = defaultDataSource.show;
+
+  try {
+    defaultDataSource.show = false;
+    setPreviewFromTripodToSubject(
+      viewer,
+      tripod,
+      subject,
+      settings,
+      cssWidth / cssHeight,
+      calculationMode,
+      viewCorrection
+    );
+    viewer.scene.render();
+
+    const viewerWidth = Math.max(1, viewer.canvas.clientWidth);
+    const viewerHeight = Math.max(1, viewer.canvas.clientHeight);
+    const screenPosition = new Cartesian2(
+      Math.min(100, Math.max(0, xPercent)) / 100 * viewerWidth,
+      Math.min(100, Math.max(0, yPercent)) / 100 * viewerHeight
+    );
+    const picked = pickSceneSurfacePosition(viewer, screenPosition);
+    return picked ? Cartesian3.clone(picked) : null;
+  } finally {
+    defaultDataSource.show = defaultDataSourceWasVisible;
+    restoreCamera(viewer, cameraState);
   }
 }

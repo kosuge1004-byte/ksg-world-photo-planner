@@ -324,7 +324,12 @@ button { cursor: pointer; }
   outline: 1px solid rgba(255, 255, 255, .72);
   outline-offset: -1px;
 }
-.preview-canvas, .map-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
+.preview-canvas, .preview-renderer { position: absolute; inset: 0; width: 100%; height: 100%; }
+.preview-renderer { z-index: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+.preview-renderer .cesium-viewer,
+.preview-renderer .cesium-viewer-cesiumWidgetContainer,
+.preview-renderer .cesium-widget,
+.preview-renderer canvas { width: 100%; height: 100%; }
 .preview-canvas {
   z-index: 1;
   display: block;
@@ -568,6 +573,7 @@ button { cursor: pointer; }
 
 .preview-actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
 .preview-actions button.active { color: #74a6ff; border-color: #246bd7; }
+.preview-subject-pick-instruction { position: absolute; z-index: 29; left: 50%; bottom: 10px; padding: 6px 10px; color: #fff; border: 1px solid rgba(116, 166, 255, .8); border-radius: 8px; background: rgba(1, 4, 8, .86); font-size: 11px; font-weight: 700; transform: translateX(-50%); pointer-events: none; }
 .preview-measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 28; }
 .preview-measurement-line-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .preview-measurement-line { stroke: #5ab9ff; stroke-width: 2; stroke-dasharray: 3 2; }
@@ -837,8 +843,6 @@ button { cursor: pointer; }
   text-decoration: none;
   transform: translateX(-50%);
 }
-.map-viewer { z-index: 0; opacity: 0; pointer-events: none; }
-.map-viewer.active { opacity: 1; pointer-events: auto; }
 .map-2d-stage { position: absolute; z-index: 1; inset: 0; display: none; overflow: hidden; background: #e5e3df; will-change: transform; }
 .map-2d-stage.active { display: block; }
 .map-2d-stage.dragging { overflow: visible; box-shadow: 0 0 0 180px #e5e3df; }

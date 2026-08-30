@@ -29,9 +29,12 @@ requireText(
 );
 requireText(
   app,
-  'if (mapViewMode !== "3d") return;',
-  "hidden Cesium entities are still updated in 2D mode"
+  "viewer.useDefaultRenderLoop = false",
+  "preview-only Cesium renderer is not kept idle between explicit renders"
 );
+if (app.includes('data-tutorial-id="map-mode-3d"') || app.includes('className="map-viewer')) {
+  throw new Error("lower-map Cesium UI is still reachable");
+}
 requireText(
   app,
   "current.width === width && current.height === height",

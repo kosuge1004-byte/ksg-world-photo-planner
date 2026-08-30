@@ -12,6 +12,8 @@ type Props = {
   onPan: (azimuthDeltaDegrees: number, altitudeDeltaDegrees: number) => void;
   measuring?: boolean;
   onMeasureTap?: (xPercent: number, yPercent: number) => void;
+  subjectPicking?: boolean;
+  onSubjectTap?: (xPercent: number, yPercent: number) => void;
 };
 
 type PointerPosition = { x: number; y: number };
@@ -37,6 +39,8 @@ export function PreviewGestureLayer({
   onPan,
   measuring = false,
   onMeasureTap,
+  subjectPicking = false,
+  onSubjectTap,
 }: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, PointerPosition>());
@@ -82,8 +86,8 @@ export function PreviewGestureLayer({
       y: event.clientY,
     });
     const points = [...pointersRef.current.values()];
-    if (measuring) {
-      // 計測モード中はドラッグでの構図調整をせず、タップした点だけを拾う。
+    if (measuring || subjectPicking) {
+      // 計測・被写体指定モード中はドラッグで構図を動かさず、タップ位置だけを拾う。
       if (points.length === 1) {
         tapStartRef.current = { position: points[0], time: performance.now() };
       } else {
@@ -109,7 +113,7 @@ export function PreviewGestureLayer({
       x: event.clientX,
       y: event.clientY,
     });
-    if (measuring) return;
+    if (measuring || subjectPicking) return;
     const points = [...pointersRef.current.values()];
     if (points.length === 2 && pinchRef.current) {
       const ratio = distance(points[0], points[1]) / pinchRef.current.distance;
@@ -138,7 +142,7 @@ export function PreviewGestureLayer({
   }
 
   function pointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
-    if (measuring && tapStartRef.current && pointersRef.current.has(event.pointerId)) {
+    if ((measuring || subjectPicking) && tapStartRef.current && pointersRef.current.has(event.pointerId)) {
       const start = tapStartRef.current;
       const end = { x: event.clientX, y: event.clientY };
       const layer = layerRef.current;
@@ -151,7 +155,8 @@ export function PreviewGestureLayer({
         if (rect.width > 0 && rect.height > 0) {
           const xPercent = ((end.x - rect.left) / rect.width) * 100;
           const yPercent = ((end.y - rect.top) / rect.height) * 100;
-          onMeasureTap?.(xPercent, yPercent);
+          if (subjectPicking) onSubjectTap?.(xPercent, yPercent);
+          else onMeasureTap?.(xPercent, yPercent);
         }
       }
     }
@@ -169,9 +174,11 @@ export function PreviewGestureLayer({
       onPointerMove={pointerMove}
       onPointerUp={pointerEnd}
       onPointerCancel={pointerEnd}
-      onDoubleClick={() => { if (!measuring) onChangeFocalLength(clamp(focalLengthMm * 1.25)); }}
+      onDoubleClick={() => { if (!measuring && !subjectPicking) onChangeFocalLength(clamp(focalLengthMm * 1.25)); }}
       aria-label={
-        measuring
+        subjectPicking
+          ? "プレビューをタップして正式な被写体3D位置を指定"
+          : measuring
           ? "プレビューをタップして2点間の距離を計測"
           : "プレビューをドラッグで構図調整、ホイールまたはピンチで拡大縮小"
       }

@@ -10,6 +10,8 @@ type Props = {
   onResetToSubject: () => void;
   measuring: boolean;
   onToggleMeasuring: () => void;
+  subjectPicking: boolean;
+  onToggleSubjectPicking: () => void;
 };
 
 export function PreviewChrome({
@@ -20,6 +22,8 @@ export function PreviewChrome({
   onResetToSubject,
   measuring,
   onToggleMeasuring,
+  subjectPicking,
+  onToggleSubjectPicking,
 }: Props) {
   const [frameMenuOpen, setFrameMenuOpen] = useState(false);
 
@@ -80,6 +84,14 @@ export function PreviewChrome({
       </div>
 
       <div className="preview-actions">
+        <button
+          type="button"
+          className={subjectPicking ? "active" : ""}
+          aria-pressed={subjectPicking}
+          onClick={onToggleSubjectPicking}
+        >
+          <span>⌖</span><small>位置指定</small>
+        </button>
         <button
           type="button"
           className={measuring ? "active" : ""}

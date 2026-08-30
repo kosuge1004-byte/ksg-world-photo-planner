@@ -49,12 +49,8 @@ const required = [
   [backgroundSearch, "runtimeCrypto?.randomUUID", "randomUUID compatibility guard"],
   [backgroundSearch, "runtimeCrypto?.getRandomValues", "secure UUID fallback"],
   [userFeedback, "2D地図は利用できます", "3D initialization fallback"],
-  [app, 'mode === "3d" && (!mapReady || !viewer || viewer.isDestroyed())', "3D activation guard"],
-  // 2026-08-27追記: BYOA化に伴い「Cesium ionトークンが無ければ2D地図の
-  // まま」という古い分岐は削除済み（標準モードはCesium ionトークンに
-  // 一切依存せず常に3D表示できるため）。3D初期化がまだ完了していない
-  // 場合の「読み込み中」の案内であることを検証する。
-  [app, "3Dマップを読み込み中です", "3D unavailable keeps 2D visible"],
+  [app, "viewer.useDefaultRenderLoop = false", "preview-only Cesium idle guard"],
+  [app, 'className="map-2d-stage active"', "lower Google Maps remains visible while preview initializes"],
   [app, "<canvas", "Canvas preview"],
   [app, "<svg", "SVG overlay"],
 ];
@@ -63,6 +59,10 @@ for (const [source, expected, label] of required) {
   if (!source.includes(expected)) {
     throw new Error(`platform compatibility requirement is missing: ${label}`);
   }
+}
+
+if (app.includes('data-tutorial-id="map-mode-3d"')) {
+  throw new Error("removed lower-map 3D activation control is still present");
 }
 
 if (!appCss.includes(".preview-gesture-layer") || !appCss.includes("touch-action: none")) {
