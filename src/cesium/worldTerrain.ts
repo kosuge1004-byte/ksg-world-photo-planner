@@ -681,12 +681,13 @@ async function fetchGsiGeoidHeightOnce(
   latitude: number,
   longitude: number,
   signal?: AbortSignal,
-  pointSpecific = false
+  pointSpecific = false,
+  timeoutMs = GEOID_FETCH_TIMEOUT_MS
 ): Promise<number> {
   // 国土地理院ジオイドCGIは応答が不安定なことがあり、タイムアウトが
   // 無いとハングして無期限に待ち続けてしまう（実際に発生していた
   // 「数分待っても描画されない」不具合の主因の1つ）。
-  const timeoutSignal = AbortSignal.timeout(GEOID_FETCH_TIMEOUT_MS);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const response = await fetch(
     `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}${pointSpecific ? "&precision=point" : ""}`,
     {
@@ -777,7 +778,8 @@ export async function fetchGsiGeoidHeight(
  */
 export async function fetchGsiGeoidHeightPointSpecific(
   point: Cartographic,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs = GEOID_FETCH_TIMEOUT_MS
 ): Promise<number> {
   if (Date.now() < geoidUnavailableUntil) {
     throw new Error("国土地理院ジオイドAPIの再試行待ちです");
@@ -792,7 +794,7 @@ export async function fetchGsiGeoidHeightPointSpecific(
     const persistent = await readGeoidPersistentCache(key);
     abortIfRequested(signal);
     if (persistent !== null) return persistent;
-    const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal, true);
+    const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal, true, timeoutMs);
     void writeGeoidPersistentCache(key, height);
     return height;
   })().catch((error: unknown) => {

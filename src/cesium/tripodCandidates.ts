@@ -788,7 +788,8 @@ async function buildPointSpecificFinalCandidateGroundPoint(
   subject: GroundPoint,
   label: string,
   signal?: AbortSignal,
-  sampledGeoidFallback?: number
+  sampledGeoidFallback?: number,
+  trace?: (stage: string, detail: string) => void
 ): Promise<GroundPoint> {
   const base = buildCandidateGroundPoint(cartographic, subject, label);
   // 最終CameraModel探索のbestはGroundPointとして保持され、その後
@@ -813,11 +814,23 @@ async function buildPointSpecificFinalCandidateGroundPoint(
   // より精密な値の取得は「取れれば使う、失敗しても候補自体は失わない」
   // ベストエフォートに格下げする。
   let exactGeoid: number | null = null;
+  const hasSampleFallback = Number.isFinite(sampledGeoid);
+  // 地形サンプル由来Nが既にある場合、地点別Nは精度向上のベストエフォート。
+  // 15秒待って同じNへfallbackするのは時間軸操作を止めるだけなので、
+  // fallback可能時だけ1.2秒で打ち切る。fallback不能時は従来の15秒を維持する。
+  const pointGeoidTimeoutMs = hasSampleFallback ? 1_200 : 15_000;
+  const geoidStartedAt = performance.now();
+  trace?.("geoid:point:start", `timeout=${pointGeoidTimeoutMs}ms sampleN=${hasSampleFallback ? Number(sampledGeoid).toFixed(4) : "none"}`);
   try {
-    exactGeoid = await fetchGsiGeoidHeightPointSpecific(cartographic, signal);
+    exactGeoid = await fetchGsiGeoidHeightPointSpecific(cartographic, signal, pointGeoidTimeoutMs);
+    trace?.("geoid:point:end", `elapsed=${(performance.now() - geoidStartedAt).toFixed(1)}ms exactN=${exactGeoid.toFixed(4)}`);
   } catch (error) {
-    if (isAbortError(error)) throw error;
-    if (!Number.isFinite(sampledGeoid)) throw error;
+    if (isAbortError(error) && signal?.aborted) throw error;
+    if (!Number.isFinite(sampledGeoid)) {
+      trace?.("geoid:point:error", `elapsed=${(performance.now() - geoidStartedAt).toFixed(1)}ms fallback=no error=${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+      throw error;
+    }
+    trace?.("geoid:point:fallback", `elapsed=${(performance.now() - geoidStartedAt).toFixed(1)}ms sampleN=${Number(sampledGeoid).toFixed(4)} error=${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     console.warn(
       `[tripod-candidate] ${label}: 候補点別ジオイド高の取得に失敗したため、地域代表値で代替します`,
       error
@@ -1713,7 +1726,8 @@ async function refineWithManualEquivalentProjection(
   signal?: AbortSignal,
   distanceRange?: TripodDistanceRange,
   refractionWeather?: RefractionWeatherContext,
-  viewCorrection?: CameraViewCorrection
+  viewCorrection?: CameraViewCorrection,
+  trace?: (stage: string, detail: string) => void
 ): Promise<RefinementResultWithDiagnostics | null> {
   const coarsePoint = buildCandidateGroundPoint(
     coarseCartographic,
@@ -2052,7 +2066,8 @@ async function refineWithManualEquivalentProjection(
     subject,
     `${point.label}手動三脚ピン同等最終候補`,
     signal,
-    best.candidatePoint.geoidHeightMeters
+    best.candidatePoint.geoidHeightMeters,
+    trace
   );
   abortIfRequested(signal);
   const finalEvaluation = evaluateManualEquivalentCandidate(
@@ -2585,7 +2600,8 @@ async function calculateOneCandidates(
         signal,
         distanceRange,
         activeRefractionWeather,
-        viewCorrection
+        viewCorrection,
+        trace
       );
     } catch (error) {
       // 2026-08-29修正（実機診断より）: 中止（AbortError）は、新しい検索が
