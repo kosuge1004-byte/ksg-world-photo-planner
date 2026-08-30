@@ -311,47 +311,55 @@ async function resolveSpotLocationUncached(
   }
 
   let result: SearchResult | undefined;
-  const apiResponse = await diagnosticFetch("geocode", "/api/geocode", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ query: normalizedQuery }),
-    signal,
-  });
-  const apiIsJson = (apiResponse.headers.get("content-type") ?? "")
-    .includes("application/json");
-  if (apiResponse.ok && apiIsJson) {
-    const location = await apiResponse.json() as {
-      latitude?: unknown;
-      longitude?: unknown;
-      label?: unknown;
-    };
-    const latitude = Number(location.latitude);
-    const longitude = Number(location.longitude);
-    if (
-      Number.isFinite(latitude) &&
-      Number.isFinite(longitude) &&
-      typeof location.label === "string"
-    ) {
-      const resolved = { latitude, longitude, label: location.label };
-      writeCachedSpotLocation(normalizedQuery, resolved);
-      return resolved;
+  let apiFailure: Error | null = null;
+  try {
+    const apiResponse = await diagnosticFetch("geocode", "/api/geocode", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ query: normalizedQuery }),
+      signal,
+    });
+    const apiIsJson = (apiResponse.headers.get("content-type") ?? "")
+      .includes("application/json");
+    if (apiResponse.ok && apiIsJson) {
+      const location = await apiResponse.json() as {
+        latitude?: unknown;
+        longitude?: unknown;
+        label?: unknown;
+      };
+      const latitude = Number(location.latitude);
+      const longitude = Number(location.longitude);
+      if (
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        typeof location.label === "string"
+      ) {
+        const resolved = { latitude, longitude, label: location.label };
+        writeCachedSpotLocation(normalizedQuery, resolved);
+        return resolved;
+      }
+      apiFailure = new Error("地名検索APIの応答座標が不正です");
+    } else if (apiIsJson) {
+      const errorBody = await apiResponse.json() as { error?: unknown };
+      apiFailure = new Error(
+        typeof errorBody.error === "string"
+          ? errorBody.error
+          : `地名検索APIエラー：${apiResponse.status}`
+      );
+    } else {
+      apiFailure = new Error(`地名検索APIの応答形式が不正です：${apiResponse.status}`);
     }
-    throw new Error("地名検索APIの応答座標が不正です");
-  }
-  if (apiIsJson) {
-    const errorBody = await apiResponse.json() as { error?: unknown };
-    throw new Error(
-      typeof errorBody.error === "string"
-        ? errorBody.error
-        : `地名検索APIエラー：${apiResponse.status}`
-    );
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw error;
+    apiFailure = error instanceof Error ? error : new Error(String(error));
   }
 
-  // バックグラウンドAPIを伴わない静的プレビューでだけ従来の直接検索へ戻す。
-  // 本番・npm run devでは同一オリジンAPIを使い、ブラウザCORSや429の影響を避ける。
+  // 同一オリジン /api/geocode が一時的に失敗・404/422・非JSON応答になった場合も、
+  // 地名検索そのものを不能にしない。従来利用していた Nominatim 直接検索へ
+  // fail-open し、過去に検索できた名称がAPI経路の障害だけで検索不能になる回帰を防ぐ。
   const parameters = new URLSearchParams({
     q: normalizedQuery,
     format: "jsonv2",
@@ -361,18 +369,39 @@ async function resolveSpotLocationUncached(
     countrycodes: "jp",
     "accept-language": "ja",
   });
-  const directResponse = await fetch(
-    `https://nominatim.openstreetmap.org/search?${parameters}`,
-    {
-      headers: { Accept: "application/json" },
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
-    }
-  );
+  let directResponse: Response;
+  try {
+    directResponse = await fetch(
+      `https://nominatim.openstreetmap.org/search?${parameters}`,
+      {
+        headers: { Accept: "application/json" },
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+      }
+    );
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw error;
+    const directMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      apiFailure
+        ? `地名検索APIと直接検索の両方に失敗しました：${apiFailure.message} / ${directMessage}`
+        : `地名検索通信エラー：${directMessage}`
+    );
+  }
   if (!directResponse.ok) {
-    throw new Error(`地名検索通信エラー：${directResponse.status}`);
+    throw new Error(
+      apiFailure
+        ? `地名検索APIと直接検索の両方に失敗しました：${apiFailure.message} / Nominatim ${directResponse.status}`
+        : `地名検索通信エラー：${directResponse.status}`
+    );
   }
   result = ((await directResponse.json()) as SearchResult[])[0];
-  if (!result) throw new Error("指定したスポットが見つかりませんでした");
+  if (!result) {
+    throw new Error(
+      apiFailure
+        ? `指定したスポットが見つかりませんでした（API: ${apiFailure.message}）`
+        : "指定したスポットが見つかりませんでした"
+    );
+  }
   const latitude = Number(result.lat);
   const longitude = Number(result.lon);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {

@@ -9,6 +9,7 @@ import type {
 } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import type { ForegroundObject } from "../types/foreground";
+import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { TripodSearchBaseLine } from "../cesium/tripodSearchLine";
 import {
   coordinatesAtMapPixel,
@@ -113,8 +114,29 @@ export function Map2DOverlay({
       >
         {tripodSearchLines.map((line) => {
           const start = projectCoordinatesToMapPixel(line.start, center, zoom, size);
-          const end = projectCoordinatesToMapPixel(line.end, center, zoom, size);
-          const extendedTarget = extendRayPastTarget(start, end, size);
+          // 250km先の地理座標をWeb Mercatorへ投影して直線で結ぶと、
+          // 測地線とMercator投影の非線形差で近距離（~1km）の候補点からも
+          // 線が目に見えて外れる。画面上の方向は被写体直近1kmの測地線接線から
+          // 求め、そこから画面端まで延長する。
+          const matchingCandidate = candidates
+            .filter((candidate) => candidate.id === line.id)
+            .sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
+          const localDirectionCoordinate = calculateKarneyDestinationPoint(
+            line.start,
+            line.bearingDegrees,
+            1_000
+          );
+          // 確定/暫定候補がある場合は、その実座標を画面上の方向基準にする。
+          // これにより「被写体→天体線」と三脚候補点が同じ投影経路を使い、
+          // 表示上の線だけが候補点から外れることを防ぐ。候補未算出時だけ
+          // 被写体直近1kmの測地線接線を使う。
+          const directionPixel = projectCoordinatesToMapPixel(
+            matchingCandidate ?? localDirectionCoordinate,
+            center,
+            zoom,
+            size
+          );
+          const extendedTarget = extendRayPastTarget(start, directionPixel, size);
           return (
             <line
               key={`${line.id}-tripod-search-base-line`}
@@ -138,13 +160,23 @@ export function Map2DOverlay({
         );
         if (!isClearOfMapControls(pixel, size)) return null;
         return (
-          <button
-            type="button"
+          <div
             key={`${candidate.id}-tripod-candidate-${candidate.intersectionIndex ?? 1}-${candidate.distanceMeters.toFixed(1)}`}
-            className={`map-tripod-candidate-label map-candidate-label-${candidate.id}`}
+            className="map-tripod-candidate-anchor"
             style={{ left: pixel.x, top: pixel.y }}
-            onClick={() => onSelectCandidate(candidate)}
-            title={
+          >
+            <button
+              type="button"
+              className={`map-tripod-candidate-marker map-candidate-marker-${candidate.id}`}
+              onClick={() => onSelectCandidate(candidate)}
+              aria-label={`${candidate.label} 三脚候補 ${Math.round(candidate.distanceMeters)}m`}
+              title={`${candidate.label}の三脚候補点`}
+            />
+            <button
+              type="button"
+              className={`map-tripod-candidate-label map-candidate-label-${candidate.id}`}
+              onClick={() => onSelectCandidate(candidate)}
+              title={
               candidate.solutionType === "direction-only"
                 ? `${candidate.label}の三脚方位候補（要確認）`
                 : candidate.solutionType === "preliminary"
@@ -155,20 +187,20 @@ export function Map2DOverlay({
                     ? `${candidate.label}の三脚位置（幾何学的条件は満たすが、途中の地形に被写体への視界を遮られている可能性があります）`
                     : `${candidate.label}の三脚位置`
             }
-          >
-            <span aria-hidden="true">●</span>
-            {candidate.label}{" "}
-            {candidate.solutionType === "direction-only"
-              ? "三脚方位候補"
-              : candidate.solutionType === "preliminary"
-                ? (tripodCandidatesCalculating ? "三脚概算候補（計算中）" : "三脚概算候補（確定解なし）")
-                : "三脚候補"}
-            {candidate.intersectionCount && candidate.intersectionCount > 1
-              ? ` ${candidate.intersectionIndex}/${candidate.intersectionCount}`
-              : ""}{" "}
-            {Math.round(candidate.distanceMeters)}m
-            {candidate.lineOfSightPossiblyObstructed ? " ⚠視界不良の可能性" : ""}
-          </button>
+            >
+              {candidate.label}{" "}
+              {candidate.solutionType === "direction-only"
+                ? "三脚方位候補"
+                : candidate.solutionType === "preliminary"
+                  ? (tripodCandidatesCalculating ? "三脚概算候補（計算中）" : "三脚概算候補（確定解なし）")
+                  : "三脚候補"}
+              {candidate.intersectionCount && candidate.intersectionCount > 1
+                ? ` ${candidate.intersectionIndex}/${candidate.intersectionCount}`
+                : ""}{" "}
+              {Math.round(candidate.distanceMeters)}m
+              {candidate.lineOfSightPossiblyObstructed ? " ⚠視界不良の可能性" : ""}
+            </button>
+          </div>
         );
       })}
 

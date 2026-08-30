@@ -890,13 +890,18 @@ button { cursor: pointer; }
 .map-candidate-moon { stroke: rgba(37, 191, 255, .95); }
 .map-candidate-milkyWay { stroke: rgba(222, 214, 202, .9); }
 .map-candidate-polaris { stroke: rgba(158, 108, 255, .95); }
-.map-track-time, .map-tripod-candidate-label { position: absolute; padding: 1px 2px; border-radius: 2px; background: rgba(0, 0, 0, .64); font-size: clamp(5px, 1vw, 7px); font-weight: 700; line-height: 1; white-space: nowrap; transform: translate(-50%, -50%); text-shadow: 0 1px 2px #000; }
+.map-track-time { position: absolute; padding: 1px 2px; border-radius: 2px; background: rgba(0, 0, 0, .64); font-size: clamp(5px, 1vw, 7px); font-weight: 700; line-height: 1; white-space: nowrap; transform: translate(-50%, -50%); text-shadow: 0 1px 2px #000; }
+.map-tripod-candidate-anchor { position: absolute; z-index: 14; width: 0; height: 0; pointer-events: none; }
+.map-tripod-candidate-marker { position: absolute; z-index: 2; left: 0; top: 0; width: 15px; height: 15px; padding: 0; border: 2px solid #111; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px rgba(255,255,255,.92), 0 1px 3px rgba(0,0,0,.8); transform: translate(-50%, -50%); pointer-events: auto; }
+.map-candidate-marker-sun { color: #ffc928; }
+.map-candidate-marker-moon { color: #52d0ff; }
+.map-candidate-marker-milkyWay { color: #da9aff; }
+.map-candidate-marker-polaris { color: #c0a1ff; }
 .map-track-time-sun, .map-candidate-label-sun { color: #ffc928; }
 .map-track-time-moon, .map-candidate-label-moon { color: #52d0ff; }
 .map-track-time-milkyWay, .map-candidate-label-milkyWay { color: #da9aff; }
 .map-track-time-polaris, .map-candidate-label-polaris { color: #c0a1ff; }
-.map-tripod-candidate-label { display: flex; align-items: center; gap: 3px; padding: 3px 5px; color: inherit; border: 1px solid currentColor; font-size: clamp(6px, 1.15vw, 8px); pointer-events: auto; }
-.map-tripod-candidate-label span { font-size: 9px; }
+.map-tripod-candidate-label { position: absolute; left: 0; top: -13px; display: flex; align-items: center; gap: 3px; padding: 3px 5px; color: inherit; border: 1px solid currentColor; border-radius: 2px; background: rgba(0, 0, 0, .64); font-size: clamp(6px, 1.15vw, 8px); font-weight: 700; line-height: 1; white-space: nowrap; text-shadow: 0 1px 2px #000; transform: translate(-50%, -100%); pointer-events: auto; }
 .map-2d-pin { position: absolute; z-index: 8; width: 14px; height: 20px; transform: translate(-50%, -100%); filter: drop-shadow(0 1px 1px rgba(0,0,0,.55)); }
 .map-2d-pin > svg { display: block; width: 14px; height: 20px; overflow: visible; }
 .map-2d-pin path { fill: #e53935; stroke: #fff; stroke-width: 2; }
