@@ -129,9 +129,7 @@ async function requestBatch(
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "X-AstroSight-Cache-Bypass": "1",
       },
-      cache: "no-store",
       body: JSON.stringify({ points }),
       signal: controller.signal,
     });

@@ -1,0 +1,33 @@
+AstroSight 三脚候補 地形キャッシュ高さ基準修正 2026-08-30
+
+実機エビデンス
+- キャッシュ使用時: 965m地点の「レイ高との差」= +39.5m、初期交点=1263.5m、最終=1252.24m。
+- キャッシュ無効時: 同965m地点=+1.4m、初期交点=965.4m。
+- 実証地点のジオイド高 N=38.107m。
+- 39.5m - 1.4m = 38.1mで、キャッシュ有無の差がNと一致。
+
+コード上の直接原因
+- 端末のdecoded DEM tile cache `resolveGsiSamplesFromDeviceTiles()` が返す `heightMeters` はGSI標高H（orthometric）。
+- `sampleTerrainCached()` は端末タイルヒット時、そのHを `Cartographic.height` に直接代入していた。
+- 一方、ネットワーク経路 `sampleTerrainWithGsiPriority()` は H + N を計算して楕円体高hとしていた。
+- そのため同じ地点でも「端末キャッシュヒット時だけ約N低い高さ」となり、ECEFレイ交点が後方へずれた。
+
+修正
+1. 端末DEMタイルヒットも必ず地域ジオイドNを取得し、h = H + Nへ変換してからCartographic.heightへ入れる。
+2. Nが取れない場合はHをhとして代用せず、authoritative network pathへフォールバックする。
+3. ネットワーク経路/端末タイル経路とも、使用したNを `geoidHeightBySample` に保存する。
+4. IndexedDB terrain cacheを v2 -> v3へ更新し、既に保存済みのdatum不明/誤datum値を再利用しない。
+5. cache recordへ `datum: ellipsoidal-v1` と `geoidHeightMeters` を保存する。
+6. 読み出し時もdatum markerを検証し、geoid metadataをCartographicへ復元する。
+7. これによりpoint-specific geoid取得がタイムアウトしても、探索中に実際に使ったNがあれば最終候補を不必要にmanual-refinement-exceptionで捨てない。
+
+変更しないもの
+- 天体中心方向→被写体中心→後方のECEFレイ方式。
+- カメラ高、屈折、気象、neutral DEM補間、1m精密化、CameraModel round-trip判定。
+- 精度しきい値。
+
+検証
+- node --experimental-strip-types --check: worldTerrain.ts PASS
+- node --experimental-strip-types --check: tripodCandidates.ts PASS
+- verify-tripod-terrain-cache-datum-v3-20260830.mjs: 全項目PASS
+- フルtsc -bは、この作業コンテナの既存node_modulesに vite/client, node, @cloudflare/workers-types 型定義が欠けるため環境要因で未完了。
