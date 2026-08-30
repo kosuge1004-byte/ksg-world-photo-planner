@@ -1,0 +1,48 @@
+AstroSight 三脚候補・時間軸停止後の無期限待機対策
+2026-08-30
+
+対象症状
+- 時間軸操作後に「計算中…経過325秒・通信0回・まだ通信していません」のまま停止。
+- DEM通信回数が0のため、地形APIより前段で停止していることを示していた。
+
+確認したコード経路
+1. calculateTripodCandidates / calculateOneCandidates が開始。
+2. 暫定候補を通信なしで表示。
+3. refractionWeatherResolver を await。
+4. その後に初めて terrainSampler (DEM) が呼ばれる。
+5. したがって気象キャッシュ読み出しで停止すると、画面上はDEM通信0回のままになる。
+
+確認した欠陥
+- src/cache/deviceCache.ts の IndexedDB open/get/transaction に無期限待機を防ぐタイムアウトがなかった。
+- indexedDB.open の onblocked 処理がなく、Android WebView/PWAでDBがblocked/stalledになった場合に Promise が完了しない経路が存在した。
+- databasePromise が停止Promiseのまま保持されると、以降の全キャッシュ読出しも同じ停止状態を再利用する可能性があった。
+- 有効な preview 気象データがすでに存在していても、三脚精密計算開始時に同じ気象コンテキストを再度resolver経由で取得していた。
+- 気象API取得後のIndexedDB書込み完了まで結果返却を待っていた。
+
+修正
+- IndexedDB open に1500ms上限を追加。
+- indexedDB.open.onblocked でキャッシュ利用を即時断念し、通常経路へフォールバック。
+- open失敗/blocked/timeout時は databasePromise を解除し、後続呼出しが再試行できるようにした。
+- IndexedDB get / getMany / put / delete / prune 等にも1500ms上限を追加。
+- キャッシュは高速化専用のため、タイムアウト時は値なしとして続行し、authoritative計算自体は止めない。
+- 有効な preview 気象コンテキスト(effectiveMode=weather)が既にある場合、時間軸停止後の三脚精密計算で同じ気象を再利用。気象が未取得/standard fallbackの場合は従来resolverを使う。
+- forecast/historical/climatologyのキャッシュ書込みはバックグラウンド化し、気象データ取得済みなら書込み待ちで計算を止めない。
+
+変更していないもの
+- 天体中心→被写体中心→後方のECEF三脚候補計算。
+- WGS84/ECEF、地表屈折、大気差、カメラ高。
+- DEM精密化・CameraModel round-trip判定。
+- GSI H + geoid N = ellipsoidal h のterrain cache datum v3修正。
+- 時間軸ドラッグ中の「直前確定候補を現在天体方位へ軽量再投影」方式。
+
+検証
+- node --experimental-strip-types --check src/cache/deviceCache.ts : PASS
+- node --experimental-strip-types --check src/search/refractionWeather.ts : PASS
+- node --experimental-strip-types --check src/cesium/tripodCandidates.ts : PASS
+- verify-tripod-timeline-cache-stall-fix-20260830.mjs : 15/15 PASS
+- verify-tripod-timeline-smooth-20260830.mjs : 8/8 PASS
+- verify-tripod-terrain-cache-datum-v3-20260830.mjs : 9/9 PASS
+
+注意
+- この実行環境にはプロジェクトのnode_modulesが無いため、npm run buildのフルビルドは実行していない。
+- 実機では、確定候補が出た状態で時間軸を動かし、ドラッグ中の滑らかな追従と、指を離した後に「通信0回」のまま長時間停止しないことを確認する。

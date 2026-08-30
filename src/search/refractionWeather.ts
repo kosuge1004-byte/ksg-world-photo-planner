@@ -156,7 +156,7 @@ async function loadForecast(point: GroundPoint, signal: AbortSignal): Promise<Re
       source: "forecast",
       samples,
     };
-    await writeCache(key, "forecast", context, FORECAST_CACHE_MS);
+    void writeCache(key, "forecast", context, FORECAST_CACHE_MS).catch(() => undefined);
     return context;
   })();
   inFlightRequests.set(key, request);
@@ -214,7 +214,7 @@ async function loadHistorical(
       source: "historical",
       samples,
     };
-    await writeCache(key, "historical", context, HISTORICAL_CACHE_MS);
+    void writeCache(key, "historical", context, HISTORICAL_CACHE_MS).catch(() => undefined);
     return context;
   })();
   inFlightRequests.set(key, request);
@@ -283,7 +283,7 @@ async function loadClimatology(point: GroundPoint, now: Date, signal: AbortSigna
       samples: [],
       climatologyByMonthHour: climatology(samples),
     };
-    await writeCache(key, "climatology", context, CLIMATOLOGY_CACHE_MS);
+    void writeCache(key, "climatology", context, CLIMATOLOGY_CACHE_MS).catch(() => undefined);
     return context;
   })();
   inFlightRequests.set(key, request);

@@ -2232,10 +2232,19 @@ async function calculateOneCandidates(
     if (preliminary) onPreliminaryCandidate(preliminary);
   }
 
-  // 暫定候補は気象・地形I/Oを一切待たずに通知する。気象コンテキストは
-  // ここから先の精密探索では従来どおり必ず解決して使用するため、最終候補の
-  // 計算値・採否は変わらない。自動気象APIが遅い場合にも地図表示だけは止めない。
-  if (refractionWeatherResolver) {
+  // 暫定候補は気象・地形I/Oを一切待たずに通知する。精密探索では有効な
+  // preview気象コンテキストが既にあればその同じ値を再利用し、無い場合だけ
+  // resolverで解決する。最終候補で使う気象補正自体は省略しない。
+  // The preview already resolves the same historical/forecast context for the
+  // subject/tripod before candidate calculation. When that context is a valid
+  // weather context, reuse it instead of hitting IndexedDB again on every
+  // timeline stop. The resolver is retained as a fallback when preview weather
+  // is absent or has fallen back to the standard atmosphere, so final accuracy
+  // is not reduced.
+  if (
+    refractionWeatherResolver &&
+    (!activeRefractionWeather || activeRefractionWeather.effectiveMode !== "weather")
+  ) {
     const weatherStartedAt = performance.now();
     const resolvedWeather = await refractionWeatherResolver(subject, signal);
     weatherResolveMs += performance.now() - weatherStartedAt;

@@ -20,6 +20,11 @@ const STORE_NAME = "entries";
 const memory = new Map<string, CacheRecord<unknown>>();
 let databasePromise: Promise<IDBDatabase | null> | null = null;
 const PRUNE_INTERVAL_MS = 60_000;
+// IndexedDB is a performance cache only. Some Android WebView/PWA environments can
+// leave open/transaction requests pending indefinitely (for example while a DB is
+// blocked by another context). Never let that stall an authoritative calculation.
+const INDEXED_DB_OPEN_TIMEOUT_MS = 1_500;
+const INDEXED_DB_OPERATION_TIMEOUT_MS = 1_500;
 const lastNamespacePruneAt = new Map<string, number>();
 const namespacePruneInFlight = new Map<string, Promise<void>>();
 
@@ -30,8 +35,21 @@ function compoundKey(namespace: string, key: string): string {
 function openDatabase(): Promise<IDBDatabase | null> {
   if (databasePromise) return databasePromise;
   if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  databasePromise = new Promise((resolve) => {
+
+  const opening = new Promise<IDBDatabase | null>((resolve) => {
     const request = indexedDB.open(DB_NAME, 1);
+    let settled = false;
+    const finish = (database: IDBDatabase | null) => {
+      if (settled) {
+        if (database) database.close();
+        return;
+      }
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      resolve(database);
+    };
+    const timeoutId = globalThis.setTimeout(() => finish(null), INDEXED_DB_OPEN_TIMEOUT_MS);
+
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
@@ -40,10 +58,34 @@ function openDatabase(): Promise<IDBDatabase | null> {
         store.createIndex("expiresAt", "expiresAt", { unique: false });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
+    request.onsuccess = () => finish(request.result);
+    request.onerror = () => finish(null);
+    request.onblocked = () => finish(null);
   });
-  return databasePromise;
+  databasePromise = opening;
+  void opening.then((database) => {
+    // A failed/blocked/timed-out open must not poison every later cache access with
+    // the same permanently pending Promise. Later calls may retry normally.
+    if (!database && databasePromise === opening) databasePromise = null;
+  });
+  return opening;
+}
+
+function boundedCacheOperation<T>(operation: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      resolve(value);
+    };
+    const timeoutId = globalThis.setTimeout(
+      () => finish(fallback),
+      INDEXED_DB_OPERATION_TIMEOUT_MS
+    );
+    void operation.then(finish, () => finish(fallback));
+  });
 }
 
 function touchMemory<T>(record: CacheRecord<T>, maximum: number): void {
@@ -59,13 +101,16 @@ function touchMemory<T>(record: CacheRecord<T>, maximum: number): void {
 async function removePersistent(id: string): Promise<void> {
   const database = await openDatabase();
   if (!database) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).delete(id);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+  await boundedCacheOperation(
+    new Promise<void>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).delete(id);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+      transaction.onabort = () => resolve();
+    }),
+    undefined
+  );
 }
 
 export async function getDeviceCache<T>(
@@ -87,11 +132,14 @@ export async function getDeviceCache<T>(
   }
   const database = await openDatabase();
   if (!database) return null;
-  const record = await new Promise<CacheRecord<T> | null>((resolve) => {
-    const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(id);
-    request.onsuccess = () => resolve((request.result as CacheRecord<T> | undefined) ?? null);
-    request.onerror = () => resolve(null);
-  });
+  const record = await boundedCacheOperation(
+    new Promise<CacheRecord<T> | null>((resolve) => {
+      const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(id);
+      request.onsuccess = () => resolve((request.result as CacheRecord<T> | undefined) ?? null);
+      request.onerror = () => resolve(null);
+    }),
+    null
+  );
   if (!record) return null;
   if (record.expiresAt <= now) {
     void removePersistent(id);
@@ -139,39 +187,45 @@ export async function getDeviceCacheMany<T>(
 
   const transaction = database.transaction(STORE_NAME, "readonly");
   const store = transaction.objectStore(STORE_NAME);
-  await Promise.all(missing.map(({ index, id }) => new Promise<void>((resolve) => {
-    const request = store.get(id);
-    request.onsuccess = () => {
-      const record = (request.result as CacheRecord<T> | undefined) ?? null;
-      if (!record) {
+  await boundedCacheOperation(
+    Promise.all(missing.map(({ index, id }) => new Promise<void>((resolve) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        const record = (request.result as CacheRecord<T> | undefined) ?? null;
+        if (!record) {
+          resolve();
+          return;
+        }
+        if (record.expiresAt <= now) {
+          void removePersistent(id);
+          resolve();
+          return;
+        }
+        record.accessedAt = now;
+        touchMemory(record, policy.memoryEntries ?? Math.min(policy.maxEntries, 256));
+        results[index] = record.value;
         resolve();
-        return;
-      }
-      if (record.expiresAt <= now) {
-        void removePersistent(id);
-        resolve();
-        return;
-      }
-      record.accessedAt = now;
-      touchMemory(record, policy.memoryEntries ?? Math.min(policy.maxEntries, 256));
-      results[index] = record.value;
-      resolve();
-    };
-    request.onerror = () => resolve();
-  })));
+      };
+      request.onerror = () => resolve();
+    })),
+    []
+  );
   return results;
 }
 
 async function pruneNamespaceNow(policy: DeviceCachePolicy): Promise<void> {
   const database = await openDatabase();
   if (!database) return;
-  const records = await new Promise<Array<CacheRecord<unknown>>>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readonly");
-    const index = transaction.objectStore(STORE_NAME).index("namespace");
-    const request = index.getAll(policy.namespace);
-    request.onsuccess = () => resolve((request.result as Array<CacheRecord<unknown>>) ?? []);
-    request.onerror = () => resolve([]);
-  });
+  const records = await boundedCacheOperation(
+    new Promise<Array<CacheRecord<unknown>>>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const index = transaction.objectStore(STORE_NAME).index("namespace");
+      const request = index.getAll(policy.namespace);
+      request.onsuccess = () => resolve((request.result as Array<CacheRecord<unknown>>) ?? []);
+      request.onerror = () => resolve([]);
+    }),
+    []
+  );
   const now = Date.now();
   const removeIds = records
     .filter((record) => record.expiresAt <= now)
@@ -181,14 +235,17 @@ async function pruneNamespaceNow(policy: DeviceCachePolicy): Promise<void> {
     .sort((left, right) => right.accessedAt - left.accessedAt);
   removeIds.push(...live.slice(policy.maxEntries).map((record) => record.id));
   if (removeIds.length === 0) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    removeIds.forEach((id) => store.delete(id));
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+  await boundedCacheOperation(
+    new Promise<void>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      removeIds.forEach((id) => store.delete(id));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+      transaction.onabort = () => resolve();
+    }),
+    undefined
+  );
   removeIds.forEach((id) => memory.delete(id));
 }
 
@@ -222,22 +279,28 @@ export async function clearDeviceCacheNamespace(namespace: string): Promise<void
   }
   const database = await openDatabase();
   if (!database) return;
-  const ids = await new Promise<string[]>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readonly");
-    const index = transaction.objectStore(STORE_NAME).index("namespace");
-    const request = index.getAllKeys(namespace);
-    request.onsuccess = () => resolve((request.result as string[]) ?? []);
-    request.onerror = () => resolve([]);
-  });
+  const ids = await boundedCacheOperation(
+    new Promise<string[]>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const index = transaction.objectStore(STORE_NAME).index("namespace");
+      const request = index.getAllKeys(namespace);
+      request.onsuccess = () => resolve((request.result as string[]) ?? []);
+      request.onerror = () => resolve([]);
+    }),
+    []
+  );
   if (ids.length === 0) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    ids.forEach((id) => store.delete(id));
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+  await boundedCacheOperation(
+    new Promise<void>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      ids.forEach((id) => store.delete(id));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+      transaction.onabort = () => resolve();
+    }),
+    undefined
+  );
 }
 
 export async function setDeviceCache<T>(
@@ -259,13 +322,16 @@ export async function setDeviceCache<T>(
   touchMemory(record, policy.memoryEntries ?? Math.min(policy.maxEntries, 256));
   const database = await openDatabase();
   if (!database) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(record);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+  await boundedCacheOperation(
+    new Promise<void>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).put(record);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+      transaction.onabort = () => resolve();
+    }),
+    undefined
+  );
   await scheduleNamespacePrune(policy);
 }
 
@@ -289,14 +355,17 @@ export async function setDeviceCacheMany<T>(
   for (const record of records) touchMemory(record, maximum);
   const database = await openDatabase();
   if (!database) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    for (const record of records) store.put(record);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+  await boundedCacheOperation(
+    new Promise<void>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      for (const record of records) store.put(record);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+      transaction.onabort = () => resolve();
+    }),
+    undefined
+  );
   await scheduleNamespacePrune(policy);
 }
 
