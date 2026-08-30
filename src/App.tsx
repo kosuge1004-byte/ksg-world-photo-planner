@@ -720,6 +720,11 @@ function App() {
   const [tripodCandidateSelectionOpen, setTripodCandidateSelectionOpen] =
     useState(false);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
+  // 時間軸操作中/操作直後の滑らかな追従専用。新しい精密探索を開始しても
+  // 直前に確定した候補を消さず、同一被写体であれば距離ヒントと再投影の基準に使う。
+  // tripodCandidatesRef は進行中の部分結果で更新されるため、確定値は別refで保持する。
+  const lastConfirmedTripodCandidatesRef = useRef<TripodCandidate[]>([]);
+  const lastConfirmedTripodSubjectRef = useRef<{ latitude: number; longitude: number } | null>(null);
   // 同一入力での重複計算を防ぐin-flight識別子。keyだけでは、中断した旧探索と
   // 同じ入力で直ちに再開した新探索を区別できないため、runIdも保持する。
   const tripodCalculationInFlightRef = useRef<{ key: string; runId: number } | null>(null);
@@ -963,6 +968,8 @@ function App() {
     try {
       await clearPersistentTripodSeeds();
       tripodCandidatesRef.current = [];
+      lastConfirmedTripodCandidatesRef.current = [];
+      lastConfirmedTripodSubjectRef.current = null;
       tripodHintSubjectRef.current = null;
       setTripodCandidates([]);
       setPreliminaryTripodCandidates({});
@@ -1472,7 +1479,7 @@ function App() {
         : tripodCandidates;
     }
     const previousById = new Map<TripodCandidate["id"], TripodCandidate[]>();
-    for (const candidate of tripodCandidatesRef.current) {
+    for (const candidate of lastConfirmedTripodCandidatesRef.current) {
       const list = previousById.get(candidate.id) ?? [];
       list.push(candidate);
       previousById.set(candidate.id, list);
@@ -1516,6 +1523,8 @@ function App() {
     );
     if (!subjectPoint || enabledPoints.length === 0) {
       tripodCandidatesRef.current = [];
+      lastConfirmedTripodCandidatesRef.current = [];
+      lastConfirmedTripodSubjectRef.current = null;
       setTripodCandidates([]);
       setPreliminaryTripodCandidates({});
       setTripodCandidateCalculationStatus("idle");
@@ -1550,8 +1559,15 @@ function App() {
       latitude: subjectPoint.latitude,
       longitude: subjectPoint.longitude,
     };
-    const preferredDistancesById = isSameSubjectAsBefore
-      ? tripodCandidatesRef.current.reduce(
+    const lastConfirmedSubject = lastConfirmedTripodSubjectRef.current;
+    const canReuseLastConfirmed =
+      lastConfirmedSubject !== null &&
+      calculateKarneyLineMetrics(
+        { latitude: lastConfirmedSubject.latitude, longitude: lastConfirmedSubject.longitude, height: 0 } as GroundPoint,
+        { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude, height: 0 } as GroundPoint
+      ).distanceMeters <= SUBJECT_SAME_THRESHOLD_METERS;
+    const preferredDistancesById = canReuseLastConfirmed
+      ? lastConfirmedTripodCandidatesRef.current.reduce(
           (result, candidate) => {
             const current = result[candidate.id];
             if (current === undefined || candidate.distanceMeters > current) {
@@ -1561,7 +1577,18 @@ function App() {
           },
           {} as Partial<Record<TripodCandidate["id"], number>>
         )
-      : undefined;
+      : (isSameSubjectAsBefore
+          ? tripodCandidatesRef.current.reduce(
+              (result, candidate) => {
+                const current = result[candidate.id];
+                if (current === undefined || candidate.distanceMeters > current) {
+                  result[candidate.id] = candidate.distanceMeters;
+                }
+                return result;
+              },
+              {} as Partial<Record<TripodCandidate["id"], number>>
+            )
+          : undefined);
 
     const initialDirectionObserver = tripodPointRef.current
       ? withLensCenterHeight(
@@ -1598,6 +1625,8 @@ function App() {
       : null;
     if (exactCachedCandidates) {
       tripodCandidatesRef.current = exactCachedCandidates;
+      lastConfirmedTripodCandidatesRef.current = exactCachedCandidates;
+      lastConfirmedTripodSubjectRef.current = { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude };
       setTripodCandidates(exactCachedCandidates);
       setPreliminaryTripodCandidates({});
       setTripodCandidateCalculationStatus("complete");
@@ -1617,8 +1646,16 @@ function App() {
 
     // キャッシュ・気象・地形I/Oを待たず、WGS84楕円体との理論交点を概算候補
     // として即時表示する。精密探索が完了した天体からaligned候補へ置き換える。
-    tripodCandidatesRef.current = [];
-    setTripodCandidates([]);
+    // 同一被写体の時刻変更では直前の確定候補を画面から消さない。
+    // 精密探索中もその候補を表示し続け、天体ごとの新しい確定解が届いた時点で
+    // 順次置換する。被写体が変わった場合だけ旧候補を破棄する。
+    if (!canReuseLastConfirmed) {
+      tripodCandidatesRef.current = [];
+      setTripodCandidates([]);
+    } else {
+      tripodCandidatesRef.current = lastConfirmedTripodCandidatesRef.current;
+      setTripodCandidates(lastConfirmedTripodCandidatesRef.current);
+    }
     const immediatePreliminaryCandidates = buildPreliminaryTripodCandidates(
       subjectPoint,
       enabledPoints,
@@ -1724,6 +1761,8 @@ function App() {
           if (!cancelled) {
             const displayedCandidates = candidates;
             tripodCandidatesRef.current = displayedCandidates;
+            lastConfirmedTripodCandidatesRef.current = displayedCandidates;
+            lastConfirmedTripodSubjectRef.current = { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude };
             setTripodCandidates(displayedCandidates);
             // 精密解が得られた天体だけ暫定値を除去する。解なし・通信失敗の
             // 天体は概算候補を残し、ユーザーが地図上で確認できるようにする。
@@ -1746,8 +1785,15 @@ function App() {
           if (error instanceof DOMException && error.name === "AbortError") return;
           console.warn("三脚候補地点を計算できませんでした", error);
           if (!cancelled) {
-            tripodCandidatesRef.current = [];
-            setTripodCandidates([]);
+            // 同一被写体の再計算失敗なら、直前の確定候補まで消して表示を跳ねさせない。
+            // 新しい被写体では旧候補を流用しない。
+            if (canReuseLastConfirmed) {
+              tripodCandidatesRef.current = lastConfirmedTripodCandidatesRef.current;
+              setTripodCandidates(lastConfirmedTripodCandidatesRef.current);
+            } else {
+              tripodCandidatesRef.current = [];
+              setTripodCandidates([]);
+            }
             // 既に表示できた概算候補は消さない。精密計算だけが失敗したことを
             // 明示しつつ、候補確認・再試行のどちらも可能な状態を維持する。
             setTripodCandidateCalculationStatus("error");
