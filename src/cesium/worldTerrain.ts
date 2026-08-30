@@ -104,6 +104,7 @@ type KsgIdbRequest<T> = {
   onsuccess: (() => void) | null;
   onerror: (() => void) | null;
   onupgradeneeded?: (() => void) | null;
+  onblocked?: (() => void) | null;
 };
 
 type KsgIdbObjectStore = {
@@ -155,14 +156,53 @@ function terrainCacheKey(
 }
 
 let terrainCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
+// Terrain IndexedDB is only a performance layer. Android WebView can leave an
+// open/transaction request blocked or a previously opened connection can become
+// invalid. Never allow that cache state to abort or stall the authoritative DEM path.
+const TERRAIN_CACHE_OPEN_TIMEOUT_MS = 1_500;
+const TERRAIN_CACHE_OPERATION_TIMEOUT_MS = 1_500;
+
+function boundedTerrainCacheOperation<T>(operation: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      resolve(value);
+    };
+    const timeoutId = globalThis.setTimeout(
+      () => finish(fallback),
+      TERRAIN_CACHE_OPERATION_TIMEOUT_MS
+    );
+    void operation.then(finish, () => finish(fallback));
+  });
+}
 
 function openTerrainCache(): Promise<KsgIdbDatabase | null> {
   const indexedDb = getIndexedDbFactory();
   if (!indexedDb) return Promise.resolve(null);
-  // 地形キャッシュもジオイドと同様にDB接続を共有する。read/writeのキー、
-  // 高度値、有効期限、DEM詳細度は一切変更せず、接続確立コストだけを削減する。
-  terrainCacheDatabasePromise ??= new Promise((resolve) => {
-    const request = indexedDb.open(TERRAIN_CACHE_DB, 1);
+  if (terrainCacheDatabasePromise) return terrainCacheDatabasePromise;
+
+  const opening = new Promise<KsgIdbDatabase | null>((resolve) => {
+    let settled = false;
+    let request: KsgIdbRequest<KsgIdbDatabase>;
+    const finish = (database: KsgIdbDatabase | null) => {
+      if (settled) {
+        if (database) database.close();
+        return;
+      }
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      resolve(database);
+    };
+    const timeoutId = globalThis.setTimeout(() => finish(null), TERRAIN_CACHE_OPEN_TIMEOUT_MS);
+    try {
+      request = indexedDb.open(TERRAIN_CACHE_DB, 1);
+    } catch {
+      finish(null);
+      return;
+    }
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains(TERRAIN_CACHE_STORE)) {
@@ -175,14 +215,18 @@ function openTerrainCache(): Promise<KsgIdbDatabase | null> {
         database.close();
         terrainCacheDatabasePromise = null;
       };
-      resolve(database);
+      finish(database);
     };
-    request.onerror = () => {
-      terrainCacheDatabasePromise = null;
-      resolve(null);
-    };
+    request.onerror = () => finish(null);
+    request.onblocked = () => finish(null);
   });
-  return terrainCacheDatabasePromise;
+  terrainCacheDatabasePromise = opening;
+  void opening.then((database) => {
+    if (!database && terrainCacheDatabasePromise === opening) {
+      terrainCacheDatabasePromise = null;
+    }
+  });
+  return opening;
 }
 
 async function readTerrainCache(
@@ -204,37 +248,46 @@ async function readTerrainCache(
   // 多点取得で数十～数百個のtransaction完了イベントが発生し、スマホの
   // メインスレッドを圧迫する。同一バッチは1つのreadonly transaction/storeを
   // 共有し、結果・キャッシュ精度を一切変えずにI/Oオーバーヘッドだけ削減する。
-  const transaction = database.transaction(TERRAIN_CACHE_STORE, "readonly");
-  const store = transaction.objectStore(TERRAIN_CACHE_STORE);
-  await Promise.all(missing.map((index) => new Promise<void>((resolve) => {
-    const key = terrainCacheKey(points[index], maximumDetails?.[index], interpolationMode);
-    const request = store.get(key);
-    request.onsuccess = () => {
-      const record = request.result as TerrainCacheRecord | undefined;
-      if (
-        record &&
-        record.datum === "ellipsoidal-v1" &&
-        Date.now() - record.updatedAt <= TERRAIN_CACHE_MAX_AGE_MS &&
-        Number.isFinite(record.height)
-      ) {
-        const cached: TerrainCachedHeight = {
-          height: record.height,
-          geoidHeightMeters: Number.isFinite(record.geoidHeightMeters)
-            ? record.geoidHeightMeters
-            : undefined,
+  try {
+    const transaction = database.transaction(TERRAIN_CACHE_STORE, "readonly");
+    const store = transaction.objectStore(TERRAIN_CACHE_STORE);
+    await boundedTerrainCacheOperation(
+      Promise.all(missing.map((index) => new Promise<void>((resolve) => {
+        const key = terrainCacheKey(points[index], maximumDetails?.[index], interpolationMode);
+        const request = store.get(key);
+        request.onsuccess = () => {
+          const record = request.result as TerrainCacheRecord | undefined;
+          if (
+            record &&
+            record.datum === "ellipsoidal-v1" &&
+            Date.now() - record.updatedAt <= TERRAIN_CACHE_MAX_AGE_MS &&
+            Number.isFinite(record.height)
+          ) {
+            const cached: TerrainCachedHeight = {
+              height: record.height,
+              geoidHeightMeters: Number.isFinite(record.geoidHeightMeters)
+                ? record.geoidHeightMeters
+                : undefined,
+            };
+            values[index] = cached;
+            writeMemoryCache(
+              terrainHeightMemoryCache,
+              key,
+              cached,
+              TERRAIN_MEMORY_CACHE_MAX_ENTRIES
+            );
+          }
+          resolve();
         };
-        values[index] = cached;
-        writeMemoryCache(
-          terrainHeightMemoryCache,
-          key,
-          cached,
-          TERRAIN_MEMORY_CACHE_MAX_ENTRIES
-        );
-      }
-      resolve();
-    };
-    request.onerror = () => resolve();
-  })));
+        request.onerror = () => resolve();
+      }))),
+      []
+    );
+  } catch {
+    // InvalidStateError/TransactionInactiveError etc. mean only that this optional
+    // cache connection is unusable. Drop it and continue through local DEM/network.
+    terrainCacheDatabasePromise = null;
+  }
   return values;
 }
 
@@ -263,14 +316,21 @@ async function writeTerrainCache(
   ));
   const database = await openTerrainCache();
   if (!database || records.length === 0) return;
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(TERRAIN_CACHE_STORE, "readwrite");
-    const store = transaction.objectStore(TERRAIN_CACHE_STORE);
-    records.forEach((record) => store.put(record));
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+  try {
+    await boundedTerrainCacheOperation(
+      new Promise<void>((resolve) => {
+        const transaction = database.transaction(TERRAIN_CACHE_STORE, "readwrite");
+        const store = transaction.objectStore(TERRAIN_CACHE_STORE);
+        records.forEach((record) => store.put(record));
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
+        transaction.onabort = () => resolve();
+      }),
+      undefined
+    );
+  } catch {
+    terrainCacheDatabasePromise = null;
+  }
 }
 
 async function sampleTerrainCached(
