@@ -3,7 +3,6 @@ import type { CSSProperties } from "react";
 import type {
   CelestialScreenPoint,
   CelestialTrack,
-  CelestialTrackPoint,
   CelestialVisibility,
   MilkyWayPathPoint,
   TripodCandidate,
@@ -38,27 +37,6 @@ type Props = {
   onSelectCandidate: (candidate: TripodCandidate) => void;
 };
 
-function projectToSkyDome(
-  origin: MapPixelPoint,
-  azimuthDegrees: number,
-  altitudeDegrees: number,
-  radius: number
-): MapPixelPoint {
-  const azimuthRadians = azimuthDegrees * Math.PI / 180;
-  // Sun Surveyor型の天空ドーム表示。天頂を中心、地平線を外周へ正距方位投影する。
-  const zenithDistance =
-    (90 - Math.max(0, Math.min(90, altitudeDegrees))) / 90;
-  const projectedRadius = radius * zenithDistance;
-  return {
-    x: origin.x + Math.sin(azimuthRadians) * projectedRadius,
-    y: origin.y - Math.cos(azimuthRadians) * projectedRadius,
-  };
-}
-
-function pointsAttribute(points: MapPixelPoint[]): string {
-  return points.map((point) => `${point.x},${point.y}`).join(" ");
-}
-
 function pinStyle(point: MapPixelPoint): CSSProperties {
   return { left: point.x, top: point.y };
 }
@@ -81,7 +59,6 @@ function extendRayPastTarget(
   const dy = target.y - origin.y;
   const length = Math.hypot(dx, dy);
   if (length < 0.001) return target;
-  // SVG側で画面端にクリップさせ、候補点を越えて同じ方位へ続く線として見せる。
   const extension = Math.hypot(size.width, size.height) * 4;
   return {
     x: origin.x + dx / length * extension,
@@ -98,90 +75,6 @@ function isClearOfMapControls(point: MapPixelPoint, size: MapSize): boolean {
   return true;
 }
 
-function contiguousVisibleSegments(track: CelestialTrack): CelestialTrackPoint[][] {
-  const segments: CelestialTrack["points"][] = [];
-  let current: CelestialTrack["points"] = [];
-  for (const point of track.points) {
-    if (point.altitudeDegrees < 0) {
-      if (current.length > 1) segments.push(current);
-      current = [];
-      continue;
-    }
-    current.push(point);
-  }
-  if (current.length > 1) segments.push(current);
-  return segments;
-}
-
-function skyDomeRadius(size: MapSize): number {
-  return Math.max(72, Math.min(size.width * 0.4, size.height * 0.4, 220));
-}
-
-function isHourlyPoint(point: CelestialTrackPoint): boolean {
-  return point.timeLabel.endsWith(":00");
-}
-
-function currentBodyRadius(point: CelestialScreenPoint): number {
-  if (point.id === "sun") return 12;
-  if (point.id === "moon") return 11;
-  if (point.id === "polaris") return 6;
-  return 7;
-}
-
-type MilkyWayDomePoint = {
-  center: MapPixelPoint;
-  north: MapPixelPoint;
-  south: MapPixelPoint;
-  lineOfSightVisible?: boolean;
-};
-
-function milkyWayDomeSegments(
-  path: MilkyWayPathPoint[],
-  origin: MapPixelPoint,
-  radius: number
-): MilkyWayDomePoint[][] {
-  const segments: MilkyWayDomePoint[][] = [];
-  let current: MilkyWayDomePoint[] = [];
-  const flush = () => {
-    if (current.length > 1) segments.push(current);
-    current = [];
-  };
-  for (const point of path) {
-    const aboveHorizon = Math.max(
-      point.altitudeDegrees,
-      point.northEdgeAltitudeDegrees,
-      point.southEdgeAltitudeDegrees
-    ) >= 0;
-    if (!aboveHorizon) {
-      flush();
-      continue;
-    }
-    current.push({
-      center: projectToSkyDome(
-        origin,
-        point.azimuthDegrees,
-        Math.max(0, point.altitudeDegrees),
-        radius
-      ),
-      north: projectToSkyDome(
-        origin,
-        point.northEdgeAzimuthDegrees,
-        Math.max(0, point.northEdgeAltitudeDegrees),
-        radius
-      ),
-      south: projectToSkyDome(
-        origin,
-        point.southEdgeAzimuthDegrees,
-        Math.max(0, point.southEdgeAltitudeDegrees),
-        radius
-      ),
-      lineOfSightVisible: point.lineOfSightVisible,
-    });
-  }
-  flush();
-  return segments;
-}
-
 export function Map2DOverlay({
   center,
   zoom,
@@ -189,9 +82,6 @@ export function Map2DOverlay({
   subject,
   tripod,
   tripodSubjectDistanceMeters,
-  points,
-  tracks,
-  milkyWayPath,
   visibility,
   candidates,
   tripodSearchLines,
@@ -212,35 +102,7 @@ export function Map2DOverlay({
   const foregroundPixel = foregroundObject?.enabled
     ? projectCoordinatesToMapPixel(foregroundObject, center, zoom, size)
     : null;
-  const domeRadius = skyDomeRadius(size);
-  const milkyWaySegments = tripodPixel && visibility.milkyWay
-    ? milkyWayDomeSegments(milkyWayPath, tripodPixel, domeRadius)
-    : [];
-  const compassTicks = tripodPixel
-    ? Array.from({ length: 24 }, (_, index) => {
-        const azimuthDegrees = index * 15;
-        return {
-          azimuthDegrees,
-          pixel: projectToSkyDome(tripodPixel, azimuthDegrees, 0, domeRadius),
-        };
-      })
-    : [];
-  const cardinals = tripodPixel
-    ? [
-        { label: "N", azimuthDegrees: 0, className: "north" },
-        { label: "E", azimuthDegrees: 90, className: "east" },
-        { label: "S", azimuthDegrees: 180, className: "south" },
-        { label: "W", azimuthDegrees: 270, className: "west" },
-      ].map((cardinal) => ({
-        ...cardinal,
-        pixel: projectToSkyDome(
-          tripodPixel,
-          cardinal.azimuthDegrees,
-          0,
-          domeRadius + 14
-        ),
-      }))
-    : [];
+
 
   return (
     <div className="map-2d-overlay">
@@ -249,197 +111,6 @@ export function Map2DOverlay({
         viewBox={`0 0 ${size.width} ${size.height}`}
         preserveAspectRatio="none"
       >
-        {tripodPixel && subjectPixel && (
-          <line
-            className="map-tripod-subject-line"
-            x1={tripodPixel.x}
-            y1={tripodPixel.y}
-            x2={subjectPixel.x}
-            y2={subjectPixel.y}
-          />
-        )}
-
-        {tripodPixel && (
-          <g className="map-sky-dome">
-            <circle
-              className="map-horizon-outline"
-              cx={tripodPixel.x}
-              cy={tripodPixel.y}
-              r={domeRadius}
-            />
-            <circle
-              className="map-horizon-circle"
-              cx={tripodPixel.x}
-              cy={tripodPixel.y}
-              r={domeRadius}
-            />
-            {compassTicks.map(({ azimuthDegrees, pixel }) => (
-              <circle
-                key={`compass-${azimuthDegrees}`}
-                className={azimuthDegrees % 90 === 0
-                  ? "map-compass-tick cardinal"
-                  : "map-compass-tick"}
-                cx={pixel.x}
-                cy={pixel.y}
-                r={azimuthDegrees % 90 === 0 ? 4 : 2.4}
-              />
-            ))}
-            {cardinals.map((cardinal) => (
-              <text
-                key={cardinal.label}
-                className={`map-cardinal-label ${cardinal.className}`}
-                x={cardinal.pixel.x}
-                y={cardinal.pixel.y}
-                textAnchor="middle"
-                dominantBaseline="central"
-              >
-                {cardinal.label}
-              </text>
-            ))}
-          </g>
-        )}
-
-        {milkyWaySegments.map((segment, segmentIndex) => {
-          const visible = segment.filter((point) => point.lineOfSightVisible !== false);
-          if (visible.length < 2) return null;
-          const outline = visible
-            .map((point) => `${point.north.x},${point.north.y}`)
-            .concat([...visible].reverse().map((point) => `${point.south.x},${point.south.y}`))
-            .join(" ");
-          const centerLine = visible.map((point) => `${point.center.x},${point.center.y}`).join(" ");
-          return (
-            <g key={`milky-way-band-${segmentIndex}`} className="map-milky-way-band">
-              <polygon className="map-milky-way-fill" points={outline} />
-              <polyline className="map-milky-way-core" points={centerLine} />
-            </g>
-          );
-        })}
-
-        {tripodPixel && tracks.flatMap((track) => {
-          if (!visibility[track.id]) return null;
-          const segments = contiguousVisibleSegments(track);
-          return segments.flatMap((segment, segmentIndex) => {
-            const visiblePoints = segment.map((point) =>
-              projectToSkyDome(
-                tripodPixel,
-                point.azimuthDegrees,
-                point.altitudeDegrees,
-                domeRadius
-              )
-            );
-            const horizonPoints = [segment[0], segment.at(-1)].filter(
-              (point): point is CelestialTrackPoint =>
-                Boolean(point && point.altitudeDegrees <= 3)
-            );
-            return (
-              <g key={`${track.id}-${segmentIndex}`}>
-                {horizonPoints.map((point, endpointIndex) => {
-                  const endpoint = projectToSkyDome(
-                    tripodPixel,
-                    point.azimuthDegrees,
-                    point.altitudeDegrees,
-                    domeRadius
-                  );
-                  return (
-                    <line
-                      key={`${point.timestampMilliseconds}-${endpointIndex}`}
-                      className={`map-rise-set-ray map-ray-${track.id}`}
-                      x1={tripodPixel.x}
-                      y1={tripodPixel.y}
-                      x2={endpoint.x}
-                      y2={endpoint.y}
-                    />
-                  );
-                })}
-                <polyline
-                  className={`map-celestial-track map-track-${track.id}`}
-                  points={pointsAttribute(visiblePoints)}
-                />
-              </g>
-            );
-          });
-        })}
-
-        {tripodPixel && tracks.flatMap((track) => {
-          if (!visibility[track.id]) return [];
-          return track.points
-            .filter((point) => point.altitudeDegrees >= 0 && isHourlyPoint(point))
-            .map((point) => {
-              const pixel = projectToSkyDome(
-                tripodPixel,
-                point.azimuthDegrees,
-                point.altitudeDegrees,
-                domeRadius
-              );
-              return (
-                <g key={`${track.id}-hour-${point.timestampMilliseconds}`}>
-                  <circle
-                    className={`map-track-hour-dot map-track-hour-${track.id}`}
-                    cx={pixel.x}
-                    cy={pixel.y}
-                    r={track.id === "sun" || track.id === "moon" ? 4 : 2.5}
-                  />
-                  {(track.id === "sun" || track.id === "moon") && (
-                    <text
-                      className={`map-track-hour-label map-track-hour-label-${track.id}`}
-                      x={pixel.x + 6}
-                      y={pixel.y + 1}
-                      dominantBaseline="central"
-                    >
-                      {Number(point.timeLabel.slice(0, 2))}
-                    </text>
-                  )}
-                </g>
-              );
-            });
-        })}
-
-        {tripodPixel && points.map((point) => {
-          if (!visibility[point.id] || point.altitudeDegrees < 0) return null;
-          const pixel = projectToSkyDome(
-            tripodPixel,
-            point.azimuthDegrees,
-            point.altitudeDegrees,
-            domeRadius
-          );
-          const radius = currentBodyRadius(point);
-          return (
-            <g key={`${point.id}-current`}>
-              <line
-                className={`map-current-body-ray map-ray-${point.id}`}
-                x1={tripodPixel.x}
-                y1={tripodPixel.y}
-                x2={pixel.x}
-                y2={pixel.y}
-              />
-              <circle
-                className={`map-current-body map-current-body-${point.id}`}
-                cx={pixel.x}
-                cy={pixel.y}
-                r={radius}
-              />
-              {point.id === "moon" && (
-                <circle
-                  className="map-current-moon-light"
-                  cx={pixel.x}
-                  cy={pixel.y}
-                  r={radius - 1}
-                  opacity={Math.max(0, Math.min(1, point.illuminationFraction ?? 0))}
-                />
-              )}
-            </g>
-          );
-        })}
-
-        {tripodPixel && (
-          <circle
-            className="map-observer-center"
-            cx={tripodPixel.x}
-            cy={tripodPixel.y}
-            r="5"
-          />
-        )}
-
         {tripodSearchLines.map((line) => {
           const start = projectCoordinatesToMapPixel(line.start, center, zoom, size);
           const end = projectCoordinatesToMapPixel(line.end, center, zoom, size);

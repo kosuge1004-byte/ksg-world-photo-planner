@@ -3516,6 +3516,31 @@ ${diagnosticMessage}
     setSearchMessage("2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
   }
 
+  async function placeTripodFromMapTap(coordinates: { latitude: number; longitude: number }): Promise<void> {
+    const viewer = mapViewerRef.current;
+    try {
+      const point = viewer && !viewer.isDestroyed()
+        ? await setTripodPinFromCoordinates(
+            viewer,
+            coordinates.latitude,
+            coordinates.longitude,
+            false
+          )
+        : await resolveGroundPoint(
+            coordinates.latitude,
+            coordinates.longitude,
+            "三脚位置"
+          );
+      setTripodPoint(point);
+      setSearchMessage(
+        `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
+      );
+    } catch (error) {
+      console.warn("2D地図タップ位置へ三脚ピンを配置できませんでした", error);
+      setSearchMessage("三脚ピンの高度を取得できませんでした。通信状態を確認して再試行してください");
+    }
+  }
+
   function handle2dMapPlacement(
     event: ReactMouseEvent<HTMLButtonElement>
   ) {
@@ -4311,6 +4336,7 @@ ${diagnosticMessage}
               size={mapSize}
               onChangeCenter={setMapCenter}
               onChangeZoom={setMapZoom}
+              onTap={(coordinates) => { void placeTripodFromMapTap(coordinates); }}
             />
           )}
         {(subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (

@@ -15,6 +15,7 @@ type Props = {
   size: MapSize;
   onChangeCenter: (center: { latitude: number; longitude: number }) => void;
   onChangeZoom: (zoom: number) => void;
+  onTap?: (coordinates: { latitude: number; longitude: number }) => void;
 };
 
 type PointerPosition = { x: number; y: number };
@@ -34,10 +35,12 @@ export function Map2DInteractionLayer({
   size,
   onChangeCenter,
   onChangeZoom,
+  onTap,
 }: Props) {
   const interactionRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, PointerPosition>());
   const panStartRef = useRef<PointerPosition | null>(null);
+  const tapStartRef = useRef<PointerPosition | null>(null);
   const panOffsetRef = useRef<PointerPosition>({ x: 0, y: 0 });
   const pinchRef = useRef<{
     startDistance: number;
@@ -106,6 +109,7 @@ export function Map2DInteractionLayer({
     const points = [...pointersRef.current.values()];
     if (points.length === 1) {
       panStartRef.current = points[0];
+      tapStartRef.current = points[0];
       panOffsetRef.current = { x: 0, y: 0 };
       stageRef.current?.classList.add("dragging");
     } else if (points.length === 2) {
@@ -113,6 +117,7 @@ export function Map2DInteractionLayer({
       commitPanOffset();
       resetStage();
       panStartRef.current = null;
+      tapStartRef.current = null;
       pinchRef.current = {
         startDistance: Math.max(1, distance(points[0], points[1])),
         lastRatio: 1,
@@ -178,11 +183,27 @@ export function Map2DInteractionLayer({
         onChangeZoom(clampZoom(zoom + step));
       }
     } else {
-      commitPanOffset();
+      const tapStart = tapStartRef.current;
+      const movedDistance = tapStart
+        ? Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y)
+        : Number.POSITIVE_INFINITY;
+      if (movedDistance < 6 && onTap) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        onTap(coordinatesAtMapPixel(
+          event.clientX - rect.left,
+          event.clientY - rect.top,
+          center,
+          zoom,
+          size
+        ));
+      } else {
+        commitPanOffset();
+      }
     }
 
     pointersRef.current.clear();
     panStartRef.current = null;
+    tapStartRef.current = null;
     pinchRef.current = null;
     panOffsetRef.current = { x: 0, y: 0 };
     resetStage();
@@ -191,6 +212,7 @@ export function Map2DInteractionLayer({
   function cancelGesture() {
     pointersRef.current.clear();
     panStartRef.current = null;
+    tapStartRef.current = null;
     pinchRef.current = null;
     panOffsetRef.current = { x: 0, y: 0 };
     resetStage();
