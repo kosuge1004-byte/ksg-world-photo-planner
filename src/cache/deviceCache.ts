@@ -207,7 +207,7 @@ export async function getDeviceCacheMany<T>(
         resolve();
       };
       request.onerror = () => resolve();
-    })),
+    }))),
     []
   );
   return results;
