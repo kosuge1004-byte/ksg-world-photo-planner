@@ -1,0 +1,16 @@
+AstroSight 三脚探索・完全経路診断 2026-08-30
+
+目的:
+1回の実機検索ログだけで、地形取得・精密化・例外の発生位置と待機時間を追跡する。
+
+追加:
+- 天体ごとの完全経路トレース
+- terrain:start/end/error（要求点数、DEM詳細度、返却点数、失敗点数、所要時間、例外）
+- refinement:start/end/error/abort（seed距離、結果距離、score、pass数、例外name/message/stack）
+- 各イベントを検索開始からの相対msでコピー診断へ出力
+
+既存のECEF/DEM/CameraModel/最終許容値は変更しない。
+
+検証:
+- tripodCandidates.ts: node --experimental-strip-types --check PASS
+- tsc -b: 実行したが、この作業環境に vite/client, node, @cloudflare/workers-types の型定義が無いためプロジェクト全体型検査は開始前に停止。ビルド成功とは主張しない。

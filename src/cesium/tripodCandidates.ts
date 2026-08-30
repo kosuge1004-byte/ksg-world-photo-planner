@@ -247,6 +247,12 @@ export type TripodSearchDiagnostics = {
         outcome: "aligned" | "rejected" | "deduplicated" | "processing-failed";
         finalDistanceMeters: number | null;
       }>;
+      /** 2026-08-30: 1回の実機ログだけで停止/例外箇所を特定する完全経路トレース。 */
+      traceEvents: Array<{
+        elapsedMs: number;
+        stage: string;
+        detail: string;
+      }>;
     }
   >;
 };
@@ -781,10 +787,21 @@ async function buildPointSpecificFinalCandidateGroundPoint(
   cartographic: Cartographic,
   subject: GroundPoint,
   label: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  sampledGeoidFallback?: number
 ): Promise<GroundPoint> {
   const base = buildCandidateGroundPoint(cartographic, subject, label);
-  const sampledGeoid = geoidHeightMetersForTerrainSample(cartographic);
+  // 最終CameraModel探索のbestはGroundPointとして保持され、その後
+  // Cartographic.fromDegrees()で最終候補を再構成する。この再構成で
+  // worldTerrain側WeakMapの「このDEMサンプルに使ったジオイドN」が失われる。
+  // その結果、地点別ジオイドAPIが一時失敗しただけでfallback不能となり、
+  // manual-refinement-exceptionで正しい候補全体を棄却していた。
+  // 元のDEM評価点が保持していたNを明示的に引き継ぎ、API取得は従来どおり
+  // 優先するが、失敗時には同じDEMサンプルのNへ確実にfallbackできるようにする。
+  const mappedGeoid = geoidHeightMetersForTerrainSample(cartographic);
+  const sampledGeoid = Number.isFinite(mappedGeoid)
+    ? mappedGeoid
+    : (Number.isFinite(sampledGeoidFallback) ? sampledGeoidFallback : undefined);
   // 2026-08-29修正（実機診断より）: 国土地理院ジオイドCGIは応答が不安定
   // （タイムアウト実績あり、GEOID_FETCH_TIMEOUT_MS=15秒）で、この
   // "候補点1点だけの高精度取得"がここで失敗・タイムアウトすると、以前は
@@ -2034,7 +2051,8 @@ async function refineWithManualEquivalentProjection(
     bestCartographic,
     subject,
     `${point.label}手動三脚ピン同等最終候補`,
-    signal
+    signal,
+    best.candidatePoint.geoidHeightMeters
   );
   abortIfRequested(signal);
   const finalEvaluation = evaluateManualEquivalentCandidate(
@@ -2116,6 +2134,11 @@ async function calculateOneCandidates(
   let doubleCheckMs = 0;
   const bodyStartedAt = performance.now();
   const rejectionReasons: Record<string, number> = {};
+  const traceEvents: TripodSearchDiagnostics["perCelestialBody"][string]["traceEvents"] = [];
+  const trace = (stage: string, detail: string) => {
+    traceEvents.push({ elapsedMs: performance.now() - bodyStartedAt, stage, detail });
+  };
+  trace("body:start", `date=${date.toISOString()} focal=${cameraSettings.focalLengthMm}mm cameraHeight=${lensCenterHeightMeters}m mode=${calculationMode}`);
   const finalEvaluations: TripodSearchDiagnostics["perCelestialBody"][string]["finalEvaluations"] = [];
   const reject = (reason: string, evaluation?: Partial<TripodSearchDiagnostics["perCelestialBody"][string]["finalEvaluations"][number]>) => {
     rejectionReasons[reason] = (rejectionReasons[reason] ?? 0) + 1;
@@ -2161,14 +2184,23 @@ async function calculateOneCandidates(
   };
   const terrainSampler: TerrainSampler = async (samplePoints, sampleSignal, maximumDetail) => {
     const startedAt = performance.now();
-    const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
-    terrainRoundTripCount += 1;
-    terrainRoundTripTotalMs += performance.now() - startedAt;
-    terrainRequestedCount += result.length;
-    terrainFailedCount += result.filter(
-      (sample) => !sample || !Number.isFinite(sample.height)
-    ).length;
-    return result;
+    const callNo = terrainRoundTripCount + 1;
+    trace("terrain:start", `#${callNo} points=${samplePoints.length} detail=${maximumDetail ?? "default"}`);
+    try {
+      const result = await outerTerrainSampler(samplePoints, sampleSignal, maximumDetail);
+      const elapsed = performance.now() - startedAt;
+      terrainRoundTripCount += 1;
+      terrainRoundTripTotalMs += elapsed;
+      terrainRequestedCount += result.length;
+      const failed = result.filter((sample) => !sample || !Number.isFinite(sample.height)).length;
+      terrainFailedCount += failed;
+      trace("terrain:end", `#${callNo} returned=${result.length} failed=${failed} elapsed=${elapsed.toFixed(1)}ms`);
+      return result;
+    } catch (error) {
+      const e = error instanceof Error ? error : new Error(String(error));
+      trace("terrain:error", `#${callNo} ${e.name}: ${e.message} elapsed=${(performance.now() - startedAt).toFixed(1)}ms`);
+      throw error;
+    }
   };
 
   // 気象連動屈折（自動モード）は約0.05度（≈5.5km）格子でキャッシュされており、
@@ -2343,6 +2375,7 @@ async function calculateOneCandidates(
       rejectionReasons,
       finalEvaluations,
       intersectionOutcomes: [],
+      traceEvents,
     });
     return [];
   }
@@ -2537,6 +2570,7 @@ async function calculateOneCandidates(
     // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
     // 詳細探索し、画面中心誤差が最小の地点を正解候補とする。
     const refinementStartedAt = performance.now();
+    trace("refinement:start", `seedDistance=${solution.distanceMeters.toFixed(2)}m`);
     let manualRefined: RefinementResultWithDiagnostics | null;
     try {
       manualRefined = await refineWithManualEquivalentProjection(
@@ -2565,13 +2599,19 @@ async function calculateOneCandidates(
       // 全く整合しない長い経過時間が確認され、この中止ケースだと判明した）。
       // 中止は診断へ記録せず、そのまま呼び出し元（Promise.allSettledの
       // 中止判定）へ伝播させる。
-      if (isAbortError(error)) throw error;
+      if (isAbortError(error)) {
+        trace("refinement:abort", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+        throw error;
+      }
+      const e = error instanceof Error ? error : new Error(String(error));
+      trace("refinement:error", `${e.name}: ${e.message}${e.stack ? ` | stack=${e.stack.replace(/\s+/g, " ").slice(0, 1200)}` : ""}`);
       reject("manual-refinement-exception", { distanceMeters: solution.distanceMeters });
       console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
       return null;
     }
     const refinementMs = performance.now() - refinementStartedAt;
     refinementTotalMs += refinementMs;
+    trace("refinement:end", `elapsed=${refinementMs.toFixed(1)}ms result=${manualRefined ? `distance=${manualRefined.distanceMeters.toFixed(2)}m score=${manualRefined.score.toFixed(4)}% passes=${manualRefined.refinementPassesUsed}` : "null"}`);
     if (!manualRefined) {
       reject("manual-refinement-no-valid-evaluation", { distanceMeters: solution.distanceMeters });
       return null;
@@ -2821,6 +2861,7 @@ async function calculateOneCandidates(
     rejectionReasons,
     finalEvaluations,
     intersectionOutcomes,
+    traceEvents,
   });
   return unique;
 }

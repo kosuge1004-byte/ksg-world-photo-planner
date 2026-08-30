@@ -857,6 +857,14 @@ function App() {
             : "");
       }),
     ];
+    lines.push("完全経路トレース（時刻ms / stage / detail）:");
+    for (const [label, entry] of Object.entries(diagnostics.perCelestialBody)) {
+      lines.push(`  [${label}]`);
+      for (const event of entry.traceEvents) {
+        lines.push(`    +${event.elapsedMs.toFixed(1)}ms ${event.stage}: ${event.detail}`);
+      }
+    }
+
     // 2026-08-29追記: 「確定/棄却の結論そのものが現地確認と食い違う」
     // 報告を受け、推測での修正ではなく実データで原因を特定できるよう、
     // 粗探索段階（精密化前）の生の(距離, レイ高との差[m])サンプルを
