@@ -671,6 +671,10 @@ function App() {
   // 同じ入力で直ちに再開した新探索を区別できないため、runIdも保持する。
   const tripodCalculationInFlightRef = useRef<{ key: string; runId: number } | null>(null);
   const tripodCalculationRunIdRef = useRef(0);
+  // 手動の三脚タップは候補精密計算より優先する。候補計算がDEM/API通信を
+  // 占有している最中でも、ユーザーが選んだ地点を待たせないため現在の探索を
+  // 明示的に中断し、手動配置完了後に同条件の探索を自動再開する。
+  const tripodCalculationAbortRef = useRef<AbortController | null>(null);
   // 2026-08-25追記: 前回の確定候補（tripodCandidatesRef）を距離ヒントとして
   // 再利用する仕組みは、天体IDだけをキーにしており「どの被写体で見つかった
   // 距離か」を区別していなかった。そのため被写体を切り替えた直後は、
@@ -1672,6 +1676,7 @@ function App() {
 
     let cancelled = false;
     const controller = new AbortController();
+    tripodCalculationAbortRef.current = controller;
     const timer = window.setTimeout(() => {
       void (async () => {
         let operationStarted = false;
@@ -1828,6 +1833,9 @@ function App() {
     return () => {
       cancelled = true;
       controller.abort();
+      if (tripodCalculationAbortRef.current === controller) {
+        tripodCalculationAbortRef.current = null;
+      }
       window.clearTimeout(timer);
       releaseInFlight();
     };
@@ -2523,7 +2531,8 @@ function App() {
   async function resolveSearchSubject(
     latitude: number,
     longitude: number,
-    label: string
+    label: string,
+    sharedGroundPointPromise?: Promise<GroundPoint>
   ): Promise<GroundPoint> {
     // 検索・URL・座標入力では、DEM（地面）確定・建物屋根面への合わせ込み・
     // OSM高さ推定の3つを並行して行う（互いに入力の緯度経度だけから独立に
@@ -2535,7 +2544,11 @@ function App() {
     // Googleタイルのまま）。建物が無い・検証できない場合は、DEM地面の値の
     // まま変更しない。
     const viewer = mapViewerRef.current;
-    const groundPointPromise = resolveGroundPoint(latitude, longitude, label);
+    // スポット検索では同じ座標の「被写体地表」と「被写体高さ解決」が同時に
+    // 必要になる。呼び出し側から同一Promiseを渡せるようにして、同じDEM取得を
+    // 二重発行しない。精度・計算値は変えず、通信失敗点だけを減らす。
+    const groundPointPromise = sharedGroundPointPromise ??
+      resolveGroundPoint(latitude, longitude, label);
     const roofPointPromise: Promise<GroundPoint | null> = (async () => {
       if (!viewer || viewer.isDestroyed()) return null;
       try {
@@ -2610,18 +2623,34 @@ function App() {
     const searchTimeZone = criteria.useCurrentSubjectPin
       ? timeZone
       : await resolveSpotTimeZone(location, timeZone, signal);
-    const subject = criteria.useCurrentSubjectPin && activeSubject
-      ? activeSubject
-      : await resolveSearchSubject(
+    let subject: GroundPoint;
+    let subjectGround: GroundPoint;
+    if (criteria.useCurrentSubjectPin && activeSubject) {
+      subject = activeSubject;
+      subjectGround = await resolveGroundPoint(
+        location.latitude,
+        location.longitude,
+        `${location.label} 地表`
+      );
+    } else {
+      // 同一座標のDEM取得を1本へ統合する。以前はresolveSearchSubject()内部と
+      // subjectGround用で同じ地形取得を二重に走らせており、一時的な外部API障害へ
+      // 当たる機会も増えていた。共有Promiseなので精度・採用値は従来と同一。
+      const sharedGroundPointPromise = resolveGroundPoint(
+        location.latitude,
+        location.longitude,
+        `${location.label} 地表`
+      );
+      [subject, subjectGround] = await Promise.all([
+        resolveSearchSubject(
           location.latitude,
           location.longitude,
-          location.label
-        );
-    const subjectGround = await resolveGroundPoint(
-      location.latitude,
-      location.longitude,
-      `${location.label} 地表`
-    );
+          location.label,
+          sharedGroundPointPromise
+        ),
+        sharedGroundPointPromise,
+      ]);
+    }
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const preparationInput = {
       criteria,
@@ -3518,6 +3547,17 @@ ${diagnosticMessage}
 
   async function placeTripodFromMapTap(coordinates: { latitude: number; longitude: number }): Promise<void> {
     const viewer = mapViewerRef.current;
+    const candidateCalculationWasRunning = tripodCandidateCalculationStatus === "calculating";
+
+    // 手動指定を最優先にする。候補精密計算は同じDEM/API通信を大量に使用するため、
+    // そのまま並行させると手動タップの高度確定が通信待ちの後ろに並び、
+    // 「タップしても三脚が置けない」ように見える。現在の探索だけを中断し、
+    // 手動配置の完了後にretrySequenceで自動再開する。
+    if (candidateCalculationWasRunning) {
+      tripodCalculationAbortRef.current?.abort();
+      setSearchMessage("三脚候補計算を一時中断し、タップした三脚位置を優先して確定しています…");
+    }
+
     try {
       const point = viewer && !viewer.isDestroyed()
         ? await setTripodPinFromCoordinates(
@@ -3532,12 +3572,21 @@ ${diagnosticMessage}
             "三脚位置"
           );
       setTripodPoint(point);
+      tripodPointRef.current = point;
       setSearchMessage(
         `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
       );
     } catch (error) {
       console.warn("2D地図タップ位置へ三脚ピンを配置できませんでした", error);
       setSearchMessage("三脚ピンの高度を取得できませんでした。通信状態を確認して再試行してください");
+    } finally {
+      if (candidateCalculationWasRunning) {
+        // setTripodPointの反映後に新しい手動三脚位置を初期方向ヒントとして
+        // 精密候補計算を再開させる。計算精度・探索式は変更しない。
+        window.setTimeout(() => {
+          setTripodCandidateRetrySequence((current) => current + 1);
+        }, 0);
+      }
     }
   }
 

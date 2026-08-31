@@ -165,8 +165,16 @@ export async function diagnosticFetch(
         durationMs: Math.round(performance.now() - startedAt),
         detail: attempt > 1 ? `${attempt}回目の試行で成功` : undefined,
       });
-      if (response.status >= 500 && attempt < MAX_ATTEMPTS) {
-        await wait(RETRY_BACKOFF_MS[attempt - 1] ?? RETRY_BACKOFF_MS.at(-1)!);
+      const retryableStatus = response.status === 408 ||
+        response.status === 425 ||
+        response.status === 429 ||
+        response.status >= 500;
+      if (retryableStatus && attempt < MAX_ATTEMPTS) {
+        const retryAfterSeconds = Number(response.headers.get("retry-after"));
+        const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+          ? Math.min(5_000, retryAfterSeconds * 1_000)
+          : RETRY_BACKOFF_MS[attempt - 1] ?? RETRY_BACKOFF_MS.at(-1)!;
+        await wait(retryAfterMs);
         continue;
       }
       return response;

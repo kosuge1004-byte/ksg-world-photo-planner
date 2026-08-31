@@ -64,6 +64,16 @@ if (
 ) {
   throw new Error("background progress can still move backward");
 }
+
+if (
+  background.includes("runningStallTimeoutMilliseconds") ||
+  !background.includes("missingJobTimeoutMilliseconds = 90_000") ||
+  !background.includes("queuedTimeoutMilliseconds = 120_000") ||
+  !background.includes("clearActiveSpotSearchJob(active)") ||
+  !background.includes('}, 15_000);')
+) {
+  throw new Error("background spot-search resilience guards regressed");
+}
 if (
   !server.includes("Math.min(97") ||
   !spotSearch.includes("100,")

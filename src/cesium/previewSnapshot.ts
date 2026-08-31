@@ -18,6 +18,82 @@ type CameraState = {
   aspectRatio?: number;
 };
 
+
+const PREVIEW_TILE_WAIT_TIMEOUT_MS = 8_000;
+const PREVIEW_TILE_RENDER_INTERVAL_MS = 80;
+
+type LoadAwarePrimitive = {
+  show?: boolean;
+  tilesLoaded?: boolean;
+  isDestroyed?: () => boolean;
+};
+
+function visiblePreviewTilesLoaded(viewer: Viewer): boolean {
+  const scene = viewer.scene;
+  const globe = scene.globe;
+  const globeLoaded = !globe.show || globe.tilesLoaded;
+
+  let loadAwarePrimitiveCount = 0;
+  let loadAwarePrimitivesLoaded = true;
+  for (let index = 0; index < scene.primitives.length; index += 1) {
+    const primitive = scene.primitives.get(index) as LoadAwarePrimitive | undefined;
+    if (!primitive || primitive.show === false) continue;
+    if (typeof primitive.isDestroyed === "function" && primitive.isDestroyed()) continue;
+    if (typeof primitive.tilesLoaded !== "boolean") continue;
+    loadAwarePrimitiveCount += 1;
+    if (!primitive.tilesLoaded) loadAwarePrimitivesLoaded = false;
+  }
+
+  return globeLoaded &&
+    (loadAwarePrimitiveCount === 0 || loadAwarePrimitivesLoaded);
+}
+
+function copyViewerFrameToPreview(
+  viewer: Viewer,
+  previewCanvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D
+): void {
+  context.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  context.drawImage(
+    viewer.canvas,
+    0,
+    0,
+    viewer.canvas.width,
+    viewer.canvas.height,
+    0,
+    0,
+    previewCanvas.width,
+    previewCanvas.height
+  );
+}
+
+async function waitForPreviewTiles(
+  viewer: Viewer,
+  previewCanvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D
+): Promise<void> {
+  const startedAt = performance.now();
+
+  // Cesiumの自動描画ループはAstroSight側で停止している。したがって
+  // プレビュー視点へカメラを移しただけでは、その視点に必要な3D Tiles/地形の
+  // リクエストとLOD更新が継続しない。現在のプレビュー視点を維持して明示的に
+  // renderを回し、各フレームを上側Canvasへ逐次転写する。これにより、タイルが
+  // 1つでも到着した時点で自動的に画面へ現れ、焦点距離の+/-操作を再描画
+  // トリガーとして使う必要がなくなる。
+  while (!viewer.isDestroyed()) {
+    viewer.scene.requestRender();
+    viewer.scene.render();
+    copyViewerFrameToPreview(viewer, previewCanvas, context);
+
+    if (visiblePreviewTilesLoaded(viewer)) return;
+    if (performance.now() - startedAt >= PREVIEW_TILE_WAIT_TIMEOUT_MS) return;
+
+    await new Promise<void>((resolve) =>
+      window.setTimeout(resolve, PREVIEW_TILE_RENDER_INTERVAL_MS)
+    );
+  }
+}
+
 function saveCamera(viewer: Viewer): CameraState {
   const frustum = viewer.camera.frustum;
 
@@ -117,28 +193,11 @@ export async function captureTripodPreview(
       viewCorrection
     );
 
-    // メイン3Dカメラをフレーム間で占有すると、ユーザー操作後に古い姿勢へ
-    // 復元されてピンが動いたように見える。撮影と復元を同一タスク内で完了する。
-    viewer.scene.render();
-
-    context.clearRect(
-      0,
-      0,
-      previewCanvas.width,
-      previewCanvas.height
-    );
-
-    context.drawImage(
-      viewer.canvas,
-      0,
-      0,
-      viewer.canvas.width,
-      viewer.canvas.height,
-      0,
-      0,
-      previewCanvas.width,
-      previewCanvas.height
-    );
+    // Cesiumはこのアプリでは自動描画ループを停止しているため、プレビュー視点へ
+    // 移動した直後の1フレームだけでは3D Tiles/地形がまだ未取得のことがある。
+    // 現在のプレビュー視点を維持したまま必要タイルの読込を明示的に進めてから
+    // Canvasへ転写する。これにより初回の黒画面を自動的に解消する。
+    await waitForPreviewTiles(viewer, previewCanvas, context);
   } finally {
     defaultDataSource.show = defaultDataSourceWasVisible;
 

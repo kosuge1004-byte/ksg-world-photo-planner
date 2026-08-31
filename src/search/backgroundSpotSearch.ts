@@ -116,17 +116,24 @@ export async function startBackgroundSpotSearch(
 ): Promise<ActiveSpotSearchJob> {
   const active = { clientId: clientId(), jobId: newId() };
   saveActiveJob(active);
-  const response = await diagnosticFetch("spot-search", "/api/spot-search-start", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ ...active, input }),
-    signal,
-  });
-  if (!response.ok) {
+  try {
+    const response = await diagnosticFetch("spot-search", "/api/spot-search-start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ ...active, input }),
+      signal,
+    }, 15_000);
+    if (!response.ok) {
+      throw new Error(await errorMessage(response));
+    }
+    return active;
+  } catch (error) {
+    // 開始APIがHTTPエラーを返した場合だけでなく、端末〜API間のtimeout/切断で
+    // fetch自体が例外になった場合も、実在を確認できないActive Jobを残さない。
+    // 残すと次回起動時に存在しないジョブをstatus APIで追跡し続ける。
     clearActiveSpotSearchJob(active);
-    throw new Error(await errorMessage(response));
+    throw error;
   }
-  return active;
 }
 
 function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -163,13 +170,11 @@ export async function waitForBackgroundSpotSearch(
 ): Promise<SpotSearchJob> {
   let missingRetryCount = 0;
   const waitStartedAt = Date.now();
-  const missingJobTimeoutMilliseconds = 30_000;
-  const queuedTimeoutMilliseconds = 45_000;
-  // サーバー側の処理（外部API呼び出しの無応答等）で更新が完全に止まった場合、
-  // running のまま無期限に待ち続けないようにする。
-  const runningStallTimeoutMilliseconds = 90_000;
-  let lastUpdatedAtMilliseconds = waitStartedAt;
-  let lastObservedUpdatedAtIso: string | null = null;
+  // Workers KVの状態反映には遅延があり得るため、開始API成功直後の404/queuedを
+  // 数十秒で故障扱いしない。Consumer側はrunning遷移をKVへ1回永続化するので、
+  // 正常起動したジョブはこの猶予中にrunning/awaiting-3dへ進む。
+  const missingJobTimeoutMilliseconds = 90_000;
+  const queuedTimeoutMilliseconds = 120_000;
   let lastReportedProgressPercent = 0;
   while (true) {
     if (signal.aborted) {
@@ -180,7 +185,7 @@ export async function waitForBackgroundSpotSearch(
       headers: { Accept: "application/json" },
       cache: "no-store",
       signal,
-    });
+    }, 15_000);
     if (response.status === 404) {
       const isJsonResponse = (
         response.headers.get("content-type") ?? ""
@@ -214,24 +219,10 @@ export async function waitForBackgroundSpotSearch(
       clearActiveSpotSearchJob(active);
       throw new Error("バックグラウンド検索の応答形式が不正です");
     }
-    const jobUpdatedAtIso = typeof job.updatedAt === "string" ? job.updatedAt : null;
-    const now = Date.now();
-    if (jobUpdatedAtIso && jobUpdatedAtIso !== lastObservedUpdatedAtIso) {
-      lastObservedUpdatedAtIso = jobUpdatedAtIso;
-      lastUpdatedAtMilliseconds = now;
-    } else if (!jobUpdatedAtIso) {
-      // updatedAt が取得できない古い形式の応答では、経過時間の基準を待機開始時刻のままにする。
-      lastUpdatedAtMilliseconds = Math.max(lastUpdatedAtMilliseconds, waitStartedAt);
-    }
-    if (
-      job.status === "running" &&
-      now - lastUpdatedAtMilliseconds >= runningStallTimeoutMilliseconds
-    ) {
-      clearActiveSpotSearchJob(active);
-      throw new Error(
-        "検索処理の進行が長時間止まりました。国土地理院や地図情報サービスの応答遅延が原因の可能性があります。時間帯の範囲を狭めるか、時間をおいてもう一度お試しください"
-      );
-    }
+    // running中の細かな進捗はKV書込量を抑えるため意図的に永続化していない。
+    // したがってupdatedAtだけを根拠に「90秒停止」と判定すると、正常に長時間
+    // 計算しているジョブを誤って失敗扱いする。runningはサーバー側の最終状態
+    // （awaiting-3d / failed）を待ち、端末側では偽のstall判定を行わない。
     const percent = typeof job.progressPercent === "number" ? job.progressPercent : 0;
     const boundedPercent = Math.max(
       lastReportedProgressPercent,
@@ -298,7 +289,7 @@ export async function finalizeBackgroundSpotSearch(
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ ...active, results: serialized }),
     signal,
-  });
+  }, 15_000);
   if (!response.ok) throw new Error(await errorMessage(response));
   clearActiveSpotSearchJob(active);
 }

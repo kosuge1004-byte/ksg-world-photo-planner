@@ -12,6 +12,7 @@ import { onRequest as searchStatus } from "../../functions/api/spot-search-statu
 import { onRequest as resolveTimezone } from "../../functions/api/timezone.ts";
 import { findCloudflareTimeZones } from "../../server/cloudflareGeoTz.ts";
 import { resolveJapanesePlaceName } from "../../server/placeGeocode.ts";
+import { createSpotSearchJobUpdater } from "../../server/spotSearchJobs.ts";
 import {
   GoogleMapsResolutionError,
   googleMapsPlaceQueryCandidates,
@@ -504,4 +505,69 @@ test("spot search Pages Functions preserve API status while KV stores Cloudflare
   assert.equal(finalized.job.status, "awaiting-3d");
   assert.deepEqual(finalized.partialResult, partialResult);
   assert.equal(finalized.finalResult, undefined);
+});
+
+
+test("spot search persists running transition exactly once without progress-write amplification", async () => {
+  const kv = new MemoryKv();
+  const now = new Date().toISOString();
+  const job = {
+    version: 1,
+    clientId: "123e4567-e89b-42d3-a456-426614174010",
+    jobId: "123e4567-e89b-42d3-a456-426614174011",
+    status: "queued",
+    progress: "queued",
+    progressPercent: 0,
+    input: {
+      criteria: {
+        query: "東京タワー",
+        useCurrentSubjectPin: false,
+        focalLengthMm: 24,
+        target: "sun",
+        period: "30-days",
+        interval: "1-day",
+        maxResults: 10,
+        timeStart: "00:00",
+        timeEnd: "23:59",
+        weekdays: [0,1,2,3,4,5,6],
+        constraints: {
+          walkingOnly: true,
+          roadsAndPathsOnly: false,
+          excludePrivateAccess: false,
+          elevationDifferenceWithin100m: false,
+          excludeRoads: false,
+        },
+      },
+      subject: { latitude: 35.6586, longitude: 139.7454, height: 350, label: "東京タワー" },
+      baseDateIso: now,
+      timeZone: "Asia/Tokyo",
+      lensCenterHeightMeters: 1.5,
+      subjectGroundHeightMeters: 0,
+      calculationMode: "standard",
+    },
+    results: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  await kv.put(`spot-search-jobs/v1/${job.clientId}/${job.jobId}.json`, JSON.stringify({
+    version: 1,
+    jobId: job.jobId,
+    status: "queued",
+    progress: job.progress,
+    progressPercent: 0,
+    createdAt: now,
+    updatedAt: now,
+    request: job.input,
+    partialResult: [],
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    job,
+  }));
+  const updater = createSpotSearchJobUpdater(kv, job);
+  const before = kv.putCount;
+  await updater(job.clientId, job.jobId, { status: "running", progress: "running", progressPercent: 0 });
+  assert.equal(kv.putCount, before + 1);
+  const persisted = JSON.parse(kv.values.get(`spot-search-jobs/v1/${job.clientId}/${job.jobId}.json`));
+  assert.equal(persisted.job.status, "running");
+  await updater(job.clientId, job.jobId, { progress: "50%", progressPercent: 50 });
+  assert.equal(kv.putCount, before + 1);
 });

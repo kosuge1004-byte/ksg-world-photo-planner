@@ -1,0 +1,46 @@
+AstroSight 上部プレビュー「タップで被写体ピン」追加
+2026-08-31
+
+基準:
+AstroSight-preview-initial-black-fix-20260831.zip
+
+要件:
+- 上部プレビューのスワイプによる構図移動は維持する。
+- 上部プレビューを短くタップした位置に被写体ピンを設定する。
+
+実装:
+1. PreviewGestureLayer の通常状態でも pointerDown 位置・時刻を記録。
+2. 10px以内かつ400ms以内のpointerUpをタップとして判定。
+3. 通常タップでは既存の onSubjectTap を呼び出す。
+4. onSubjectTap は既存の handlePreviewSubjectTap -> pickTripodPreviewSurface -> setSubjectPinFromExplicit3dPick を使用。
+   したがって、表示中のCesiumカメラ/フラスタムからsceneの実3D表面をdepth pickし、
+   建物・屋根・山頂等を楕円体や2D地図位置へ丸めず被写体点に設定する。
+5. 10pxを超えた時点でドラッグと判定し、従来どおりonPanを継続。
+   閾値を超えた最初のフレームでは押し始めからの全移動量を反映するため、スワイプ量を失わない。
+6. 2本指ピンチは従来どおり焦点距離変更。
+7. 計測モードでは計測タップを優先し、通常の被写体ピン設置は発火させない。
+8. 既存「位置指定」モードは残し、明示的被写体指定を最優先する。
+
+変更ファイル:
+- src/components/PreviewGestureLayer.tsx
+- scripts/verify-preview-tap-subject-pin-20260831.mjs（検証追加）
+- PREVIEW_TAP_SUBJECT_PIN_20260831.txt
+
+検証結果:
+- verify-preview-tap-subject-pin-20260831.mjs: 9/9 PASS
+  * 通常タップ記録
+  * 通常タップから被写体pick
+  * 計測モード優先順位
+  * 位置指定モード優先順位
+  * 10px移動閾値
+  * 400ms時間閾値
+  * ドラッグ開始判定
+  * onPan維持
+  * pinch zoom維持
+- verify-preview-initial-load-20260831.mjs: 8/8 PASS
+- verify-performance-lifecycle.mjs: PASS
+- verify-user-error-handling.mjs: PASS
+
+未確認:
+- この実行環境にはnode_modulesが無いため、tsc/viteによる完全buildは未実施。
+- Android実機のPointerEvent挙動は実機での最終確認が必要。

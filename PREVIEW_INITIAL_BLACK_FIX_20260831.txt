@@ -1,0 +1,37 @@
+AstroSight 上部プレビュー初回黒画面修正 2026-08-31
+
+対象:
+  AstroSight-spot-search-wifi-error-fix-20260831.zip
+
+実機症状:
+  - 上部の三脚視点プレビューが初回に黒いまま表示される。
+  - 時間経過後、焦点距離の + / - を押すとプレビューが表示される。
+
+実コードで確認した原因:
+  1. src/App.tsx でプレビュー専用Cesium Viewerの useDefaultRenderLoop を false にしている。
+  2. src/cesium/previewSnapshot.ts の captureTripodPreview() は、プレビュー視点へカメラを移した直後に scene.render() を1回だけ実行してCanvasへ転写し、直ちに元カメラへ復元していた。
+  3. Google Photorealistic 3D Tiles / terrain は視点変更後に非同期ロードされるため、最初の1フレーム時点で必要タイルが未到着だと黒いCanvasが保存される。
+  4. 後から焦点距離を変更すると cameraSettings が変化してcaptureTripodPreview()が再実行される。この時点ではタイルがキャッシュ済みなので表示される。実機症状と一致する。
+  5. App.tsxには3.2秒後の再撮影もあるが、旧captureTripodPreview()が1フレームだけ描いてすぐカメラを戻すため、プレビュー視点を維持した状態でタイルロードを進められていなかった。
+
+修正:
+  - src/cesium/previewSnapshot.ts に waitForPreviewTiles() を追加。
+  - プレビュー視点を維持したまま requestRender() + render() を80ms間隔で明示実行。
+  - globe.tilesLoaded と表示中primitiveの tilesLoaded を確認。
+  - 各ロード中フレームを上部Canvasへ逐次転写するため、全タイル完了を待たなくても到着した描画から自動表示される。
+  - 最大待機時間は8秒。通信障害などで永久待機しない。
+  - 既存のcamera restore/finally、画角、三脚位置、被写体位置、天体計算、DEM、屈折補正、焦点距離計算には変更なし。
+
+検証:
+  PASS scripts/verify-preview-initial-load-20260831.mjs 8/8
+  PASS scripts/verify-performance-lifecycle.mjs
+  PASS scripts/verify-user-error-handling.mjs
+
+既存 scripts/verify-3d-map-smoothness-20260823.mjs について:
+  9項目中8項目PASS、1項目FAIL。
+  FAILは "viewer.useDefaultRenderLoop = mapViewMode === \"3d\"" という旧実装文字列を要求する陳腐化した検査。
+  現行App.tsxはCesiumをプレビュー専用にして viewer.useDefaultRenderLoop = false としているため、今回変更前から一致しない。今回修正による回帰ではない。
+
+ビルド:
+  npm ci はこの作業環境でパッケージ取得中にTransportTimeoutとなり、完全な tsc/vite build は未確認。
+  よって「ビルド成功済み」とは記載しない。

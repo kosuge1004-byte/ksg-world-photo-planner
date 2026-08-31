@@ -223,14 +223,18 @@ function persistedJobSignature(job: SpotSearchJob): string {
  * チェックポイントだけに限定する。
  *
  * queued: Queueへ渡したジョブの初期状態
+ * running: Consumerが実際にジョブを取得したことを端末へ通知する状態
  * awaiting-3d: サーバー検索結果を端末へ引き渡す状態
  * failed: エラー復旧に必要な最終状態
  *
- * running と進捗表示はQueue Consumer内のメモリだけで管理し、
- * 時間変更・候補更新・進捗通知によるPUTを発生させない。
+ * running は「開始時の1回」だけ永続化する。進捗率・進捗文言だけの更新は
+ * 引き続きKVへ保存しないため、検索ループ中のPUT増加は発生しない。
+ * これにより端末が、実行中の長い検索を queued のまま誤認してタイムアウト
+ * させる競合を解消する。
  */
 function shouldPersistJob(job: SpotSearchJob): boolean {
   return job.status === "queued" ||
+    job.status === "running" ||
     job.status === "awaiting-3d" ||
     job.status === "failed";
 }

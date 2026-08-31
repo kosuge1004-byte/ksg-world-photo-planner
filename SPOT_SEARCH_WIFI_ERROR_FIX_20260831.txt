@@ -1,0 +1,83 @@
+AstroSight スポット検索 Wi-Fi正常時エラー修正
+基準: AstroSight-fixed-map-line-candidate-fix-20260830.zip
+修正日: 2026-08-31
+
+【確認・修正した原因】
+1. Queue Consumerが検索開始してもrunning状態をWorkers KVへ保存していなかった
+   - 端末のstatus APIはKVしか読まないため、実際には検索中でもqueuedのまま見えた。
+   - 端末側はqueuedを45秒で異常判定していたため、45秒を超える正常検索を誤って失敗扱いできた。
+   修正:
+   - running遷移をKVへ1回だけ保存。
+   - 進捗率/進捗文言だけの更新は引き続きKVへ保存しないため、PUT増加を最小化。
+
+2. running中のupdatedAtが更新されない設計なのに、端末が90秒でstall判定していた
+   - 進捗更新はConsumerメモリのみで、KVへ保存しない仕様だったため、正常な長時間検索も誤検知可能だった。
+   修正:
+   - runningの固定90秒stall判定を削除。
+   - サーバーのawaiting-3d / failedへの状態遷移を待つ。
+
+3. spot-search-startのfetch自体がtimeout/切断で例外になると、端末にActive Jobが残った
+   - startBackgroundSpotSearchはHTTPエラー時だけclearしていた。
+   - fetch例外ではlocalStorageに存在しないジョブIDが残り、次回起動時にstatus APIで古いジョブを追跡する原因になった。
+   修正:
+   - start API全体をtry/catch化し、HTTP失敗/timeout/切断のすべてでActive Jobを解除。
+
+4. KV反映遅延に対して端末側の判定猶予が短かった
+   修正:
+   - status 404の猶予: 30秒 -> 90秒
+   - queuedの猶予: 45秒 -> 120秒
+   - running遷移をKV保存する変更と組み合わせ、正常検索をqueued timeoutしにくくした。
+
+5. spot-search API共通通信の8秒timeoutが短かった
+   修正:
+   - start/status/finalizeは15秒/試行へ拡張。
+   - 共通fetchの最大3回再試行は維持。
+
+6. 共通fetchが5xxしかHTTP再試行しなかった
+   修正:
+   - 408 Request Timeout
+   - 425 Too Early
+   - 429 Too Many Requests
+   - 5xx
+     を再試行対象に追加。
+   - Retry-After秒指定がある場合は最大5秒まで尊重。
+
+7. スポット検索準備で同一座標のDEM取得を二重発行していた
+   - resolveSearchSubject内部とsubjectGround取得で同じ地点のresolveGroundPointを別々に呼んでいた。
+   修正:
+   - 同じresolveGroundPoint Promiseを共有。
+   - 高度値・精度・DEMアルゴリズムは変更せず、通信回数と失敗点だけ削減。
+
+【精度への影響】
+- 天文計算、測地計算、三脚候補計算、DEM補間、地球曲率、屈折補正等の計算アルゴリズムは変更していない。
+- 地表高は従来と同じresolveGroundPointを使用し、同一地点で二重に呼んでいたものを1回へ統合しただけ。
+- 低精度値への置換は追加していない。
+
+【変更ファイル】
+- server/spotSearchJobs.ts
+- src/search/backgroundSpotSearch.ts
+- src/network/networkDiagnostics.ts
+- src/App.tsx
+- scripts/verify-search-progress.mjs
+- tests/regression/cloudflare-functions.test.mjs
+
+【実施した検証】
+PASS:
+- modified TypeScript/TSX 4ファイル transpile構文チェック
+- scripts/verify-search-progress.mjs
+- scripts/verify-phase5-1-network-audit.mjs
+- createSpotSearchJobUpdater targeted test
+  - queued -> runningでKV PUTが1回発生
+  - running中のprogress-only更新では追加PUTなし
+
+既存不具合/環境制約:
+- scripts/verify-workers-kv-writes.mjs は functions/api/high-precision-session.ts のKV putを検出して失敗。
+  修正前の元ZIPでも同じ失敗を再現済み。今回の変更による回帰ではない。
+- npm ciは実行環境のパッケージ取得がタイムアウトし、完全なnpm test/buildまでは実行できなかった。
+  そのため「完全ビルド成功」は未確認。上記の構文・対象回帰テストは確認済み。
+
+【重要】
+今回の修正で、Wi-Fi電波が正常なのにアプリ内部の状態競合/短すぎるtimeout/古いActive Jobによって
+スポット検索がエラーになる確認済み経路は修正した。
+ただし、国土地理院・Nominatim・Cloudflare等の外部サービス自体が実際に停止している場合まで
+100%成功させることは不可能。精度を落とす偽データ代替は実装していない。

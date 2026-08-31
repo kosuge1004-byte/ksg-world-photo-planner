@@ -1,0 +1,26 @@
+AstroSight 下地図・三脚候補計算中の手動三脚タップ修正
+2026-08-31
+
+■ 症状
+三脚候補点を精密計算中、下側2D地図をタップしても手動三脚ピンが置かれない／反応しないように見える。
+
+■ 実コードで確認した原因
+App.tsx の placeTripodFromMapTap() は、タップ後すぐに三脚状態を更新せず、setTripodPinFromCoordinates()/resolveGroundPoint() の高度確定完了後に setTripodPoint() していた。
+一方、三脚候補精密計算も同じDEM/API通信を使用しているため、候補計算中は手動タップの高度取得が通信待ちに入り、ユーザー操作が反映されない状態になり得る。
+
+■ 修正
+1. 現在の三脚候補計算 AbortController を tripodCalculationAbortRef で保持。
+2. 候補計算中に2D地図を手動タップした場合、現在の候補計算を一時中断。
+3. 手動タップ位置を既存の正規高度解決経路 setTripodPinFromCoordinates()/resolveGroundPoint() で確定。
+4. setTripodPoint() と tripodPointRef.current を更新。
+5. 手動配置完了後、tripodCandidateRetrySequence を進めて候補精密計算を自動再開。
+6. 探索式・DEM精度・天文計算・構図計算は変更していない。
+
+■ 検証
+scripts/verify-manual-tripod-during-calculation-20260831.mjs: 8/8 PASS
+scripts/verify-preview-tap-subject-pin-20260831.mjs: 9/9 PASS
+scripts/verify-performance-lifecycle.mjs: PASS
+scripts/verify-user-error-handling.mjs: PASS
+
+■ 未確認
+この実行環境には node_modules/typescript がないため、tsc/vite build は未実行。ビルド成功とは断定しない。
