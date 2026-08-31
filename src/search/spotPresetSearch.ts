@@ -6,6 +6,7 @@ import {
 } from "astronomy-engine";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { requestTimeZone } from "../network/timeZoneRequest";
+import { JAPAN_LANDMARKS, type JapanLandmark } from "../data/japanLandmarks";
 
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type {
@@ -111,6 +112,27 @@ function browserLocalStorage(): BrowserStorageLike | undefined {
 
 function normalizedLocationQuery(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("ja");
+}
+
+function landmarkSearchKeys(landmark: JapanLandmark): string[] {
+  return [landmark.name, ...(landmark.aliases ?? [])]
+    .map(normalizedLocationQuery)
+    .filter(Boolean);
+}
+
+const landmarkByExactSearchKey = new Map<string, JapanLandmark>();
+for (const landmark of JAPAN_LANDMARKS) {
+  for (const key of landmarkSearchKeys(landmark)) {
+    if (!landmarkByExactSearchKey.has(key)) landmarkByExactSearchKey.set(key, landmark);
+  }
+}
+
+function resolveStaticJapanLandmark(query: string): ResolvedSpotLocation | null {
+  const key = normalizedLocationQuery(query);
+  if (!key) return null;
+  const exact = landmarkByExactSearchKey.get(key);
+  if (!exact) return null;
+  return { latitude: exact.latitude, longitude: exact.longitude, label: exact.name };
 }
 
 function readCachedSpotLocation(query: string): ResolvedSpotLocation | null {
@@ -239,6 +261,8 @@ export async function resolveSpotLocation(
   signal?: AbortSignal
 ): Promise<ResolvedSpotLocation> {
   const normalizedQuery = query.trim();
+  const staticLandmark = resolveStaticJapanLandmark(normalizedQuery);
+  if (staticLandmark) return staticLandmark;
   const cached = readCachedSpotLocation(normalizedQuery);
   if (cached) return cached;
 

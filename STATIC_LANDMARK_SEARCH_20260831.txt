@@ -1,0 +1,22 @@
+AstroSight static landmark instant-search implementation — 2026-08-31
+
+Implemented:
+- All 278 verified entries from server/landmarkPrewarmSeed.ts are copied into a client-side static data table.
+- Static lookup runs BEFORE localStorage/R2/API geocoding.
+- Exact normalized landmark names and selected aliases resolve without network access.
+- Coordinates are only used as the initial geographic target; existing high-precision subject height / DEM / 3D surface resolution remains unchanged.
+- Regression verification added and registered in scripts/run-regression-tests.mjs.
+
+Verified static count:
+- 278 / 278 prewarm landmarks.
+
+Important scope note:
+- Nationwide amusement-park and Ferris-wheel expansion is NOT claimed complete in this build.
+- A current 2026 public amusement-park list contains 144 operating facilities but explicitly states that it is not exhaustive.
+- The Ferris-wheel source found also does not provide a current, authoritative complete coordinate registry.
+- Unverified coordinates were intentionally not fabricated or inserted.
+
+Public references used for scope research:
+- 369days.net nationwide amusement park list (2026-03-01): 144 major operating facilities, explicitly non-exhaustive.
+- FWGP existing Ferris wheel list: nationwide existing-wheel catalogue, but published list is not a current authoritative coordinate registry.
+- Geofabrik Japan OpenStreetMap extract: current Japan OSM data is available, but the full Japan extract is ~2.3 GB and could not be bulk-ingested in this environment.

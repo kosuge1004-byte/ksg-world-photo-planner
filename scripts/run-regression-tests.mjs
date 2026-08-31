@@ -93,6 +93,10 @@ const cases = [
     arguments: ["./scripts/verify-google-maps-url.mjs"],
   },
   {
+    name: "static Japan landmark instant search",
+    arguments: ["./scripts/verify-static-landmark-search-20260831.mjs"],
+  },
+  {
     name: "Android, iPhone and browser compatibility contracts",
     arguments: ["./scripts/verify-platform-compatibility.mjs"],
   },
