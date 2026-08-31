@@ -1,0 +1,46 @@
+AstroSight 2D地図 MapLibre移行記録 (2026-08-31)
+
+起点:
+  AstroSight-manual-tripod-tap-during-calculation-fix-20260831.zip
+
+実装:
+- 下画面Google Maps iframeを廃止。
+- 下画面の描画エンジンをMapLibre GL JS 6.6.0へ変更。
+- 通常地図: OpenFreeMap Bright
+  https://tiles.openfreemap.org/styles/bright
+- 航空写真: 国土地理院 全国最新写真（シームレス）
+  https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg
+- 航空写真はMapLibreのraster source/layerとして同じMapLibreインスタンスへ重畳し、通常/航空で中心座標を作り直さない。
+- 航空写真提供外の小縮尺(z14未満)はBrightをフォールバック表示。
+
+位置同期で変更しなかったもの:
+- AstroSight内部の緯度/経度を正とする既存state
+- Map2DOverlay
+- src/map/webMercator.ts
+- 三脚候補計算
+- Karney測地線
+- ECEF/天体計算
+- DEM/標高解決
+- Cesium 3Dプレビュー
+
+重要な縮尺互換:
+- 既存AstroSight 2DはGoogle/XYZの256px基準 worldSize = 256*2^zoom。
+- MapLibreの画面zoomは512px基準。
+- そのため表示アダプタで MapLibre zoom = AstroSight zoom - 1 とし、既存overlay/保存済みmapZoomの意味を変更しない。
+- MapLibre側の回転・pitchは無効化し、既存WebMercator overlayとの平面投影一致を維持。
+
+操作:
+- 通常パン/ピンチ/ホイール: MapLibreネイティブ操作へ変更。
+- move/zoom中の中心座標/zoomをrequestAnimationFrame単位でAstroSight stateへ同期し、既存overlayを追従。
+- 通常タップ: MapLibreのlngLatを直接manual tripod placementへ渡す。
+- 明示ピン配置/計測モード: 既存overlay buttonを維持し、既存webMercatorで座標化。
+
+依存関係:
+- npm installが実行環境でタイムアウトしたため、MapLibre GL JS/CSSはjsDelivr固定版6.6.0を実行時dynamic importする方式。
+- package.json/package-lock.jsonは変更していない。
+- 将来ビルド環境でnpm取得が安定した場合はmaplibre-glをbundle dependencyへ移すことを推奨。
+
+未確認:
+- Android/iPhone実機WebViewでのフレームレート。
+- OpenFreeMap Brightの日本語ラベル実表示品質。
+- 地理院航空写真とCesium 3D建物頂部の見た目上のpixel一致（データソース固有差は残り得る）。

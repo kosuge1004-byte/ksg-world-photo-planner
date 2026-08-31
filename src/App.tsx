@@ -22,7 +22,7 @@ import { LightPollutionTileOverlay } from "./components/LightPollutionTileOverla
 import { CelestialOverlay } from "./components/CelestialOverlay";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { Map2DOverlay } from "./components/Map2DOverlay";
-import { Map2DInteractionLayer } from "./components/Map2DInteractionLayer";
+import { MapLibre2DMap } from "./components/MapLibre2DMap";
 import { PinControls } from "./components/PinControls";
 import { PreviewStatus } from "./components/PreviewStatus";
 import { PreviewChrome } from "./components/PreviewChrome";
@@ -1142,12 +1142,6 @@ function App() {
 
     return calculateKarneyLineMetrics(tripodPoint, subjectPoint);
   }, [subjectPoint, tripodPoint]);
-
-  const googleMapUrl = useMemo(() => {
-    const centerValue = `${mapCenter.latitude},${mapCenter.longitude}`;
-    const layer = mapType === "satellite" ? "k" : "m";
-    return `https://maps.google.com/maps?ll=${encodeURIComponent(centerValue)}&z=${mapZoom}&output=embed&hl=ja&t=${layer}`;
-  }, [mapCenter, mapType, mapZoom]);
 
   const previewReady = Boolean(
     mapReady && subjectPoint && tripodPoint
@@ -4309,20 +4303,20 @@ ${diagnosticMessage}
           ref={map2dStageRef}
           className="map-2d-stage active"
         >
-          <iframe
-            className="google-map-2d"
-            src={googleMapUrl}
-            title={mapType === "satellite" ? "Googleマップ 航空写真" : "Googleマップ 通常地図"}
-            loading="eager"
-            referrerPolicy="no-referrer-when-downgrade"
-            allowFullScreen
-            onLoad={() => {
-              const stage = map2dStageRef.current;
-              if (!stage) return;
-              stage.style.transform = "";
-              stage.style.transformOrigin = "";
-              stage.classList.remove("dragging");
+          <MapLibre2DMap
+            center={mapCenter}
+            zoom={mapZoom}
+            mapType={mapType}
+            onViewChange={({ center, zoom }) => {
+              mapCenterRef.current = center;
+              setMapCenter(center);
+              setMapZoom(zoom);
             }}
+            onTap={(coordinates) => {
+              if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
+              void placeTripodFromMapTap(coordinates);
+            }}
+            onError={(message) => setSearchMessage(message)}
           />
           {lightPollutionEnabled && celestialVisibility.milkyWay && (
             <LightPollutionTileOverlay
@@ -4374,20 +4368,6 @@ ${diagnosticMessage}
               onSelectCandidate={selectTripodCandidate}
           />
         </div>
-        {!subjectPlacementActive &&
-          !tripodPlacementActive &&
-          !foregroundPlacementActive &&
-          !mapMeasuring && (
-            <Map2DInteractionLayer
-              stageRef={map2dStageRef}
-              center={mapCenter}
-              zoom={mapZoom}
-              size={mapSize}
-              onChangeCenter={setMapCenter}
-              onChangeZoom={setMapZoom}
-              onTap={(coordinates) => { void placeTripodFromMapTap(coordinates); }}
-            />
-          )}
         {(subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (
             <button
               type="button"
