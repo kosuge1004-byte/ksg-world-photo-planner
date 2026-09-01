@@ -18,6 +18,9 @@
 const STORAGE_KEY = "ksg-cesium-ion-connection";
 const PKCE_VERIFIER_STORAGE_KEY = "ksg-cesium-ion-pkce-verifier";
 const OAUTH_STATE_STORAGE_KEY = "ksg-cesium-ion-oauth-state";
+const PKCE_SAVED_AT_STORAGE_KEY = "ksg-cesium-ion-pkce-saved-at";
+// PKCE検証情報の有効期間。この時間を過ぎたものは古い試行の残骸として無視する。
+const PKCE_MAX_AGE_MS = 15 * 60 * 1000;
 
 // Cesium ion側で発行されたアプリケーション情報（公開情報。秘密鍵ではない）。
 const CESIUM_ION_CLIENT_ID = "2235";
@@ -55,14 +58,26 @@ function randomString(length: number): string {
  * Cesium ionの認証画面へ遷移するためのURLを組み立て、PKCE検証用の値を
  * 端末内に一時保存する。呼び出し側は、得られたURLへ実際に遷移させること
  * （location.href = url など）。
+ *
+ * 2026-09-01追記: iPhoneで「接続できない」という報告を受けて調査した結果、
+ * PKCE検証値の保存にsessionStorageを使っていたことが原因と判明した。
+ * iOSでは、ホーム画面に追加したスタンドアロン表示のアプリから外部ドメイン
+ * （ion.cesium.com）へ遷移すると、その遷移がSafari側の別コンテキストで
+ * 開かれることがあり、sessionStorageはそのブラウジングコンテキスト
+ * （タブ/ウィンドウのインスタンス）に紐づくため、Safari側からは
+ * スタンドアロンアプリ側で保存した値を参照できず認証が失敗していた。
+ * localStorageは同一オリジンであればコンテキストをまたいで共有される
+ * ため、こちらへ切り替える。有効期間（PKCE_MAX_AGE_MS）を併せて持たせ、
+ * 古い試行の値が無期限に残り続けないようにする。
  */
 export async function beginCesiumIonConnection(): Promise<string> {
   const codeVerifier = randomString(64);
   const state = randomString(24);
   const codeChallenge = base64UrlEncode(await sha256(codeVerifier));
 
-  sessionStorage.setItem(PKCE_VERIFIER_STORAGE_KEY, codeVerifier);
-  sessionStorage.setItem(OAUTH_STATE_STORAGE_KEY, state);
+  localStorage.setItem(PKCE_VERIFIER_STORAGE_KEY, codeVerifier);
+  localStorage.setItem(OAUTH_STATE_STORAGE_KEY, state);
+  localStorage.setItem(PKCE_SAVED_AT_STORAGE_KEY, String(Date.now()));
 
   const url = new URL("https://ion.cesium.com/oauth");
   url.searchParams.set("response_type", "code");
@@ -85,11 +100,16 @@ export async function completeCesiumIonConnection(
   code: string,
   state: string
 ): Promise<CesiumIonConnection> {
-  const expectedState = sessionStorage.getItem(OAUTH_STATE_STORAGE_KEY);
-  const codeVerifier = sessionStorage.getItem(PKCE_VERIFIER_STORAGE_KEY);
-  sessionStorage.removeItem(OAUTH_STATE_STORAGE_KEY);
-  sessionStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
+  const expectedState = localStorage.getItem(OAUTH_STATE_STORAGE_KEY);
+  const codeVerifier = localStorage.getItem(PKCE_VERIFIER_STORAGE_KEY);
+  const savedAt = Number(localStorage.getItem(PKCE_SAVED_AT_STORAGE_KEY) ?? "0");
+  localStorage.removeItem(OAUTH_STATE_STORAGE_KEY);
+  localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
+  localStorage.removeItem(PKCE_SAVED_AT_STORAGE_KEY);
 
+  if (!Number.isFinite(savedAt) || Date.now() - savedAt > PKCE_MAX_AGE_MS) {
+    throw new Error("認証情報の有効期限が切れました。もう一度接続をお試しください。");
+  }
   if (!expectedState || state !== expectedState) {
     throw new Error("認証状態を確認できませんでした（state不一致）。もう一度接続をお試しください。");
   }

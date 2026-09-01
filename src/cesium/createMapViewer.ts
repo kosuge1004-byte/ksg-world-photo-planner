@@ -48,6 +48,7 @@ export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
 }
 
 const HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER = Symbol("astrosight-hidden-plateau-height-lookup");
+export { HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER };
 
 /**
  * Googleタイルモード（Google Photorealistic 3D Tiles）では、Googleの利用規約により

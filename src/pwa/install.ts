@@ -57,6 +57,37 @@ async function registerServiceWorker(): Promise<void> {
   }
 }
 
+/**
+ * 標準3D表示（国土地理院タイル・PLATEAU地形/建物）のオフラインタイル
+ * キャッシュ（sw.js側の astrosight-tiles-v1）を削除する。
+ * Googleタイルモードのデータはそもそもこのキャッシュに入らない
+ * （sw.jsがホスト名で構造的に除外している）ため、ここでの削除対象にもならない。
+ */
+export async function clearOfflineTileCache(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return false;
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  const controller = registration?.active ?? navigator.serviceWorker.controller;
+  if (!controller) return false;
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+      resolve(result);
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.data === "TILE_CACHE_CLEARED") finish(true);
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    controller.postMessage("CLEAR_TILE_CACHE");
+    // Service Workerが応答しない環境（未登録・非対応ブラウザ等）でも
+    // 呼び出し元を待たせ続けないためのフォールバック。
+    setTimeout(() => finish(false), 3000);
+  });
+}
+
 export function initializePwaInstallSupport(): void {
   if (initialized || typeof window === "undefined") return;
   initialized = true;

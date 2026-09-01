@@ -14,7 +14,7 @@ const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
 };
 import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import { parseFocalLengthInput } from "../utils/focalLengthInput";
-import { usePwaInstall } from "../pwa/install";
+import { usePwaInstall, clearOfflineTileCache } from "../pwa/install";
 import { getRecordedFreezes, clearRecordedFreezes } from "../diagnostics/freezeDetector";
 
 type Props = {
@@ -62,6 +62,17 @@ export function TopSettingsBar({
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
+  const [tileCacheClearState, setTileCacheClearState] =
+    useState<"idle" | "clearing" | "cleared" | "failed">("idle");
+  const handleClearOfflineTileCache = async () => {
+    setTileCacheClearState("clearing");
+    try {
+      const cleared = await clearOfflineTileCache();
+      setTileCacheClearState(cleared ? "cleared" : "failed");
+    } catch {
+      setTileCacheClearState("failed");
+    }
+  };
   const [lightPollutionGuideOpen, setLightPollutionGuideOpen] = useState(false);
   const [freezeDiagnosticsCopyState, setFreezeDiagnosticsCopyState] =
     useState<"idle" | "copied" | "empty" | "failed">("idle");
@@ -297,6 +308,20 @@ export function TopSettingsBar({
                 </div>
               </dl>
               <small>表示・検索・計算内容に応じて、上記の一部または複数を使用します。</small>
+              <div className="offline-tile-cache">
+                <p>
+                  標準3D表示（国土地理院地図＋PLATEAU）で読み込んだ地図タイルは、
+                  次回同じ場所を表示するときに素早く出せるよう端末に保存されます
+                  （地理院タイル・PLATEAUは複製・保存が認められているデータのため）。
+                  Google Photorealistic 3D Tilesはこの保存の対象外です（利用規約により
+                  キャッシュ・保存が禁止されているため、常にその都度取得します）。
+                </p>
+                <button type="button" onClick={() => void handleClearOfflineTileCache()} disabled={tileCacheClearState === "clearing"}>
+                  {tileCacheClearState === "clearing" ? "削除中…" : "保存した地図タイルを削除"}
+                </button>
+                {tileCacheClearState === "cleared" && <small role="status">削除しました。</small>}
+                {tileCacheClearState === "failed" && <small role="status">削除できませんでした。時間をおいて再試行してください。</small>}
+              </div>
               <nav aria-label="出典元の詳細">
                 <a href="https://www.google.com/maps" target="_blank" rel="noreferrer">Google Maps</a>
                 <a href="https://developers.google.com/maps/documentation/tile/3d-tiles" target="_blank" rel="noreferrer">Google 3D Tiles</a>

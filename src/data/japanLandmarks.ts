@@ -291,4 +291,11 @@ export const JAPAN_LANDMARKS: readonly JapanLandmark[] = [
   { name: "会津慈母大観音", category: "temple", latitude: 37.5534047, longitude: 139.9538613 },
   { name: "北海道大観音", category: "temple", latitude: 43.5281276, longitude: 142.1980184 },
   { name: "加賀大観音", category: "temple", latitude: 36.3256867, longitude: 136.3487974 },
+  // Nationwide Ferris-wheel expansion: batch 1, coordinates independently verified from public map/official sources (2026-09-01).
+  { name: "コスモクロック21", category: "ferriswheel", latitude: 35.4554, longitude: 139.637, aliases: ["よこはまコスモワールド観覧車", "横浜コスモワールド観覧車", "大観覧車コスモクロック21"] },
+  { name: "ダイヤと花の大観覧車", category: "ferriswheel", latitude: 35.64394, longitude: 139.85725, aliases: ["葛西臨海公園観覧車", "葛西観覧車"] },
+  { name: "Sky-Boat", category: "ferriswheel", latitude: 35.16965, longitude: 136.90628, aliases: ["Sky Boat", "スカイボート", "サンシャインサカエ観覧車", "栄観覧車"] },
+  { name: "HEP FIVE観覧車", category: "ferriswheel", latitude: 34.704, longitude: 135.50009, aliases: ["HEP FIVE 観覧車", "HEP観覧車", "梅田観覧車", "ヘップファイブ観覧車"] },
+  { name: "Fuji Sky View", category: "ferriswheel", latitude: 35.16175, longitude: 138.61735, aliases: ["フジスカイビュー", "富士川SA大観覧車", "富士川サービスエリア観覧車"] },
+  { name: "アミュラン", category: "ferriswheel", latitude: 31.584601, longitude: 130.542596, aliases: ["アミュプラザ鹿児島観覧車", "鹿児島中央駅観覧車"] },
 ] as const;

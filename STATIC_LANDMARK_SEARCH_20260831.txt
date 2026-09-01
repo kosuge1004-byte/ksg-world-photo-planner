@@ -20,3 +20,9 @@ Public references used for scope research:
 - 369days.net nationwide amusement park list (2026-03-01): 144 major operating facilities, explicitly non-exhaustive.
 - FWGP existing Ferris wheel list: nationwide existing-wheel catalogue, but published list is not a current authoritative coordinate registry.
 - Geofabrik Japan OpenStreetMap extract: current Japan OSM data is available, but the full Japan extract is ~2.3 GB and could not be bulk-ingested in this environment.
+
+2026-09-01 nationwide expansion batch 1:
+- Added 6 independently coordinate-verified Ferris wheels as static instant-search entries.
+- Static table now intentionally extends beyond the original 278 R2-prewarm seed entries.
+- Regression verifier updated to require all 278 seed entries plus expansion entries.
+- Closed Palette Town Ferris Wheel was explicitly excluded after confirming its 2022-08-31 closure.

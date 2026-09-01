@@ -324,13 +324,17 @@ function loadCameraSettings(): CameraSettings {
       cameraHeightMeters?: number;
     };
 
+    const focalLengthMm = parsed.focalLengthMm;
+    const lensCenterHeightMeters =
+      parsed.lensCenterHeightMeters ?? parsed.cameraHeightMeters;
+
     return {
-      focalLengthMm:
-        parsed.focalLengthMm ?? DEFAULT_CAMERA_SETTINGS.focalLengthMm,
-      lensCenterHeightMeters:
-        parsed.lensCenterHeightMeters ??
-        parsed.cameraHeightMeters ??
-        DEFAULT_CAMERA_SETTINGS.lensCenterHeightMeters,
+      focalLengthMm: Number.isFinite(focalLengthMm)
+        ? focalLengthMm!
+        : DEFAULT_CAMERA_SETTINGS.focalLengthMm,
+      lensCenterHeightMeters: Number.isFinite(lensCenterHeightMeters)
+        ? lensCenterHeightMeters!
+        : DEFAULT_CAMERA_SETTINGS.lensCenterHeightMeters,
     };
   } catch {
     return DEFAULT_CAMERA_SETTINGS;
@@ -2370,11 +2374,11 @@ function App() {
     const mapCameraAtSchedule = cameraSignature();
 
     const updatePreview = (label: string) => {
-      const render = async () => {
-        if (cancelled || jobId !== previewJobRef.current) return;
+      const render = async (): Promise<boolean> => {
+        if (cancelled || jobId !== previewJobRef.current) return true;
         try {
           setPreviewStatus(label);
-          await captureTripodPreview(
+          const tilesFullyLoaded = await captureTripodPreview(
             viewer,
             previewCanvas,
             tripodPoint,
@@ -2388,6 +2392,7 @@ function App() {
           if (!cancelled && jobId === previewJobRef.current) {
             setPreviewStatus("三脚視点プレビュー");
           }
+          return tilesFullyLoaded;
         } catch (error) {
           console.error("プレビュー生成エラー:", error);
           const message = toUserFacingErrorMessage(error, "preview");
@@ -2397,10 +2402,32 @@ function App() {
               key: "preview-render",
               tone: "error",
               message,
+              diagnosticDetail: buildDiagnosticDetail("三脚視点プレビュー", error, {
+                三脚緯度: tripodPoint?.latitude,
+                三脚経度: tripodPoint?.longitude,
+                三脚楕円体高m: tripodPoint?.ellipsoidalHeightMeters ?? tripodPoint?.height,
+                三脚標高m: tripodPoint?.orthometricHeightMeters,
+                三脚geoidm: tripodPoint?.geoidHeightMeters,
+                三脚高度ソース: tripodPoint?.heightSource,
+                被写体緯度: subjectPoint?.latitude,
+                被写体経度: subjectPoint?.longitude,
+                被写体楕円体高m: subjectPoint?.ellipsoidalHeightMeters ?? subjectPoint?.height,
+                被写体標高m: subjectPoint?.orthometricHeightMeters,
+                被写体geoidm: subjectPoint?.geoidHeightMeters,
+                被写体高度ソース: subjectPoint?.heightSource,
+                焦点距離mm: cameraSettings.focalLengthMm,
+                カメラ高m: cameraSettings.lensCenterHeightMeters,
+                計算モード: calculationMode,
+                補正方位角度: previewViewCorrection.azimuthDegrees,
+                補正仰角度: previewViewCorrection.altitudeDegrees,
+              }),
               actionLabel: "再試行",
               onAction: () => setPreviewRetrySequence((current) => current + 1),
             });
           }
+          // エラー時は「再試行」ボタンでの手動再実行に任せ、3.2秒後の
+          // 自動最終更新では同じ失敗を繰り返させない。
+          return true;
         }
       };
 
@@ -2412,36 +2439,43 @@ function App() {
       return scheduled;
     };
 
-    void updatePreview("プレビュー生成中…");
+    const firstPassFullyLoaded = updatePreview("プレビュー生成中…");
+    void firstPassFullyLoaded;
 
     // Preview視点で追加タイルが読み込まれた後に最終高精細描画を1回だけ行う。
     // 従来は1.2秒/3.2秒の2回再撮影していたが、1.2秒時点の中間画像は
     // 3.2秒時点で必ず置き換えられるため、最終画質・座標計算を変えずに省略する。
+    // 2026-09-01追記: 1回目の撮影で全タイルが揃っていた場合（キャッシュ済み等）は
+    // 3.2秒待つ意味がないため、その場合は最終更新そのものをスキップして
+    // プレビュー確定までの体感時間を短縮する。
     timers.push(
       window.setTimeout(() => {
-        if (cancelled || jobId !== previewJobRef.current) return;
-        const current = cameraSignature();
-        if (sameCamera(current, mapCameraAtSchedule)) {
-          // 予約後にメイン3Dカメラが動いていなければ従来どおり3.2秒で最終更新。
-          void updatePreview("プレビュー最終更新中…");
-          return;
-        }
-
-        // 3.2秒の待機中にユーザーがパン/ズームした場合、操作中へ強制描画を
-        // 割り込ませない。カメラが700ms連続で静止してから最終高精細更新を
-        // 1回だけ実施するので、最終画質は維持したまま操作時のカクつきを避ける。
-        let previous = current;
-        const waitForCameraIdle = () => {
+        void firstPassFullyLoaded.then((tilesFullyLoaded) => {
           if (cancelled || jobId !== previewJobRef.current) return;
-          const next = cameraSignature();
-          if (sameCamera(previous, next)) {
+          if (tilesFullyLoaded) return;
+          const current = cameraSignature();
+          if (sameCamera(current, mapCameraAtSchedule)) {
+            // 予約後にメイン3Dカメラが動いていなければ従来どおり3.2秒で最終更新。
             void updatePreview("プレビュー最終更新中…");
             return;
           }
-          previous = next;
+
+          // 3.2秒の待機中にユーザーがパン/ズームした場合、操作中へ強制描画を
+          // 割り込ませない。カメラが700ms連続で静止してから最終高精細更新を
+          // 1回だけ実施するので、最終画質は維持したまま操作時のカクつきを避ける。
+          let previous = current;
+          const waitForCameraIdle = () => {
+            if (cancelled || jobId !== previewJobRef.current) return;
+            const next = cameraSignature();
+            if (sameCamera(previous, next)) {
+              void updatePreview("プレビュー最終更新中…");
+              return;
+            }
+            previous = next;
+            timers.push(window.setTimeout(waitForCameraIdle, 700));
+          };
           timers.push(window.setTimeout(waitForCameraIdle, 700));
-        };
-        timers.push(window.setTimeout(waitForCameraIdle, 700));
+        });
       }, 3200)
     );
 
