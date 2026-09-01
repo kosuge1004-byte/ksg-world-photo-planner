@@ -33,6 +33,7 @@ import {
   WeekdaySelector,
 } from "./SearchOptionControls";
 import { useSearchTimeRange } from "../search/searchUiPreferences";
+import { isAbortError } from "../utils/runtimeErrors";
 import {
   createSearchProgressEstimator,
   formatEstimatedRemainingTime,
@@ -247,7 +248,7 @@ export function CelestialTransitSearchDialog({
         : "指定条件に一致する日時は見つかりませんでした");
     } catch (error) {
       if (searchGenerationRef.current !== searchGeneration) return;
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (isAbortError(error)) return;
       setEstimatedRemainingSeconds(null);
       setMessage(toUserFacingErrorMessage(
         error,

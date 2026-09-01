@@ -142,6 +142,7 @@ import {
   calculateKarneySurfaceDistanceMeters,
 } from "./geodesy/karneyGeodesic";
 import { captureTripodPreview, pickTripodPreviewSurface } from "./cesium/previewSnapshot";
+import { isAbortError } from "./utils/runtimeErrors";
 import {
   setSubjectPinFromCoordinates,
   getSubjectPinPoint,
@@ -1411,7 +1412,7 @@ function App() {
       setPreviewRefractionWeather(context);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (isAbortError(error)) return;
       setPreviewRefractionWeather(undefined);
       publishUserNotice({
         key: "preview-weather-error",
@@ -1788,7 +1789,7 @@ function App() {
             if (exactCacheKey) setExactTripodCandidates(exactCacheKey, candidates);
           }
         } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") return;
+          if (isAbortError(error)) return;
           console.warn("三脚候補地点を計算できませんでした", error);
           if (!cancelled) {
             // 同一被写体の再計算失敗なら、直前の確定候補まで消して表示を跳ねさせない。
@@ -2065,7 +2066,7 @@ function App() {
         setTimeZone(resolvedTimeZone);
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbortError(error)) return;
         console.warn("撮影地点のタイムゾーンを取得できませんでした", error);
         showUserNotice({
           key: "timezone-fallback",
@@ -2156,7 +2157,7 @@ function App() {
         }));
         endOperationTag("evaluateCelestialLineOfSight");
       }).catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbortError(error)) return;
         console.warn("天体の地形・建物遮蔽を検証できませんでした", error);
         if (!cancelled) {
           const message = error instanceof Error
@@ -2266,7 +2267,7 @@ function App() {
           setMilkyWayLineOfSight({ ...pathVisibility });
         }
       }).catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbortError(error)) return;
         console.warn("天の川の地形・建物遮蔽を検証できませんでした", error);
         if (!cancelled) setMilkyWayLineOfSight({});
       });
@@ -2720,7 +2721,7 @@ function App() {
     } catch (error) {
       if (
         signal.aborted ||
-        (error instanceof DOMException && error.name === "AbortError")
+        (isAbortError(error))
       ) {
         throw error;
       }

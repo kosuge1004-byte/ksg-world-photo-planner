@@ -1,5 +1,7 @@
 export type NetworkDiagnosticKind = "request" | "cache-hit" | "cache-miss" | "deduplicated" | "error";
 
+import { isAbortError } from "../utils/runtimeErrors";
+
 export type NetworkDiagnosticEvent = {
   time: number;
   kind: NetworkDiagnosticKind;
@@ -127,7 +129,7 @@ function combinedSignal(
 }
 
 function isUserAbort(error: unknown, externalSignal?: AbortSignal | null): boolean {
-  return Boolean(externalSignal?.aborted) && error instanceof DOMException && error.name === "AbortError";
+  return Boolean(externalSignal?.aborted) && isAbortError(error);
 }
 
 /** タイムアウト・ネットワーク断（fetch自体が例外を投げた場合）は常に

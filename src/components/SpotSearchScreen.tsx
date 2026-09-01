@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import type { GroundPoint } from "../types/points";
 import type { SubjectRecord } from "../subjectStorage";
 import { toUserFacingErrorMessage } from "../errors/userFeedback";
+import { isAbortError } from "../utils/runtimeErrors";
 
 type Props = {
   open: boolean;
@@ -106,7 +107,7 @@ export function SpotSearchScreen({
         setProgressPercent(Math.min(100, Math.max(0, percent)));
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (isAbortError(error)) return;
       setMessage(toUserFacingErrorMessage(
         error,
         /^https?:\/\//i.test(trimmedQuery) ? "google-maps-url" : "spot-search"

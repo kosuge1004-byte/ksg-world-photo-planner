@@ -27,6 +27,7 @@ import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { horizontalDirectionToVec3 } from "../projection/projectionService";
 import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
 import { verifyPlateauBuildingBaseHeight } from "./plateauBuildingVerification";
+import { isAbortError } from "../utils/runtimeErrors";
 import {
   adaptiveCoarseDistances,
   adaptiveRefinementDistances,
@@ -486,7 +487,7 @@ export async function evaluateCelestialLineOfSight(
       signal
     );
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
     console.warn("地形データを取得できず、遮蔽物を確認できませんでした", error);
     return failedCelestialOcclusion(
       error instanceof Error ? error.message : "DEM遮蔽判定に失敗しました"
