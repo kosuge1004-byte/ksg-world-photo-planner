@@ -734,6 +734,33 @@ async function waitForGeoidBreakerToClear(signal?: AbortSignal): Promise<void> {
   });
 }
 
+// 2026-09-01追記（実機診断より）: 「timeout=15000ms」と宣言していても、
+// 実際にエラーになるまで22755msかかった実測が確認された。原因は、宣言した
+// timeoutMsが実際にはfetchGsiGeoidHeightOnce（実ネットワーク通信）にしか
+// 適用されておらず、その前段のreadGeoidPersistentCache（端末IndexedDB
+// 読み取り、openGeoidCache()のDB接続待ちを含む）には時間制限が一切無かった
+// ため。他の巨大な地形取得と同時にIndexedDBへアクセスが集中する状況下では、
+// このIndexedDB読み取りだけで数秒〜十数秒かかりうる。呼び出し元へ約束する
+// timeoutMsを、内部の一部分ではなく関数全体（IndexedDB読み取り含む）の
+// 上限として扱うよう、全体を1つのタイムアウトで包む。
+async function withOverallTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchGsiGeoidHeight(
   point: Cartographic,
   signal?: AbortSignal
@@ -745,27 +772,31 @@ export async function fetchGsiGeoidHeight(
   const cached = readMemoryCache(geoidHeightCache, key);
   if (cached) return cached;
 
-  const request = (async () => {
-    const persistent = await readGeoidPersistentCache(key);
-    abortIfRequested(signal);
-    if (persistent !== null) return persistent;
+  const request = withOverallTimeout(
+    (async () => {
+      const persistent = await readGeoidPersistentCache(key);
+      abortIfRequested(signal);
+      if (persistent !== null) return persistent;
 
-    // サーバー側で既にGSI CGIへの再試行は行っているが、端末〜Cloudflare間の
-    // 一時的な通信の乱れはサーバー再試行では救えないため、ここでも1回だけ
-    // 短い間隔を空けて再試行する。
-    try {
-      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
-      void writeGeoidPersistentCache(key, height);
-      return height;
-    } catch {
-      abortIfRequested(signal);
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      abortIfRequested(signal);
-      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
-      void writeGeoidPersistentCache(key, height);
-      return height;
-    }
-  })().catch((error: unknown) => {
+      // サーバー側で既にGSI CGIへの再試行は行っているが、端末〜Cloudflare間の
+      // 一時的な通信の乱れはサーバー再試行では救えないため、ここでも1回だけ
+      // 短い間隔を空けて再試行する。
+      try {
+        const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
+        void writeGeoidPersistentCache(key, height);
+        return height;
+      } catch {
+        abortIfRequested(signal);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        abortIfRequested(signal);
+        const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
+        void writeGeoidPersistentCache(key, height);
+        return height;
+      }
+    })(),
+    GEOID_FETCH_TIMEOUT_MS,
+    "国土地理院ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）"
+  ).catch((error: unknown) => {
     geoidHeightCache.delete(key);
     if (!(isAbortError(error))) {
       // 1回の失敗で長時間ブロックすると、それだけで「頻繁にエラーが出る」体感を
@@ -809,14 +840,18 @@ export async function fetchGsiGeoidHeightPointSpecific(
   const cached = readMemoryCache(geoidHeightCache, key);
   if (cached) return cached;
 
-  const request = (async () => {
-    const persistent = await readGeoidPersistentCache(key);
-    abortIfRequested(signal);
-    if (persistent !== null) return persistent;
-    const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal, true, timeoutMs);
-    void writeGeoidPersistentCache(key, height);
-    return height;
-  })().catch((error: unknown) => {
+  const request = withOverallTimeout(
+    (async () => {
+      const persistent = await readGeoidPersistentCache(key);
+      abortIfRequested(signal);
+      if (persistent !== null) return persistent;
+      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal, true, timeoutMs);
+      void writeGeoidPersistentCache(key, height);
+      return height;
+    })(),
+    timeoutMs,
+    "地点別ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）"
+  ).catch((error: unknown) => {
     geoidHeightCache.delete(key);
     if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + 8_000;
     throw error;
