@@ -711,13 +711,34 @@ async function fetchGsiGeoidHeightOnce(
   return data.geoidHeightMeters;
 }
 
+// 2026-09-01追記: 従来はgeoidUnavailableUntil中のジオイド取得を即座に
+// 失敗させていた。しかし三脚候補の精密化（refineWithManualEquivalentProjection）
+// はジオイド取得の失敗をそのまま候補全体の棄却に使っており、無関係な
+// 地点・無関係な検索で先に起きた一時的なAPI不調（8秒間のブレーカー）が、
+// 既に得られている粗い解（seed）ごと候補を消してしまう実害が実機診断で
+// 確認された。ブレーカーは「即失敗」ではなく「解除まで待ってから通常どおり
+// 試す」方式にし、瞬間的な不調からの回復を優先する。ブレーカーの残り時間は
+// 設計上常に8秒以内のため、待ち時間の上限も自明に抑えられる。
+async function waitForGeoidBreakerToClear(signal?: AbortSignal): Promise<void> {
+  const remainingMs = geoidUnavailableUntil - Date.now();
+  if (remainingMs <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, remainingMs);
+    if (!signal) return;
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"));
+    };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function fetchGsiGeoidHeight(
   point: Cartographic,
   signal?: AbortSignal
 ): Promise<number> {
-  if (Date.now() < geoidUnavailableUntil) {
-    throw new Error("国土地理院ジオイドAPIの再試行待ちです");
-  }
+  await waitForGeoidBreakerToClear(signal);
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
   const key = geoidRegionKey(point);
@@ -781,9 +802,7 @@ export async function fetchGsiGeoidHeightPointSpecific(
   signal?: AbortSignal,
   timeoutMs = GEOID_FETCH_TIMEOUT_MS
 ): Promise<number> {
-  if (Date.now() < geoidUnavailableUntil) {
-    throw new Error("国土地理院ジオイドAPIの再試行待ちです");
-  }
+  await waitForGeoidBreakerToClear(signal);
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
   const key = `point:${latitude.toFixed(4)},${longitude.toFixed(4)}`;

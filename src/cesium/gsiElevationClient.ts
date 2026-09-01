@@ -334,6 +334,26 @@ async function requestBatchWithRecovery(
   }
 }
 
+// 2026-09-01追記: REQUEST_BATCH_SIZE（1024点、サーバーが1要求として受理
+// できる上限）と、実際にクライアントが1要求へ詰め込む点数は別の関心事
+// だった。640点規模の初期探索は Math.ceil(640/1024)=1 バッチにしかならず、
+// 下のMAX_CONCURRENT_REQUESTS=8の並列ワーカーが用意されていても実質1本
+// しか動かず、その1本がGSI原本サーバーへの実問い合わせを多く含む重い
+// エリアでREQUEST_TIMEOUT_MS（30秒）ぎりぎりまでかかる実測が確認された
+// （elapsed=30975.3ms）。8並列という既存の仕組みを実際に活かすため、
+// ある程度まとまった点数（PARALLEL_SPLIT_MIN_POINTS以上）は、最初から
+// おおよそMAX_CONCURRENT_REQUESTS本に均等分割してから投げる。座標・順序・
+// maximumDetail・補間方式・DEMソース優先順位・再試行条件・レスポンスの
+// 組み立て方は一切変更せず、「1要求に何点詰め込むか」だけを変える。
+const PARALLEL_SPLIT_MIN_POINTS = 96;
+const MIN_PARALLEL_CHUNK_SIZE = 48;
+
+function chunkSizeForRequest(totalPoints: number): number {
+  if (totalPoints < PARALLEL_SPLIT_MIN_POINTS) return REQUEST_BATCH_SIZE;
+  const evenSplitSize = Math.ceil(totalPoints / MAX_CONCURRENT_REQUESTS);
+  return Math.min(REQUEST_BATCH_SIZE, Math.max(MIN_PARALLEL_CHUNK_SIZE, evenSplitSize));
+}
+
 export async function fetchGsiElevationSamples(
   points: GsiElevationClientPoint[],
   signal?: AbortSignal,
@@ -351,11 +371,12 @@ export async function fetchGsiElevationSamples(
       tileCacheBypassCount: 0,
     };
   }
+  const requestChunkSize = chunkSizeForRequest(points.length);
   const batches = Array.from(
-    { length: Math.ceil(points.length / REQUEST_BATCH_SIZE) },
+    { length: Math.ceil(points.length / requestChunkSize) },
     (_, index) => points.slice(
-      index * REQUEST_BATCH_SIZE,
-      (index + 1) * REQUEST_BATCH_SIZE
+      index * requestChunkSize,
+      (index + 1) * requestChunkSize
     )
   );
   const results = new Array<GsiElevationClientResult>(batches.length);
