@@ -743,23 +743,7 @@ async function waitForGeoidBreakerToClear(signal?: AbortSignal): Promise<void> {
 // このIndexedDB読み取りだけで数秒〜十数秒かかりうる。呼び出し元へ約束する
 // timeoutMsを、内部の一部分ではなく関数全体（IndexedDB読み取り含む）の
 // 上限として扱うよう、全体を1つのタイムアウトで包む。
-async function withOverallTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+import { withOverallTimeout } from "../utils/withOverallTimeout";
 
 export async function fetchGsiGeoidHeight(
   point: Cartographic,

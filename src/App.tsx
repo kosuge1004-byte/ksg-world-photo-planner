@@ -2557,6 +2557,85 @@ function App() {
     }
   }
 
+  /**
+   * 2026-09-01追記: 「検索開始ボタンを押した直後に地図が動いてほしい」
+   * （Googleマップ同様の体感）という要望に対応する。従来は地面確定・
+   * 建物屋根合わせ・OSM高さ推定の3つがすべて終わるまで地図を動かさな
+   * かったため、緯度経度自体は一瞬で決まる地名でも、体感的な検索完了
+   * までが長く見えていた。地面確定（DEM、単一地点で比較的速い）だけを
+   * 待って即座にピンを立てて地図を動かし、屋根合わせ・OSM高さ推定は
+   * バックグラウンドで継続して、より良い高さが見つかり次第そっと
+   * 差し替える。地面確定自体の速度・精度は変更しない。
+   */
+  function refineSearchSubjectHeightInBackground(
+    latitude: number,
+    longitude: number,
+    label: string,
+    groundPointPromise: Promise<GroundPoint>
+  ): void {
+    void (async () => {
+      const viewer = mapViewerRef.current;
+      const roofPointPromise: Promise<GroundPoint | null> = (async () => {
+        if (!viewer || viewer.isDestroyed()) return null;
+        try {
+          if (precisionSettings.accuracyMode === "highest") {
+            await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
+            if (viewer.isDestroyed()) return null;
+          }
+          return await resolvePlateauRoofGroundPoint(viewer, latitude, longitude, label);
+        } catch (error) {
+          console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
+          return null;
+        }
+      })();
+      const osmHintPromise = findOsmSubjectHeightHint(latitude, longitude).catch((error) => {
+        console.warn("被写体地点のOSM高さ推定に失敗しました", error);
+        return null;
+      });
+      const [groundPoint, roofPoint, osmHint] = await Promise.all([
+        groundPointPromise,
+        roofPointPromise,
+        osmHintPromise,
+      ]);
+      const osmPoint = osmHint ? applyOsmSubjectHeightHint(groundPoint, osmHint, label) : null;
+      const candidates = [roofPoint, osmPoint].filter(
+        (point): point is GroundPoint => point !== null
+      );
+      if (candidates.length === 0) return;
+      const refined = candidates.reduce((tallest, current) =>
+        ellipsoidalHeightMeters(current) > ellipsoidalHeightMeters(tallest) ? current : tallest
+      );
+      if (ellipsoidalHeightMeters(refined) <= ellipsoidalHeightMeters(groundPoint)) return;
+
+      // 待っている間にユーザーが別の被写体へ移動・変更していたら、
+      // 古い検索結果で上書きしない（同じ地点かどうかを緯度経度で確認）。
+      setSubjectPoint((current) => {
+        if (
+          !current ||
+          Math.abs(current.latitude - latitude) > 0.0005 ||
+          Math.abs(current.longitude - longitude) > 0.0005
+        ) {
+          return current;
+        }
+        const refinedWithLabel = { ...refined, label: current.label };
+        const activeViewer = mapViewerRef.current;
+        if (activeViewer && !activeViewer.isDestroyed()) {
+          return setSubjectPinFromPosition(
+            activeViewer,
+            Cartesian3.fromDegrees(
+              refinedWithLabel.longitude,
+              refinedWithLabel.latitude,
+              refinedWithLabel.height
+            ),
+            refinedWithLabel.label,
+            refinedWithLabel
+          );
+        }
+        return refinedWithLabel;
+      });
+    })();
+  }
+
   async function resolveSearchSubject(
     latitude: number,
     longitude: number,
@@ -2840,11 +2919,16 @@ ${diagnosticMessage}
       return;
     }
 
-    const subject = await resolveSearchSubject(
+    // 2026-09-01追記: 地面確定（DEM）だけを待って即座にピンを立て・地図を
+    // 動かす。屋根合わせ・OSM高さ推定はバックグラウンドへ回し、より良い
+    // 高さが見つかり次第そっと差し替える（Googleマップ同様、検索結果へ
+    // すぐ移動してから詳細を追いかける体感にするため）。
+    const groundPointPromise = resolveGroundPoint(
       location.latitude,
       location.longitude,
       location.label
     );
+    const subject = await groundPointPromise;
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const pinned = viewer && !viewer.isDestroyed()
       ? setSubjectPinFromPosition(
@@ -2868,6 +2952,12 @@ ${diagnosticMessage}
     setMapCenter(center);
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
+    refineSearchSubjectHeightInBackground(
+      location.latitude,
+      location.longitude,
+      location.label,
+      groundPointPromise
+    );
   }
 
   function applyStoredSubject(record: SubjectRecord) {

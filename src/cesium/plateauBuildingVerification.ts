@@ -3,6 +3,7 @@ import { Cartesian3, Cartographic, Ellipsoid, Ray, type Scene, type Viewer } fro
 import { fetchGsiGeoidHeight, groundPointFromCoordinates } from "./worldTerrain";
 import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
 import { clampToHeightWithTimeout } from "./clampToHeightWithTimeout";
+import { withOverallTimeout } from "../utils/withOverallTimeout";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
@@ -331,6 +332,34 @@ export async function resolvePlateauRoofGroundPoint(
   const scene = viewer.scene as ClampHeightScene;
   if (typeof scene.clampToHeightMostDetailed !== "function") return null;
 
+  // 2026-09-01追記（実機診断より）: 東京タワー等、隣接する低い建物が
+  // Stage 2局所探索で先に見つかるケースでは、Stage 2局所→Stage 3精密化→
+  // ジオイド取得の最大3段階が順番に実行される。各段階は個別に
+  // 最大10秒（clampToHeightWithTimeout）まで待つため、直列に積み重なると
+  // 合計30秒超になりうる（「検索が異常なほど遅い」という報告と一致）。
+  // 呼び出し元（resolveSearchSubject）はこの関数の結果がnullでも通常の
+  // DEM地面高へ安全にフォールバックするため、ここに関数全体としての
+  // 上限を設けても精度上のリスクはない。
+  const OVERALL_ROOF_SEARCH_TIMEOUT_MS = 15_000;
+  try {
+    return await withOverallTimeout(
+      resolvePlateauRoofGroundPointUnbounded(viewer, latitude, longitude, label, signal),
+      OVERALL_ROOF_SEARCH_TIMEOUT_MS,
+      `${label}の建物屋根探索がタイムアウトしました`
+    );
+  } catch (error) {
+    console.warn(`${label}の建物屋根探索がタイムアウトまたは失敗したため、通常のDEM地面高へフォールバックします`, error);
+    return null;
+  }
+}
+
+async function resolvePlateauRoofGroundPointUnbounded(
+  viewer: Viewer,
+  latitude: number,
+  longitude: number,
+  label: string,
+  signal?: AbortSignal
+): Promise<ResolvedGroundPoint | null> {
   const origin: CandidatePoint = { latitude, longitude };
 
   // Stage 2: 局所探索（半径20m以内）。
