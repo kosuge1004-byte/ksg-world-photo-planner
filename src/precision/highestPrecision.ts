@@ -13,6 +13,7 @@ import type { HorizontalCoordinates } from "../types/celestial";
 import { calculateKarneyDestinationPoint, calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
 import { fetchSiteContexts } from "../search/siteContext";
 import { sampleWorldTerrainHighestPrecision, geoidHeightMetersForHighestPrecisionSample } from "../cesium/worldTerrain";
+import { clampToHeightWithTimeout } from "../cesium/clampToHeightWithTimeout";
 import {
   calculateCelestialHorizontalCoordinates,
   createCameraProjection,
@@ -148,7 +149,8 @@ async function clampMostDetailed(
   const positions = points.map((point) =>
     Cartesian3.fromDegrees(point.longitude, point.latitude, point.height)
   );
-  const clamped = await viewer.scene.clampToHeightMostDetailed(
+  const clamped = await clampToHeightWithTimeout(
+    viewer.scene,
     positions,
     [...viewer.entities.values],
     0.01

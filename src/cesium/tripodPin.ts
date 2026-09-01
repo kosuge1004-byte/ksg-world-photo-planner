@@ -14,6 +14,7 @@ import {
 import type { GroundPoint, ResolvedGroundPoint } from "../types/points";
 import { publishUserNotice } from "../errors/userFeedback";
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "../height/heightResolver";
+import { clampToHeightWithTimeout } from "./clampToHeightWithTimeout";
 import type { HeightMetadata } from "./subjectPin";
 
 const TRIPOD_PIN_ID = "ksg-tripod-pin";
@@ -94,7 +95,7 @@ export async function setTripodPinFromCoordinates(
     if (preferPhotorealisticSurface) {
       try {
         const clamped = (
-          await viewer.scene.clampToHeightMostDetailed([
+          await clampToHeightWithTimeout(viewer.scene, [
             Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
           ], [...viewer.entities.values], 0.15)
         )[0];

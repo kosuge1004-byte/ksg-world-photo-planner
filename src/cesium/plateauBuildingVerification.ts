@@ -2,6 +2,7 @@ import { Cartesian3, Cartographic, Ellipsoid, Ray, type Scene, type Viewer } fro
 
 import { fetchGsiGeoidHeight, groundPointFromCoordinates } from "./worldTerrain";
 import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
+import { clampToHeightWithTimeout } from "./clampToHeightWithTimeout";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
@@ -41,7 +42,7 @@ type RayPickingScene = Scene & {
 type ClampHeightScene = Scene & {
   clampToHeightMostDetailed?: (
     cartesians: Cartesian3[],
-    objectsToExclude?: unknown[],
+    objectsToExclude?: object[],
     width?: number
   ) => Promise<(Cartesian3 | undefined)[]>;
 };
@@ -208,6 +209,9 @@ type ClampedCandidate = {
  * 候補地点群をまとめて1回のバッチ呼び出しでclampToHeightMostDetailedへ通し、
  * DEM地面との突き合わせ（非現実的な高さの除外）まで済ませた有効な結果を返す。
  */
+// 2026-09-01追記: clampToHeightMostDetailedの無期限ハング対策は
+// ./clampToHeightWithTimeout に共通化した（他の呼び出し箇所と揃える）。
+
 async function clampAndValidate(
   viewer: Viewer,
   candidates: CandidatePoint[],
@@ -226,7 +230,7 @@ async function clampAndValidate(
   if (globe) globe.show = false;
   let clamped: (Cartesian3 | undefined)[];
   try {
-    clamped = await scene.clampToHeightMostDetailed.call(
+    clamped = await clampToHeightWithTimeout(
       scene,
       positions,
       // Googleタイルの形状データはこの判定に一切使わない（利用規約上の理由。
