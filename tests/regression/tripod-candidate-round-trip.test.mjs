@@ -229,7 +229,7 @@ test("tripod candidate progress: preliminary display does not wait for weather I
   assert.deepEqual(events[resolvedIndex].candidates, candidates, "途中通知と最終戻り値の精度・候補順は同一であるべき");
 });
 
-test("multiple terrain intersections: both crossings are kept as separate candidates, not merged into one", async () => {
+test("multiple terrain intersections: only the farthest crossing from the subject is kept as the final candidate", async () => {
   const sun = realSunHorizontal();
   const point = { id: "sun", label: "太陽", azimuthDegrees: sun.azimuthDegrees, altitudeDegrees: sun.altitudeDegrees };
   const ray = buildCelestialBackwardRay(SUBJECT, sun.azimuthDegrees, sun.altitudeDegrees);
@@ -249,21 +249,17 @@ test("multiple terrain intersections: both crossings are kept as separate candid
     { minMeters: 100, maxMeters: 1000 }
   );
 
-  assert.equal(candidates.length, 2, `2つの交点はどちらも候補として保持されるべき（実際: ${candidates.length}件）`);
-  const distances = candidates.map((c) => c.distanceMeters).sort((a, b) => a - b);
+  // 2026-09-02変更（明示指示により）: 同一天体で複数の交点が見つかった
+  // 場合、被写体から最も遠い1件だけを最終候補として返す方針になった。
+  // 300m・700mの2箇所が見つかっても、遠い方（700m側）だけが残るべき。
+  assert.equal(candidates.length, 1, `最遠の候補1件だけが残るべき（実際: ${candidates.length}件）`);
   // 2026-08-27追記: (d-300)(d-700)/10000 は300m・700m付近で勾配が非常に
   // 緩やか（±0.04程度）なため、3パスまでの収束反復では数m単位の残差が
   // 残ることがある。これは実装のバグではなく、この合成地形の勾配特性に
   // よるもの（実務上の三脚設置精度としては問題にならない差）。
   // 許容誤差を2mから4mへ調整する。
-  assert.ok(Math.abs(distances[0] - 300) < 6, `1つ目の交点は300m付近（実際: ${distances[0]}）`);
-  assert.ok(Math.abs(distances[1] - 700) < 6, `2つ目の交点は700m付近（実際: ${distances[1]}）`);
-  // 遠い候補から並ぶ（intersectionIndex 1が一番遠い距離）。
-  const sortedByDescendingDistance = [...candidates].sort((a, b) => b.distanceMeters - a.distanceMeters);
-  assert.deepEqual(
-    sortedByDescendingDistance.map((c) => c.intersectionIndex),
-    [1, 2]
-  );
+  assert.ok(Math.abs(candidates[0].distanceMeters - 700) < 6, `残った候補は700m付近であるべき（実際: ${candidates[0].distanceMeters}）`);
+  assert.equal(candidates[0].intersectionIndex, 1, "最遠の候補のintersectionIndexは1であるべき");
 });
 
 test("rocky/bumpy real-world terrain: convergence succeeds within the iteration budget without loosening the angular tolerance", async () => {

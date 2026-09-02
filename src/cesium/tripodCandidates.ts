@@ -2102,7 +2102,13 @@ async function calculateOneCandidates(
     intersectionOutcomes,
     traceEvents,
   });
-  return unique;
+  // 2026-09-02変更（明示指示により）: 同一天体で複数の候補が見つかった
+  // 場合、被写体から最も遠い1件だけを最終候補として返す（地図上に表示
+  // される候補数を確実に1天体あたり最大1件へ絞り、描画・地図側の負荷を
+  // 下げる狙い）。uniqueは既に距離の降順でソート済みのため、先頭が
+  // 最遠の候補。診断（recordDiagnostics）には全件の情報をそのまま残し、
+  // 「何件見つかって何件に絞ったか」を後から確認できるようにする。
+  return unique.slice(0, 1);
 }
 
 export async function calculateTripodCandidates(

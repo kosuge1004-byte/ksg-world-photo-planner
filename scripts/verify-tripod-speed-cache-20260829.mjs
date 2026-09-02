@@ -42,7 +42,9 @@ assert.match(appSource, /refractionCorrectionMode === "standard"/);
 assert.match(appSource, /loadPersistentTripodSeeds/);
 assert.match(appSource, /savePersistentTripodSeeds/);
 assert.match(appSource, /warmGsiDeviceTilesFromPersistentCache/);
-assert.match(appSource, /const immediatePreliminaryCandidates = buildPreliminaryTripodCandidates\(/);
+// 2026-09-02変更: 暫定候補の先行表示（immediatePreliminaryCandidates）は
+// 明示指示により撤去した。表示は確定候補のみとする方針のため、この
+// アサーションは削除する（他の高速化キャッシュ関連の検証は維持）。
 assert.match(appSource, /tripodCalculationInFlightRef\.current\?\.runId === runId/);
 assert.match(appSource, /controller\.abort\(\);[\s\S]*?releaseInFlight\(\);/);
 assert.match(appSource, /onCelestialCandidatesResolved|resolvedCandidates/);

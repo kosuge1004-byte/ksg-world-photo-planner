@@ -116,7 +116,6 @@ import {
   thirdDimensionSourceForAccuracyMode,
 } from "./cesium/celestialOcclusion";
 import {
-  buildPreliminaryTripodCandidates,
   calculateTripodCandidates,
   getLastTripodSearchDiagnostics,
   getLastCoarseScanSamples,
@@ -240,12 +239,31 @@ import {
   openNativeSystemLocationSettings,
 } from "./device/locationSettings";
 
+// 2026-09-02変更（明示指示により）: 天体は同時に複数表示しない方針に
+// 変更したため、既定値も1つだけをtrueにする。
 const DEFAULT_CELESTIAL_VISIBILITY: CelestialVisibility = {
   sun: true,
-  moon: true,
-  milkyWay: true,
-  polaris: true,
+  moon: false,
+  milkyWay: false,
+  polaris: false,
 };
+
+/**
+ * 2026-09-02追記: 天体は同時に複数表示しない方針のため、localStorage・
+ * プロジェクトファイル・共有リンクなど、この方針より前に保存された
+ * データ（複数trueが混在しうる）を読み込む際は、必ずここを通して
+ * 「最初に見つかった1つだけをtrueにする」よう正規化する。
+ */
+function normalizeCelestialVisibility(value: CelestialVisibility): CelestialVisibility {
+  const order: Array<keyof CelestialVisibility> = ["sun", "moon", "milkyWay", "polaris"];
+  const selected = order.find((key) => value[key]) ?? "sun";
+  return {
+    sun: selected === "sun",
+    moon: selected === "moon",
+    milkyWay: selected === "milkyWay",
+    polaris: selected === "polaris",
+  };
+}
 
 const TRIPOD_CACHE_PREPARATION_TIMEOUT_MS = 2_000;
 
@@ -372,10 +390,10 @@ function loadCelestialVisibility(): CelestialVisibility {
       return DEFAULT_CELESTIAL_VISIBILITY;
     }
 
-    return {
+    return normalizeCelestialVisibility({
       ...DEFAULT_CELESTIAL_VISIBILITY,
       ...(JSON.parse(saved) as CelestialVisibility),
-    };
+    });
   } catch {
     return DEFAULT_CELESTIAL_VISIBILITY;
   }
@@ -658,12 +676,9 @@ function App() {
     useState<Partial<Record<number, boolean>>>({});
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
-  // 2026-08-28追記: 精密計算（数秒〜数十秒）が終わる前に、通信不要の
-  // 理論値を「候補点計算中」として先に表示するための、天体ID→暫定候補の
-  // マップ。精密計算が完了した天体は、対応するエントリを削除する
-  // （tripodCandidatesの確定表示に切り替わるため）。
-  const [preliminaryTripodCandidates, setPreliminaryTripodCandidates] =
-    useState<Partial<Record<TripodCandidate["id"], TripodCandidate>>>({});
+  // 2026-09-02変更（明示指示により）: 計算中の暫定候補（地形未確認の
+  // 理論値）は地図に表示しない方針となったため撤去した。表示するのは
+  // 地形確認まで完了した確定候補（tripodCandidates）のみ。
   const [tripodCandidateSelectionOpen, setTripodCandidateSelectionOpen] =
     useState(false);
   const tripodCandidatesRef = useRef<TripodCandidate[]>([]);
@@ -931,7 +946,6 @@ function App() {
       lastConfirmedTripodSubjectRef.current = null;
       tripodHintSubjectRef.current = null;
       setTripodCandidates([]);
-      setPreliminaryTripodCandidates({});
       setTripodCandidateRetrySequence((current) => current + 1);
       setTripodSeedResetState("done");
     } catch {
@@ -1469,20 +1483,13 @@ function App() {
 
   const displayedTripodCandidates = useMemo(() => {
     if (!timelineInteracting || !subjectPoint) {
-      // 2026-08-28追記: まだ精密計算が終わっていない（確定候補がまだない）
-      // 天体については、通信を待たずに表示できる暫定候補（地球を完全な
-      // 球体とみなした理論値、solutionType: "preliminary"）を補って表示する。
-      // 精密計算が終わった天体は、確定候補（tripodCandidates）が優先される
-      // （setPreliminaryTripodCandidatesが完了時に空にリセットされるため、
-      // 自然にこの補完は行われなくなる）。
-      const confirmedIds = new Set(tripodCandidates.map((candidate) => candidate.id));
-      const preliminaryOnly = Object.values(preliminaryTripodCandidates).filter(
-        (candidate): candidate is TripodCandidate =>
-          candidate !== undefined && !confirmedIds.has(candidate.id)
-      );
-      return preliminaryOnly.length > 0
-        ? [...tripodCandidates, ...preliminaryOnly]
-        : tripodCandidates;
+      // 2026-09-02変更（明示指示により）: 計算中の暫定候補（地球を完全な
+      // 球体とみなした理論値、solutionType: "preliminary"）は地図に表示
+      // しない。表示するのは地形確認まで完了した確定候補（tripodCandidates）
+      // のみとする。以前はここで暫定候補を補って先行表示していたが、
+      // 候補が見つかるたびに地図の描画が頻繁に更新される負荷の原因にも
+      // なっていたため、確定時の1回だけ描画する形にする。
+      return tripodCandidates;
     }
     const previousById = new Map<TripodCandidate["id"], TripodCandidate[]>();
     for (const candidate of lastConfirmedTripodCandidatesRef.current) {
@@ -1515,7 +1522,6 @@ function App() {
     timelineInteracting,
     tripodCandidateSourcePoints,
     tripodCandidates,
-    preliminaryTripodCandidates,
   ]);
 
   const selectableDisplayedTripodCandidates = useMemo(
@@ -1532,7 +1538,6 @@ function App() {
       lastConfirmedTripodCandidatesRef.current = [];
       lastConfirmedTripodSubjectRef.current = null;
       setTripodCandidates([]);
-      setPreliminaryTripodCandidates({});
       setTripodCandidateCalculationStatus("idle");
       return;
     }
@@ -1634,7 +1639,6 @@ function App() {
       lastConfirmedTripodCandidatesRef.current = exactCachedCandidates;
       lastConfirmedTripodSubjectRef.current = { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude };
       setTripodCandidates(exactCachedCandidates);
-      setPreliminaryTripodCandidates({});
       setTripodCandidateCalculationStatus("complete");
       return;
     }
@@ -1662,15 +1666,6 @@ function App() {
       tripodCandidatesRef.current = lastConfirmedTripodCandidatesRef.current;
       setTripodCandidates(lastConfirmedTripodCandidatesRef.current);
     }
-    const immediatePreliminaryCandidates = buildPreliminaryTripodCandidates(
-      subjectPoint,
-      enabledPoints,
-      cameraSettings.lensCenterHeightMeters,
-      initialDirectionObserver
-    );
-    setPreliminaryTripodCandidates(Object.fromEntries(
-      immediatePreliminaryCandidates.map((candidate) => [candidate.id, candidate])
-    ));
     setTripodCandidateCalculationStatus("calculating");
 
     let cancelled = false;
@@ -1745,13 +1740,11 @@ function App() {
             resolveTripodCandidateRefractionWeather,
             precisionSettings.tripodCandidateDoubleCheckEnabled,
             initialDirectionObserver,
-            (preliminary) => {
-              if (cancelled || controller.signal.aborted) return;
-              setPreliminaryTripodCandidates((current) => ({
-                ...current,
-                [preliminary.id]: preliminary,
-              }));
-            },
+            // 2026-09-02変更（明示指示により）: 計算中の暫定候補は地図に
+            // 表示しない方針になったため、この通知を受けてもstateを更新
+            // しない（頻繁な再描画の発生源そのものを止める）。コールバック
+            // 自体は下層の探索ロジック（進捗診断等）に影響しないよう残す。
+            () => {},
             (resolvedId, resolvedCandidates) => {
               if (cancelled || controller.signal.aborted || resolvedCandidates.length === 0) return;
               // 先に完了した天体の全交点を即時表示し、遅い天体の完了を待たない。
@@ -1764,12 +1757,6 @@ function App() {
                 tripodCandidatesRef.current = merged;
                 return merged;
               });
-              setPreliminaryTripodCandidates((current) => {
-                if (current[resolvedId] === undefined) return current;
-                const next = { ...current };
-                delete next[resolvedId];
-                return next;
-              });
             },
             previewViewCorrection
           );
@@ -1779,12 +1766,6 @@ function App() {
             lastConfirmedTripodCandidatesRef.current = displayedCandidates;
             lastConfirmedTripodSubjectRef.current = { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude };
             setTripodCandidates(displayedCandidates);
-            // 精密解が得られた天体だけ暫定値を除去する。解なし・通信失敗の
-            // 天体は概算候補を残し、ユーザーが地図上で確認できるようにする。
-            const confirmedIds = new Set(displayedCandidates.map((candidate) => candidate.id));
-            setPreliminaryTripodCandidates((current) => Object.fromEntries(
-              Object.entries(current).filter(([id]) => !confirmedIds.has(id as TripodCandidate["id"]))
-            ));
             setTripodCandidateCalculationStatus(
               candidates.length > 0 ? "complete" : "no-solution"
             );
@@ -1809,7 +1790,7 @@ function App() {
               tripodCandidatesRef.current = [];
               setTripodCandidates([]);
             }
-            // 既に表示できた概算候補は消さない。精密計算だけが失敗したことを
+            // 直前に確定していた候補は消さない。精密計算だけが失敗したことを
             // 明示しつつ、候補確認・再試行のどちらも可能な状態を維持する。
             setTripodCandidateCalculationStatus("error");
             const isTerrainDataUnavailable =
@@ -3309,7 +3290,7 @@ ${diagnosticMessage}
       });
     }
     setCameraSettings(project.cameraSettings);
-    setCelestialVisibility(project.celestialVisibility); setPreviewFrameMode(project.previewFrameMode);
+    setCelestialVisibility(normalizeCelestialVisibility(project.celestialVisibility)); setPreviewFrameMode(project.previewFrameMode);
     setMapZoom(project.mapZoom); setMapCenter(project.mapCenter); mapCenterRef.current = project.mapCenter;
     setCelestialMenuOpen(project.displaySettings.celestialMenuOpen);
     timeZoneRef.current = project.timeZone; setTimeZone(project.timeZone);
@@ -3448,7 +3429,7 @@ ${diagnosticMessage}
         }))
       );
       setCameraSettings(sharedImportPayload.cameraSettings);
-      setCelestialVisibility(sharedImportPayload.celestialVisibility);
+      setCelestialVisibility(normalizeCelestialVisibility(sharedImportPayload.celestialVisibility));
       setPreviewFrameMode(sharedImportPayload.previewFrameMode);
       timeZoneRef.current = sharedImportPayload.timeZone;
       setTimeZone(sharedImportPayload.timeZone);
@@ -4649,13 +4630,9 @@ ${diagnosticMessage}
                 }
               >
                 {tripodCandidateCalculationStatus === "calculating"
-                  ? (Object.keys(preliminaryTripodCandidates).length > 0
-                      ? "候補点計算中…（表示中の位置は概算です）"
-                      : "三脚候補を精密計算中…")
+                  ? "三脚候補を精密計算中…"
                   : tripodCandidateCalculationStatus === "complete"
-                    ? (Object.keys(preliminaryTripodCandidates).length > 0
-                        ? "三脚候補（地形未確定の概算を含む）"
-                        : "確定した三脚候補")
+                    ? "確定した三脚候補"
                     : tripodCandidateCalculationStatus === "no-solution"
                       ? (displayedTripodCandidates.length > 0
                           ? "確定解なし（概算候補を表示）"
