@@ -76,10 +76,11 @@ test("terrain horizon uncertainty does not turn a visible body into confirmed ob
     terrainElevationDegrees >= celestialAltitudeDegrees - 0.015;
   assert.equal(formerRuleObstructed, true, "the former one-sided rule must reproduce the false positive");
 
-  assert.deepEqual(
-    classifyTerrainOcclusion(celestialAltitudeDegrees, terrainElevationDegrees),
-    { clearanceDegrees: 0.009999999999999787, status: "uncertain" },
-  );
+  // 2026-09-02変更: 戻り値にvisibleFraction（視直径込みの可視面積割合）
+  // が追加されたため、deepEqualではなく個別フィールドの比較にする。
+  const decision = classifyTerrainOcclusion(celestialAltitudeDegrees, terrainElevationDegrees);
+  assert.equal(decision.clearanceDegrees, 0.009999999999999787);
+  assert.equal(decision.status, "uncertain");
   assert.equal(
     classifyTerrainOcclusion(10.02, 10).status,
     "visible",

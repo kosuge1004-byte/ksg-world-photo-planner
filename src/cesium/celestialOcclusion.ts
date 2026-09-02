@@ -454,7 +454,7 @@ export async function prepareCelestialLineOfSightObserver(
 export async function evaluateCelestialLineOfSight(
   viewer: Viewer,
   observer: CelestialLineOfSightObserver,
-  horizontal: HorizontalCoordinates,
+  horizontal: HorizontalCoordinates & { angularDiameterDegrees?: number },
   signal?: AbortSignal,
   onDemVerified?: (result: CelestialOcclusion) => void,
   thirdDimensionSource: ThirdDimensionSource = "plateau-verified",
@@ -497,7 +497,8 @@ export async function evaluateCelestialLineOfSight(
     horizontal.altitudeDegrees,
     terrain.maximumElevationDegrees,
     undefined,
-    terrain.distanceMeters
+    terrain.distanceMeters,
+    horizontal.angularDiameterDegrees ?? 0
   );
   const terrainObstructed = terrainDecision.status === "obstructed";
   const terrainBoundaryUncertain = terrainDecision.status === "uncertain";

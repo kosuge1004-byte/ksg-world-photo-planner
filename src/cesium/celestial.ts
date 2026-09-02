@@ -256,6 +256,76 @@ export function angularDistanceFromCameraCenterDegrees(
   return Math.acos(Math.max(-1, Math.min(1, dot(direction, projection.forward)))) * RAD;
 }
 
+/**
+ * 太陽・月の視直径（縦方向、大気差による近地平線での潰れを含む）を、
+ * 画面投影（プロジェクション）に依存せず計算する。地形遮蔽判定
+ * （円盤の何%が地形稜線より上に出ているか）で使うため、画面座標系
+ * ではなく角度（度）のまま返す。北極星・天の川など視直径を持たない
+ * 天体は呼び出し対象外。
+ */
+/**
+ * App.tsx側（`astronomy-engine`のBody型を直接importしていない箇所）から
+ * 呼びやすいよう、CelestialBodyId（文字列）を受け取るラッパー。
+ * sun/moon以外（milkyWay/polaris、視直径を持たない）は0を返す。
+ */
+export function celestialVerticalAngularDiameterDegreesForId(
+  id: CelestialBodyId,
+  date: Date,
+  observerPoint: GroundPoint,
+  geometricAltitudeDegrees: number,
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
+): number {
+  if (id !== "sun" && id !== "moon") return 0;
+  return celestialVerticalAngularDiameterDegrees(
+    id === "sun" ? Body.Sun : Body.Moon,
+    date,
+    observerPoint,
+    geometricAltitudeDegrees,
+    calculationMode,
+    refractionWeather
+  );
+}
+
+export function celestialVerticalAngularDiameterDegrees(
+  body: typeof Body.Sun | typeof Body.Moon,
+  date: Date,
+  observerPoint: GroundPoint,
+  geometricAltitudeDegrees: number,
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
+): number {
+  const observer = createAstronomyObserver(observerPoint);
+  const equatorial = Equator(body, date, observer, true, true);
+  const distanceKilometers = equatorial.dist * AU_KILOMETERS;
+  const radius = body === Body.Moon
+    ? BODY_RADIUS_KILOMETERS.moon
+    : BODY_RADIUS_KILOMETERS.sun;
+  const angularRadius = Math.asin(
+    Math.min(1, radius / Math.max(radius, distanceKilometers))
+  );
+  const angularDiameterDegrees = 2 * angularRadius * RAD;
+  const weather = refractionWeather?.effectiveMode === "weather"
+    ? weatherForDate(refractionWeather, date)
+    : null;
+  const refractionAtDegrees = (altitudeDegrees: number): number => {
+    if (weather) {
+      const correction = weatherRefractionCorrectionDegrees(altitudeDegrees, weather);
+      if (correction !== null) return correction;
+    }
+    return Refraction("normal", altitudeDegrees);
+  };
+  return calculationMode === "pro"
+    ? (
+        geometricAltitudeDegrees + angularDiameterDegrees / 2 +
+        refractionAtDegrees(geometricAltitudeDegrees + angularDiameterDegrees / 2)
+      ) - (
+        geometricAltitudeDegrees - angularDiameterDegrees / 2 +
+        refractionAtDegrees(geometricAltitudeDegrees - angularDiameterDegrees / 2)
+      )
+    : angularDiameterDegrees;
+}
+
 function apparentDisc(
   body: typeof Body.Sun | typeof Body.Moon,
   date: Date,
@@ -281,28 +351,14 @@ function apparentDisc(
     Math.min(1, radius / Math.max(radius, distanceKilometers))
   );
   const angularDiameterDegrees = 2 * angularRadius * RAD;
-  // 中心高度の大気差補正と同じ経路（実況気象のBennett式、なければ標準大気式）を
-  // 円盤上端・下端にも使う。円盤中心と縁で補正元が食い違うと、天気補正の
-  // 適用時だけ「潰れ」の見え方が標準大気のままになる非対称が生じるため。
-  const weather = refractionWeather?.effectiveMode === "weather"
-    ? weatherForDate(refractionWeather, date)
-    : null;
-  const refractionAtDegrees = (altitudeDegrees: number): number => {
-    if (weather) {
-      const correction = weatherRefractionCorrectionDegrees(altitudeDegrees, weather);
-      if (correction !== null) return correction;
-    }
-    return Refraction("normal", altitudeDegrees);
-  };
-  const verticalAngularDiameterDegrees = calculationMode === "pro"
-    ? (
-        geometricAltitudeDegrees + angularDiameterDegrees / 2 +
-        refractionAtDegrees(geometricAltitudeDegrees + angularDiameterDegrees / 2)
-      ) - (
-        geometricAltitudeDegrees - angularDiameterDegrees / 2 +
-        refractionAtDegrees(geometricAltitudeDegrees - angularDiameterDegrees / 2)
-      )
-    : angularDiameterDegrees;
+  const verticalAngularDiameterDegrees = celestialVerticalAngularDiameterDegrees(
+    body,
+    date,
+    observerPoint,
+    geometricAltitudeDegrees,
+    calculationMode,
+    refractionWeather
+  );
 
   return {
     angularDiameterDegrees,

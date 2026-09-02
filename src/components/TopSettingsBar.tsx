@@ -25,6 +25,7 @@ type Props = {
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
   onOpenArCamera: () => void;
+  onOpenMap3D: () => void;
   precisionSettings: PrecisionSettings;
   onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
   cesiumIonConnected: boolean;
@@ -40,6 +41,7 @@ export function TopSettingsBar({
   onOpenCalendar,
   onOpenMoonAgeCalendar,
   onOpenArCamera,
+  onOpenMap3D,
   precisionSettings,
   onPrecisionSettingsChange,
   cesiumIonConnected,
@@ -221,6 +223,12 @@ export function TopSettingsBar({
             onOpenArCamera();
           }}>
             <b>ARカメラ</b><small>実景と3D・天体を重ねて確認</small>
+          </button>
+          <button type="button" onClick={() => {
+            setModeMenuOpen(false);
+            onOpenMap3D();
+          }}>
+            <b>3Dマップ</b><small>Googleタイル等を対話的に表示・タップで三脚配置</small>
           </button>
           {pwaInstall.supported && !pwaInstall.installed && (
             <>

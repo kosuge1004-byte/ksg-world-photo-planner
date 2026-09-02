@@ -13,6 +13,8 @@ import {
   Cartesian3,
 } from "cesium";
 import type { Viewer } from "cesium";
+import { Cartesian2, Cartographic, Math as CesiumMath, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
+import { pickSceneSurfacePosition } from "./cesium/surfacePicking";
 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./App.css";
@@ -105,6 +107,7 @@ import {
 
 import {
   calculateCelestialHorizontalCoordinates,
+  celestialVerticalAngularDiameterDegreesForId,
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
@@ -422,7 +425,21 @@ function App() {
   const previewSectionRef = useRef<HTMLElement>(null);
   const mapSectionRef = useRef<HTMLElement>(null);
   const map2dStageRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<HTMLDivElement>(null);
+  // 2026-09-02追記: mapRef（Cesiumコンテナ）はJSXの中で条件分岐して
+  // 描画すると、条件が変わるたびにReactが別要素として作り直してしまい
+  // Cesiumインスタンス・WebGLコンテキストを失う。useState(() => ...)で
+  // 一度だけ生成した要素をmapRef.currentへ固定し、実際にどこへ挿入するか
+  // （プレビュー内の小さい枠／3Dマップ画面の全画面）はuseEffectで
+  // appendChildして制御する（後述）。
+  const [mapContainerElement] = useState(() => {
+    const element = document.createElement("div");
+    element.className = "preview-renderer";
+    element.setAttribute("aria-hidden", "true");
+    return element;
+  });
+  const mapRef = useRef<HTMLDivElement>(mapContainerElement);
+  const previewMapHostRef = useRef<HTMLDivElement>(null);
+  const map3DHostRef = useRef<HTMLDivElement>(null);
   const mapViewerRef = useRef<Viewer | null>(null);
   // Reactの再描画前に連続タップされても、配置対象を一意に判定する同期状態。
   const placementModeRef = useRef<PlacementMode>("none");
@@ -513,6 +530,8 @@ function App() {
   }, [showUserNotice]);
   const [spotSearchOpen, setSpotSearchOpen] = useState(false);
   const [arCameraOpen, setArCameraOpen] = useState(false);
+  const [map3DScreenOpen, setMap3DScreenOpen] = useState(false);
+  const map3DRenderLoopRef = useRef<number | null>(null);
   const [arTracking, setArTracking] = useState<ArTrackingSnapshot>({ location: null, orientation: null });
   const [arCameraProjection, setArCameraProjection] = useState<ArCameraProjection | null>(null);
   const [arSearchTripod, setArSearchTripod] = useState<GroundPoint | null>(null);
@@ -595,6 +614,78 @@ function App() {
   const [mapMeasuring, setMapMeasuring] = useState(false);
   const [mapMeasureDistanceMeters, setMapMeasureDistanceMeters] = useState<number | null>(null);
   const [mapMeasureStart, setMapMeasureStart] = useState<GroundPoint | null>(null);
+
+  // 2026-09-02追記: mapRef（Cesiumコンテナ、useStateで1度だけ生成した
+  // 安定した要素）を、通常時はプレビュー用の小さい枠（previewMapHostRef）
+  // へ、3Dマップ画面表示中は全画面用の枠（map3DHostRef）へappendChildで
+  // 挿入する。要素そのものは同一のままホスト先だけ変わるので、Cesium
+  // インスタンス・WebGLコンテキストは維持される。
+  useEffect(() => {
+    const host = map3DScreenOpen ? map3DHostRef.current : previewMapHostRef.current;
+    const element = mapRef.current;
+    if (!host || !element) return;
+    if (element.parentElement !== host) host.appendChild(element);
+  }, [map3DScreenOpen]);
+
+  // 2026-09-02追記: 3Dマップ画面を開いている間だけ、Cesiumの操作
+  // （パン/ズーム/回転、既存のダブルタップズームも含む）を有効化し、
+  // シングルタップでの三脚配置ハンドラを追加する。既存の2Dマップの
+  // 「何も配置モードを選んでいない時のタップ＝現在の三脚候補計算を
+  // 中断してタップ位置へ三脚を優先配置する」という現行仕様
+  // （placeTripodFromMapTap）をそのまま流用し、この画面専用の別ロジックは
+  // 作らない。閉じている間はCesiumの自動描画ループが止まったままなので
+  // （useDefaultRenderLoop = false）、開いている間だけ手動でレンダー
+  // ループを回す。
+  useEffect(() => {
+    if (!map3DScreenOpen) return;
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    viewer.scene.screenSpaceCameraController.enableInputs = true;
+    if (mapRef.current) mapRef.current.style.pointerEvents = "auto";
+
+    const tapHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
+    tapHandler.setInputAction((movement: { position: Cartesian2 }) => {
+      if (viewer.isDestroyed()) return;
+      if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
+      const surfacePosition = pickSceneSurfacePosition(viewer, movement.position);
+      if (!surfacePosition) return;
+      const cartographic = Cartographic.fromCartesian(surfacePosition);
+      if (!cartographic) return;
+      void placeTripodFromMapTap({
+        latitude: CesiumMath.toDegrees(cartographic.latitude),
+        longitude: CesiumMath.toDegrees(cartographic.longitude),
+      });
+    }, ScreenSpaceEventType.LEFT_CLICK);
+
+    let rafId: number | null = null;
+    const renderLoop = () => {
+      if (viewer.isDestroyed()) return;
+      viewer.scene.requestRender();
+      viewer.scene.render();
+      rafId = requestAnimationFrame(renderLoop);
+    };
+    rafId = requestAnimationFrame(renderLoop);
+    map3DRenderLoopRef.current = rafId;
+
+    return () => {
+      tapHandler.destroy();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      map3DRenderLoopRef.current = null;
+      if (!viewer.isDestroyed()) {
+        viewer.scene.screenSpaceCameraController.enableInputs = false;
+      }
+      if (mapRef.current) mapRef.current.style.pointerEvents = "";
+    };
+  }, [
+    map3DScreenOpen,
+    mapReady,
+    subjectPlacementActive,
+    tripodPlacementActive,
+    foregroundPlacementActive,
+    mapMeasuring,
+  ]);
+
   const [precisionSettings, setPrecisionSettings] =
     useState<PrecisionSettings>(loadPrecisionSettings);
   // BYOA化: ARカメラ画面（ArCameraScreen経由でArCesiumOverlayへ渡す）でも
@@ -1224,16 +1315,30 @@ function App() {
         ...tripodPoint,
         height: tripodPoint.height + cameraSettings.lensCenterHeightMeters,
       };
-      return (["sun", "moon", "milkyWay", "polaris"] as const).map((id) => ({
-        id,
-        ...calculateCelestialHorizontalCoordinates(
+      return (["sun", "moon", "milkyWay", "polaris"] as const).map((id) => {
+        const horizontal = calculateCelestialHorizontalCoordinates(
           id,
           selectedDate,
           observerAtLens,
           calculationMode,
           previewRefractionWeather
-        ),
-      }));
+        );
+        return {
+          id,
+          ...horizontal,
+          // 2026-09-02追記（明示指示により）: 地形遮蔽判定を、天体中心
+          // 1点だけの二値から、視直径を考慮した円盤の可視面積割合
+          // （5%以上見えていれば表示）へ変更するために追加。
+          angularDiameterDegrees: celestialVerticalAngularDiameterDegreesForId(
+            id,
+            selectedDate,
+            observerAtLens,
+            horizontal.geometricAltitudeDegrees ?? horizontal.altitudeDegrees,
+            calculationMode,
+            previewRefractionWeather
+          ),
+        };
+      });
     },
     // 焦点距離・画角・構図補正は水平座標を変えないため依存させない。
     [
@@ -2350,6 +2455,16 @@ function App() {
     // 既存の高精細化タイマーもeffect cleanupで止め、操作停止後に再開する。
     if (timelineInteracting) return;
 
+    // 2026-09-02追記: 3Dマップ画面（Googleタイルモード等を対話的に見る、
+    // プレビューと同じCesiumインスタンスを共有する全画面表示）を開いて
+    // いる間は、ユーザーが自由にカメラを操作しているため、プレビュー側が
+    // 同じカメラを勝手に動かして撮影すると操作と競合する。3Dマップ画面
+    // 表示中はプレビュー更新を一時停止する（閉じれば自動的に再開する）。
+    if (map3DScreenOpen) {
+      setPreviewStatus("3Dマップ表示中はプレビューを一時停止しています");
+      return;
+    }
+
     if (
       !mapReady ||
       !viewer ||
@@ -2499,6 +2614,7 @@ function App() {
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
+    map3DScreenOpen,
   ]);
 
   function stopPlacementMode() {
@@ -4246,6 +4362,7 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
+        onOpenMap3D={() => setMap3DScreenOpen(true)}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
         cesiumIonConnected={cesiumIonConnected}
@@ -4282,6 +4399,28 @@ ${diagnosticMessage}
           />
         </Suspense>
       )}
+
+      {/* 2026-09-02追記: ハンバーガーメニューから開く3Dマップ画面。
+          プレビューと同じCesiumインスタンス（mapRef）を共有し、開いて
+          いる間だけこの全画面コンテナへappendChildで移す（前述の
+          useEffect）。三脚候補計算・タップでの三脚配置は現行仕様
+          （placeTripodFromMapTap等）をそのまま使い、この画面専用の
+          別ロジックは持たない。 */}
+      {map3DScreenOpen && (
+        <div className="map-3d-screen">
+          <div ref={map3DHostRef} className="map-3d-screen-host" />
+          <button
+            type="button"
+            className="map-3d-screen-close"
+            onClick={() => setMap3DScreenOpen(false)}
+          >
+            閉じる
+          </button>
+          <div className="map-3d-screen-hint" role="status">
+            タップでその場所へ三脚を配置します（ダブルタップでズーム）
+          </div>
+        </div>
+      )}
       <section
         ref={previewSectionRef}
         className="preview-section"
@@ -4290,7 +4429,13 @@ ${diagnosticMessage}
           className={`preview-imaging-frame frame-${previewFrameMode}`}
           style={previewImagingFrameStyle}
         >
-          <div ref={mapRef} className="preview-renderer" aria-hidden="true" />
+          {/* 2026-09-02追記: mapRefのCesiumコンテナは常にこの位置へ
+              ポータルで描画する。3Dマップ画面（後述）を開いている間は
+              previewMapHostElement自体をCSSで見えなくし、代わりに
+              map3DHostElement側（全画面）へポータル先を切り替える
+              （後述のuseEffect）。ポータル先を切り替えるだけなので、
+              Cesiumインスタンス・WebGLコンテキストは維持される。 */}
+          <div ref={previewMapHostRef} className="preview-renderer-host" />
           <canvas
             ref={previewCanvasRef}
             className="preview-canvas"

@@ -330,6 +330,34 @@ button { cursor: pointer; }
 .preview-renderer .cesium-viewer-cesiumWidgetContainer,
 .preview-renderer .cesium-widget,
 .preview-renderer canvas { width: 100%; height: 100%; }
+/* 2026-09-02追記: mapRef要素は常に.preview-rendererクラスのまま
+   （opacity:0; pointer-events:none）だが、プレビュー内の小さい枠
+   （previewMapHostRef）は元々position: absolute; inset: 0の親を必要と
+   するため、そのホスト自体をposition: relativeにしておく。 */
+.preview-renderer-host { position: absolute; inset: 0; z-index: 0; overflow: hidden; }
+
+/* 2026-09-02追記: 3Dマップ画面（ハンバーガーメニューから開く、Cesiumを
+   全画面・対話的に表示する画面）。mapRef要素は.preview-rendererの
+   opacity:0/pointer-events:noneを引き継いだままここへ移ってくるため、
+   より詳細度の高いセレクタでこの画面内だけ上書きする。 */
+.map-3d-screen { position: fixed; inset: 0; z-index: 500; background: #000; }
+.map-3d-screen-host { position: absolute; inset: 0; }
+.map-3d-screen-host .preview-renderer {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 1; pointer-events: auto;
+}
+.map-3d-screen-close {
+  position: absolute; z-index: 10; top: calc(12px + env(safe-area-inset-top));
+  right: 12px; min-height: 40px; padding: 8px 16px; color: #fff;
+  border: 1px solid rgba(255,255,255,.35); border-radius: 8px;
+  background: rgba(2,5,9,.82); font-size: 14px; font-weight: 700;
+}
+.map-3d-screen-hint {
+  position: absolute; z-index: 10; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%); max-width: calc(100% - 32px); padding: 6px 12px;
+  color: #eef7ff; border: 1px solid rgba(90,185,255,.5); border-radius: 8px;
+  background: rgba(2,8,14,.85); font-size: 12px; text-align: center; pointer-events: none;
+}
 .preview-canvas {
   z-index: 1;
   display: block;
