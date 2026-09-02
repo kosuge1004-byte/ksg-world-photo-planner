@@ -203,20 +203,51 @@ type ScheduledJob = {
 
 const sharedQueue: ScheduledJob[] = [];
 let sharedActiveRequests = 0;
+let sharedActiveLargeRequests = 0;
+
+// 2026-09-01追記（実機診断より）: 三脚候補探索は複数の天体（太陽・月等）を
+// 同時に探索することがあり、それぞれが独立して「1呼び出しあたり最大
+// MAX_CONCURRENT_REQUESTS-2まで」に自制しても、2つの探索が合わされば
+// グローバルな8スロットを合計で埋め尽くしてしまう（自制は呼び出し単位
+// でしか効かず、アプリ全体として空き枠を保証できていなかった）。手動での
+// 三脚ピン配置のような単発・小規模な通信が、背景の大規模探索によって
+// 「通信状態は問題ないのに」長時間待たされ失敗して見える不具合が実機で
+// 再現した。呼び出し側の自制ではなく、キュー自体（アプリ全体で唯一の
+// 実行主体）で「大きなジョブ」が使えるスロット数に絶対的な上限を設け、
+// 残りは常に「小さなジョブ」（単発の手動操作等）が使えるようにする。
+const MAX_CONCURRENT_LARGE_REQUESTS = MAX_CONCURRENT_REQUESTS - 2;
+// この点数以下なら「小さなジョブ」として優先枠の対象にする。手動での
+// ピン配置・被写体検索の地面確定は基本的に1点、多くても数十点程度。
+const SMALL_JOB_MAX_POINTS = 40;
 
 function pumpSharedQueue(): void {
   while (sharedActiveRequests < MAX_CONCURRENT_REQUESTS && sharedQueue.length > 0) {
-    const job = sharedQueue.shift();
-    if (!job) return;
+    const isSmall = (job: ScheduledJob) => job.points.length <= SMALL_JOB_MAX_POINTS;
+    // 小さなジョブ（手動操作等）を常に最優先で探す。先着順ではなく、
+    // キューのどこにあっても、グローバル枠が空いている限り真っ先に通す。
+    let index = sharedQueue.findIndex(isSmall);
+    if (index === -1) {
+      // 小さなジョブが無ければ大きなジョブを処理するが、大きなジョブ専用の
+      // 上限（MAX_CONCURRENT_LARGE_REQUESTS）に達している場合はここで待機
+      // する（グローバル枠にまだ空きがあっても、それは小さなジョブが
+      // 割り込んでくるための予約分なので使わない）。
+      if (sharedActiveLargeRequests >= MAX_CONCURRENT_LARGE_REQUESTS) return;
+      index = 0;
+    }
+    const job = sharedQueue[index];
+    sharedQueue.splice(index, 1);
     if (job.signal?.aborted) {
       job.reject(abortError());
       continue;
     }
+    const large = !isSmall(job);
     sharedActiveRequests += 1;
+    if (large) sharedActiveLargeRequests += 1;
     void requestBatch(job.points, job.signal, job.fetcher)
       .then(job.resolve, job.reject)
       .finally(() => {
         sharedActiveRequests -= 1;
+        if (large) sharedActiveLargeRequests -= 1;
         pumpSharedQueue();
       });
   }
