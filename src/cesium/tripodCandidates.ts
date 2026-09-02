@@ -15,8 +15,6 @@ import { ellipsoidalHeightMeters, orthometricHeightMeters, withLensCenterHeight 
 import type { CalculationMode, CameraSettings, CameraViewCorrection } from "../types/camera";
 import {
   calculateCelestialHorizontalCoordinates,
-  createCameraProjection,
-  projectHorizontalToPreview,
 } from "./celestial";
 import {
   calculateKarneyDestinationPoint,
@@ -26,7 +24,6 @@ import {
   fetchGsiGeoidHeightPointSpecific,
   geoidHeightMetersForTerrainSample,
   sampleWorldTerrain,
-  terrainDataSource,
 } from "./worldTerrain";
 import {
   resetGsiElevationCacheStats,
@@ -103,12 +100,8 @@ const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 32;
 // 最終的な角度誤差の許容値自体は変えていないため、得られる位置の精度は
 // 従来と変わらない。
 const CONVERGED_HORIZONTAL_DEGREES = 0.002;
-// Round-trip検証（仕様3-G）: 候補地点を既存プレビューと同じCameraModel/Projection
-// 経路へ逆投入し、天体中心と被写体中心のスクリーン座標差（画面幅・高さに対する
-// 割合）を確認する。角度収束条件（CONVERGED_HORIZONTAL_DEGREES）を満たしていれば
-// 通常はこの範囲に収まるが、投影の非線形性（望遠レンズでの接線補正等）による
-// 残差を別経路で二重に検出するための独立したしきい値。
-const ROUND_TRIP_SCREEN_TOLERANCE_PERCENT = 0.5;
+// 2026-09-01変更: round-trip投影によるフレーミング判定・棄却を撤廃した
+// ため、この定数は不要になった。
 export const DEFAULT_DIRECTION_CANDIDATE_DISTANCE_METERS = 500;
 
 export type TerrainSampler = (
@@ -487,15 +480,6 @@ let lastCenterlineScanSamples: Array<{
   altitudeErrorDegrees: number;
 }> | null = null;
 
-/**
- * 2026-08-29追記: 「979m付近で精密化がなぜ968m側の真の解へ到達しない
- * のか」を推測でなく実データで確認するための診断専用の記録。直近1回の
- * refineWithManualEquivalentProjection()呼び出しの、各パスの中心距離・
- * 探索半径・そのパスの最良スコア・最良距離・外縁ヒットの有無をそのまま
- * 保持する。探索の挙動・精度には一切影響しない。
- */
-let lastRefinementPassTrace: RefinementResultWithDiagnostics["passTrace"] | null = null;
-
 export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null {
   return lastSearchDiagnostics;
 }
@@ -512,15 +496,6 @@ export function getLastCoarseScanSamples(): Array<{ distanceMeters: number; heig
 
 export function getLastCenterlineScanSamples() {
   return lastCenterlineScanSamples;
-}
-
-/**
- * 診断専用: 直近1回のrefineWithManualEquivalentProjection()呼び出しの、
- * 各パスの中心距離・探索半径・そのパスの最良スコア・最良距離・外縁ヒット
- * の有無をそのまま返す。探索結果そのものには一切使わない。
- */
-export function getLastRefinementPassTrace() {
-  return lastRefinementPassTrace;
 }
 
 function recordDiagnostics(
@@ -1003,74 +978,6 @@ async function sampleRayTerrainErrors(
       : Number.NaN;
   });
   return { rayPoints, samples, errors };
-}
-
-/**
- * 2026-08-29追記（「仕様が目的と違っている可能性」というご指摘を受けて追加）:
- * 2026-08-23のCLAUDE_HANDOFF仕様は「天体中心→被写体→後方の3Dレイと地形の
- * 交点であること」「round-trip投影で天体・被写体中心が一致すること」を
- * 確定条件として定義していたが、「候補地点から実際に被写体が見えるか
- * （途中の地形に遮られていないか）」は確定条件に含まれていなかった。
- *
- * 同じ被写体・同じ天体方位のレイは、地形が起伏していれば複数回地表と
- * 交差しうる（例: 川の堤防の被写体側斜面と反対側斜面）。近い方の交点
- * （堤防の被写体側斜面）は被写体への視線が通るが、遠い方の交点（堤防の
- * 反対側斜面）は、その堤防自体に視線を遮られ、実際には被写体がまったく
- * 見えない場所になりうる。round-trip投影条件だけではこれを区別できない
- * （ある点が幾何学的にレイ上にあれば、途中に何があろうと投影条件は
- * 満たしてしまうため）。
- *
- * これは実機で報告された「現地確認済みの正しい三脚位置（近い方の交点）
- * ではなく、より遠い交点が誤って確定として表示される」症状と整合する
- * （近い方の交点上の地形が、遠い方の交点から見た被写体への視線を遮る
- * 位置関係になっているケース）。
- *
- * 候補地点の高さ（カメラ高込み）から被写体の高さまでの直線上に、途中の
- * 地形が実際に飛び出していないかを、候補・被写体間を数点サンプリングして
- * 確認する。地球曲率・大気差はこの判定の目的（数百m〜数kmスケールの
- * 明白な地形遮蔽の検出）には無視できる大きさのため、単純な直線補間で
- * 判定する（±1mの余裕を持たせ、DEMノイズによる誤検出を避ける）。
- */
-const LINE_OF_SIGHT_CHECK_POINT_COUNT = 9;
-const LINE_OF_SIGHT_CLEARANCE_MARGIN_METERS = 1;
-
-async function candidateSubjectLineOfSightClear(
-  candidate: GroundPoint,
-  subject: GroundPoint,
-  lensCenterHeightMeters: number,
-  terrainSampler: TerrainSampler,
-  signal?: AbortSignal
-): Promise<{ clear: boolean; obstructionDistanceMeters: number | null; obstructionHeightMeters: number | null }> {
-  const metrics = calculateKarneyLineMetrics(candidate, subject);
-  const totalDistance = metrics.distanceMeters;
-  if (!Number.isFinite(totalDistance) || totalDistance <= 0) {
-    return { clear: true, obstructionDistanceMeters: null, obstructionHeightMeters: null };
-  }
-  const cameraHeight = ellipsoidalHeightMeters(candidate) + lensCenterHeightMeters;
-  const subjectHeight = ellipsoidalHeightMeters(subject);
-  const fractions = Array.from(
-    { length: LINE_OF_SIGHT_CHECK_POINT_COUNT },
-    (_, index) => (index + 1) / (LINE_OF_SIGHT_CHECK_POINT_COUNT + 1)
-  );
-  const checkPoints = fractions.map((fraction) =>
-    destinationCartographic(candidate, metrics.bearingDegrees, totalDistance * fraction)
-  );
-  const sampled = await terrainSampler(checkPoints, signal, "10m");
-  abortIfRequested(signal);
-  for (let index = 0; index < sampled.length; index += 1) {
-    const sample = sampled[index];
-    if (!sample || !Number.isFinite(sample.height)) continue;
-    const fraction = fractions[index];
-    const sightLineHeight = cameraHeight + fraction * (subjectHeight - cameraHeight);
-    if (sample.height > sightLineHeight + LINE_OF_SIGHT_CLEARANCE_MARGIN_METERS) {
-      return {
-        clear: false,
-        obstructionDistanceMeters: totalDistance * fraction,
-        obstructionHeightMeters: sample.height - sightLineHeight,
-      };
-    }
-  }
-  return { clear: true, obstructionDistanceMeters: null, obstructionHeightMeters: null };
 }
 
 type TerrainSolution = {
@@ -1577,541 +1484,15 @@ async function solveTerrainDistance(
   );
 }
 
-/**
- * 仕様3-G Round-trip検証: 候補地点を通常プレビューと同じCameraModel/Projectionへ
- * 逆投入し、同じ投影基底で計算した「天体中心」と「被写体中心」の画面差を測る。
- * viewCorrectionが非ゼロなら被写体中心も50/50から移動するため、50/50固定を
- * 正解とせず、必ず被写体自身を投影して相対差を取る。
- */
-function verifyRoundTripProjection(
-  candidatePoint: GroundPoint,
-  subject: GroundPoint,
-  cameraSettings: CameraSettings,
-  previewAspectRatio: number,
-  calculationMode: CalculationMode,
-  finalHorizontal: { azimuthDegrees: number; altitudeDegrees: number },
-  viewCorrection?: CameraViewCorrection
-): { dxPercent: number; dyPercent: number; inFront: boolean } | null {
-  try {
-    // 最終検証は通常プレビューと完全に同じCameraModelを使う。
-    // viewCorrectionが非ゼロなら被写体自身も画面中央から移動するため、
-    // 「天体-50,50」ではなく、同じ投影基底で投影した被写体中心との差を測る。
-    const projection = createCameraProjection(
-      candidatePoint,
-      subject,
-      cameraSettings,
-      previewAspectRatio,
-      calculationMode,
-      viewCorrection
-    );
-    const screen = projectHorizontalToPreview(
-      {
-        azimuthDegrees: finalHorizontal.azimuthDegrees,
-        altitudeDegrees: finalHorizontal.altitudeDegrees,
-        geometricAltitudeDegrees: finalHorizontal.altitudeDegrees,
-      },
-      projection
-    );
-    const lensObserver = withLensCenterHeight(
-      candidatePoint,
-      cameraSettings.lensCenterHeightMeters,
-      "三脚候補round-trip被写体観測点"
-    );
-    const subjectLine = calculateKarneyLineMetrics(candidatePoint, subject);
-    const subjectElevation = computeApparentElevation(
-      lensObserver,
-      subject,
-      calculationMode
-    );
-    const subjectScreen = projectHorizontalToPreview(
-      {
-        azimuthDegrees: subjectLine.bearingDegrees,
-        altitudeDegrees: subjectElevation.apparentAltitudeDegrees,
-        geometricAltitudeDegrees: subjectElevation.geometricAltitudeDegrees,
-      },
-      projection
-    );
-    return {
-      dxPercent: screen.xPercent - subjectScreen.xPercent,
-      dyPercent: screen.yPercent - subjectScreen.yPercent,
-      inFront: screen.inFront && subjectScreen.inFront,
-    };
-  } catch (error) {
-    console.warn("[tripod-candidate] round-trip投影を計算できませんでした", error);
-    return null;
-  }
-}
-
-
-
-type ManualEquivalentEvaluation = {
-  candidatePoint: GroundPoint;
-  horizontal: { azimuthDegrees: number; altitudeDegrees: number; geometricAltitudeDegrees?: number };
-  roundTrip: { dxPercent: number; dyPercent: number; inFront: boolean };
-  score: number;
-  distanceMeters: number;
-  // 2026-08-29追記: この評価がrefineWithManualEquivalentProjection()の
-  // 何パス目で得られたか。診断出力（1パス目と最終のスコア比較）に使う。
-  refinementPass?: number;
-};
-
-/**
- * 手動三脚ピンと同じ最終評価経路。
- * 地点が決まった後は、地表高→任意カメラ高→天体水平座標→CameraModel投影
- * という通常プレビューと同じ順で評価し、天体中心と被写体中心の画面誤差を返す。
- * ECEFレイや0.002度の角度収束値はここでは正解判定に使わない。
- */
-function evaluateManualEquivalentCandidate(
-  candidatePoint: GroundPoint,
-  subject: GroundPoint,
-  point: CelestialScreenPoint,
-  cameraSettings: CameraSettings,
-  previewAspectRatio: number,
-  date: Date,
-  calculationMode: CalculationMode,
-  refractionWeather?: RefractionWeatherContext,
-  viewCorrection?: CameraViewCorrection
-): ManualEquivalentEvaluation | null {
-  const lensObserver = withLensCenterHeight(
-    candidatePoint,
-    cameraSettings.lensCenterHeightMeters,
-    `${point.label}詳細探索レンズ中心`
-  );
-  const horizontal = calculateCelestialHorizontalCoordinates(
-    point.id,
-    date,
-    lensObserver,
-    calculationMode,
-    refractionWeather
-  );
-  if (!Number.isFinite(horizontal.altitudeDegrees) || horizontal.altitudeDegrees <= 0.25) {
-    return null;
-  }
-  const roundTrip = verifyRoundTripProjection(
-    candidatePoint,
-    subject,
-    cameraSettings,
-    previewAspectRatio,
-    calculationMode,
-    horizontal,
-    viewCorrection
-  );
-  if (!roundTrip || !roundTrip.inFront || !Number.isFinite(roundTrip.dxPercent) || !Number.isFinite(roundTrip.dyPercent)) {
-    return null;
-  }
-  const distanceMeters = calculateKarneyLineMetrics(subject, candidatePoint).distanceMeters;
-  return {
-    candidatePoint,
-    horizontal,
-    roundTrip,
-    score: Math.hypot(roundTrip.dxPercent, roundTrip.dyPercent),
-    distanceMeters,
-  };
-}
-
-/**
- * 二段階方式の詳細側。粗いECEF+DEM解の近傍だけを、手動三脚ピンと同じ
- * CameraModel評価で適応的に絞る。1回9点×最大3回=最大27点。
- * 粗探索は位置のseedにのみ使い、最終的な正解は画面中心誤差で決める。
- */
-async function refineWithManualEquivalentProjection(
-  coarseCartographic: Cartographic,
-  subject: GroundPoint,
-  point: CelestialScreenPoint,
-  cameraSettings: CameraSettings,
-  previewAspectRatio: number,
-  date: Date,
-  calculationMode: CalculationMode,
-  terrainSampler: TerrainSampler,
-  signal?: AbortSignal,
-  distanceRange?: TripodDistanceRange,
-  refractionWeather?: RefractionWeatherContext,
-  viewCorrection?: CameraViewCorrection,
-  trace?: (stage: string, detail: string) => void
-): Promise<RefinementResultWithDiagnostics | null> {
-  const coarsePoint = buildCandidateGroundPoint(
-    coarseCartographic,
-    subject,
-    `${point.label}粗候補`
-  );
-  const coarseMetrics = calculateKarneyLineMetrics(subject, coarsePoint);
-  if (!(coarseMetrics.distanceMeters > 0) || !Number.isFinite(coarseMetrics.bearingDegrees)) {
-    return null;
-  }
-
-  const minimum = Math.max(
-    ABSOLUTE_MIN_DISTANCE_METERS,
-    distanceRange?.minMeters ?? ABSOLUTE_MIN_DISTANCE_METERS
-  );
-  const maximum = Math.min(
-    ABSOLUTE_MAX_DISTANCE_METERS,
-    distanceRange?.maxMeters ?? ABSOLUTE_MAX_DISTANCE_METERS
-  );
-
-  // 2026-08-29 regression repair:
-  // The previous manual-equivalent refinement searched only along ONE fixed bearing
-  // (coarseMetrics.bearingDegrees). That can minimize distance error but cannot correct
-  // a lateral error in the coarse ECEF/DEM intersection. Because final acceptance is a
-  // 2-D CameraModel screen error (dx AND dy), a 1-D distance-only optimizer can leave
-  // every real intersection outside the 0.5% round-trip gate even when valid terrain
-  // intersections exist. Keep the exact same CameraModel objective and acceptance gate,
-  // but solve the missing second degree of freedom: bearing/lateral displacement.
-  let centerDistance = Math.min(maximum, Math.max(minimum, coarseMetrics.distanceMeters));
-  let centerBearing = coarseMetrics.bearingDegrees;
-  let radialRadiusMeters = Math.max(24, Math.min(80, centerDistance * 0.04));
-  let lateralRadiusMeters = radialRadiusMeters;
-  // 2026-08-29追記: 貪欲な「最良点を中心に半径を縮める」パターンサーチは、
-  // 地形が局所的に複雑な場所（例: 堤防近傍）では、真の最小値が近傍の別の
-  // 局所的な窪みに囲まれていると、そこへ収束してしまい抜け出せないことが
-  // ある（実機診断で、979m付近が現地確認済みの正解に極めて近い（約11m）
-  // にもかかわらず、6回の精密化を経てもスコアが1.7〜4%までしか改善しない
-  // ケースを確認）。粗い交点探索は幾何学的高度（大気差抜き）で交点を
-  // 検出するのに対し、最終round-trip判定は見かけの高度（大気差込み）で
-  // 判定するため、この2つの基準には低高度ほど無視できない差（本ケースの
-  // 太陽高度7.5°前後では大気差だけで約0.1°程度）が生じうる。この差自体は
-  // 精密化の探索半径（24〜80m）に対して十分小さい実距離（十数m程度）の
-  // はずだが、貪欲な縮小だけでは確実に補正しきれないことがある。
-  // 元の（縮小前の）中心・半径を、最後の安全網探索のために保持しておく。
-  const originalCenterDistance = centerDistance;
-  const originalCenterBearing = centerBearing;
-  const originalRadialRadiusMeters = radialRadiusMeters;
-  const originalLateralRadiusMeters = lateralRadiusMeters;
-  // 2026-08-29追記（実機診断より判明した重大な副作用への対応）: 「窓を
-  // スライドさせる」仕組み（外縁で最良候補が見つかった場合、半径を縮め
-  // ずに中心だけ動かして再探索する）には、これまで総移動距離の上限が
-  // 無かった。パスを重ねるたびに外縁ヒットが続けば、理論上いくらでも
-  // 遠くまで中心が移動しうる。実機診断で、本来は互いに独立している
-  // はずの複数の交点候補（初期距離1150m・1180m・1280m、100m以上離れて
-  // いる）が、精密化の結果すべて同じ1点（1252m）へ収束し、複数交点の
-  // うち2件が「重複」として消えてしまう事例が確認された。これは
-  // 2026-08-23仕様「D. 地形との複数交点：全交点を候補として保持する」に
-  // 反する動作であり、「窓のスライド」が他の交点の領域まで越境して
-  // しまっていたことが原因と判明した。安全網（原設計時の半径のみに
-  // 制限）は届かない距離（原半径の最大80mに対し100m超）だったため、
-  // スライドの累積移動量そのものに上限が必要である。
-  // 元の探索半径の3倍までを、越境とみなさない妥当な補正範囲の上限とする
-  // （大気差起因の補正量は原半径に対して十分小さい十数m程度で足りるため、
-  // 3倍という余裕を持たせても、別の交点の領域（実機で100m超）まで
-  // 到達することはない）。
-  const MAX_SLIDE_DRIFT_METERS = originalRadialRadiusMeters * 3;
-  let best: ManualEquivalentEvaluation | null = null;
-  let refinementPassesUsed = 0;
-  let firstPassScorePercent: number | null = null;
-  // 2026-08-29追記:「979m付近で精密化がなぜ968m側の真の正解へ到達しない
-  // のか」を推測でなく実データで確認するため、各パスの中心距離・半径・
-  // 最良スコアの推移をそのまま記録する。これにより次回の診断コピーで、
-  // 探索が真の解の方向へ単調に近づいているのか、途中で行き詰まって
-  // いるのか、格子の量子化で真の最小値を通り過ぎてしまっているのかを
-  // 判別できる。探索の挙動・精度には一切影響しない。
-  const passTrace: Array<{
-    pass: number;
-    centerDistanceMeters: number;
-    radialRadiusMeters: number;
-    bestScorePercent: number | null;
-    bestDistanceMeters: number | null;
-    onEdge: boolean;
-  }> = [];
-
-  // 2026-08-29修正: 以前はここを固定3回で打ち切っていた。しかし
-  // ROUND_TRIP_SCREEN_TOLERANCE_PERCENT（画面比0.5%）は画角に依存しない
-  // 固定値である一方、同じ0.5%が要求する実距離の位置精度は焦点距離が
-  // 長くなる（画角が狭くなる）ほど厳しくなる。固定3回終了後の格子間隔は
-  // 約1.5m前後までしか縮まらず、望遠での構図では0.5%以内に収まる前に
-  // 探索が尽きて「候補は実在するのに確定解なしになる」（本レポートの症状）
-  // ことがあった。人がプレビューを見ながら手動でピンをドラッグ調整する
-  // 場合はこの格子の粗さに制約されないため、同じ地点でも手動なら見つかる。
-  // 格子間隔が要求精度に対して十分細かくなるか、既に十分collapseした
-  // 最良候補が得られるまでパスを継続する（暴走防止に上限を設ける）。
-  // 格子の外縁で最良候補が見つかった場合は、実際の解に到達するまで半径を
-  // 縮めず窓をスライドさせる（詳細は下記ループ内コメント参照）。これにより
-  // 必要なパス数が増えることがあるため、従来の3回・後の8回よりさらに余裕を
-  // 持たせる。1パスあたり最大81点のDEM取得で足止めしても通信コストは
-  // 限定的（キャッシュ・バッチ取得あり）なため、暴走防止の上限として妥当。
-  const MAX_REFINEMENT_PASSES = 12;
-  // スクリーン許容誤差(0.5%)に対して十分な余裕（1/5）を持って収束した
-  // ら、それ以上格子を細かくしても最終判定を変えないため打ち切る。
-  const CONVERGED_SCORE_PERCENT = ROUND_TRIP_SCREEN_TOLERANCE_PERCENT * 0.2;
-  // 格子間隔がこれより小さくなれば、GSI 1m DEM・座標倍精度の実用限界に
-  // 達しているとみなし、これ以上縮めても実質的な精度向上が無いため打ち切る。
-  const MIN_USEFUL_GRID_SPACING_METERS = 0.05;
-
-  for (let pass = 0; pass < MAX_REFINEMENT_PASSES; pass += 1) {
-    abortIfRequested(signal);
-    refinementPassesUsed = pass + 1;
-    const segments = 8;
-    const requests: Array<{
-      distance: number;
-      bearing: number;
-      cartographic: Cartographic;
-      radialIndex: number;
-      lateralIndex: number;
-    }> = [];
-    const dedupe = new Set<string>();
-
-    for (let radialIndex = 0; radialIndex <= segments; radialIndex += 1) {
-      const rawDistance = centerDistance - radialRadiusMeters +
-        (2 * radialRadiusMeters * radialIndex) / segments;
-      const distance = Math.min(maximum, Math.max(minimum, rawDistance));
-      for (let lateralIndex = 0; lateralIndex <= segments; lateralIndex += 1) {
-        const lateralMeters = -lateralRadiusMeters +
-          (2 * lateralRadiusMeters * lateralIndex) / segments;
-        // Convert the requested cross-track displacement to a bearing offset without
-        // quantizing coordinates. atan2 is stable even at the minimum 8 m range.
-        const bearingOffsetDegrees = Math.atan2(lateralMeters, Math.max(distance, 1)) * 180 / Math.PI;
-        const bearing = (centerBearing + bearingOffsetDegrees + 360) % 360;
-        const key = `${distance.toFixed(9)}:${bearing.toFixed(12)}`;
-        if (dedupe.has(key)) continue;
-        dedupe.add(key);
-        requests.push({
-          distance,
-          bearing,
-          cartographic: destinationCartographic(subject, bearing, distance),
-          radialIndex,
-          lateralIndex,
-        });
-      }
-    }
-
-    const sampled = await terrainSampler(
-      requests.map((request) => request.cartographic),
-      signal,
-      "1m"
-    );
-    abortIfRequested(signal);
-
-    let passBest: ManualEquivalentEvaluation | null = null;
-    let passBestOnEdge = false;
-    for (let index = 0; index < sampled.length; index += 1) {
-      const cartographic = sampled[index];
-      if (!cartographic || !Number.isFinite(cartographic.height)) continue;
-      const candidate = buildCandidateGroundPoint(
-        cartographic,
-        subject,
-        `${point.label}手動三脚ピン同等2D詳細候補`
-      );
-      const evaluated = evaluateManualEquivalentCandidate(
-        candidate,
-        subject,
-        point,
-        cameraSettings,
-        previewAspectRatio,
-        date,
-        calculationMode,
-        refractionWeather,
-        viewCorrection
-      );
-      if (!evaluated) continue;
-      const request = requests[index];
-      const onEdge = request.radialIndex === 0 || request.radialIndex === segments ||
-        request.lateralIndex === 0 || request.lateralIndex === segments;
-      if (!passBest || evaluated.score < passBest.score) {
-        passBest = evaluated;
-        passBestOnEdge = onEdge;
-      }
-      if (!best || evaluated.score < best.score) best = evaluated;
-    }
-    if (!passBest) {
-      passTrace.push({
-        pass: pass + 1,
-        centerDistanceMeters: centerDistance,
-        radialRadiusMeters,
-        bestScorePercent: null,
-        bestDistanceMeters: null,
-        onEdge: false,
-      });
-      break;
-    }
-    if (pass === 0) firstPassScorePercent = passBest.score;
-    passTrace.push({
-      pass: pass + 1,
-      centerDistanceMeters: centerDistance,
-      radialRadiusMeters,
-      bestScorePercent: passBest.score,
-      bestDistanceMeters: passBest.distanceMeters,
-      onEdge: passBestOnEdge,
-    });
-
-    // 既に許容誤差に十分な余裕を持って収束していれば、これ以上格子を
-    // 細かくしても最終判定（0.5%以内か否か）は変わらないため打ち切る。
-    if (passBest.score <= CONVERGED_SCORE_PERCENT) break;
-
-    const passMetrics = calculateKarneyLineMetrics(subject, passBest.candidatePoint);
-    const candidateCenterDistance = Math.min(maximum, Math.max(minimum, passMetrics.distanceMeters));
-
-    // 2026-08-29修正（実機診断より判明した重大な副作用への対応）: 中心を
-    // 動かす前に、元の交点位置からの総移動距離が上限（MAX_SLIDE_DRIFT_
-    // METERS）を超えないか確認する。超える場合は、これ以上スライドせず
-    // （＝別の交点の領域へ越境する前に）ここで打ち切り、現時点までの
-    // 最良点を採用する。詳細はMAX_SLIDE_DRIFT_METERS宣言部のコメント
-    // 参照。
-    if (Math.abs(candidateCenterDistance - originalCenterDistance) > MAX_SLIDE_DRIFT_METERS) {
-      break;
-    }
-    centerDistance = candidateCenterDistance;
-    centerBearing = passMetrics.bearingDegrees;
-
-    // 2026-08-29修正（実機診断より）: このパスの最良候補が探索窓の外縁
-    // （格子の端）で見つかった場合、真の最適解は窓の外側にまだ残っている
-    // 可能性が高い。この状態でいつも通り半径を縮めてしまうと、以前は
-    // 「候補は実在するのに窓の外だったため見つからない」まま収束して
-    // しまっていた（実機診断: 距離979m・仰角誤差0.096°・dy=-1.75%で
-    // roundtrip-vertical-outside-tolerance却下、必要な補正量が探索半径
-    // 約39mを超えていたケースを確認）。外縁で最良だった場合は、その地点を
-    // 新しい中心として同じ半径のまま探索窓をスライドさせ、最良点が窓の
-    // 内側（外縁ではない）で見つかるまでは縮小しない（ただし上記の総
-    // 移動距離の上限内に限る）。
-    if (passBestOnEdge) {
-      continue;
-    }
-
-    // One grid spacing from the preceding pass becomes the next search radius.
-    // 2026-08-29修正: 以前は0.5m未満へ縮まらないよう下限を設けていたため、
-    // 望遠構図で必要な実距離精度（時にセンチメートル単位）に届く前に
-    // 格子が縮み止まっていた。DEM・測地計算の実用限界（MIN_USEFUL_GRID_
-    // SPACING_METERS=5cm換算の半径）までは縮小を続ける。
-    const nextRadialRadius = (2 * radialRadiusMeters) / segments;
-    const nextLateralRadius = (2 * lateralRadiusMeters) / segments;
-    if (
-      nextRadialRadius < MIN_USEFUL_GRID_SPACING_METERS / 2 &&
-      nextLateralRadius < MIN_USEFUL_GRID_SPACING_METERS / 2
-    ) {
-      break;
-    }
-    radialRadiusMeters = Math.max(MIN_USEFUL_GRID_SPACING_METERS / 2, nextRadialRadius);
-    lateralRadiusMeters = Math.max(MIN_USEFUL_GRID_SPACING_METERS / 2, nextLateralRadius);
-  }
-
-  if (!best) return null;
-
-  // 2026-08-29追記: 安全網の広域再走査。
-  // 上のループは「最良点を中心に縮める」貪欲パターンサーチのため、地形が
-  // 局所的に複雑な場所では、真の最小値が近傍の別の窪みに囲まれていると
-  // そこへ収束してしまい抜け出せないことがある（詳細は centerDistance
-  // 宣言部のコメント参照）。まだ許容誤差（0.5%）に収まっていない場合
-  // だけ、元の（縮小前の）探索窓全体を、通常パスより細かい格子
-  // （16分割）で一度だけ再走査し、貪欲収束が見逃した、より良い候補が
-  // 無いかを確認する。
-  // 安全のため、ここで見つかった候補は「現在のbestより明確に良い場合
-  // （スコアが半分以下）だけ」採用する。既存の収束結果を悪化させることは
-  // 絶対にない（見つからなければ何もしない）。通常パスと同じ
-  // evaluateManualEquivalentCandidate/round-trip判定条件をそのまま使う
-  // ため、判定基準自体は一切変更しない。
-  if (best.score > CONVERGED_SCORE_PERCENT) {
-    try {
-      const safetyNetSegments = 16;
-      const safetyNetRequests: Array<{ cartographic: Cartographic }> = [];
-      const safetyNetDedupe = new Set<string>();
-      for (let radialIndex = 0; radialIndex <= safetyNetSegments; radialIndex += 1) {
-        const rawDistance = originalCenterDistance - originalRadialRadiusMeters +
-          (2 * originalRadialRadiusMeters * radialIndex) / safetyNetSegments;
-        const distance = Math.min(maximum, Math.max(minimum, rawDistance));
-        for (let lateralIndex = 0; lateralIndex <= safetyNetSegments; lateralIndex += 1) {
-          const lateralMeters = -originalLateralRadiusMeters +
-            (2 * originalLateralRadiusMeters * lateralIndex) / safetyNetSegments;
-          const bearingOffsetDegrees = Math.atan2(lateralMeters, Math.max(distance, 1)) * 180 / Math.PI;
-          const bearing = (originalCenterBearing + bearingOffsetDegrees + 360) % 360;
-          const key = `${distance.toFixed(9)}:${bearing.toFixed(12)}`;
-          if (safetyNetDedupe.has(key)) continue;
-          safetyNetDedupe.add(key);
-          safetyNetRequests.push({ cartographic: destinationCartographic(subject, bearing, distance) });
-        }
-      }
-      const safetyNetSampled = await terrainSampler(
-        safetyNetRequests.map((request) => request.cartographic),
-        signal,
-        "1m"
-      );
-      abortIfRequested(signal);
-      for (let index = 0; index < safetyNetSampled.length; index += 1) {
-        const cartographic = safetyNetSampled[index];
-        if (!cartographic || !Number.isFinite(cartographic.height)) continue;
-        const candidate = buildCandidateGroundPoint(
-          cartographic,
-          subject,
-          `${point.label}手動三脚ピン同等安全網候補`
-        );
-        const evaluated = evaluateManualEquivalentCandidate(
-          candidate,
-          subject,
-          point,
-          cameraSettings,
-          previewAspectRatio,
-          date,
-          calculationMode,
-          refractionWeather,
-          viewCorrection
-        );
-        if (!evaluated) continue;
-        // 既存の貪欲収束結果を明確に上回る場合だけ採用する。
-        if (evaluated.score < best.score * 0.5) {
-          best = evaluated;
-        }
-      }
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      console.warn(
-        `[tripod-candidate] ${point.label}: 安全網の広域再走査に失敗（貪欲収束結果をそのまま使用）`,
-        error
-      );
-    }
-  }
-
-  const bestCartographic = Cartographic.fromDegrees(
-    best.candidatePoint.longitude,
-    best.candidatePoint.latitude,
-    ellipsoidalHeightMeters(best.candidatePoint)
-  );
-  const exactPoint = await buildPointSpecificFinalCandidateGroundPoint(
-    bestCartographic,
-    subject,
-    `${point.label}手動三脚ピン同等最終候補`,
-    signal,
-    best.candidatePoint.geoidHeightMeters,
-    trace
-  );
-  abortIfRequested(signal);
-  const finalEvaluation = evaluateManualEquivalentCandidate(
-    exactPoint,
-    subject,
-    point,
-    cameraSettings,
-    previewAspectRatio,
-    date,
-    calculationMode,
-    refractionWeather,
-    viewCorrection
-  );
-  // 診断用のパス数・1パス目スコアは、最終再評価の成否に関わらず呼び出し
-  // 側（診断記録）へ伝える必要があるため、finalEvaluationがnullの場合は
-  // grid探索段階のbestへ差し戻して付与する。
-  const withDiagnostics = finalEvaluation ?? best;
-  lastRefinementPassTrace = passTrace;
-  return {
-    ...withDiagnostics,
-    refinementPassesUsed,
-    firstPassScorePercent,
-    passTrace,
-  };
-}
-
-type RefinementResultWithDiagnostics = ManualEquivalentEvaluation & {
-  refinementPassesUsed: number;
-  firstPassScorePercent: number | null;
-  passTrace: Array<{
-    pass: number;
-    centerDistanceMeters: number;
-    radialRadiusMeters: number;
-    bestScorePercent: number | null;
-    bestDistanceMeters: number | null;
-    onEdge: boolean;
-  }>;
-};
-
 async function calculateOneCandidates(
   subject: GroundPoint,
   point: CelestialScreenPoint,
   cameraSettings: CameraSettings,
-  previewAspectRatio: number,
+  // 2026-09-01: round-trip投影によるフレーミング判定を撤廃したため、
+  // 画角計算に使っていたこの引数は不要になった。呼び出し元の多い位置引数の
+  // 並びを変えないよう、削除せず未使用のまま残す（TSの規約通り_始まりで
+  // 明示）。
+  _previewAspectRatio: number,
   date: Date,
   calculationMode: CalculationMode,
   outerTerrainSampler: TerrainSampler,
@@ -2122,7 +1503,9 @@ async function calculateOneCandidates(
   refractionWeatherResolver?: RefractionWeatherResolver,
   doubleCheckEnabled = false,
   initialDirectionObserver?: GroundPoint,
-  viewCorrection?: CameraViewCorrection,
+  // 2026-09-01: 同上の理由でround-trip投影（画面内位置補正）に使わなく
+  // なった。
+  _viewCorrection?: CameraViewCorrection,
   onPreliminaryCandidate?: (candidate: TripodCandidate) => void
 ): Promise<TripodCandidate[]> {
   const lensCenterHeightMeters = cameraSettings.lensCenterHeightMeters;
@@ -2581,218 +1964,58 @@ async function calculateOneCandidates(
     const convergenceLoopMs = performance.now() - convergenceLoopStartedAt;
     convergenceLoopTotalMs += convergenceLoopMs;
 
-    // 粗いECEF+DEM解はseedとしてのみ使用する。ここから先は、粗候補周辺だけを
-    // 手動三脚ピンと同じ「地表高→任意カメラ高→天体計算→CameraModel」経路で
-    // 詳細探索し、画面中心誤差が最小の地点を正解候補とする。
+    // 2026-09-01変更（明示指示により）: 従来ここから、候補地点周辺を
+    // CameraModelで再探索し、プレビュー画面内のズレ（dx/dy%）が最小になる
+    // 位置へ「補正」した上で、その補正結果が許容誤差に収まらなければ
+    // 候補ごと棄却する処理（refineWithManualEquivalentProjection＋
+    // round-trip判定）を行っていた。この処理を撤廃し、上の幾何レイ再収束
+    // ループが求めた「天体中心→被写体→後方のレイと地形の交点」を、
+    // カメラ高・その地点固有のジオイド補正だけ行って、そのまま最終候補
+    // として返す。画角内に収まるかどうかによる選別・位置の補正は行わない
+    // （被写体の真下であっても、その交点をそのまま候補として示す）。
     const refinementStartedAt = performance.now();
     trace("refinement:start", `seedDistance=${solution.distanceMeters.toFixed(2)}m`);
-    let manualRefined: RefinementResultWithDiagnostics | null;
-    try {
-      manualRefined = await refineWithManualEquivalentProjection(
-        solution.cartographic,
-        subject,
-        point,
-        cameraSettings,
-        previewAspectRatio,
-        date,
-        calculationMode,
-        terrainSampler,
-        signal,
-        distanceRange,
-        activeRefractionWeather,
-        viewCorrection,
-        trace
-      );
-    } catch (error) {
-      // 2026-08-29修正（実機診断より）: 中止（AbortError）は、新しい検索が
-      // 開始されて古い検索が置き換えられた場合などに発生する正常な動作
-      // であり、本当の失敗ではない。これを他のエラーと同じように
-      // reject()してしまうと、「中止された古い検索の結果」が「確定解なし」
-      // という確定した診断・表示として画面に残ってしまい、実際には別の
-      // （新しい）検索の結果が出ているにもかかわらず古い誤った情報が
-      // ユーザーに見え続ける不具合になる（実機診断で「manual-refinement-
-      // exception」・所要時間15秒という、通信時間の内訳（0.1秒）と
-      // 全く整合しない長い経過時間が確認され、この中止ケースだと判明した）。
-      // 中止は診断へ記録せず、そのまま呼び出し元（Promise.allSettledの
-      // 中止判定）へ伝播させる。
-      if (isAbortError(error)) {
-        trace("refinement:abort", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-        throw error;
-      }
-      const e = error instanceof Error ? error : new Error(String(error));
-      trace("refinement:error", `${e.name}: ${e.message}${e.stack ? ` | stack=${e.stack.replace(/\s+/g, " ").slice(0, 1200)}` : ""}`);
-      reject("manual-refinement-exception", { distanceMeters: solution.distanceMeters });
-      console.warn(`[tripod-candidate] ${point.label}: 手動三脚ピン同等の詳細探索に失敗`, error);
-      return null;
-    }
+    const finalGroundPoint = await buildPointSpecificFinalCandidateGroundPoint(
+      solution.cartographic,
+      subject,
+      `${point.label}三脚候補`,
+      signal,
+      geoidHeightMetersForTerrainSample(solution.cartographic),
+      trace
+    );
+    // 2026-09-01追記: solution.distanceMetersはレイに沿ったパラメータ距離
+    // であり、候補地点（緯度経度）から被写体までの測地線距離とは、天体の
+    // 高度がある分だけわずかに異なる（回帰テストで、レイ距離700mの交点の
+    // 測地線距離が708m程度になることを確認）。三脚候補として意味を持つ
+    // 「距離」は、実際にその地点から被写体までの地表距離（測地線距離）の
+    // 方であるべきなので、確定した候補地点自身の緯度経度から測地線距離を
+    // 再計算して使う。
+    const finalDistanceMeters = calculateKarneyLineMetrics(subject, finalGroundPoint).distanceMeters;
     const refinementMs = performance.now() - refinementStartedAt;
     refinementTotalMs += refinementMs;
-    trace("refinement:end", `elapsed=${refinementMs.toFixed(1)}ms result=${manualRefined ? `distance=${manualRefined.distanceMeters.toFixed(2)}m score=${manualRefined.score.toFixed(4)}% passes=${manualRefined.refinementPassesUsed}` : "null"}`);
-    if (!manualRefined) {
-      reject("manual-refinement-no-valid-evaluation", { distanceMeters: solution.distanceMeters });
-      return null;
-    }
+    trace("refinement:end", `elapsed=${refinementMs.toFixed(1)}ms result=distance=${finalDistanceMeters.toFixed(2)}m（round-trip判定なし）`);
 
-    const finalCandidatePoint = manualRefined.candidatePoint;
-    const finalHorizontal = manualRefined.horizontal;
-    const roundTrip = manualRefined.roundTrip;
-    const finalCartographic = Cartographic.fromDegrees(
-      finalCandidatePoint.longitude,
-      finalCandidatePoint.latitude,
-      ellipsoidalHeightMeters(finalCandidatePoint)
-    );
-    const finalAltitudeError = Math.abs(
-      elevationAngleDegrees(
-        finalCartographic,
-        subject,
-        lensCenterHeightMeters,
-        calculationMode
-      ) - finalHorizontal.altitudeDegrees
-    );
-    const finalSubjectBearing = calculateKarneyLineMetrics(finalCandidatePoint, subject).bearingDegrees;
-    const finalAzimuthError = angularDifferenceDegrees(finalSubjectBearing, finalHorizontal.azimuthDegrees);
-
-    // 仕様7: 診断ログ（候補座標・高さ基準・天体/被写体方位仰角・誤差・
-    // スクリーンdx/dy・地形データソース）。合否に関わらず出力する。
-    const diagnostics = {
-      candidateLatitude: finalCandidatePoint.latitude,
-      candidateLongitude: finalCandidatePoint.longitude,
-      ellipsoidalHeightMeters: finalCandidatePoint.ellipsoidalHeightMeters,
-      orthometricHeightMeters: finalCandidatePoint.orthometricHeightMeters,
-      geoidHeightMeters: finalCandidatePoint.geoidHeightMeters,
-      celestialAzimuthDegrees: finalHorizontal.azimuthDegrees,
-      celestialAltitudeDegrees: finalHorizontal.altitudeDegrees,
-      subjectAzimuthDegrees: finalSubjectBearing,
-      subjectElevationDegrees: elevationAngleDegrees(
-        finalCartographic,
-        subject,
-        lensCenterHeightMeters,
-        calculationMode
-      ),
-      azimuthErrorDegrees: finalAzimuthError,
-      altitudeErrorDegrees: finalAltitudeError,
-      previewScreenDxPercent: roundTrip?.dxPercent,
-      previewScreenDyPercent: roundTrip?.dyPercent,
-      terrainSource: terrainDataSource(solution.cartographic),
-    };
-
-    const roundTripFailed =
-      !roundTrip ||
-      !roundTrip.inFront ||
-      Math.abs(roundTrip.dxPercent) > ROUND_TRIP_SCREEN_TOLERANCE_PERCENT ||
-      Math.abs(roundTrip.dyPercent) > ROUND_TRIP_SCREEN_TOLERANCE_PERCENT;
-
-    if (
-      !Number.isFinite(finalHorizontal.altitudeDegrees) ||
-      finalHorizontal.altitudeDegrees <= 0.25 ||
-      !Number.isFinite(finalAltitudeError) ||
-      !Number.isFinite(finalAzimuthError) ||
-      roundTripFailed
-    ) {
-      const rejectionReason = !Number.isFinite(finalHorizontal.altitudeDegrees)
-        ? "final-celestial-altitude-invalid"
-        : finalHorizontal.altitudeDegrees <= 0.25
-          ? "final-celestial-below-threshold"
-          : !Number.isFinite(finalAltitudeError)
-            ? "final-altitude-error-invalid"
-            : !Number.isFinite(finalAzimuthError)
-              ? "final-azimuth-error-invalid"
-              : !roundTrip
-                ? "roundtrip-missing"
-                : !roundTrip.inFront
-                  ? "roundtrip-behind-camera"
-                  : Math.abs(roundTrip.dxPercent) > ROUND_TRIP_SCREEN_TOLERANCE_PERCENT
-                    ? "roundtrip-horizontal-outside-tolerance"
-                    : "roundtrip-vertical-outside-tolerance";
-      reject(rejectionReason, {
-        distanceMeters: manualRefined.distanceMeters,
-        azimuthErrorDegrees: Number.isFinite(finalAzimuthError) ? finalAzimuthError : null,
-        altitudeErrorDegrees: Number.isFinite(finalAltitudeError) ? finalAltitudeError : null,
-        dxPercent: roundTrip && Number.isFinite(roundTrip.dxPercent) ? roundTrip.dxPercent : null,
-        dyPercent: roundTrip && Number.isFinite(roundTrip.dyPercent) ? roundTrip.dyPercent : null,
-        inFront: roundTrip?.inFront ?? null,
-        refinementPassesUsed: manualRefined.refinementPassesUsed,
-        firstPassScorePercent: manualRefined.firstPassScorePercent,
-        finalScorePercent: manualRefined.score,
-        refinementPassTrace: manualRefined.passTrace,
-      });
-      console.warn(`[tripod-candidate] ${point.label}: 最終幾何収束条件（round-trip含む）を満たさない候補を除外`, {
-        distanceMeters: manualRefined.distanceMeters,
-        ...diagnostics,
-      });
-      return null;
-    }
-
-    // 2026-08-29追記（外部レビューにより判明した確認済みの不整合への
-    // 対応）: ここまで到達した候補は確定（aligned）となる。従来はここで
-    // 診断への記録が一切無かったため、確定候補自身の誤差・スコアが
-    // どこにも残らなかった（詳細はrecordConfirmed宣言部のコメント参照）。
     recordConfirmed({
-      distanceMeters: manualRefined.distanceMeters,
-      azimuthErrorDegrees: Number.isFinite(finalAzimuthError) ? finalAzimuthError : null,
-      altitudeErrorDegrees: Number.isFinite(finalAltitudeError) ? finalAltitudeError : null,
-      dxPercent: roundTrip && Number.isFinite(roundTrip.dxPercent) ? roundTrip.dxPercent : null,
-      dyPercent: roundTrip && Number.isFinite(roundTrip.dyPercent) ? roundTrip.dyPercent : null,
-      inFront: roundTrip?.inFront ?? null,
-      refinementPassesUsed: manualRefined.refinementPassesUsed,
-      firstPassScorePercent: manualRefined.firstPassScorePercent,
-      finalScorePercent: manualRefined.score,
-      refinementPassTrace: manualRefined.passTrace,
+      distanceMeters: finalDistanceMeters,
+      azimuthErrorDegrees: null,
+      altitudeErrorDegrees: null,
+      dxPercent: null,
+      dyPercent: null,
+      inFront: null,
+      refinementPassesUsed: 0,
+      firstPassScorePercent: null,
+      finalScorePercent: null,
+      refinementPassTrace: undefined,
     });
-
-    // 2026-08-29追記: round-trip投影条件だけでは検出できない「途中の
-    // 地形に被写体への視線を遮られている」可能性を確認する（詳細は
-    // candidateSubjectLineOfSightClear()のコメント参照）。
-    //
-    // 2026-08-23仕様（D. 地形との複数交点）は「レイが地形と複数回交差
-    // する場合、全交点を候補として保持する。遠い候補を勝手に1点へ絞ら
-    // ない」ことを明確に要求している。実際、既存の回帰テスト
-    // （tests/regression/tripod-candidate-round-trip.test.mjs）は
-    // 「2つの交点はどちらも候補として保持されるべき」ことを検証しており、
-    // 視線が遮られている可能性がある交点であっても、それだけを理由に
-    // 除外してはならない（DEM誤差・見落としている経路等により、実際には
-    // 見える場合もあるため、最終判断はユーザーに委ねる）。
-    // したがって、この判定は候補を除外するためではなく、候補に「視界を
-    // 確認してください」という注意フラグを付与するためだけに使う。
-    let lineOfSightPossiblyObstructed = false;
-    let obstructionDistanceMeters: number | undefined;
-    try {
-      const lineOfSight = await candidateSubjectLineOfSightClear(
-        finalCandidatePoint,
-        subject,
-        lensCenterHeightMeters,
-        terrainSampler,
-        signal
-      );
-      if (!lineOfSight.clear) {
-        lineOfSightPossiblyObstructed = true;
-        obstructionDistanceMeters = lineOfSight.obstructionDistanceMeters ?? undefined;
-        console.warn(
-          `[tripod-candidate] ${point.label}: 幾何学的には条件を満たすが、` +
-          `手前の地形（約${lineOfSight.obstructionDistanceMeters?.toFixed(0)}m地点、` +
-          `視線より約${lineOfSight.obstructionHeightMeters?.toFixed(1)}m高い）に` +
-          `被写体への視線を遮られている可能性があるため注意フラグを付与（候補自体は保持）`,
-          { distanceMeters: manualRefined.distanceMeters, ...diagnostics }
-        );
-      }
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      // 視線判定自体が取得できない場合は、判定できないだけで候補を握り
-      // つぶさない（round-trip等の他の確定条件は既に満たしているため）。
-      console.warn(`[tripod-candidate] ${point.label}: 視線遮蔽判定に失敗（候補はそのまま採用）`, error);
-    }
 
     return {
       id: point.id,
       label: point.label,
-      latitude: finalCandidatePoint.latitude,
-      longitude: finalCandidatePoint.longitude,
-      height: ellipsoidalHeightMeters(finalCandidatePoint),
-      distanceMeters: manualRefined.distanceMeters,
+      latitude: finalGroundPoint.latitude,
+      longitude: finalGroundPoint.longitude,
+      height: ellipsoidalHeightMeters(finalGroundPoint),
+      distanceMeters: finalDistanceMeters,
       solutionType: "aligned",
-      ...(lineOfSightPossiblyObstructed
-        ? { lineOfSightPossiblyObstructed: true, obstructionDistanceMeters }
-        : {}),
     };
   }
 

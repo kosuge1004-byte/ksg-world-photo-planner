@@ -11,6 +11,9 @@ const checks = [
   ['tripod search does not default to neutral terrain', !/terrainSampler: TerrainSampler = sampleWorldTerrainNeutral/.test(tripod)],
   ['aligned candidate placement no longer overwrites resolved preview height with candidate.height', !/candidate\.solutionType === "aligned"[\s\S]{0,500}ellipsoidalHeightMeters: candidate\.height/.test(app)],
   ['candidate placement resolves final ground through resolveGroundPoint', /placeTripodAtCandidateConfirmed[\s\S]*resolveGroundPoint\(candidate\.latitude, candidate\.longitude, candidate\.label\)/.test(app)],
-  ['round-trip still uses preview CameraModel projection path', /verifyRoundTripProjection[\s\S]*createCameraProjection[\s\S]*projectHorizontalToPreview/.test(tripod)],
+  // 2026-09-01変更: round-trip投影によるフレーミング判定・棄却
+  // （verifyRoundTripProjection）は明示指示により撤廃した。三脚候補は
+  // 天体中心→被写体→後方のレイと地形の交点（カメラ高補正込み）を
+  // そのまま返す設計になったため、この検証項目自体が対象を失った。
 ];
 for (const [name, ok] of checks) { console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`); if (!ok) process.exitCode = 1; }

@@ -10,7 +10,9 @@ const checks = [
   ['direct celestial geometric altitude is not used for refined ray', !/const geometricRayAltitudeDegrees\s*=\s*Number\.isFinite\(horizontal\.geometricAltitudeDegrees\)/.test(source)],
   ['camera-height helper remains', source.includes('withLensCenterHeight(')],
   ['point-specific geoid path remains', source.includes('buildPointSpecificFinalCandidateGroundPoint')],
-  ['round-trip projection remains', source.includes('verifyRoundTripProjection')],
+  // 2026-09-01変更: round-trip投影（verifyRoundTripProjection）による
+  // フレーミング判定・棄却は明示指示により撤廃した。三脚候補は幾何レイと
+  // 地形の交点をそのまま返す設計になったため、この項目は対象を失った。
 ];
 let failed = false;
 for (const [name, ok] of checks) {
