@@ -118,9 +118,21 @@ export function setPreviewWireframeMode(viewer: Viewer, enabled: boolean): void 
     if (primitive[HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER]) continue; // 当たり判定専用の透明タイルセットは対象外
     primitive.debugWireframe = enabled;
   }
-  for (let index = 0; index < viewer.imageryLayers.length; index += 1) {
-    const layer = viewer.imageryLayers.get(index);
-    if (layer) layer.show = !enabled;
+  // 2026-09-02修正（実機診断より）: Googleタイルモード（highest精度、
+  // createHighestPrecisionViewerでglobe: falseにて作成）ではglobe自体が
+  // 存在せず、Cesiumの仕様上 scene.imageryLayers（延いてはviewer.
+  // imageryLayers）はglobeが無いとundefinedを返す
+  // （node_modules/cesium内のScene.imageryLayersゲッター実装で確認）。
+  // 未定義を考慮せず.lengthへアクセスしていたため、「地形データを取得
+  // できず、三脚候補を計算できませんでした」という無関係な文言で三脚
+  // 候補計算全体が落ちる実害が実機で発生した。このモードではそもそも
+  // 地面の画像レイヤーが存在しない（見た目はGoogle 3D Tilesの実写のみ）
+  // ため、存在しなければ何もしないだけでよい。
+  if (viewer.imageryLayers) {
+    for (let index = 0; index < viewer.imageryLayers.length; index += 1) {
+      const layer = viewer.imageryLayers.get(index);
+      if (layer) layer.show = !enabled;
+    }
   }
 }
 
