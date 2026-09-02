@@ -26,6 +26,7 @@ type Props = {
   onOpenMoonAgeCalendar: () => void;
   onOpenArCamera: () => void;
   onOpenMap3D: () => void;
+  mapDisplayMode: "2d" | "3d";
   precisionSettings: PrecisionSettings;
   onPrecisionSettingsChange: (settings: PrecisionSettings) => void;
   cesiumIonConnected: boolean;
@@ -42,6 +43,7 @@ export function TopSettingsBar({
   onOpenMoonAgeCalendar,
   onOpenArCamera,
   onOpenMap3D,
+  mapDisplayMode,
   precisionSettings,
   onPrecisionSettingsChange,
   cesiumIonConnected,
@@ -228,7 +230,10 @@ export function TopSettingsBar({
             setModeMenuOpen(false);
             onOpenMap3D();
           }}>
-            <b>3Dマップ</b><small>Googleタイル等を対話的に表示・タップで三脚配置</small>
+            <b>地図を{mapDisplayMode === "3d" ? "2D" : "3D"}表示に切替</b>
+            <small>{mapDisplayMode === "3d"
+              ? "通常の2D地図に戻す"
+              : "対話的な3D表示（タップで三脚配置・ダブルタップでズーム）"}</small>
           </button>
           {pwaInstall.supported && !pwaInstall.installed && (
             <>

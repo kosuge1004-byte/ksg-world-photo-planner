@@ -530,7 +530,9 @@ function App() {
   }, [showUserNotice]);
   const [spotSearchOpen, setSpotSearchOpen] = useState(false);
   const [arCameraOpen, setArCameraOpen] = useState(false);
-  const [map3DScreenOpen, setMap3DScreenOpen] = useState(false);
+  // 2026-09-02変更: 別画面のモーダルではなく、今の2Dマップ（画面下部の
+  // map-section）自体を3D表示へ切り替えられる、永続的な設定にする。
+  const [mapDisplayMode, setMapDisplayMode] = useState<"2d" | "3d">("2d");
   const map3DRenderLoopRef = useRef<number | null>(null);
   const [arTracking, setArTracking] = useState<ArTrackingSnapshot>({ location: null, orientation: null });
   const [arCameraProjection, setArCameraProjection] = useState<ArCameraProjection | null>(null);
@@ -616,28 +618,29 @@ function App() {
   const [mapMeasureStart, setMapMeasureStart] = useState<GroundPoint | null>(null);
 
   // 2026-09-02追記: mapRef（Cesiumコンテナ、useStateで1度だけ生成した
-  // 安定した要素）を、通常時はプレビュー用の小さい枠（previewMapHostRef）
-  // へ、3Dマップ画面表示中は全画面用の枠（map3DHostRef）へappendChildで
+  // 安定した要素）を、2D表示中はプレビュー用の小さい枠
+  // （previewMapHostRef）へ、3D表示中は画面下部の地図欄そのもの
+  // （map3DHostRef、MapLibre2DMapと入れ替わる位置）へappendChildで
   // 挿入する。要素そのものは同一のままホスト先だけ変わるので、Cesium
   // インスタンス・WebGLコンテキストは維持される。
   useEffect(() => {
-    const host = map3DScreenOpen ? map3DHostRef.current : previewMapHostRef.current;
+    const host = mapDisplayMode === "3d" ? map3DHostRef.current : previewMapHostRef.current;
     const element = mapRef.current;
     if (!host || !element) return;
     if (element.parentElement !== host) host.appendChild(element);
-  }, [map3DScreenOpen]);
+  }, [mapDisplayMode]);
 
-  // 2026-09-02追記: 3Dマップ画面を開いている間だけ、Cesiumの操作
+  // 2026-09-02追記: 画面下部の地図を3D表示にしている間だけ、Cesiumの操作
   // （パン/ズーム/回転、既存のダブルタップズームも含む）を有効化し、
   // シングルタップでの三脚配置ハンドラを追加する。既存の2Dマップの
   // 「何も配置モードを選んでいない時のタップ＝現在の三脚候補計算を
   // 中断してタップ位置へ三脚を優先配置する」という現行仕様
-  // （placeTripodFromMapTap）をそのまま流用し、この画面専用の別ロジックは
-  // 作らない。閉じている間はCesiumの自動描画ループが止まったままなので
-  // （useDefaultRenderLoop = false）、開いている間だけ手動でレンダー
+  // （placeTripodFromMapTap）をそのまま流用し、3D表示専用の別ロジックは
+  // 作らない。2D表示中はCesiumの自動描画ループが止まったままなので
+  // （useDefaultRenderLoop = false）、3D表示中だけ手動でレンダー
   // ループを回す。
   useEffect(() => {
-    if (!map3DScreenOpen) return;
+    if (mapDisplayMode !== "3d") return;
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
 
@@ -678,7 +681,7 @@ function App() {
       if (mapRef.current) mapRef.current.style.pointerEvents = "";
     };
   }, [
-    map3DScreenOpen,
+    mapDisplayMode,
     mapReady,
     subjectPlacementActive,
     tripodPlacementActive,
@@ -2455,13 +2458,13 @@ function App() {
     // 既存の高精細化タイマーもeffect cleanupで止め、操作停止後に再開する。
     if (timelineInteracting) return;
 
-    // 2026-09-02追記: 3Dマップ画面（Googleタイルモード等を対話的に見る、
-    // プレビューと同じCesiumインスタンスを共有する全画面表示）を開いて
-    // いる間は、ユーザーが自由にカメラを操作しているため、プレビュー側が
-    // 同じカメラを勝手に動かして撮影すると操作と競合する。3Dマップ画面
-    // 表示中はプレビュー更新を一時停止する（閉じれば自動的に再開する）。
-    if (map3DScreenOpen) {
-      setPreviewStatus("3Dマップ表示中はプレビューを一時停止しています");
+    // 2026-09-02追記: 画面下部の地図を3D表示にしている間（Googleタイル
+    // モード等を対話的に見る、プレビューと同じCesiumインスタンスを共有）
+    // は、ユーザーが自由にカメラを操作しているため、プレビュー側が同じ
+    // カメラを勝手に動かして撮影すると操作と競合する。3D表示中は
+    // プレビュー更新を一時停止する（2D表示へ戻せば自動的に再開する）。
+    if (mapDisplayMode === "3d") {
+      setPreviewStatus("地図を3D表示中はプレビューを一時停止しています");
       return;
     }
 
@@ -2614,7 +2617,7 @@ function App() {
     timelineInteracting,
     previewRetrySequence,
     showUserNotice,
-    map3DScreenOpen,
+    mapDisplayMode,
   ]);
 
   function stopPlacementMode() {
@@ -4362,7 +4365,8 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
-        onOpenMap3D={() => setMap3DScreenOpen(true)}
+        onOpenMap3D={() => setMapDisplayMode((current) => current === "3d" ? "2d" : "3d")}
+        mapDisplayMode={mapDisplayMode}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
         cesiumIonConnected={cesiumIonConnected}
@@ -4400,27 +4404,6 @@ ${diagnosticMessage}
         </Suspense>
       )}
 
-      {/* 2026-09-02追記: ハンバーガーメニューから開く3Dマップ画面。
-          プレビューと同じCesiumインスタンス（mapRef）を共有し、開いて
-          いる間だけこの全画面コンテナへappendChildで移す（前述の
-          useEffect）。三脚候補計算・タップでの三脚配置は現行仕様
-          （placeTripodFromMapTap等）をそのまま使い、この画面専用の
-          別ロジックは持たない。 */}
-      {map3DScreenOpen && (
-        <div className="map-3d-screen">
-          <div ref={map3DHostRef} className="map-3d-screen-host" />
-          <button
-            type="button"
-            className="map-3d-screen-close"
-            onClick={() => setMap3DScreenOpen(false)}
-          >
-            閉じる
-          </button>
-          <div className="map-3d-screen-hint" role="status">
-            タップでその場所へ三脚を配置します（ダブルタップでズーム）
-          </div>
-        </div>
-      )}
       <section
         ref={previewSectionRef}
         className="preview-section"
@@ -4577,28 +4560,37 @@ ${diagnosticMessage}
           ref={map2dStageRef}
           className="map-2d-stage active"
         >
-          <MapLibre2DMap
-            center={mapCenter}
-            zoom={mapZoom}
-            mapType={mapType}
-            onViewChange={({ center, zoom }) => {
-              mapCenterRef.current = center;
-              setMapCenter(center);
-              setMapZoom(zoom);
-            }}
-            onTap={(coordinates) => {
-              if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
-              void placeTripodFromMapTap(coordinates);
-            }}
-            onError={(message) => setSearchMessage(message)}
-          />
-          {lightPollutionEnabled && celestialVisibility.milkyWay && (
+          {mapDisplayMode === "2d" ? (
+            <MapLibre2DMap
+              center={mapCenter}
+              zoom={mapZoom}
+              mapType={mapType}
+              onViewChange={({ center, zoom }) => {
+                mapCenterRef.current = center;
+                setMapCenter(center);
+                setMapZoom(zoom);
+              }}
+              onTap={(coordinates) => {
+                if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
+                void placeTripodFromMapTap(coordinates);
+              }}
+              onError={(message) => setSearchMessage(message)}
+            />
+          ) : (
+            // 2026-09-02追記: 3D表示中はMapLibreの代わりに、プレビューと
+            // 共有しているCesiumコンテナ（mapRef）をこの位置へ移して表示する
+            // （前述のuseEffect）。タップでの三脚配置・ダブルタップズームも
+            // 同じuseEffect内で有効化される。
+            <div ref={map3DHostRef} className="map-3d-stage-host" />
+          )}
+          {mapDisplayMode === "2d" && lightPollutionEnabled && celestialVisibility.milkyWay && (
             <LightPollutionTileOverlay
               center={mapCenter}
               zoom={mapZoom}
               size={mapSize}
             />
           )}
+          {mapDisplayMode === "2d" && (
           <Map2DOverlay
               center={mapCenter}
               zoom={mapZoom}
@@ -4641,6 +4633,7 @@ ${diagnosticMessage}
               }}
               onSelectCandidate={selectTripodCandidate}
           />
+          )}
         </div>
         {(subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (
             <button
@@ -4660,7 +4653,7 @@ ${diagnosticMessage}
               </span>
             </button>
         )}
-        {mapMeasuring && (
+        {mapDisplayMode === "2d" && mapMeasuring && (
           <button
             type="button"
             className="map-2d-placement-layer map-2d-measurement-layer"
@@ -4675,8 +4668,12 @@ ${diagnosticMessage}
             <div className="map-native-top-left-mask" aria-hidden="true" />
             <div className="map-left-controls">
               <div className="map-tool-rail" aria-label="地図表示ツール">
-                <button type="button" className={mapType === "roadmap" ? "active" : ""} aria-pressed={mapType === "roadmap"} onClick={() => setMapType("roadmap")}><span>▣</span><small>通常地図</small></button>
-                <button type="button" className={mapType === "satellite" ? "active" : ""} aria-pressed={mapType === "satellite"} onClick={() => setMapType("satellite")}><span>▧</span><small>航空写真</small></button>
+                {mapDisplayMode === "2d" && (
+                  <>
+                    <button type="button" className={mapType === "roadmap" ? "active" : ""} aria-pressed={mapType === "roadmap"} onClick={() => setMapType("roadmap")}><span>▣</span><small>通常地図</small></button>
+                    <button type="button" className={mapType === "satellite" ? "active" : ""} aria-pressed={mapType === "satellite"} onClick={() => setMapType("satellite")}><span>▧</span><small>航空写真</small></button>
+                  </>
+                )}
                 <button
                   type="button"
                   ref={pinToolButtonRef}
@@ -4832,7 +4829,7 @@ ${diagnosticMessage}
                 </div>
               )}
 
-            {mapMeasuring && (
+            {mapDisplayMode === "2d" && mapMeasuring && (
               <div className="map-tripod-candidate-status complete" role="status" aria-live="polite">
                 {mapMeasureDistanceMeters === null
                   ? "地図を2回タップして距離を計測してください"
@@ -4843,15 +4840,17 @@ ${diagnosticMessage}
             )}
 
             <div className="map-right-actions">
-              <button
-                type="button"
-                data-tutorial-id="map-measure"
-                className={mapMeasuring ? "active" : ""}
-                aria-pressed={mapMeasuring}
-                onClick={toggleMapMeasurement}
-              >
-                <span>📏</span><small>計測</small>
-              </button>
+              {mapDisplayMode === "2d" && (
+                <button
+                  type="button"
+                  data-tutorial-id="map-measure"
+                  className={mapMeasuring ? "active" : ""}
+                  aria-pressed={mapMeasuring}
+                  onClick={toggleMapMeasurement}
+                >
+                  <span>📏</span><small>計測</small>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={showCurrentLocation}
