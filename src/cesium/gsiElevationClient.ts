@@ -391,8 +391,22 @@ export async function fetchGsiElevationSamples(
     }
   }
 
+  // 2026-09-01追記（実機診断より）: sharedQueue/MAX_CONCURRENT_REQUESTSは
+  // アプリ全体で共有されるグローバルな上限であり、この1回の呼び出し専用
+  // ではない。上の並列分割で1回の大きな探索がMAX_CONCURRENT_REQUESTS分の
+  // ワーカーを一度に起動すると、その探索が終わるまでグローバル枠を
+  // 独占し、同時に発生した別の通信（手動での三脚ピン配置など、単発の
+  // 地形取得）が「通信状態は問題ないのに」長時間待たされ、結果的に
+  // 応答がないまま失敗して見える不具合が実機で確認された。1回の呼び出しが
+  // 使うワーカー数にアプリ内キャップを設け、常に他の同時通信のための
+  // 枠を残す（大規模探索自体の並列化効果は維持しつつ、独占だけを防ぐ）。
+  const PER_CALL_WORKER_RESERVE = 2;
+  const workerCount = Math.max(
+    1,
+    Math.min(MAX_CONCURRENT_REQUESTS - PER_CALL_WORKER_RESERVE, batches.length)
+  );
   await Promise.all(Array.from(
-    { length: Math.min(MAX_CONCURRENT_REQUESTS, batches.length) },
+    { length: workerCount },
     () => worker()
   ));
   const finalResult = {
