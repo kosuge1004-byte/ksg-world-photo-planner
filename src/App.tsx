@@ -135,7 +135,7 @@ import {
 } from "./cesium/tripodCandidateExactCache";
 import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
-import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup } from "./cesium/createMapViewer";
+import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup, setPreviewWireframeMode } from "./cesium/createMapViewer";
 import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
@@ -1720,6 +1720,14 @@ function App() {
           }
 
           beginOperationTag("calculateTripodCandidates");
+          // 2026-09-02追記: 重い候補探索の間、プレビューの見た目をワイヤー
+          // フレーム（形だけ）に切り替え、テクスチャ読み込みを省略して
+          // 探索側の通信と取り合わないようにする。地面はGoogleタイルモード
+          // では対象外（setPreviewWireframeMode内でGoogle 3Dは除外済み）。
+          {
+            const previewViewer = mapViewerRef.current;
+            if (previewViewer) setPreviewWireframeMode(previewViewer, true);
+          }
           operationStarted = true;
           const candidates = await calculateTripodCandidates(
             subjectPoint,
@@ -1825,6 +1833,21 @@ function App() {
         } finally {
           if (operationStarted) endOperationTag("calculateTripodCandidates");
           releaseInFlight();
+          // ワイヤーフレーム表示を通常へ戻す（探索の成功・失敗に関わらず）。
+          {
+            const previewViewer = mapViewerRef.current;
+            if (previewViewer) setPreviewWireframeMode(previewViewer, false);
+          }
+          // 2026-09-02追記（実機診断より）: 重い候補探索（数十秒規模）が
+          // 実際の通信帯域とメインスレッドを占有している間、プレビューの
+          // 自動更新（最初の1回＋条件付きでもう1回）がその間に間に合わず
+          // 失敗すると、それ以降は何も自動で再試行されず、探索が終わって
+          // 帯域が空いた後もユーザーが焦点距離を操作する等、何か別の
+          // 操作をするまでプレビューが黒いまま残ることが実機で確認された。
+          // 探索完了（成功・失敗どちらでも帯域は空く）を、プレビュー再試行の
+          // 自然なきっかけとして使う。cancelled時（新しい検索に差し替わった
+          // 場合）は最新の検索側で改めて処理されるため、ここでは起こさない。
+          if (!cancelled) setPreviewRetrySequence((current) => current + 1);
         }
       })();
     }, 0);

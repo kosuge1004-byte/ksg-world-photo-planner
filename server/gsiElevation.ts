@@ -738,11 +738,23 @@ export async function lookupGsiElevations(
   // 点ごとに「タイル取得→待機」を繰り返さず、標高種別ごとに必要タイルを
   // 先に集約して一括取得する。標高種別の優先順位と各点の詳細度条件は
   // 従来どおり維持するため、取得結果・精度は変わらない。
-  for (const source of GSI_TILE_SOURCES) {
-    if (unresolved.size === 0) break;
-    if (signal?.aborted) {
-      throw createAbortError();
-    }
+  //
+  // 2026-09-02追記（実測診断より）: 以前はGSI_TILE_SOURCES（DEM1A→5A→5B→
+  // 5C→DEM10Bの5段階）を完全に逐次実行していた。精密なDEM（1A/5A/5B/5C）
+  // が存在しない地方エリアでは、最終的に使われるDEM10Bへたどり着くまでに
+  // 無駄な逐次往復を最大4回繰り返すことになり、実機診断で640点規模の
+  // 初期探索が30秒超かかる主因と判明した。
+  // 都市部（DEM1Aで即解決するエリア）では従来どおり最初の1段階だけで
+  // 完結させ、下位段階には一切触れない（R2の読み書き量を増やさない）。
+  // DEM1Aで解決しなかった点だけ、残り4段階を並列で一気に問い合わせる。
+  // 最終的に取得するタイルの集合・優先順位・精度は従来と完全に同じで、
+  // 「直列だった待ち時間を並列にする」という順序だけの変更。
+  async function resolveSourceTier(
+    source: (typeof GSI_TILE_SOURCES)[number],
+    targetIndices: ReadonlySet<number>
+  ): Promise<Map<number, { heightMeters: number; source: GsiElevationSource }>> {
+    const resolved = new Map<number, { heightMeters: number; source: GsiElevationSource }>();
+    if (targetIndices.size === 0) return resolved;
 
     const requests: Array<{
       index: number;
@@ -752,19 +764,14 @@ export async function lookupGsiElevations(
     }> = [];
     const uniqueTiles = new Map<string, { x: number; y: number }>();
 
-    for (const index of unresolved) {
+    for (const index of targetIndices) {
       const point = points[index];
       if (!sourceIsAllowedForPoint(source, point)) continue;
       const coordinate = tileCoordinates(point, source.zoom);
       const tileKey = `${coordinate.x}/${coordinate.y}`;
       const interpolation: "bilinear" | "constrained-bicubic" =
         point.maximumDetail === "1m" ? "constrained-bicubic" : "bilinear";
-      requests.push({
-        index,
-        coordinate,
-        tileKey,
-        interpolation,
-      });
+      requests.push({ index, coordinate, tileKey, interpolation });
       if (!uniqueTiles.has(tileKey)) {
         uniqueTiles.set(tileKey, { x: coordinate.x, y: coordinate.y });
       }
@@ -787,7 +794,7 @@ export async function lookupGsiElevations(
       }
     }
 
-    if (requests.length === 0) continue;
+    if (requests.length === 0) return resolved;
 
     const tileEntries = await Promise.all(
       [...uniqueTiles.entries()].map(async ([tileKey, coordinate]) => [
@@ -819,9 +826,35 @@ export async function lookupGsiElevations(
             request.coordinate.fracY
           );
       if (heightMeters === null) continue;
-      results[request.index] = { heightMeters, source: source.label };
-      unresolved.delete(request.index);
+      resolved.set(request.index, { heightMeters, source: source.label });
     }
+    return resolved;
+  }
+
+  function applyResolved(
+    resolved: Map<number, { heightMeters: number; source: GsiElevationSource }>
+  ): void {
+    for (const [index, value] of resolved) {
+      if (!unresolved.has(index)) continue; // 優先順位の高い段階が既に解決済み
+      results[index] = value;
+      unresolved.delete(index);
+    }
+  }
+
+  if (signal?.aborted) throw createAbortError();
+  const [firstSource, ...remainingSources] = GSI_TILE_SOURCES;
+  if (firstSource && unresolved.size > 0) {
+    applyResolved(await resolveSourceTier(firstSource, unresolved));
+  }
+  if (unresolved.size > 0 && remainingSources.length > 0) {
+    if (signal?.aborted) throw createAbortError();
+    const targetIndices = new Set(unresolved);
+    const tierResults = await Promise.all(
+      remainingSources.map((source) => resolveSourceTier(source, targetIndices))
+    );
+    // remainingSourcesの並び（優先順位）どおりに適用する。先に適用した
+    // ものが優先され、後続はunresolvedから外れているため上書きしない。
+    for (const resolved of tierResults) applyResolved(resolved);
   }
 
   return results;

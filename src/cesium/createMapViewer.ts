@@ -37,7 +37,14 @@ const PLATEAU_TERRAIN_URL = "https://tile.plateauview.mlit.go.jp/terrain/";
  * 遮蔽判定へPLATEAUを再接続する試みは検証ロジックが機能しない疑いがあり撤回した）。
  */
 export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
-  const buildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
+  const buildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL, {
+    // 2026-09-02追記: 三脚候補探索中だけプレビューをワイヤーフレーム表示に
+    // 切り替えるため（重い探索と通信を取り合わないよう、建物テクスチャの
+    // 読み込みを一時的に省略する目的）。debugWireframeは作成後に動的に
+    // ON/OFFできるが、そのためにはWebGL1環境向けにこのフラグを作成時に
+    // 立てておく必要がある（Cesium公式の制約）。
+    enableDebugWireframe: true,
+  });
   buildings.show = false;
   buildings.maximumScreenSpaceError = 8;
   buildings.dynamicScreenSpaceError = true;
@@ -82,6 +89,39 @@ export async function ensureHiddenPlateauBuildingsForHeightLookup(
     return;
   }
   viewer.scene.primitives.add(buildings);
+}
+
+/**
+ * 2026-09-02追記: 重い三脚候補探索（数十秒規模の通信）が走っている間だけ、
+ * プレビューの見た目を「形だけ」（建物はワイヤーフレーム、地面は画像
+ * テクスチャ無しの単色陰影）に切り替え、画像・テクスチャの読み込み自体を
+ * 省略することで、候補探索側の通信と取り合わないようにする。探索が
+ * 終わったら通常の見た目へ戻す。座標・高さ計算には一切関与しない、
+ * 純粋に見た目だけの切り替え。
+ * - 建物（PLATEAU）: Cesium3DTileset.debugWireframe（公式のデバッグ用
+ *   プロパティ。loadPlateauBuildingsTilesetでenableDebugWireframe: true
+ *   を作成時に指定済みなので動的に切り替えられる）。Googleタイル
+ *   モードの建物（Google Photorealistic 3D Tiles）は対象外とする
+ *   （Googleの利用規約上の制約が既にあるこの3Dデータには、通常の見た目
+ *   から外れる追加の操作をしない）。
+ * - 地面: 画像レイヤー（GSI標準地図等）を一時的に非表示にし、Globeの
+ *   単色陰影だけで地形の起伏を見せる。地形メッシュ自体（Globe.show）は
+ *   変更しないため、高さ・位置は普段どおり正しく描画される。
+ */
+export function setPreviewWireframeMode(viewer: Viewer, enabled: boolean): void {
+  if (viewer.isDestroyed()) return;
+  for (let index = 0; index < viewer.scene.primitives.length; index += 1) {
+    const primitive = viewer.scene.primitives.get(index) as unknown as
+      | (Cesium3DTileset & Record<symbol, boolean>)
+      | undefined;
+    if (!primitive || typeof primitive.debugWireframe !== "boolean") continue;
+    if (primitive[HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER]) continue; // 当たり判定専用の透明タイルセットは対象外
+    primitive.debugWireframe = enabled;
+  }
+  for (let index = 0; index < viewer.imageryLayers.length; index += 1) {
+    const layer = viewer.imageryLayers.get(index);
+    if (layer) layer.show = !enabled;
+  }
 }
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {

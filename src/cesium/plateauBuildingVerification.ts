@@ -8,6 +8,130 @@ import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
 
+// 2026-09-02追記（ユーザー提案により）: 屋根合わせ（clampToHeightMostDetailed
+// による複数段階のPLATEAU建物探索）は、DEM標高のようにサーバー側R2へ
+// キャッシュすることができない（Cloudflare Worker側にWebGL環境が無く、
+// 3D形状との交差判定自体がクライアントのCesium/WebGLでしか行えないため）。
+// ただし「この緯度経度なら屋根の高さは何mか」という結果の数値自体は、
+// ジオイドキャッシュ（worldTerrain.tsのreadGeoidPersistentCache等）と
+// 同じパターンで端末のIndexedDBへ永続化できる。同じ地点（東京タワー等の
+// よく検索される地点）を同じ端末で再検索した場合、重い探索を再実行せず
+// キャッシュ済みの結果をそのまま使う。サーバー側R2と違い他の利用者とは
+// 共有されないが、端末単体でも同一地点の再検索は確実に速くなる。
+// 建物は地形・ジオイドと違い改築・解体されうるため、有効期限は
+// ジオイドキャッシュ（180日）より短い90日にする。
+
+type KsgIdbRequest<T> = {
+  result: T;
+  onsuccess: (() => void) | null;
+  onerror: (() => void) | null;
+  onupgradeneeded?: (() => void) | null;
+};
+type KsgIdbObjectStore = {
+  get: (key: string) => KsgIdbRequest<unknown>;
+  put: (value: unknown) => KsgIdbRequest<unknown>;
+};
+type KsgIdbTransaction = {
+  objectStore: (name: string) => KsgIdbObjectStore;
+  oncomplete: (() => void) | null;
+  onerror: (() => void) | null;
+  onabort: (() => void) | null;
+};
+type KsgIdbDatabase = {
+  objectStoreNames: { contains: (name: string) => boolean };
+  createObjectStore: (name: string, options: { keyPath: string }) => KsgIdbObjectStore;
+  transaction: (name: string, mode: "readonly" | "readwrite") => KsgIdbTransaction;
+  close: () => void;
+  onversionchange?: (() => void) | null;
+};
+type KsgIndexedDbFactory = { open: (name: string, version: number) => KsgIdbRequest<KsgIdbDatabase> };
+
+function getIndexedDbFactory(): KsgIndexedDbFactory | null {
+  const runtimeGlobal = globalThis as unknown as { indexedDB?: KsgIndexedDbFactory };
+  return runtimeGlobal.indexedDB ?? null;
+}
+
+const ROOF_CACHE_DB = "ksg-world-photo-planner-roof-v1";
+const ROOF_CACHE_STORE = "roof";
+const ROOF_CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+// 建物単位の精度が必要なため、ジオイド（約1.1km格子）より細かい
+// 約1m格子で丸める。同じ検索を繰り返したときに確実にヒットさせつつ、
+// わずかな座標入力誤差（浮動小数点等）も同一地点として扱えるようにする。
+const ROOF_CACHE_KEY_DECIMALS = 5;
+
+type RoofCacheRecord = {
+  key: string;
+  point: ResolvedGroundPoint;
+  updatedAt: number;
+};
+
+let roofCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
+
+function openRoofCache(): Promise<KsgIdbDatabase | null> {
+  const indexedDb = getIndexedDbFactory();
+  if (!indexedDb) return Promise.resolve(null);
+  roofCacheDatabasePromise ??= new Promise((resolve) => {
+    const request = indexedDb.open(ROOF_CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(ROOF_CACHE_STORE)) {
+        database.createObjectStore(ROOF_CACHE_STORE, { keyPath: "key" });
+      }
+    };
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onversionchange = () => {
+        database.close();
+        roofCacheDatabasePromise = null;
+      };
+      resolve(database);
+    };
+    request.onerror = () => {
+      roofCacheDatabasePromise = null;
+      resolve(null);
+    };
+  });
+  return roofCacheDatabasePromise;
+}
+
+function roofCacheKey(latitude: number, longitude: number): string {
+  return `${latitude.toFixed(ROOF_CACHE_KEY_DECIMALS)},${longitude.toFixed(ROOF_CACHE_KEY_DECIMALS)}`;
+}
+
+async function readRoofPersistentCache(key: string): Promise<ResolvedGroundPoint | null> {
+  const database = await openRoofCache();
+  if (!database) return null;
+  return new Promise((resolve) => {
+    const request = database.transaction(ROOF_CACHE_STORE, "readonly")
+      .objectStore(ROOF_CACHE_STORE).get(key);
+    request.onsuccess = () => {
+      const record = request.result as RoofCacheRecord | undefined;
+      if (
+        record &&
+        Date.now() - record.updatedAt <= ROOF_CACHE_MAX_AGE_MS &&
+        isResolvedGroundPoint(record.point)
+      ) {
+        resolve(record.point);
+      } else {
+        resolve(null);
+      }
+    };
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function writeRoofPersistentCache(key: string, point: ResolvedGroundPoint): Promise<void> {
+  const database = await openRoofCache();
+  if (!database) return;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(ROOF_CACHE_STORE, "readwrite");
+    transaction.objectStore(ROOF_CACHE_STORE).put({ key, point, updatedAt: Date.now() } satisfies RoofCacheRecord);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+}
+
 /**
  * PLATEAU建物3Dは標準モードの3Dマップに表示専用として読み込まれているが、
  * 全国複合タイルセットのため地域によってジオイド・高さ基準のズレがあり、
@@ -332,6 +456,10 @@ export async function resolvePlateauRoofGroundPoint(
   const scene = viewer.scene as ClampHeightScene;
   if (typeof scene.clampToHeightMostDetailed !== "function") return null;
 
+  const cacheKey = roofCacheKey(latitude, longitude);
+  const cached = await readRoofPersistentCache(cacheKey).catch(() => null);
+  if (cached) return cached;
+
   // 2026-09-01追記（実機診断より）: 東京タワー等、隣接する低い建物が
   // Stage 2局所探索で先に見つかるケースでは、Stage 2局所→Stage 3精密化→
   // ジオイド取得の最大3段階が順番に実行される。各段階は個別に
@@ -342,11 +470,13 @@ export async function resolvePlateauRoofGroundPoint(
   // 上限を設けても精度上のリスクはない。
   const OVERALL_ROOF_SEARCH_TIMEOUT_MS = 15_000;
   try {
-    return await withOverallTimeout(
+    const resolved = await withOverallTimeout(
       resolvePlateauRoofGroundPointUnbounded(viewer, latitude, longitude, label, signal),
       OVERALL_ROOF_SEARCH_TIMEOUT_MS,
       `${label}の建物屋根探索がタイムアウトしました`
     );
+    if (resolved) void writeRoofPersistentCache(cacheKey, resolved);
+    return resolved;
   } catch (error) {
     console.warn(`${label}の建物屋根探索がタイムアウトまたは失敗したため、通常のDEM地面高へフォールバックします`, error);
     return null;
