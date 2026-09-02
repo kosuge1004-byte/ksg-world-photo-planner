@@ -38,11 +38,15 @@ function singleSelection(visibility: CelestialVisibility): CelestialBodyId {
  * CelestialVisibility型自体（4つの真偽値を持つオブジェクト）は保存済み
  * プロジェクト・共有リンクとの互換性のため変更せず、常にどれか1つだけが
  * trueになるよう、この画面からの変更経路だけで制御する。
+ *
+ * 2026-09-02追記: 開閉トグルの見出しボタン（旧「天体の表示」）と、
+ * 中のラベル（旧「表示する天体」、2行に折り返していた）が意味の重複する
+ * 表示だったため、見出しボタンを削除し、常に中身を1行・小さい文字で
+ * 表示する形にした。open/onToggleOpenはプロジェクトファイル・他画面との
+ * 互換性のためProps型としては残すが、この画面内では使わない。
  */
 export function CelestialMenu({
-  open,
   visibility,
-  onToggleOpen,
   onChangeVisibility,
   lightPollutionEnabled,
   onChangeLightPollution,
@@ -51,49 +55,38 @@ export function CelestialMenu({
 
   return (
     <section className="celestial-menu">
-      <button
-        type="button"
-        className="celestial-menu-button"
-        onClick={onToggleOpen}
-        aria-expanded={open}
-      >
-        天体の表示 {open ? "▲" : "▼"}
-      </button>
-
-      {open && (
-        <div className="celestial-menu-popover">
-          <label className="celestial-select-label">
-            <span>表示する天体</span>
-            <select
-              className="celestial-select"
-              value={selected}
-              onChange={(event) =>
-                onChangeVisibility({
-                  ...ALL_OFF,
-                  [event.target.value as CelestialBodyId]: true,
-                })
-              }
-            >
-              {items.map((item) => (
-                <option key={item.key} value={item.key}>
-                  {item.symbol} {item.label}
-                </option>
-              ))}
-            </select>
+      <div className="celestial-menu-popover celestial-menu-inline">
+        <label className="celestial-select-label">
+          <span>天体の表示</span>
+          <select
+            className="celestial-select"
+            value={selected}
+            onChange={(event) =>
+              onChangeVisibility({
+                ...ALL_OFF,
+                [event.target.value as CelestialBodyId]: true,
+              })
+            }
+          >
+            {items.map((item) => (
+              <option key={item.key} value={item.key}>
+                {item.symbol} {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selected === "milkyWay" && (
+          <label className="light-pollution-toggle">
+            <span className="celestial-symbol">◉</span>
+            <span>光害マップ</span>
+            <input
+              type="checkbox"
+              checked={lightPollutionEnabled}
+              onChange={(event) => onChangeLightPollution(event.target.checked)}
+            />
           </label>
-          {selected === "milkyWay" && (
-            <label className="light-pollution-toggle">
-              <span className="celestial-symbol">◉</span>
-              <span>光害マップ</span>
-              <input
-                type="checkbox"
-                checked={lightPollutionEnabled}
-                onChange={(event) => onChangeLightPollution(event.target.checked)}
-              />
-            </label>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </section>
   );
 }

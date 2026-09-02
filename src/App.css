@@ -747,6 +747,13 @@ button { cursor: pointer; }
 .celestial-menu { position: absolute; z-index: 60; top: 15px; right: 7px; pointer-events: auto; }
 .celestial-menu-button { min-width: 94px; min-height: 27px; padding: 3px 7px; color: #fff; border: 1px solid #343c46; border-radius: 6px; background: rgba(2,5,9,.91); font-size: 11px; }
 .celestial-menu-popover { position: absolute; top: 30px; right: 0; width: 98px; max-height: calc(27.3dvh - 127px); padding: 3px; overflow-y: auto; border: 1px solid #333b46; border-radius: 6px; background: rgba(1,4,8,.94); box-shadow: 0 10px 26px rgba(0,0,0,.65); }
+/* 2026-09-02追記: 開閉トグルを廃止し、常時表示のコンパクトな1行UIにした。
+   ラベル・プルダウンが折り返さないよう幅を内容に合わせて広げ、
+   position: staticで通常のドキュメントフローに戻す（トグル開閉が
+   無いのでabsolute配置の重なりを気にする必要がない）。 */
+.celestial-menu-popover.celestial-menu-inline { position: static; top: auto; right: auto; width: max-content; max-width: min(220px, calc(100vw - 20px)); max-height: none; overflow: visible; }
+.celestial-select-label { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 10px; color: #cfe3ff; }
+.celestial-select { flex: 0 0 auto; min-width: 0; padding: 2px 4px; color: #fff; border: 1px solid #343c46; border-radius: 5px; background: rgba(2,5,9,.91); font-size: 10px; font-family: inherit; white-space: nowrap; }
 .preview-section:fullscreen .celestial-menu-popover,
 .preview-section:-webkit-full-screen .celestial-menu-popover { max-height: calc(100dvh - 127px); }
 .celestial-checks { display: grid; gap: 1px; }
