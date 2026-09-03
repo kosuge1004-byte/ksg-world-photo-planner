@@ -665,10 +665,83 @@ function App() {
 
     const tapHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     tapHandler.setInputAction((movement: { position: Cartesian2 }) => {
-      if (viewer.isDestroyed()) return;
-      if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
+      if (viewer.isDestroyed() || mapMeasuring) return;
       const surfacePosition = pickSceneSurfacePosition(viewer, movement.position);
-      if (!surfacePosition) return;
+      if (!surfacePosition) {
+        setSearchMessage("3D表面位置を取得できませんでした。建物・地形が表示されている場所をもう一度タップしてください");
+        return;
+      }
+
+      const placementMode = placementModeRef.current;
+      if (placementMode === "foreground") {
+        openPlacementConfirm("person", async (offsetMeters) => {
+          const ground = await resolveGroundPointFrom3dSurface(surfacePosition, "人物配置地点");
+          const placed = placeForegroundAtCoordinates(
+            ground.latitude,
+            ground.longitude,
+            ground.ellipsoidalHeightMeters + offsetMeters,
+            false,
+            undefined,
+            "map-3d-surface"
+          );
+          if (!placed) throw new Error("人物を配置できませんでした");
+          setSearchMessage("人物を3D表面に配置しました。ドラッグして移動できます");
+        });
+        return;
+      }
+
+      if (placementMode === "subject") {
+        openPlacementConfirm("subject", async (offsetMeters) => {
+          const rawPoint = await setSubjectPinFromExplicit3dPick(
+            viewer,
+            surfacePosition,
+            "3Dマップ指定地点"
+          );
+          const point = offsetMeters !== 0
+            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+            : rawPoint;
+          if (offsetMeters !== 0) {
+            setSubjectPinFromPosition(
+              viewer,
+              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+              point.label,
+              point
+            );
+          }
+          setSubjectPoint(point);
+          const center = { latitude: point.latitude, longitude: point.longitude };
+          mapCenterRef.current = center;
+          setMapCenter(center);
+          setSearchMessage(
+            `被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
+          );
+        });
+        return;
+      }
+
+      if (placementMode === "tripod") {
+        openPlacementConfirm("tripod", async (offsetMeters) => {
+          const rawPoint = await resolveGroundPointFrom3dSurface(surfacePosition, "三脚位置");
+          const point = offsetMeters !== 0
+            ? withVerticalOffset(rawPoint, offsetMeters, "三脚ピン")
+            : rawPoint;
+          setTripodPin(
+            viewer,
+            Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+            point
+          );
+          setTripodPoint(point);
+          tripodPointRef.current = point;
+          const center = { latitude: point.latitude, longitude: point.longitude };
+          mapCenterRef.current = center;
+          setMapCenter(center);
+          setSearchMessage(
+            `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
+          );
+        });
+        return;
+      }
+
       const cartographic = Cartographic.fromCartesian(surfacePosition);
       if (!cartographic) return;
       void placeTripodFromMapTap({
@@ -3094,6 +3167,14 @@ ${diagnosticMessage}
       setTripodPoint(tripod);
       mapCenterRef.current = center;
       setMapCenter(center);
+      if (mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()) {
+        flyMapToTarget(
+          viewer,
+          tripod.latitude,
+          tripod.longitude,
+          tripod.height
+        );
+      }
       setSpotSearchOpen(false);
       setSearchMessage(`${tripod.label}に三脚ピンを設置しました`);
       return;
@@ -3130,6 +3211,14 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, /^https?:\/\//i.test(query.trim()) ? "google-maps-url" : "place"));
     mapCenterRef.current = center;
     setMapCenter(center);
+    if (mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()) {
+      flyMapToTarget(
+        viewer,
+        pinned.latitude,
+        pinned.longitude,
+        pinned.height
+      );
+    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
     refineSearchSubjectHeightInBackground(
@@ -3155,6 +3244,14 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, record.searchType));
     mapCenterRef.current = center;
     setMapCenter(center);
+    if (mapDisplayMode === "3d") {
+      flyMapToTarget(
+        viewer,
+        pinned.latitude,
+        pinned.longitude,
+        pinned.height
+      );
+    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
@@ -3698,10 +3795,10 @@ ${diagnosticMessage}
 
     placementModeRef.current = "subject";
     setSubjectPlacementActive(true);
-    setSearchMessage("2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
+    setSearchMessage(mapDisplayMode === "3d" ? "3Dマップ上で被写体を置く表面をタップしてください" : "2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
   }
 
-  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved";
+  type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved" | "map-3d-surface";
 
   function placeForegroundAtCoordinates(
     latitude: number,
@@ -3841,7 +3938,7 @@ ${diagnosticMessage}
 
     placementModeRef.current = "tripod";
     setTripodPlacementActive(true);
-    setSearchMessage("2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
+    setSearchMessage(mapDisplayMode === "3d" ? "3Dマップ上で三脚を置く表面をタップしてください" : "2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
   }
 
   async function placeTripodFromMapTap(coordinates: { latitude: number; longitude: number }): Promise<void> {
@@ -4283,7 +4380,66 @@ ${diagnosticMessage}
     setSearchMessage("三脚ピンの場所をGoogle Mapsへ送りました");
   }
 
+  function get3dMapCenter(viewer: Viewer): { latitude: number; longitude: number } | null {
+    if (viewer.isDestroyed()) return null;
+    const canvas = viewer.scene.canvas;
+    const centerPixel = new Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+    const surface = pickSceneSurfacePosition(viewer, centerPixel);
+    if (surface) {
+      const cartographic = Cartographic.fromCartesian(surface);
+      if (cartographic) {
+        return {
+          latitude: CesiumMath.toDegrees(cartographic.latitude),
+          longitude: CesiumMath.toDegrees(cartographic.longitude),
+        };
+      }
+    }
+    const cameraPosition = viewer.camera.positionCartographic;
+    if (!cameraPosition) return null;
+    return {
+      latitude: CesiumMath.toDegrees(cameraPosition.latitude),
+      longitude: CesiumMath.toDegrees(cameraPosition.longitude),
+    };
+  }
+
+  function toggleMapDisplayMode(): void {
+    if (mapDisplayMode === "3d") {
+      const viewer = mapViewerRef.current;
+      if (viewer && !viewer.isDestroyed()) {
+        const center = get3dMapCenter(viewer);
+        if (center) {
+          mapCenterRef.current = center;
+          setMapCenter(center);
+        }
+      }
+      setMapDisplayMode("2d");
+      return;
+    }
+
+    const center = mapCenterRef.current;
+    setMapDisplayMode("3d");
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const viewer = mapViewerRef.current;
+        if (!viewer || viewer.isDestroyed()) return;
+        viewer.resize();
+        flyMapToTarget(viewer, center.latitude, center.longitude, 0);
+      });
+    });
+  }
+
   function zoomMap(direction: "in" | "out") {
+    if (mapDisplayMode === "3d") {
+      const viewer = mapViewerRef.current;
+      if (viewer && !viewer.isDestroyed()) {
+        const height = Math.max(1, viewer.camera.positionCartographic?.height ?? 1000);
+        const amount = Math.max(10, Math.min(height * 0.28, 5000000));
+        if (direction === "in") viewer.camera.zoomIn(amount);
+        else viewer.camera.zoomOut(amount);
+        viewer.scene.requestRender();
+      }
+      return;
+    }
     setMapZoom((current) =>
       Math.min(20, Math.max(3, current + (direction === "in" ? 1 : -1)))
     );
@@ -4444,7 +4600,7 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
-        onOpenMap3D={() => setMapDisplayMode((current) => current === "3d" ? "2d" : "3d")}
+        onOpenMap3D={toggleMapDisplayMode}
         mapDisplayMode={mapDisplayMode}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
@@ -4747,17 +4903,36 @@ ${diagnosticMessage}
         <div className={foregroundPlacementActive ? "map-controls-layer foreground-placement-mode" : "map-controls-layer"}>
             <div className="map-native-top-left-mask" aria-hidden="true" />
             <div className="map-left-controls">
-              <div className="map-tool-rail" aria-label="地図表示ツール">
-                {mapDisplayMode === "2d" && (
-                  <>
-                    <button type="button" className={mapType === "roadmap" ? "active" : ""} aria-pressed={mapType === "roadmap"} onClick={() => setMapType("roadmap")}><span>▣</span><small>通常地図</small></button>
-                    <button type="button" className={mapType === "satellite" ? "active" : ""} aria-pressed={mapType === "satellite"} onClick={() => setMapType("satellite")}><span>▧</span><small>航空写真</small></button>
-                  </>
-                )}
+              {mapDisplayMode === "2d" ? (
+                <div className="map-tool-rail" aria-label="地図表示ツール">
+                  <button type="button" className={mapType === "roadmap" ? "active" : ""} aria-pressed={mapType === "roadmap"} onClick={() => setMapType("roadmap")}><span>▣</span><small>通常地図</small></button>
+                  <button type="button" className={mapType === "satellite" ? "active" : ""} aria-pressed={mapType === "satellite"} onClick={() => setMapType("satellite")}><span>▧</span><small>航空写真</small></button>
+                  <button
+                    type="button"
+                    ref={pinToolButtonRef}
+                    className={`map-pin-tool-button${mapTool === "pin" ? " active" : ""}`}
+                    aria-label="ピン配置"
+                    onClick={() => {
+                      setSpotSearchOpen(false);
+                      stopAllEditModes();
+                      setMapTool((current) => current === "pin" ? "none" : "pin");
+                    }}
+                  >
+                    <span className="map-pin-tool-icon" aria-hidden="true">
+                      <img src="/app-icon.svg" alt="" />
+                      <svg className="map-pin-tool-marker" viewBox="0 0 24 32" focusable="false" aria-hidden="true">
+                        <path d="M12 1.5C6.75 1.5 2.5 5.75 2.5 11c0 7.1 9.5 19.5 9.5 19.5S21.5 18.1 21.5 11C21.5 5.75 17.25 1.5 12 1.5Z" />
+                        <circle cx="12" cy="11" r="3.6" />
+                      </svg>
+                    </span>
+                    <small>ピン配置</small>
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
                   ref={pinToolButtonRef}
-                  className={`map-pin-tool-button${mapTool === "pin" ? " active" : ""}`}
+                  className={`map-pin-tool-button map-3d-pin-tool-button${mapTool === "pin" ? " active" : ""}`}
                   aria-label="ピン配置"
                   onClick={() => {
                     setSpotSearchOpen(false);
@@ -4774,7 +4949,7 @@ ${diagnosticMessage}
                   </span>
                   <small>ピン配置</small>
                 </button>
-              </div>
+              )}
 
               <div className="map-zoom-control">
                 <button type="button" aria-label="地図を拡大" onClick={() => zoomMap("in")}>＋</button>
