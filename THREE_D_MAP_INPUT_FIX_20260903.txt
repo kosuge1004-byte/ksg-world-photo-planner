@@ -1,0 +1,21 @@
+AstroSight 3D map input fix - 2026-09-03
+
+Problem confirmed:
+- src/App.tsx rendered .map-2d-placement-layer whenever subject/tripod/foreground placement mode was active.
+- The rendering condition did not require mapDisplayMode === "2d".
+- src/App.css defines this layer as absolute, inset:0, z-index:30, so it can cover the Cesium 3D map and intercept pointer/touch input.
+
+Fix:
+- Restricted the placement overlay to mapDisplayMode === "2d".
+- Measurement overlay was already restricted to 2D and was left unchanged.
+- No tripod calculation, preview calculation, image quality, celestial calculation, terrain, R2, or cache logic was changed.
+
+Regression protection:
+- Added scripts/verify-3d-map-input-20260903.mjs.
+- Added this verifier to scripts/run-regression-tests.mjs.
+- Dedicated verifier result: PASS 6/6.
+
+Verification limitation:
+- npm test was attempted but cannot run in this supplied source ZIP because node_modules is absent.
+- It stops at the first test with ERR_MODULE_NOT_FOUND for package 'typescript'.
+- Therefore full project regression/build success is NOT claimed in this environment.

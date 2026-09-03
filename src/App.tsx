@@ -4691,7 +4691,8 @@ ${diagnosticMessage}
           />
           )}
         </div>
-        {(subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (
+        {mapDisplayMode === "2d" &&
+          (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive) && (
             <button
               type="button"
               className="map-2d-placement-layer"

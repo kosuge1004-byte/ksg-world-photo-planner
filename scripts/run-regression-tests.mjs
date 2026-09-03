@@ -101,6 +101,10 @@ const cases = [
     arguments: ["./scripts/verify-platform-compatibility.mjs"],
   },
   {
+    name: "3D map pointer input is not blocked by 2D placement overlays",
+    arguments: ["./scripts/verify-3d-map-input-20260903.mjs"],
+  },
+  {
     name: "final source cleanup and strict TypeScript contracts",
     arguments: ["./scripts/verify-final-cleanup.mjs"],
   },
