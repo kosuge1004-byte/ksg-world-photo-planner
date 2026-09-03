@@ -393,7 +393,8 @@ button { cursor: pointer; }
    なっていたため、画面内に収まる固定位置表示へ修正する。 */
 .app-status {
   position: fixed;
-  z-index: 12000;
+  /* 通常画面では最前面に近い位置へ表示するが、検索・設定ダイアログより下に置く。 */
+  z-index: 900;
   left: 50%;
   bottom: calc(12px + env(safe-area-inset-bottom));
   box-sizing: border-box;
