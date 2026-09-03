@@ -140,7 +140,7 @@ export async function waitForPreviewTiles(
     if (!viewer.isDestroyed()) {
       // 解像度を戻した状態でもう1回だけ描画し、最終フレームの画質を保つ。
       viewer.scene.requestRender();
-      viewer.render();
+      viewer.scene.render();
       copyViewerFrameToPreview(viewer, previewCanvas, context);
     }
     return loaded;
@@ -154,7 +154,7 @@ export async function waitForPreviewTiles(
   // トリガーとして使う必要がなくなる。
   while (!viewer.isDestroyed()) {
     viewer.scene.requestRender();
-    viewer.render();
+    viewer.scene.render();
     copyViewerFrameToPreview(viewer, previewCanvas, context);
 
     if (visiblePreviewTilesLoaded(viewer)) return finish(true);
@@ -281,7 +281,7 @@ export async function captureTripodPreview(
     restoreCamera(viewer, cameraState);
     // 3Dマップが実際に表示されている時だけ復元フレームを即描画する。
     // 2D表示中はCesium自体を休止しているため、不可視の1フレームを描く必要はない。
-    if (restoreVisibleScene) viewer.render();
+    if (restoreVisibleScene) viewer.scene.render();
   }
   return tilesFullyLoaded;
 }
@@ -337,7 +337,7 @@ export async function pickTripodPreviewSurface(
       await waitForPreviewTiles(viewer, dummyCanvas, dummyContext);
     } else {
       viewer.scene.requestRender();
-      viewer.render();
+      viewer.scene.render();
     }
 
     const viewerWidth = Math.max(1, viewer.canvas.clientWidth);

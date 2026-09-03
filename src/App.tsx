@@ -15,7 +15,6 @@ import {
 import type { Viewer } from "cesium";
 import { Cartesian2, Cartographic, Math as CesiumMath, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
 import { pickSceneSurfacePosition } from "./cesium/surfacePicking";
-import { flyMapToTarget } from "./cesium/camera";
 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./App.css";
@@ -156,7 +155,6 @@ import {
 import {
   setTripodPin,
   setTripodPinFromCoordinates,
-  setTripodPinFromExplicit3dPick,
 } from "./cesium/tripodPin";
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
 import { isResolvedGroundPoint } from "./types/points";
@@ -643,10 +641,6 @@ function App() {
         if (viewer.isDestroyed()) return;
         viewer.resize();
         viewer.scene.requestRender();
-        if (mapDisplayMode === "3d") {
-          const center = mapCenterRef.current;
-          flyMapToTarget(viewer, center.latitude, center.longitude);
-        }
       });
     }
   }, [mapDisplayMode, mapReady]);
@@ -668,95 +662,12 @@ function App() {
     viewer.scene.screenSpaceCameraController.enableInputs = true;
     if (mapRef.current) mapRef.current.style.pointerEvents = "auto";
 
-    // 2026-09-03修正: Viewer作成後は2Dプレビューの負荷削減のため
-    // useDefaultRenderLoop=falseにしている。Cesium公式仕様では、この状態で
-    // 独自ループを使う場合はViewer#render()を呼ぶ必要があるが、従来コードは
-    // Scene#render()を直接呼んでいた。これではViewerが担う標準フレーム処理と
-    // 入力更新の契約から外れるため、3D地図を実際に操作する間はCesium自身の
-    // 標準レンダーループを復帰させる。
-    viewer.useDefaultRenderLoop = true;
-    viewer.resize();
-    viewer.scene.requestRender();
-
     const tapHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     tapHandler.setInputAction((movement: { position: Cartesian2 }) => {
-      if (viewer.isDestroyed() || mapMeasuring) return;
+      if (viewer.isDestroyed()) return;
+      if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
       const surfacePosition = pickSceneSurfacePosition(viewer, movement.position);
-      if (!surfacePosition) {
-        if (placementModeRef.current !== "none") {
-          setSearchMessage("3D表面を取得できませんでした。建物・地形が読み込まれている場所をもう一度タップしてください");
-        }
-        return;
-      }
-
-      const placementMode = placementModeRef.current;
-      if (placementMode === "subject") {
-        openPlacementConfirm("subject", async (offsetMeters) => {
-          const rawPoint = await setSubjectPinFromExplicit3dPick(
-            viewer,
-            Cartesian3.clone(surfacePosition),
-            "3D指定地点"
-          );
-          const point = offsetMeters !== 0
-            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
-            : rawPoint;
-          if (offsetMeters !== 0) {
-            setSubjectPinFromPosition(
-              viewer,
-              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-              point.label,
-              point
-            );
-          }
-          setSubjectPoint(point);
-          setSearchMessage(`被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`);
-        });
-        return;
-      }
-
-      if (placementMode === "tripod") {
-        openPlacementConfirm("tripod", async (offsetMeters) => {
-          const rawPoint = await setTripodPinFromExplicit3dPick(
-            viewer,
-            Cartesian3.clone(surfacePosition)
-          );
-          const point = offsetMeters !== 0
-            ? withVerticalOffset(rawPoint, offsetMeters, "三脚ピン")
-            : rawPoint;
-          if (offsetMeters !== 0) {
-            setTripodPin(
-              viewer,
-              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
-              point
-            );
-          }
-          setTripodPoint(point);
-          tripodPointRef.current = point;
-          setSearchMessage(`三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`);
-        });
-        return;
-      }
-
-      if (placementMode === "foreground") {
-        openPlacementConfirm("person", async (offsetMeters) => {
-          const ground = await resolveGroundPointFrom3dSurface(
-            Cartesian3.clone(surfacePosition),
-            "人物配置地点"
-          );
-          const placed = placeForegroundAtCoordinates(
-            ground.latitude,
-            ground.longitude,
-            ground.ellipsoidalHeightMeters + offsetMeters,
-            false,
-            undefined,
-            "map-3d-surface"
-          );
-          if (!placed) throw new Error("人物を配置できませんでした");
-          setSearchMessage("人物を配置しました。ドラッグして移動できます");
-        });
-        return;
-      }
-
+      if (!surfacePosition) return;
       const cartographic = Cartographic.fromCartesian(surfacePosition);
       if (!cartographic) return;
       void placeTripodFromMapTap({
@@ -765,17 +676,18 @@ function App() {
       });
     }, ScreenSpaceEventType.LEFT_CLICK);
 
-    // Viewerの標準ループがwindow resizeを処理するが、上下ペインのサイズ変更は
-    // window resizeを伴わない場合があるため、ホスト自体も監視して確実に追従する。
-    const resizeObserver = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => {
-          if (viewer.isDestroyed()) return;
-          viewer.resize();
-          viewer.scene.requestRender();
-        })
-      : null;
-    if (map3DHostRef.current) resizeObserver?.observe(map3DHostRef.current);
+    let rafId: number | null = null;
+    const renderLoop = () => {
+      if (viewer.isDestroyed()) return;
+      viewer.scene.requestRender();
+      viewer.scene.render();
+      rafId = requestAnimationFrame(renderLoop);
+    };
+    rafId = requestAnimationFrame(renderLoop);
+    map3DRenderLoopRef.current = rafId;
 
+    // 画面回転・キーボード表示等でホストのサイズが変わっても追従できる
+    // よう、3D表示中はwindowのresizeも監視する。
     const handleWindowResize = () => {
       if (viewer.isDestroyed()) return;
       viewer.resize();
@@ -785,13 +697,10 @@ function App() {
 
     return () => {
       tapHandler.destroy();
-      resizeObserver?.disconnect();
       window.removeEventListener("resize", handleWindowResize);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       map3DRenderLoopRef.current = null;
       if (!viewer.isDestroyed()) {
-        // 2Dへ戻った後は上側プレビュー専用になるため、再び自動ループを止めて
-        // captureTripodPreview側の必要時描画だけに戻す。
-        viewer.useDefaultRenderLoop = false;
         viewer.scene.screenSpaceCameraController.enableInputs = false;
       }
       if (mapRef.current) mapRef.current.style.pointerEvents = "";
@@ -3184,9 +3093,6 @@ ${diagnosticMessage}
       setTripodPoint(tripod);
       mapCenterRef.current = center;
       setMapCenter(center);
-      if (mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()) {
-        flyMapToTarget(viewer, tripod.latitude, tripod.longitude, tripod.height);
-      }
       setSpotSearchOpen(false);
       setSearchMessage(`${tripod.label}に三脚ピンを設置しました`);
       return;
@@ -3223,9 +3129,6 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, /^https?:\/\//i.test(query.trim()) ? "google-maps-url" : "place"));
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()) {
-      flyMapToTarget(viewer, pinned.latitude, pinned.longitude, pinned.height);
-    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
     refineSearchSubjectHeightInBackground(
@@ -3251,9 +3154,6 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, record.searchType));
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapDisplayMode === "3d") {
-      flyMapToTarget(viewer, pinned.latitude, pinned.longitude, pinned.height);
-    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
@@ -3394,14 +3294,6 @@ ${diagnosticMessage}
     const center = { latitude: appliedResult.subject.latitude, longitude: appliedResult.subject.longitude };
     mapCenterRef.current = center;
     setMapCenter(center);
-    if (mapDisplayMode === "3d") {
-      flyMapToTarget(
-        viewer,
-        appliedResult.subject.latitude,
-        appliedResult.subject.longitude,
-        appliedResult.subject.height
-      );
-    }
     setSpotSearchOpen(false);
     setHighestPrecisionProgress(null);
     setSearchMessage(
@@ -3805,7 +3697,7 @@ ${diagnosticMessage}
 
     placementModeRef.current = "subject";
     setSubjectPlacementActive(true);
-    setSearchMessage(mapDisplayMode === "3d" ? "3Dマップ上で被写体を置く表面をタップしてください" : "2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
+    setSearchMessage("2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
   }
 
   type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved";
@@ -3948,7 +3840,7 @@ ${diagnosticMessage}
 
     placementModeRef.current = "tripod";
     setTripodPlacementActive(true);
-    setSearchMessage(mapDisplayMode === "3d" ? "3Dマップ上で三脚を置く地面をタップしてください" : "2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
+    setSearchMessage("2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
   }
 
   async function placeTripodFromMapTap(coordinates: { latitude: number; longitude: number }): Promise<void> {
@@ -4281,18 +4173,6 @@ ${diagnosticMessage}
       mapCenterRef.current = center;
       // 新しいオブジェクトを必ず設定し、2D iframe・オーバーレイも再描画させる。
       setMapCenter({ latitude: center.latitude, longitude: center.longitude });
-      if (mapDisplayMode === "3d") {
-        const viewer = mapViewerRef.current;
-        if (viewer && !viewer.isDestroyed()) {
-          try {
-            const ground = await resolveGroundPoint(latitude, longitude, "現在地3D表示");
-            flyMapToTarget(viewer, latitude, longitude, ground.height);
-          } catch (error) {
-            console.warn("現在地の3D表示用標高を取得できませんでした", error);
-            flyMapToTarget(viewer, latitude, longitude);
-          }
-        }
-      }
 
       const accuracyText = Number.isFinite(accuracy)
         ? `（精度 約${Math.max(1, Math.round(accuracy))}m）`
@@ -4343,17 +4223,6 @@ ${diagnosticMessage}
       latitude: subjectPoint.latitude,
       longitude: subjectPoint.longitude,
     });
-    if (mapDisplayMode === "3d") {
-      const viewer = mapViewerRef.current;
-      if (viewer && !viewer.isDestroyed()) {
-        flyMapToTarget(
-          viewer,
-          subjectPoint.latitude,
-          subjectPoint.longitude,
-          subjectPoint.height
-        );
-      }
-    }
     setSearchMessage("被写体を地図の中心へ移動しました");
   }
 
@@ -4366,59 +4235,7 @@ ${diagnosticMessage}
       latitude: tripodPoint.latitude,
       longitude: tripodPoint.longitude,
     });
-    if (mapDisplayMode === "3d") {
-      const viewer = mapViewerRef.current;
-      if (viewer && !viewer.isDestroyed()) {
-        flyMapToTarget(
-          viewer,
-          tripodPoint.latitude,
-          tripodPoint.longitude,
-          tripodPoint.height
-        );
-      }
-    }
     setSearchMessage("三脚ピンを地図の中心へ移動しました");
-  }
-
-  function read3DDisplayedCenter(): { latitude: number; longitude: number } | null {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return null;
-    const canvas = viewer.scene.canvas;
-    const center = new Cartesian2(
-      Math.max(0, canvas.clientWidth) / 2,
-      Math.max(0, canvas.clientHeight) / 2
-    );
-    // まず実際に表示されている3D表面を使う。深度ピックできない場合だけ、
-    // 同じ画面中央レイと地形グローブの交点へフォールバックする。
-    const picked = pickSceneSurfacePosition(viewer, center);
-    const ray = viewer.camera.getPickRay(center);
-    const globePicked = !picked && ray ? viewer.scene.globe.pick(ray, viewer.scene) : undefined;
-    const position = picked ?? globePicked;
-    if (!position) return null;
-    const cartographic = Cartographic.fromCartesian(position);
-    if (!cartographic) return null;
-    const latitude = CesiumMath.toDegrees(cartographic.latitude);
-    const longitude = CesiumMath.toDegrees(cartographic.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-    return { latitude, longitude };
-  }
-
-  function toggleMapDisplayMode(): void {
-    if (mapDisplayMode === "3d") {
-      // 3Dでユーザーが移動した現在の画面中央を2Dへ引き継ぐ。
-      // これを行わないと、2Dへ戻した瞬間に最後のmapCenterへ巻き戻る。
-      const displayedCenter = read3DDisplayedCenter();
-      if (displayedCenter) {
-        mapCenterRef.current = displayedCenter;
-        setMapCenter(displayedCenter);
-      }
-      setMapDisplayMode("2d");
-      return;
-    }
-
-    // 2D側はMapLibreのonCenterChangeでmapCenterRefへ常時同期されている。
-    // 3Dへ切り替えた後、ホスト移動・resize完了後にuseEffect側でこの中心へ飛ばす。
-    setMapDisplayMode("3d");
   }
 
   function openSubjectInGoogleMaps() {
@@ -4604,7 +4421,7 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
-        onOpenMap3D={toggleMapDisplayMode}
+        onOpenMap3D={() => setMapDisplayMode((current) => current === "3d" ? "2d" : "3d")}
         mapDisplayMode={mapDisplayMode}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
@@ -4904,7 +4721,7 @@ ${diagnosticMessage}
           </button>
         )}
 
-        <div className={`map-controls-layer ${mapDisplayMode === "3d" ? "map-mode-3d" : "map-mode-2d"}${foregroundPlacementActive ? " foreground-placement-mode" : ""}`}>
+        <div className={foregroundPlacementActive ? "map-controls-layer foreground-placement-mode" : "map-controls-layer"}>
             <div className="map-native-top-left-mask" aria-hidden="true" />
             <div className="map-left-controls">
               <div className="map-tool-rail" aria-label="地図表示ツール">
@@ -4996,6 +4813,47 @@ ${diagnosticMessage}
                   </div>
                 )}
               </div>
+            )}
+
+            {tripodCandidateCalculationStatus !== "idle" && (
+              <button
+                type="button"
+                className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus} ${
+                  displayedTripodCandidates.length > 0 ? "tappable" : ""
+                }`}
+                role={displayedTripodCandidates.length > 0 ? undefined : "status"}
+                aria-live="polite"
+                disabled={displayedTripodCandidates.length === 0}
+                onClick={
+                  displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined
+                }
+              >
+                {tripodCandidateCalculationStatus === "calculating"
+                  ? "三脚候補を精密計算中…"
+                  : tripodCandidateCalculationStatus === "complete"
+                    ? "確定した三脚候補"
+                    : tripodCandidateCalculationStatus === "no-solution"
+                      ? (displayedTripodCandidates.length > 0
+                          ? "確定解なし（概算候補を表示）"
+                          : "現在の条件では確定できる三脚候補がありません")
+                      : (displayedTripodCandidates.length > 0
+                          ? "精密計算に失敗（概算候補を表示）"
+                          : "三脚候補の計算に失敗しました")}
+              </button>
+            )}
+
+            {tripodProgressSnapshot && (
+              <p className="map-tripod-progress-snapshot" role="status" aria-live="polite">
+                計算中… 経過{tripodProgressSnapshot.elapsedSeconds}秒・
+                通信{tripodProgressSnapshot.roundTripCount}回
+                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null
+                  ? `・最後の通信から${tripodProgressSnapshot.secondsSinceLastRoundTrip}秒経過`
+                  : "・まだ通信していません"}
+                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null &&
+                  tripodProgressSnapshot.secondsSinceLastRoundTrip >= 30 && (
+                    <><br />⚠ 30秒以上通信が発生していません。処理が停止している可能性があります。</>
+                  )}
+              </p>
             )}
 
             {tripodCandidateCalculationStatus !== "idle" &&
@@ -5136,29 +4994,7 @@ ${diagnosticMessage}
         </a>
       </section>
 
-      <div className="app-status" aria-live="polite">
-        <span>{status}</span>
-        {tripodCandidateCalculationStatus !== "idle" && (
-          <button
-            type="button"
-            className={`app-status-candidate ${tripodCandidateCalculationStatus}`}
-            disabled={displayedTripodCandidates.length === 0}
-            onClick={displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined}
-          >
-            {tripodCandidateCalculationStatus === "calculating"
-              ? `三脚候補を精密計算中…${tripodProgressSnapshot ? ` 経過${tripodProgressSnapshot.elapsedSeconds}秒・通信${tripodProgressSnapshot.roundTripCount}回` : ""}`
-              : tripodCandidateCalculationStatus === "complete"
-                ? "確定した三脚候補"
-                : tripodCandidateCalculationStatus === "no-solution"
-                  ? (displayedTripodCandidates.length > 0
-                      ? "確定解なし（概算候補を表示）"
-                      : "現在の条件では確定できる三脚候補がありません")
-                  : (displayedTripodCandidates.length > 0
-                      ? "精密計算に失敗（概算候補を表示）"
-                      : "三脚候補の計算に失敗しました")}
-          </button>
-        )}
-      </div>
+      <div className="app-status" aria-live="polite">{status}</div>
 
       {userNotice && (
         <UserNotice
