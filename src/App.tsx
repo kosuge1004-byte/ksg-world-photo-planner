@@ -15,6 +15,7 @@ import {
 import type { Viewer } from "cesium";
 import { Cartesian2, Cartographic, Math as CesiumMath, ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
 import { pickSceneSurfacePosition } from "./cesium/surfacePicking";
+import { flyMapToTarget } from "./cesium/camera";
 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./App.css";
@@ -4185,6 +4186,18 @@ ${diagnosticMessage}
       mapCenterRef.current = center;
       // 新しいオブジェクトを必ず設定し、2D iframe・オーバーレイも再描画させる。
       setMapCenter({ latitude: center.latitude, longitude: center.longitude });
+      if (mapDisplayMode === "3d") {
+        const viewer = mapViewerRef.current;
+        if (viewer && !viewer.isDestroyed()) {
+          try {
+            const ground = await resolveGroundPoint(latitude, longitude, "現在地3D表示");
+            flyMapToTarget(viewer, latitude, longitude, ground.height);
+          } catch (error) {
+            console.warn("現在地の3D表示用標高を取得できませんでした", error);
+            flyMapToTarget(viewer, latitude, longitude);
+          }
+        }
+      }
 
       const accuracyText = Number.isFinite(accuracy)
         ? `（精度 約${Math.max(1, Math.round(accuracy))}m）`
@@ -4235,6 +4248,17 @@ ${diagnosticMessage}
       latitude: subjectPoint.latitude,
       longitude: subjectPoint.longitude,
     });
+    if (mapDisplayMode === "3d") {
+      const viewer = mapViewerRef.current;
+      if (viewer && !viewer.isDestroyed()) {
+        flyMapToTarget(
+          viewer,
+          subjectPoint.latitude,
+          subjectPoint.longitude,
+          subjectPoint.height
+        );
+      }
+    }
     setSearchMessage("被写体を地図の中心へ移動しました");
   }
 
@@ -4247,6 +4271,17 @@ ${diagnosticMessage}
       latitude: tripodPoint.latitude,
       longitude: tripodPoint.longitude,
     });
+    if (mapDisplayMode === "3d") {
+      const viewer = mapViewerRef.current;
+      if (viewer && !viewer.isDestroyed()) {
+        flyMapToTarget(
+          viewer,
+          tripodPoint.latitude,
+          tripodPoint.longitude,
+          tripodPoint.height
+        );
+      }
+    }
     setSearchMessage("三脚ピンを地図の中心へ移動しました");
   }
 

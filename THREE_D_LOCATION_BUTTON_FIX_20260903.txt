@@ -1,0 +1,19 @@
+AstroSight 3D map location-button fix - 2026-09-03
+
+Confirmed cause
+- The lower-right Current location / Subject / Tripod buttons updated React mapCenter only.
+- mapCenter is consumed by the 2D map, but no Cesium camera move was performed for 3D.
+- Therefore clicks could fire normally while the visible 3D map did not move.
+
+Fix
+- Reused existing src/cesium/camera.ts flyMapToTarget().
+- Subject button: in 3D, fly Cesium camera to subject latitude/longitude/height.
+- Tripod button: in 3D, fly Cesium camera to tripod latitude/longitude/height.
+- Current location button: in 3D, resolve ground height and fly Cesium camera to current location; if elevation resolution fails, use the helper fallback.
+- Existing setMapCenter behavior remains for 2D.
+
+Verification
+- scripts/verify-3d-location-buttons-20260903.mjs: 5/5 PASS.
+- Existing scripts/verify-3d-map-input-20260903.mjs: 6/6 PASS.
+- Existing scripts/verify-3d-map-render-loop-20260903.mjs: 7/7 PASS.
+- Full TypeScript compilation was not run because node_modules/typescript is not present in the supplied project archive.
