@@ -156,6 +156,7 @@ import {
 import {
   setTripodPin,
   setTripodPinFromCoordinates,
+  setTripodPinFromExplicit3dPick,
 } from "./cesium/tripodPin";
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
 import { isResolvedGroundPoint } from "./types/points";
@@ -679,10 +680,83 @@ function App() {
 
     const tapHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     tapHandler.setInputAction((movement: { position: Cartesian2 }) => {
-      if (viewer.isDestroyed()) return;
-      if (subjectPlacementActive || tripodPlacementActive || foregroundPlacementActive || mapMeasuring) return;
+      if (viewer.isDestroyed() || mapMeasuring) return;
       const surfacePosition = pickSceneSurfacePosition(viewer, movement.position);
-      if (!surfacePosition) return;
+      if (!surfacePosition) {
+        if (placementModeRef.current !== "none") {
+          setSearchMessage("3D表面を取得できませんでした。建物・地形が読み込まれている場所をもう一度タップしてください");
+        }
+        return;
+      }
+
+      const placementMode = placementModeRef.current;
+      if (placementMode === "subject") {
+        openPlacementConfirm("subject", async (offsetMeters) => {
+          const rawPoint = await setSubjectPinFromExplicit3dPick(
+            viewer,
+            Cartesian3.clone(surfacePosition),
+            "3D指定地点"
+          );
+          const point = offsetMeters !== 0
+            ? withLensCenterHeight(rawPoint, offsetMeters, rawPoint.label)
+            : rawPoint;
+          if (offsetMeters !== 0) {
+            setSubjectPinFromPosition(
+              viewer,
+              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+              point.label,
+              point
+            );
+          }
+          setSubjectPoint(point);
+          setSearchMessage(`被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`);
+        });
+        return;
+      }
+
+      if (placementMode === "tripod") {
+        openPlacementConfirm("tripod", async (offsetMeters) => {
+          const rawPoint = await setTripodPinFromExplicit3dPick(
+            viewer,
+            Cartesian3.clone(surfacePosition)
+          );
+          const point = offsetMeters !== 0
+            ? withVerticalOffset(rawPoint, offsetMeters, "三脚ピン")
+            : rawPoint;
+          if (offsetMeters !== 0) {
+            setTripodPin(
+              viewer,
+              Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+              point
+            );
+          }
+          setTripodPoint(point);
+          tripodPointRef.current = point;
+          setSearchMessage(`三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`);
+        });
+        return;
+      }
+
+      if (placementMode === "foreground") {
+        openPlacementConfirm("person", async (offsetMeters) => {
+          const ground = await resolveGroundPointFrom3dSurface(
+            Cartesian3.clone(surfacePosition),
+            "人物配置地点"
+          );
+          const placed = placeForegroundAtCoordinates(
+            ground.latitude,
+            ground.longitude,
+            ground.ellipsoidalHeightMeters + offsetMeters,
+            false,
+            undefined,
+            "map-3d-surface"
+          );
+          if (!placed) throw new Error("人物を配置できませんでした");
+          setSearchMessage("人物を配置しました。ドラッグして移動できます");
+        });
+        return;
+      }
+
       const cartographic = Cartographic.fromCartesian(surfacePosition);
       if (!cartographic) return;
       void placeTripodFromMapTap({
@@ -3731,7 +3805,7 @@ ${diagnosticMessage}
 
     placementModeRef.current = "subject";
     setSubjectPlacementActive(true);
-    setSearchMessage("2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
+    setSearchMessage(mapDisplayMode === "3d" ? "3Dマップ上で被写体を置く表面をタップしてください" : "2D地図上で被写体の周辺位置をクリックしてください。正式な3D位置は上側プレビューで指定できます");
   }
 
   type ForegroundPlacementSource = "subject-pin" | "map-2d" | "map-2d-resolved";
@@ -3874,7 +3948,7 @@ ${diagnosticMessage}
 
     placementModeRef.current = "tripod";
     setTripodPlacementActive(true);
-    setSearchMessage("2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
+    setSearchMessage(mapDisplayMode === "3d" ? "3Dマップ上で三脚を置く地面をタップしてください" : "2D地図上で三脚を置く場所をクリックしてください。高さは自動で取得します");
   }
 
   async function placeTripodFromMapTap(coordinates: { latitude: number; longitude: number }): Promise<void> {
@@ -4830,7 +4904,7 @@ ${diagnosticMessage}
           </button>
         )}
 
-        <div className={foregroundPlacementActive ? "map-controls-layer foreground-placement-mode" : "map-controls-layer"}>
+        <div className={`map-controls-layer ${mapDisplayMode === "3d" ? "map-mode-3d" : "map-mode-2d"}${foregroundPlacementActive ? " foreground-placement-mode" : ""}`}>
             <div className="map-native-top-left-mask" aria-hidden="true" />
             <div className="map-left-controls">
               <div className="map-tool-rail" aria-label="地図表示ツール">
@@ -4922,47 +4996,6 @@ ${diagnosticMessage}
                   </div>
                 )}
               </div>
-            )}
-
-            {tripodCandidateCalculationStatus !== "idle" && (
-              <button
-                type="button"
-                className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus} ${
-                  displayedTripodCandidates.length > 0 ? "tappable" : ""
-                }`}
-                role={displayedTripodCandidates.length > 0 ? undefined : "status"}
-                aria-live="polite"
-                disabled={displayedTripodCandidates.length === 0}
-                onClick={
-                  displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined
-                }
-              >
-                {tripodCandidateCalculationStatus === "calculating"
-                  ? "三脚候補を精密計算中…"
-                  : tripodCandidateCalculationStatus === "complete"
-                    ? "確定した三脚候補"
-                    : tripodCandidateCalculationStatus === "no-solution"
-                      ? (displayedTripodCandidates.length > 0
-                          ? "確定解なし（概算候補を表示）"
-                          : "現在の条件では確定できる三脚候補がありません")
-                      : (displayedTripodCandidates.length > 0
-                          ? "精密計算に失敗（概算候補を表示）"
-                          : "三脚候補の計算に失敗しました")}
-              </button>
-            )}
-
-            {tripodProgressSnapshot && (
-              <p className="map-tripod-progress-snapshot" role="status" aria-live="polite">
-                計算中… 経過{tripodProgressSnapshot.elapsedSeconds}秒・
-                通信{tripodProgressSnapshot.roundTripCount}回
-                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null
-                  ? `・最後の通信から${tripodProgressSnapshot.secondsSinceLastRoundTrip}秒経過`
-                  : "・まだ通信していません"}
-                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null &&
-                  tripodProgressSnapshot.secondsSinceLastRoundTrip >= 30 && (
-                    <><br />⚠ 30秒以上通信が発生していません。処理が停止している可能性があります。</>
-                  )}
-              </p>
             )}
 
             {tripodCandidateCalculationStatus !== "idle" &&
@@ -5103,7 +5136,29 @@ ${diagnosticMessage}
         </a>
       </section>
 
-      <div className="app-status" aria-live="polite">{status}</div>
+      <div className="app-status" aria-live="polite">
+        <span>{status}</span>
+        {tripodCandidateCalculationStatus !== "idle" && (
+          <button
+            type="button"
+            className={`app-status-candidate ${tripodCandidateCalculationStatus}`}
+            disabled={displayedTripodCandidates.length === 0}
+            onClick={displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined}
+          >
+            {tripodCandidateCalculationStatus === "calculating"
+              ? `三脚候補を精密計算中…${tripodProgressSnapshot ? ` 経過${tripodProgressSnapshot.elapsedSeconds}秒・通信${tripodProgressSnapshot.roundTripCount}回` : ""}`
+              : tripodCandidateCalculationStatus === "complete"
+                ? "確定した三脚候補"
+                : tripodCandidateCalculationStatus === "no-solution"
+                  ? (displayedTripodCandidates.length > 0
+                      ? "確定解なし（概算候補を表示）"
+                      : "現在の条件では確定できる三脚候補がありません")
+                  : (displayedTripodCandidates.length > 0
+                      ? "精密計算に失敗（概算候補を表示）"
+                      : "三脚候補の計算に失敗しました")}
+          </button>
+        )}
+      </div>
 
       {userNotice && (
         <UserNotice

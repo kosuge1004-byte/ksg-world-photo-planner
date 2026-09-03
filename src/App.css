@@ -3125,3 +3125,58 @@ body.pseudo-fullscreen-active {
 }
 .precision-subsection:first-of-type { border-top: 0; padding-top: 0; }
 .precision-subsection > strong { color: #e7edf4; font-size: 12px; }
+
+/* 2026-09-03: 3D map pin placement UI.
+   In 3D there are no 2D map-type buttons, so the pin button should sit directly
+   above +/- without a tall black rail behind it. */
+.map-controls-layer.map-mode-3d .map-left-controls {
+  justify-content: flex-end;
+}
+.map-controls-layer.map-mode-3d .map-tool-rail {
+  display: block;
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-bottom: 7px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.map-controls-layer.map-mode-3d .map-tool-rail > .map-pin-tool-button {
+  min-height: 58px;
+  border: 0;
+  background: transparent;
+}
+.map-controls-layer.map-mode-3d .map-tool-rail > .map-pin-tool-button.active {
+  background: transparent;
+}
+
+/* Tripod-candidate state belongs in the existing bottom status field rather
+   than floating over the 2D/3D map and hiding the pin-placement surface. */
+.app-status {
+  display: grid;
+  gap: 4px;
+}
+.app-status > span:empty {
+  display: none;
+}
+.app-status-candidate {
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 7px;
+  color: #eef7ff;
+  border: 1px solid rgba(90,185,255,.58);
+  border-radius: 5px;
+  background: rgba(2,8,14,.72);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+.app-status-candidate.complete { color: #d9ffe0; border-color: rgba(73,214,111,.64); }
+.app-status-candidate.no-solution,
+.app-status-candidate.error { color: #ffe6b3; border-color: rgba(255,184,77,.68); }
+.app-status-candidate:disabled { opacity: 1; cursor: default; pointer-events: none; }

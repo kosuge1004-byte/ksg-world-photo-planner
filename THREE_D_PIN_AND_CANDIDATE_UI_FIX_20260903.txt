@@ -1,0 +1,17 @@
+AstroSight 3D pin placement / tripod candidate UI fix
+Date: 2026-09-03
+
+Changes
+1. 3D pin placement was non-functional because the Cesium LEFT_CLICK handler returned whenever subject/tripod/foreground placement mode was active. The handler now routes explicit 3D surface picks to the existing high-precision placement functions:
+   - subject: setSubjectPinFromExplicit3dPick()
+   - tripod: setTripodPinFromExplicit3dPick()
+   - foreground/person: resolveGroundPointFrom3dSurface()
+2. If a 3D surface cannot be depth-picked, the existing bottom app status field reports the failure instead of silently doing nothing.
+3. The floating tripod-candidate status popup over the map was removed. Candidate calculation/status is rendered inside the existing bottom app-status area (the same area used for messages such as "三脚ピンを配置しました").
+4. Candidate progress elapsed time and network count were also moved into the bottom candidate status entry.
+5. In 3D mode, the pin placement button is positioned directly above the +/- zoom buttons.
+6. In 3D mode, the tall black map-tool rail background behind the pin button is removed. 2D map type controls are unchanged.
+
+Verification
+- scripts/verify-3d-pin-placement-ui-20260903.mjs: PASS 10/10
+- Full npm/TypeScript build: NOT VERIFIED. The source ZIP did not contain node_modules and npm dependency installation timed out in the execution environment, leaving node_modules/.bin/tsc unavailable.
