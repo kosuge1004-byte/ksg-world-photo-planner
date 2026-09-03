@@ -4815,76 +4815,8 @@ ${diagnosticMessage}
               </div>
             )}
 
-            {tripodCandidateCalculationStatus !== "idle" && (
-              <button
-                type="button"
-                className={`map-tripod-candidate-status ${tripodCandidateCalculationStatus} ${
-                  displayedTripodCandidates.length > 0 ? "tappable" : ""
-                }`}
-                role={displayedTripodCandidates.length > 0 ? undefined : "status"}
-                aria-live="polite"
-                disabled={displayedTripodCandidates.length === 0}
-                onClick={
-                  displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined
-                }
-              >
-                {tripodCandidateCalculationStatus === "calculating"
-                  ? "三脚候補を精密計算中…"
-                  : tripodCandidateCalculationStatus === "complete"
-                    ? "確定した三脚候補"
-                    : tripodCandidateCalculationStatus === "no-solution"
-                      ? (displayedTripodCandidates.length > 0
-                          ? "確定解なし（概算候補を表示）"
-                          : "現在の条件では確定できる三脚候補がありません")
-                      : (displayedTripodCandidates.length > 0
-                          ? "精密計算に失敗（概算候補を表示）"
-                          : "三脚候補の計算に失敗しました")}
-              </button>
-            )}
-
-            {tripodProgressSnapshot && (
-              <p className="map-tripod-progress-snapshot" role="status" aria-live="polite">
-                計算中… 経過{tripodProgressSnapshot.elapsedSeconds}秒・
-                通信{tripodProgressSnapshot.roundTripCount}回
-                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null
-                  ? `・最後の通信から${tripodProgressSnapshot.secondsSinceLastRoundTrip}秒経過`
-                  : "・まだ通信していません"}
-                {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null &&
-                  tripodProgressSnapshot.secondsSinceLastRoundTrip >= 30 && (
-                    <><br />⚠ 30秒以上通信が発生していません。処理が停止している可能性があります。</>
-                  )}
-              </p>
-            )}
-
-            {tripodCandidateCalculationStatus !== "idle" &&
-              tripodCandidateCalculationStatus !== "calculating" && (
-                <div className="map-tripod-diagnostics-actions">
-                  <button
-                    type="button"
-                    className="map-tripod-diagnostics-copy"
-                    onClick={handleCopyTripodDiagnostics}
-                    title="所要時間・見つかった交点候補数などをコピーします（開発者への報告用）"
-                  >
-                    {tripodDiagnosticsCopyState === "copied"
-                      ? "診断情報をコピーしました"
-                      : tripodDiagnosticsCopyState === "failed"
-                        ? "コピーできませんでした"
-                        : "この検索の診断情報をコピー"}
-                  </button>
-                  <button
-                    type="button"
-                    className="map-tripod-diagnostics-copy"
-                    onClick={handleResetTripodSeedCache}
-                    title="この端末に保存された三脚候補の記憶（前回距離のヒント）を消去します。誤った候補が繰り返し出る場合にお試しください"
-                  >
-                    {tripodSeedResetState === "done"
-                      ? "三脚候補の記憶をリセットしました"
-                      : tripodSeedResetState === "failed"
-                        ? "リセットできませんでした"
-                        : "三脚候補の記憶をリセット"}
-                  </button>
-                </div>
-              )}
+            {/* 三脚候補の状態・診断表示は地図上へ重ねない。
+                ピン設定パネルを隠さないよう、画面下部の app-status へ集約する。 */}
 
             {mapDisplayMode === "2d" && mapMeasuring && (
               <div className="map-tripod-candidate-status complete" role="status" aria-live="polite">
@@ -4994,7 +4926,64 @@ ${diagnosticMessage}
         </a>
       </section>
 
-      <div className="app-status" aria-live="polite">{status}</div>
+      <div className="app-status" aria-live="polite">
+        <span>{status}</span>
+        {tripodCandidateCalculationStatus !== "idle" && (
+          <button
+            type="button"
+            className={`app-status-tripod ${tripodCandidateCalculationStatus} ${
+              displayedTripodCandidates.length > 0 ? "tappable" : ""
+            }`}
+            disabled={displayedTripodCandidates.length === 0}
+            onClick={
+              displayedTripodCandidates.length > 0 ? placeTripodAtDisplayedCandidate : undefined
+            }
+          >
+            {tripodCandidateCalculationStatus === "calculating"
+              ? "三脚候補を精密計算中…"
+              : tripodCandidateCalculationStatus === "complete"
+                ? "確定した三脚候補"
+                : tripodCandidateCalculationStatus === "no-solution"
+                  ? (displayedTripodCandidates.length > 0
+                      ? "確定解なし（概算候補を表示）"
+                      : "現在の条件では確定できる三脚候補がありません")
+                  : (displayedTripodCandidates.length > 0
+                      ? "精密計算に失敗（概算候補を表示）"
+                      : "三脚候補の計算に失敗しました")}
+          </button>
+        )}
+        {tripodProgressSnapshot && (
+          <span className="app-status-tripod-progress">
+            計算中… 経過{tripodProgressSnapshot.elapsedSeconds}秒・通信{tripodProgressSnapshot.roundTripCount}回
+            {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null
+              ? `・最後の通信から${tripodProgressSnapshot.secondsSinceLastRoundTrip}秒経過`
+              : "・まだ通信していません"}
+            {tripodProgressSnapshot.secondsSinceLastRoundTrip !== null &&
+              tripodProgressSnapshot.secondsSinceLastRoundTrip >= 30
+                ? "・⚠ 30秒以上通信が発生していません"
+                : ""}
+          </span>
+        )}
+        {tripodCandidateCalculationStatus !== "idle" &&
+          tripodCandidateCalculationStatus !== "calculating" && (
+            <span className="app-status-tripod-actions">
+              <button type="button" onClick={handleCopyTripodDiagnostics}>
+                {tripodDiagnosticsCopyState === "copied"
+                  ? "診断情報をコピーしました"
+                  : tripodDiagnosticsCopyState === "failed"
+                    ? "コピーできませんでした"
+                    : "この検索の診断情報をコピー"}
+              </button>
+              <button type="button" onClick={handleResetTripodSeedCache}>
+                {tripodSeedResetState === "done"
+                  ? "三脚候補の記憶をリセットしました"
+                  : tripodSeedResetState === "failed"
+                    ? "リセットできませんでした"
+                    : "三脚候補の記憶をリセット"}
+              </button>
+            </span>
+          )}
+      </div>
 
       {userNotice && (
         <UserNotice

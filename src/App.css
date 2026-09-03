@@ -407,10 +407,41 @@ button { cursor: pointer; }
   line-height: 1.4;
   text-align: center;
   transform: translateX(-50%);
-  pointer-events: none;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
 }
 .app-status:empty { display: none; }
 
+
+.app-status-tripod {
+  padding: 3px 7px;
+  color: #eef7ff;
+  border: 1px solid rgba(90,185,255,.58);
+  border-radius: 5px;
+  background: rgba(2,8,14,.72);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.app-status-tripod:disabled { opacity: 1; }
+.app-status-tripod.tappable { cursor: pointer; }
+.app-status-tripod-progress { font-size: 9px; color: rgba(238,247,255,.9); }
+.app-status-tripod-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px; }
+.app-status-tripod-actions button {
+  padding: 2px 6px;
+  color: rgba(238,247,255,.82);
+  border: 1px solid rgba(120,150,175,.4);
+  border-radius: 5px;
+  background: rgba(2,8,14,.72);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
 .user-notice {
   position: fixed;
   z-index: 13000;
