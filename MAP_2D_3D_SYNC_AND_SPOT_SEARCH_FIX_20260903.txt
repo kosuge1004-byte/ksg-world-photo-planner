@@ -1,0 +1,22 @@
+AstroSight 2D/3D display-center sync + 3D spot-search camera fix
+Date: 2026-09-03
+
+Confirmed causes in src/App.tsx:
+1. 2D display center is stored in mapCenter/mapCenterRef, while 3D display center is owned by the Cesium camera. The old mode-toggle only changed mapDisplayMode and did not transfer the current display center between them.
+2. locatePinFromSpotScreen(), applyStoredSubject(), and applySpotPreset() updated mapCenter but did not move the Cesium camera when the map was already in 3D mode.
+
+Changes:
+- Added read3DDisplayedCenter(): obtains the actual 3D screen-center position using scene depth picking, with the same center camera ray intersected against the Cesium globe as fallback.
+- Added toggleMapDisplayMode():
+  * 3D -> 2D: copies the actual 3D displayed center into mapCenter before switching.
+  * 2D -> 3D: the existing host-move effect now flies the Cesium camera to mapCenter after appendChild/resize.
+- Spot subject search and tripod search now call flyMapToTarget() in 3D mode.
+- Stored-subject recall and spot-preset application now call flyMapToTarget() in 3D mode.
+- Existing 2D behavior remains unchanged.
+
+Verification:
+node scripts/verify-map-2d-3d-sync-20260903.mjs
+Result: 9/9 PASS.
+
+Limitations:
+The source ZIP does not contain node_modules. A complete npm build was therefore not used as proof in this workspace. Global tsc can parse the project but reports expected unresolved package modules without installed dependencies. No claim of full build PASS is made.

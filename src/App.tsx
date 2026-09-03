@@ -642,6 +642,10 @@ function App() {
         if (viewer.isDestroyed()) return;
         viewer.resize();
         viewer.scene.requestRender();
+        if (mapDisplayMode === "3d") {
+          const center = mapCenterRef.current;
+          flyMapToTarget(viewer, center.latitude, center.longitude);
+        }
       });
     }
   }, [mapDisplayMode, mapReady]);
@@ -3106,6 +3110,9 @@ ${diagnosticMessage}
       setTripodPoint(tripod);
       mapCenterRef.current = center;
       setMapCenter(center);
+      if (mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()) {
+        flyMapToTarget(viewer, tripod.latitude, tripod.longitude, tripod.height);
+      }
       setSpotSearchOpen(false);
       setSearchMessage(`${tripod.label}に三脚ピンを設置しました`);
       return;
@@ -3142,6 +3149,9 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, /^https?:\/\//i.test(query.trim()) ? "google-maps-url" : "place"));
     mapCenterRef.current = center;
     setMapCenter(center);
+    if (mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()) {
+      flyMapToTarget(viewer, pinned.latitude, pinned.longitude, pinned.height);
+    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
     refineSearchSubjectHeightInBackground(
@@ -3167,6 +3177,9 @@ ${diagnosticMessage}
     setSubjectHistory(addSubjectHistory(pinned, record.searchType));
     mapCenterRef.current = center;
     setMapCenter(center);
+    if (mapDisplayMode === "3d") {
+      flyMapToTarget(viewer, pinned.latitude, pinned.longitude, pinned.height);
+    }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
@@ -3307,6 +3320,14 @@ ${diagnosticMessage}
     const center = { latitude: appliedResult.subject.latitude, longitude: appliedResult.subject.longitude };
     mapCenterRef.current = center;
     setMapCenter(center);
+    if (mapDisplayMode === "3d") {
+      flyMapToTarget(
+        viewer,
+        appliedResult.subject.latitude,
+        appliedResult.subject.longitude,
+        appliedResult.subject.height
+      );
+    }
     setSpotSearchOpen(false);
     setHighestPrecisionProgress(null);
     setSearchMessage(
@@ -4285,6 +4306,47 @@ ${diagnosticMessage}
     setSearchMessage("三脚ピンを地図の中心へ移動しました");
   }
 
+  function read3DDisplayedCenter(): { latitude: number; longitude: number } | null {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return null;
+    const canvas = viewer.scene.canvas;
+    const center = new Cartesian2(
+      Math.max(0, canvas.clientWidth) / 2,
+      Math.max(0, canvas.clientHeight) / 2
+    );
+    // まず実際に表示されている3D表面を使う。深度ピックできない場合だけ、
+    // 同じ画面中央レイと地形グローブの交点へフォールバックする。
+    const picked = pickSceneSurfacePosition(viewer, center);
+    const ray = viewer.camera.getPickRay(center);
+    const globePicked = !picked && ray ? viewer.scene.globe.pick(ray, viewer.scene) : undefined;
+    const position = picked ?? globePicked;
+    if (!position) return null;
+    const cartographic = Cartographic.fromCartesian(position);
+    if (!cartographic) return null;
+    const latitude = CesiumMath.toDegrees(cartographic.latitude);
+    const longitude = CesiumMath.toDegrees(cartographic.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    return { latitude, longitude };
+  }
+
+  function toggleMapDisplayMode(): void {
+    if (mapDisplayMode === "3d") {
+      // 3Dでユーザーが移動した現在の画面中央を2Dへ引き継ぐ。
+      // これを行わないと、2Dへ戻した瞬間に最後のmapCenterへ巻き戻る。
+      const displayedCenter = read3DDisplayedCenter();
+      if (displayedCenter) {
+        mapCenterRef.current = displayedCenter;
+        setMapCenter(displayedCenter);
+      }
+      setMapDisplayMode("2d");
+      return;
+    }
+
+    // 2D側はMapLibreのonCenterChangeでmapCenterRefへ常時同期されている。
+    // 3Dへ切り替えた後、ホスト移動・resize完了後にuseEffect側でこの中心へ飛ばす。
+    setMapDisplayMode("3d");
+  }
+
   function openSubjectInGoogleMaps() {
     if (!subjectPoint) {
       setSearchMessage("被写体ピンを先に配置してください");
@@ -4468,7 +4530,7 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
-        onOpenMap3D={() => setMapDisplayMode((current) => current === "3d" ? "2d" : "3d")}
+        onOpenMap3D={toggleMapDisplayMode}
         mapDisplayMode={mapDisplayMode}
         precisionSettings={precisionSettings}
         onPrecisionSettingsChange={setPrecisionSettings}
