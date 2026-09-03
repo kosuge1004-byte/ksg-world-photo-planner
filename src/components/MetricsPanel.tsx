@@ -1,4 +1,5 @@
 import type { LineMetrics } from "../types/points";
+import { memo } from "react";
 
 type Props = {
   metrics: LineMetrics | null;
@@ -12,7 +13,7 @@ function formatDistance(value: number): string {
   return `${value.toFixed(1)} m`;
 }
 
-export function MetricsPanel({ metrics }: Props) {
+export function MetricsPanelComponent({ metrics }: Props) {
   if (!metrics) {
     return (
       <section className="metrics-panel empty">
@@ -46,3 +47,6 @@ export function MetricsPanel({ metrics }: Props) {
     </section>
   );
 }
+
+// 2026-09-02追記（合理化）: 無関係な状態変化での再実行を防ぐためmemo化。
+export const MetricsPanel = memo(MetricsPanelComponent);

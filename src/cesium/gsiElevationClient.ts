@@ -44,7 +44,12 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 // これにより精度を変えず、初期探索のHTTP往復とサーバー側の重複タイル処理を削減する。
 const REQUEST_BATCH_SIZE = 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
-const MAX_CONCURRENT_REQUESTS = 8;
+// 2026-09-02変更（実機での試験目的、利用者の判断により）: Cloudflare
+// Workerはリクエストごとに自動スケールするため8という上限自体の根拠は
+// 薄く、8→10で実機の挙動（特にDEM未キャッシュの地方エリアでGSI原本
+// サーバー側のレート制限に引っかからないか）を確認する試験的な変更。
+// 悪化が見られた場合は8へ戻す。
+const MAX_CONCURRENT_REQUESTS = 10;
 const SINGLE_POINT_RETRY_DELAY_MS = 250;
 
 // 2026-08-28追記: 「R2キャッシュ（DEMタイル単位）が実際に活用されて
@@ -368,10 +373,11 @@ async function requestBatchWithRecovery(
 // 2026-09-01追記: REQUEST_BATCH_SIZE（1024点、サーバーが1要求として受理
 // できる上限）と、実際にクライアントが1要求へ詰め込む点数は別の関心事
 // だった。640点規模の初期探索は Math.ceil(640/1024)=1 バッチにしかならず、
-// 下のMAX_CONCURRENT_REQUESTS=8の並列ワーカーが用意されていても実質1本
+// 下のMAX_CONCURRENT_REQUESTS（当時8、2026-09-02に10へ変更）の並列
+// ワーカーが用意されていても実質1本
 // しか動かず、その1本がGSI原本サーバーへの実問い合わせを多く含む重い
 // エリアでREQUEST_TIMEOUT_MS（30秒）ぎりぎりまでかかる実測が確認された
-// （elapsed=30975.3ms）。8並列という既存の仕組みを実際に活かすため、
+// （elapsed=30975.3ms）。この並列という既存の仕組みを実際に活かすため、
 // ある程度まとまった点数（PARALLEL_SPLIT_MIN_POINTS以上）は、最初から
 // おおよそMAX_CONCURRENT_REQUESTS本に均等分割してから投げる。座標・順序・
 // maximumDetail・補間方式・DEMソース優先順位・再試行条件・レスポンスの

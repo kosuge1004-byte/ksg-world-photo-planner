@@ -2502,6 +2502,21 @@ body.pseudo-fullscreen-active {
     linear-gradient(180deg, #090c11 0%, #020305 100%);
 }
 
+/* 2026-09-02追記（実機報告より）: 方角補正（画面スワイプで実景とCG
+   表示を合わせる）が効かない不具合の原因調査で判明。Cesium製の
+   ArCesiumOverlayはenableInputs=falseでカメラ操作自体は無効化して
+   いるが、Cesiumの内部イベントリスナー（ScreenSpaceEventHandler等）は
+   enableInputsの値に関わらずキャンバスへ残っており、pointerイベントを
+   途中で捕捉（stopPropagation・pointer capture等）してしまい、外側の
+   .ar-camera-stageのスワイプハンドラまで届かなくなっていた可能性が
+   高い。このオーバーレイは常に純粋な視覚表示専用（カメラ操作は既に
+   無効）なので、pointer-events: noneにしてブラウザのヒットテスト自体を
+   素通りさせ、下の.ar-camera-stageが確実にpointerイベントを受け取れる
+   ようにする。 */
+.ar-camera-cesium-overlay {
+  pointer-events: none;
+}
+
 .ar-calibration-reset {
   position: absolute;
   z-index: 80;

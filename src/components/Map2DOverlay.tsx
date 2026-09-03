@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { memo } from "react";
 
 import type {
   CelestialScreenPoint,
@@ -76,7 +77,7 @@ function isClearOfMapControls(point: MapPixelPoint, size: MapSize): boolean {
   return true;
 }
 
-export function Map2DOverlay({
+export function Map2DOverlayComponent({
   center,
   zoom,
   size,
@@ -264,3 +265,8 @@ export function Map2DOverlay({
 </div>
   );
 }
+
+// 2026-09-02追記（合理化）: 三脚候補探索の進捗表示（1秒→2秒間隔）等、
+// このコンポーネントの表示内容と無関係な状態変化でも毎回再実行されて
+// いたため、propsが変わらない限り再描画しないようmemo化する。
+export const Map2DOverlay = memo(Map2DOverlayComponent);

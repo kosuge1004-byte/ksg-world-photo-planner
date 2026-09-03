@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { PreviewFrameMode } from "../types/camera";
 import { enterElementFullscreen, exitElementFullscreen } from "../ui/fullscreen";
 
@@ -14,7 +14,7 @@ type Props = {
   onToggleSubjectPicking: () => void;
 };
 
-export function PreviewChrome({
+export function PreviewChromeComponent({
   frameMode,
   onChangeFrameMode,
   onZoomIn,
@@ -114,3 +114,6 @@ export function PreviewChrome({
     </div>
   );
 }
+
+// 2026-09-02追記（合理化）: 無関係な状態変化での再実行を防ぐためmemo化。
+export const PreviewChrome = memo(PreviewChromeComponent);

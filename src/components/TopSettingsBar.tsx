@@ -6,7 +6,11 @@ import {
 
 import type { CameraSettings } from "../types/camera";
 import type { PrecisionSettings, RefractionCorrectionMode } from "../types/precision";
-import { REFRACTION_MODE_LABELS } from "../types/precision";
+import {
+  REFRACTION_MODE_LABELS,
+  TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS,
+  TRIPOD_SEARCH_MAX_DISTANCE_DEFAULT_METERS,
+} from "../types/precision";
 
 const REFRACTION_MODE_DESCRIPTIONS: Record<RefractionCorrectionMode, string> = {
   auto: "利用できる天気データで空気による光の曲がりを補正します。地平線付近ほど効果が大きく、取得時は通信と待ち時間が増えます。",
@@ -437,6 +441,46 @@ export function TopSettingsBar({
             <fieldset className="precision-settings-panel">
               <legend>精度設定</legend>
               <div className="menu-panel-header"><strong>三脚候補・補正</strong><button type="button" onClick={() => setPrecisionMenuOpen(false)}>閉じる</button></div>
+              <div className="precision-subsection">
+                <strong>三脚候補の初回探索範囲</strong>
+                <label className="precision-choice">
+                  <input
+                    type="range"
+                    min={1000}
+                    max={TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS}
+                    step={1000}
+                    value={precisionSettings.tripodSearchMaxDistanceMeters}
+                    onChange={(event) => onPrecisionSettingsChange({
+                      ...precisionSettings,
+                      tripodSearchMaxDistanceMeters: Number(event.target.value),
+                    })}
+                  />
+                  <span className="precision-choice-copy">
+                    <span className="precision-choice-title">
+                      <b>最大{(precisionSettings.tripodSearchMaxDistanceMeters / 1000).toFixed(0)}km</b>
+                      {precisionSettings.tripodSearchMaxDistanceMeters === TRIPOD_SEARCH_MAX_DISTANCE_DEFAULT_METERS && <small>初期値</small>}
+                    </span>
+                    <small>距離ヒントが無い初回探索（新しい被写体・天体）で対象とする最大距離。狭くすると探索が触れる地形タイルの範囲が減り速くなりますが、これより遠い候補は見つかりません。最大{(TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS / 1000).toFixed(0)}kmまで広げられます。</small>
+                  </span>
+                </label>
+              </div>
+              <div className="precision-subsection">
+                <strong>地形の陰影表現</strong>
+                <label className="precision-choice">
+                  <input
+                    type="checkbox"
+                    checked={precisionSettings.terrainShadingEnabled}
+                    onChange={(event) => onPrecisionSettingsChange({
+                      ...precisionSettings,
+                      terrainShadingEnabled: event.target.checked,
+                    })}
+                  />
+                  <span className="precision-choice-copy">
+                    <span className="precision-choice-title"><b>地形に陰影を付ける</b>{!precisionSettings.terrainShadingEnabled && <small>初期値OFF</small>}</span>
+                    <small>標準3D表示（Googleタイルモードを除く）の地形に、陰影計算用のデータを追加で読み込みます。OFFの方がタイルの転送量が少なく速くなりますが、地形の立体感が少し平坦になります。標高・位置の精度には影響しません。</small>
+                  </span>
+                </label>
+              </div>
               <div className="precision-subsection">
                 <strong>三脚候補ダブルチェック</strong>
                 <label className="precision-choice">

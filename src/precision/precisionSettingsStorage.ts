@@ -1,5 +1,7 @@
 import {
   DEFAULT_PRECISION_SETTINGS,
+  TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS,
+  TRIPOD_SEARCH_MAX_DISTANCE_DEFAULT_METERS,
   type PrecisionSettings,
 } from "../types/precision";
 
@@ -20,6 +22,15 @@ export function normalizePrecisionSettings(value: unknown): PrecisionSettings {
     accuracyMode: parsed.accuracyMode === "highest" ? "highest" : "standard",
     refractionCorrectionMode,
     tripodCandidateDoubleCheckEnabled: parsed.tripodCandidateDoubleCheckEnabled === true,
+    tripodSearchMaxDistanceMeters:
+      Number.isFinite(parsed.tripodSearchMaxDistanceMeters) &&
+      (parsed.tripodSearchMaxDistanceMeters as number) > 0
+        ? Math.min(
+            TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS,
+            parsed.tripodSearchMaxDistanceMeters as number
+          )
+        : TRIPOD_SEARCH_MAX_DISTANCE_DEFAULT_METERS,
+    terrainShadingEnabled: parsed.terrainShadingEnabled === true,
   };
 }
 

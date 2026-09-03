@@ -29,6 +29,10 @@ import {
   resetGsiElevationCacheStats,
   getGsiElevationCacheStats,
 } from "./gsiElevationClient";
+import {
+  resetLocalTileCacheStats,
+  getLocalTileCacheStats,
+} from "./gsiDemTileCache";
 import { computeApparentElevation } from "../apparent/apparentElevation";
 import { calculateGeometricElevation } from "./geometry";
 import {
@@ -40,8 +44,8 @@ import {
 import { weatherForDate } from "../search/refractionWeatherModel";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 
-const ABSOLUTE_MIN_DISTANCE_METERS = 8;
-const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
+export const ABSOLUTE_MIN_DISTANCE_METERS = 8;
+export const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
 const DEFAULT_SAMPLE_COUNT = 32;
 // 交点取りこぼし防止用の補助走査。初期32点は維持しつつ、広すぎる区間だけを
@@ -160,6 +164,12 @@ export type TripodSearchDiagnostics = {
   cacheMemoryHitCount: number;
   cacheSharedCount: number;
   cacheBypassCount: number;
+  // 2026-09-02追記: 「R2ヒット0・R2ミス0なのに遅い」というパターンの
+  // 原因切り分けのため、サーバーへ到達する前段（端末内の生DEMタイル
+  // デコードキャッシュ）の活動もあわせて記録する。
+  localTileMemoryHitCount: number;
+  localTileIndexedDbHitCount: number;
+  localTileDecodeMissCount: number;
   /** 2026-08-29: 最終確定時間の実測内訳。計算結果には影響しない診断専用。 */
   totalElapsedMs: number | null;
   perCelestialBody: Record<
@@ -2159,6 +2169,7 @@ export async function calculateTripodCandidates(
   abortIfRequested(signal);
 
   resetGsiElevationCacheStats();
+  resetLocalTileCacheStats();
   lastCoarseScanSamples = null;
   lastCenterlineScanSamples = null;
   lastPhysicsAudits = [];
@@ -2172,6 +2183,9 @@ export async function calculateTripodCandidates(
     cacheMemoryHitCount: 0,
     cacheSharedCount: 0,
     cacheBypassCount: 0,
+    localTileMemoryHitCount: 0,
+    localTileIndexedDbHitCount: 0,
+    localTileDecodeMissCount: 0,
     totalElapsedMs: null,
     perCelestialBody: {},
   };
@@ -2291,6 +2305,10 @@ export async function calculateTripodCandidates(
     lastSearchDiagnostics.cacheMemoryHitCount = cacheStats.memoryHit;
     lastSearchDiagnostics.cacheSharedCount = cacheStats.shared;
     lastSearchDiagnostics.cacheBypassCount = cacheStats.bypass;
+    const localTileStats = getLocalTileCacheStats();
+    lastSearchDiagnostics.localTileMemoryHitCount = localTileStats.memoryHit;
+    lastSearchDiagnostics.localTileIndexedDbHitCount = localTileStats.indexedDbHit;
+    lastSearchDiagnostics.localTileDecodeMissCount = localTileStats.miss;
   };
   if (
     candidates.length === 0 &&

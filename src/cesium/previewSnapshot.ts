@@ -126,7 +126,7 @@ function copyViewerFrameToPreview(
 // 自然に解消される。
 const PREVIEW_FAST_RESOLUTION_SCALE = 0.5;
 
-async function waitForPreviewTiles(
+export async function waitForPreviewTiles(
   viewer: Viewer,
   previewCanvas: HTMLCanvasElement,
   context: CanvasRenderingContext2D
@@ -294,7 +294,7 @@ export async function captureTripodPreview(
  * nullを返し、呼び出し側で再指定を求める。これにより建物先端・屋根・山頂を
  * 地表へ丸めず、既存の明示的3D pick経路へそのまま渡せる。
  */
-export function pickTripodPreviewSurface(
+export async function pickTripodPreviewSurface(
   viewer: Viewer,
   previewCanvas: HTMLCanvasElement,
   tripod: GroundPoint,
@@ -304,7 +304,7 @@ export function pickTripodPreviewSurface(
   viewCorrection: CameraViewCorrection | undefined,
   xPercent: number,
   yPercent: number
-): Cartesian3 | null {
+): Promise<Cartesian3 | null> {
   if (viewer.isDestroyed()) return null;
 
   const cssWidth = Math.max(1, previewCanvas.clientWidth);
@@ -324,7 +324,21 @@ export function pickTripodPreviewSurface(
       calculationMode,
       viewCorrection
     );
-    viewer.scene.render();
+    // 2026-09-02追記（実機報告より）: 従来はここでrender()を1回呼ぶだけで
+    // 即座にピックしていたが、カメラが新しい向きへ移動した直後は、その
+    // 視点に必要な3Dタイル・地形がまだ読み込まれていないことがあり、
+    // その場合pickSceneSurfacePositionは何も見つからずnullを返す
+    // （「タップしても被写体ピンを置けない」という報告の主因と考えられる）。
+    // captureTripodPreview()と同じ待機処理を使い、タイルが揃うのを
+    // 待ってからピックする。
+    const dummyCanvas = document.createElement("canvas");
+    const dummyContext = dummyCanvas.getContext("2d");
+    if (dummyContext) {
+      await waitForPreviewTiles(viewer, dummyCanvas, dummyContext);
+    } else {
+      viewer.scene.requestRender();
+      viewer.scene.render();
+    }
 
     const viewerWidth = Math.max(1, viewer.canvas.clientWidth);
     const viewerHeight = Math.max(1, viewer.canvas.clientHeight);

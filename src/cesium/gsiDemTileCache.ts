@@ -31,13 +31,49 @@ const SOURCES: readonly SourceDefinition[] = [
   { id: "dem_png", label: "DEM10B", zoom: 14 },
 ] as const;
 
+// 2026-09-02追記（実機診断より）: 「R2ヒット0・R2ミス0なのに遅い」
+// （サーバーへ一切到達せず、この端末内キャッシュ層だけで処理が完結して
+// いる）という診断パターンが繰り返し確認されたが、この層自体には
+// 活動を計測する手段が無く、実際にここが遅さの原因かどうか確認できな
+// かった。次回以降の診断で実データとして確認できるよう、簡易カウンタを
+// 追加する。探索の挙動・精度には一切影響しない。
+let localTileMemoryHitCount = 0;
+let localTileIndexedDbHitCount = 0;
+let localTileDecodeMissCount = 0;
+
+export function resetLocalTileCacheStats(): void {
+  localTileMemoryHitCount = 0;
+  localTileIndexedDbHitCount = 0;
+  localTileDecodeMissCount = 0;
+}
+
+export function getLocalTileCacheStats(): {
+  memoryHit: number;
+  indexedDbHit: number;
+  miss: number;
+} {
+  return {
+    memoryHit: localTileMemoryHitCount,
+    indexedDbHit: localTileIndexedDbHitCount,
+    miss: localTileDecodeMissCount,
+  };
+}
+
 const DB_NAME = "ksg-world-photo-planner-dem-tiles-v1";
 const STORE_NAME = "tiles";
 const CACHE_SCHEMA_VERSION = "gsi-dem-device-v1";
 const MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const TILE_SIZE = 256;
-const MEMORY_MAX_ENTRIES = 48;
+// 2026-09-02変更（実機診断より）: 「R2ヒット0・R2ミス0なのに遅い」
+// （＝サーバーへ一切到達せず、この端末内キャッシュ層だけで処理が完結
+// している）という診断パターンが繰り返し確認された。640点規模の地方
+// エリア探索は、DEM1A〜10Bの複数ソース×複数ズームレベルにまたがる
+// ため必要なタイル種類が48枚を大きく超えやすく、旧値のままだと同じ
+// タイルを探索中に何度も再デコードしていた可能性が高い。256枚
+// （1枚あたり256x256px、概算1枚256KB程度として最大64MB前後）へ拡大し、
+// 1回の探索内での重複デコードを減らす。
+const MEMORY_MAX_ENTRIES = 256;
 const PERSISTED_MAX_ENTRIES = 192;
 const PREFETCH_CONCURRENCY = 2;
 const PREFETCH_MAX_TILES_PER_CALL = 24;
@@ -219,6 +255,7 @@ async function readTilesBatch(
       memoryCache.delete(key);
       memoryCache.set(key, memory);
       results.set(key, memory);
+      localTileMemoryHitCount++;
       continue;
     }
     const inFlight = inFlightReads.get(key);
@@ -254,12 +291,14 @@ async function readTilesBatch(
         const record = request.result as StoredTile | undefined;
         if (!record || now - record.updatedAt > MAX_AGE_MS) {
           results.set(key, null);
+          localTileDecodeMissCount++;
           resolve();
           return;
         }
         const lookup = storedToLookup(record);
         if (lookup) writeMemory(key, lookup);
         results.set(key, lookup);
+        localTileIndexedDbHitCount++;
         resolve();
       };
       request.onerror = () => {

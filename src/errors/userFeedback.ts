@@ -63,6 +63,30 @@ function technicalMessage(error: unknown): string {
 }
 
 /**
+ * AggregateError（例: 三脚候補計算で複数天体すべてが失敗した場合）は、
+ * それ自身の.messageが「すべて失敗しました」のような一括の要約文言に
+ * とどまり、本当の原因（.errorsに入っている個々の失敗理由）が
+ * technicalMessage()だけでは診断コピーに出てこなかった。各要素の
+ * メッセージ・スタックを展開し、実際に何が起きたかを追えるようにする。
+ */
+function expandAggregateError(error: unknown, depth = 0): string[] {
+  if (depth > 3 || !(error instanceof Error)) return [];
+  const lines: string[] = [];
+  if (error instanceof AggregateError && Array.isArray(error.errors)) {
+    error.errors.forEach((inner, index) => {
+      const message = inner instanceof Error ? inner.message : String(inner);
+      const name = inner instanceof Error ? inner.name : "Error";
+      lines.push(`  内訳${index + 1}: ${name}: ${message}`);
+      if (inner instanceof Error && inner.stack) {
+        lines.push(`    stack: ${inner.stack.replace(/\s+/g, " ").slice(0, 400)}`);
+      }
+      lines.push(...expandAggregateError(inner, depth + 1).map((line) => `  ${line}`));
+    });
+  }
+  return lines;
+}
+
+/**
  * 「詳細をコピー」ボタンに渡す診断テキストを組み立てる。
  * 個人が特定できる情報（氏名・端末固有IDなど）は含めない。
  * 発生時刻・機能名・技術的なエラーメッセージ・任意の補足情報のみ。
@@ -81,6 +105,8 @@ export function buildDiagnosticDetail(
     `日時: ${new Date().toISOString()}`,
     `エラー内容: ${technicalMessage(error) || String(error)}`,
   ];
+  const aggregateDetails = expandAggregateError(error);
+  if (aggregateDetails.length > 0) lines.push(...aggregateDetails);
   if (extra) {
     for (const [key, value] of Object.entries(extra)) {
       if (value === undefined) continue;

@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 type Props = {
   subjectActive: boolean;
   tripodActive: boolean;
@@ -11,7 +13,7 @@ type Props = {
   tripodCandidateAvailable: boolean;
 };
 
-export function PinControls({
+export function PinControlsComponent({
   subjectActive,
   tripodActive,
   onSubjectToggle,
@@ -83,3 +85,6 @@ export function PinControls({
     </section>
   );
 }
+
+// 2026-09-02追記（合理化）: 無関係な状態変化での再実行を防ぐためmemo化。
+export const PinControls = memo(PinControlsComponent);

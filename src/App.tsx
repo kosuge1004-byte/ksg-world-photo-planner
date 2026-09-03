@@ -124,6 +124,7 @@ import {
   getLastCoarseScanSamples,
   getLastCenterlineScanSamples,
   getLastTripodPhysicsAudits,
+  ABSOLUTE_MIN_DISTANCE_METERS,
 } from "./cesium/tripodCandidates";
 import {
   loadPersistentTripodSeeds,
@@ -628,7 +629,21 @@ function App() {
     const element = mapRef.current;
     if (!host || !element) return;
     if (element.parentElement !== host) host.appendChild(element);
-  }, [mapDisplayMode]);
+    // 2026-09-02追記（実機診断より）: appendChildでコンテナを移動しても、
+    // Cesiumはキャンバスの実ピクセルサイズ・カメラのアスペクト比を
+    // 自動では再計算しない。手動でresize()を呼ばないと、タッチ座標と
+    // 実際のレンダリング座標がズレ、ドラッグ操作が正しく反映されない
+    // （「表示はされるが動かせない」）。サイズ確定を待つため次フレームで
+    // 呼ぶ。
+    const viewer = mapViewerRef.current;
+    if (viewer && !viewer.isDestroyed()) {
+      requestAnimationFrame(() => {
+        if (viewer.isDestroyed()) return;
+        viewer.resize();
+        viewer.scene.requestRender();
+      });
+    }
+  }, [mapDisplayMode, mapReady]);
 
   // 2026-09-02追記: 画面下部の地図を3D表示にしている間だけ、Cesiumの操作
   // （パン/ズーム/回転、既存のダブルタップズームも含む）を有効化し、
@@ -671,8 +686,18 @@ function App() {
     rafId = requestAnimationFrame(renderLoop);
     map3DRenderLoopRef.current = rafId;
 
+    // 画面回転・キーボード表示等でホストのサイズが変わっても追従できる
+    // よう、3D表示中はwindowのresizeも監視する。
+    const handleWindowResize = () => {
+      if (viewer.isDestroyed()) return;
+      viewer.resize();
+      viewer.scene.requestRender();
+    };
+    window.addEventListener("resize", handleWindowResize);
+
     return () => {
       tapHandler.destroy();
+      window.removeEventListener("resize", handleWindowResize);
       if (rafId !== null) cancelAnimationFrame(rafId);
       map3DRenderLoopRef.current = null;
       if (!viewer.isDestroyed()) {
@@ -817,6 +842,9 @@ function App() {
       setTripodProgressSnapshot(null);
       return;
     }
+    // 2026-09-02変更（合理化）: 経過秒数の表示は1秒刻みで正確である必要は
+    // なく、2秒間隔でも体感上は問題ない。計算中（最大30秒超）ずっと動く
+    // 定期的な再描画の頻度を半分にする。
     const intervalId = window.setInterval(() => {
       const diagnostics = getLastTripodSearchDiagnostics();
       if (!diagnostics || diagnostics.finishedAtMs !== null) return;
@@ -833,7 +861,7 @@ function App() {
           ? Math.round((now - diagnostics.liveLastRoundTripFinishedAtMs) / 1000)
           : null,
       });
-    }, 1_000);
+    }, 2_000);
     return () => window.clearInterval(intervalId);
   }, [tripodCandidateCalculationStatus]);
 
@@ -853,6 +881,8 @@ function App() {
       `地形タイルキャッシュ: R2ヒット${diagnostics.cacheHitBatchCount}回・R2ミス${diagnostics.cacheMissBatchCount}回・` +
         `メモリヒット${diagnostics.cacheMemoryHitCount}回・同時要求共有${diagnostics.cacheSharedCount}回・` +
         `R2不使用/障害${diagnostics.cacheBypassCount}回`,
+      `端末内タイルキャッシュ（サーバー到達前）: メモリヒット${diagnostics.localTileMemoryHitCount}回・` +
+        `IndexedDBヒット${diagnostics.localTileIndexedDbHitCount}回・未収載${diagnostics.localTileDecodeMissCount}回`,
       "天体別内訳:",
       ...Object.entries(diagnostics.perCelestialBody).map(([label, entry]) => {
         const failRate = entry.terrainRequestedPoints > 0
@@ -1191,7 +1221,22 @@ function App() {
     try {
       const position = await scheduled;
       if (!position) {
-        setSearchMessage("タップ位置の3D座標を取得できませんでした。建物・山頂・地形が見える位置でもう一度指定してください");
+        // 2026-09-02追記: pickSceneSurfacePosition失敗の原因は主に2通り
+        // あるが、従来は同じ文言で区別がつかなかった。
+        // (a) viewer.scene.pickPositionSupportedがfalse
+        //     → 端末・ブラウザのWebGL機能に依存する制約で、何度タップし
+        //       直しても解決しない。
+        // (b) その瞬間、タップした画面位置に3Dタイル・地形がまだ読み込ま
+        //     れていない → 少し待って再指定すれば直る可能性がある。
+        // 「もう一度お試しください」という同じ文言では、(a)の場合に
+        // ユーザーが無意味な再試行を繰り返すことになるため分ける。
+        if (viewer.isDestroyed() || !viewer.scene.pickPositionSupported) {
+          setSearchMessage(
+            "この端末・ブラウザでは3D表面のタップ指定に対応していません（WebGLの機能制約）。地図タップまたはスポット検索で被写体を指定してください"
+          );
+        } else {
+          setSearchMessage("タップ位置の3D座標を取得できませんでした。少し待ってから、建物・山頂・地形が見える位置でもう一度指定してください");
+        }
         return;
       }
       const point = await setSubjectPinFromExplicit3dPick(
@@ -1841,7 +1886,16 @@ function App() {
             undefined,
             controller.signal,
             previewAspectRatio,
-            undefined,
+            // 2026-09-02追記（明示指示により）: 距離ヒントが無い初回探索の
+            // 対象範囲を、精度設定で選べる上限（既定10km、最大50km）に
+            // 絞る。範囲を狭めることで、探索が触れる地形タイルの種類が
+            // 減り速度が向上する。距離ヒントがある再探索（時刻操作後の
+            // 微調整等）はmergedPreferredDistances側で個別に狭められる
+            // ため、ここでは初回探索の上限だけを制御する。
+            {
+              minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
+              maxMeters: precisionSettings.tripodSearchMaxDistanceMeters,
+            },
             undefined,
             previewRefractionWeather,
             mergedPreferredDistances,
@@ -2025,7 +2079,8 @@ function App() {
           mapRef.current!,
           token,
           available ? accuracyMode : "standard",
-          setStatus
+          setStatus,
+          precisionSettings.terrainShadingEnabled
         )
       )
       .then((viewer) => {
@@ -2070,6 +2125,7 @@ function App() {
   }, [
     mapInitializationAttempt,
     precisionSettings.accuracyMode,
+    precisionSettings.terrainShadingEnabled,
     requestCesiumIonConnection,
     setSearchMessage,
     showUserNotice,

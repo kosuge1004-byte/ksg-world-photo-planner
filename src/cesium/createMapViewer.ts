@@ -172,7 +172,8 @@ async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotoreal
 
 async function createStandardViewer(
   container: HTMLDivElement,
-  setStatus: (message: string) => void
+  setStatus: (message: string) => void,
+  terrainShadingEnabled: boolean
 ): Promise<Viewer> {
   const baseLayer = new ImageryLayer(new UrlTemplateImageryProvider({
     url: GSI_STANDARD_TILE_URL,
@@ -187,8 +188,12 @@ async function createStandardViewer(
   // ため）が、取得そのものを直列に待つ理由はない。読み込み内容・精度・
   // 表示条件は変更しない。
   setStatus("標準3D：PLATEAU地形を読み込み中…");
+  // 2026-09-02追記（明示指示により）: requestVertexNormals（陰影計算用の
+  // 法線データ）は既定でOFFにし、1タイルあたりの転送量を減らす。地形の
+  // 高さ・形状データ自体（標高値）には一切影響しない。精度設定から
+  // ONにすると陰影表現が戻る。
   const terrainProviderPromise = CesiumTerrainProvider.fromUrl(PLATEAU_TERRAIN_URL, {
-    requestVertexNormals: true,
+    requestVertexNormals: terrainShadingEnabled,
   });
   const plateauBuildingsPromise = loadPlateauBuildingsTileset();
   // 先行取得中のPLATEAU建物リクエストの失敗を、地形の結果を待つ間に
@@ -358,11 +363,12 @@ export async function createMapViewer(
   container: HTMLDivElement,
   token: string | undefined,
   accuracyMode: AccuracyMode,
-  setStatus: (message: string) => void
+  setStatus: (message: string) => void,
+  terrainShadingEnabled = false
 ): Promise<Viewer> {
   const viewer = accuracyMode === "highest"
     ? await createHighestPrecisionViewer(container, token ?? "", setStatus)
-    : await createStandardViewer(container, setStatus);
+    : await createStandardViewer(container, setStatus, terrainShadingEnabled);
 
   enableDoubleTapZoom(viewer);
 
