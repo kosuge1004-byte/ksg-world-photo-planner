@@ -55,6 +55,8 @@ export type OsmSiteContext = {
   onMappedWay: boolean;
   restrictedAccess: boolean;
   onMotorRoad: boolean;
+  onWaterSurface: boolean;
+  waterSurfaceKind: "none" | "river" | "sea-or-other-water";
   nearbyLandmarks: OsmNearbyLandmark[];
   nearbyBuildings: OsmNamedBuilding[];
   nearbyStructures: OsmNearbyStructure[];
@@ -284,6 +286,44 @@ function isOnOpenPublicLand(element: OsmElement, point: OsmContextRequestPoint):
     return false;
   }
   return polygonContainsPoint(geometryOf(element), point);
+}
+
+/**
+ * 水面そのものを表す面ポリゴンだけを判定する。
+ * 線形の waterway=river/stream は幅を持たず、山間部の細い河川まで
+ * 一律0mにしてしまうため対象外。natural=water / water=river /
+ * waterway=riverbank の「面」の内側だけを水面として扱う。
+ */
+function isOnMappedWaterSurface(element: OsmElement, point: OsmContextRequestPoint): boolean {
+  const tags = element.tags ?? {};
+  const isWaterSurface =
+    tags.natural === "water" ||
+    tags.water === "river" ||
+    tags.water === "canal" ||
+    tags.waterway === "riverbank";
+  if (!isWaterSurface) return false;
+  const geometry = geometryOf(element);
+  return geometry.length >= 3 && polygonContainsPoint(geometry, point);
+}
+
+function mappedWaterSurfaceKind(
+  elements: OsmElement[],
+  point: OsmContextRequestPoint
+): "none" | "river" | "sea-or-other-water" {
+  let genericWater = false;
+  for (const element of elements) {
+    if (!isOnMappedWaterSurface(element, point)) continue;
+    const tags = element.tags ?? {};
+    if (
+      tags.water === "river" ||
+      tags.water === "canal" ||
+      tags.waterway === "riverbank"
+    ) {
+      return "river";
+    }
+    genericWater = true;
+  }
+  return genericWater ? "sea-or-other-water" : "none";
 }
 
 function isOnMappedWay(element: OsmElement, point: OsmContextRequestPoint): boolean {
@@ -532,6 +572,11 @@ function queryForPoints(
       // 河川敷・公園・砂浜などhighwayタグを持たない開けた公共空間。
       // 近くに歩道が無くても、この中に入っていれば歩行可能とみなす。
       `way${aroundAccess}["landuse"="riverbank"]`,
+      // 広い河川・運河等の水面ポリゴン。細い山間河川の線形waterwayは含めない。
+      `nwr${aroundAccess}["natural"="water"]`,
+      `nwr${aroundAccess}["water"="river"]`,
+      `nwr${aroundAccess}["water"="canal"]`,
+      `way${aroundAccess}["waterway"="riverbank"]`,
       `way${aroundAccess}["natural"="beach"]`,
       `way${aroundAccess}["leisure"="park"]`,
       // 駐車場・運動場等（landuse=riverbank等と同じく、歩道が無くても
@@ -658,12 +703,15 @@ export async function lookupOsmSiteContexts(
   const elements = await fetchOverpass(queryForPoints(points, includeDetails), signal);
   return points.map((point) => {
     const structures = nearbyStructures(elements, point);
+    const waterSurfaceKind = mappedWaterSurfaceKind(elements, point);
     return {
       walkingAccessible: elements.some((element) => isWalkable(element, point)) ||
         elements.some((element) => isOnOpenPublicLand(element, point)),
       onMappedWay: elements.some((element) => isOnMappedWay(element, point)),
       restrictedAccess: elements.some((element) => isRestricted(element, point)),
       onMotorRoad: elements.some((element) => isOnMotorRoad(element, point)),
+      onWaterSurface: waterSurfaceKind !== "none",
+      waterSurfaceKind,
       nearbyLandmarks: combinedLandmarks(elements, point, structures),
       nearbyBuildings: nearbyBuildings(elements, point),
       nearbyStructures: structures,

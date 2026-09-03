@@ -24,6 +24,7 @@ import {
   fetchGsiGeoidHeightPointSpecific,
   geoidHeightMetersForTerrainSample,
   sampleWorldTerrain,
+  terrainDataSource,
 } from "./worldTerrain";
 import {
   resetGsiElevationCacheStats,
@@ -43,6 +44,7 @@ import {
 } from "../geodesy/terrestrialRefraction";
 import { weatherForDate } from "../search/refractionWeatherModel";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
+import { fetchSiteContexts } from "../search/siteContext";
 
 export const ABSOLUTE_MIN_DISTANCE_METERS = 8;
 export const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
@@ -763,6 +765,90 @@ export function buildCandidateGroundPoint(
   };
 }
 
+const RIVER_NEAREST_LAND_RADII_METERS = [3, 6, 10, 15, 25, 40, 60, 90, 140, 220] as const;
+const RIVER_NEAREST_LAND_BEARINGS_DEGREES = [0, 45, 90, 135, 180, 225, 270, 315] as const;
+
+/**
+ * 河川水面の候補点では標高0mを固定せず、最も近い陸地点のDEM標高を使う。
+ * 各半径で8方向を同時に調べ、OSM水面ポリゴン外かつ有効DEMの点だけを候補にする。
+ * 最初に陸地が見つかった半径で打ち切るため、遠い丘や対岸を不用意に採用しない。
+ */
+async function estimateRiverOrthometricHeightFromNearestLand(
+  riverPoint: GroundPoint,
+  signal?: AbortSignal,
+  trace?: (stage: string, detail: string) => void
+): Promise<{ orthometricHeightMeters: number; distanceMeters: number; sample: Cartographic } | null> {
+  for (const radiusMeters of RIVER_NEAREST_LAND_RADII_METERS) {
+    abortIfRequested(signal);
+    const probes = RIVER_NEAREST_LAND_BEARINGS_DEGREES.map((bearingDegrees) => {
+      const destination = calculateKarneyDestinationPoint(
+        riverPoint,
+        bearingDegrees,
+        radiusMeters
+      );
+      return Cartographic.fromDegrees(destination.longitude, destination.latitude, 0);
+    });
+
+    let sampled: Cartographic[];
+    try {
+      sampled = await sampleWorldTerrain(probes, signal, "10m");
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      trace?.("river-land:terrain-error", `radius=${radiusMeters}m error=${String(error)}`);
+      continue;
+    }
+
+    const probeGroundPoints = sampled.map((sample, index) =>
+      buildCandidateGroundPoint(
+        sample,
+        riverPoint,
+        `河川近傍陸地 ${radiusMeters}m/${RIVER_NEAREST_LAND_BEARINGS_DEGREES[index]}°`
+      )
+    );
+
+    let contexts;
+    try {
+      contexts = await fetchSiteContexts(probeGroundPoints, signal, false);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      trace?.("river-land:context-error", `radius=${radiusMeters}m error=${String(error)}`);
+      // 水面/陸地を判別できない状態で陸地標高と断定しない。
+      continue;
+    }
+
+    const landSamples = sampled
+      .map((sample, index) => {
+        if (contexts[index]?.onWaterSurface) return null;
+        const geoid = geoidHeightMetersForTerrainSample(sample);
+        if (!Number.isFinite(geoid) || !Number.isFinite(sample.height)) return null;
+        const orthometric = sample.height - (geoid as number);
+        if (!Number.isFinite(orthometric)) return null;
+        return { sample, orthometricHeightMeters: orthometric };
+      })
+      .filter((value): value is { sample: Cartographic; orthometricHeightMeters: number } => value !== null);
+
+    if (landSamples.length > 0) {
+      // 同一半径で複数陸地点が見つかった場合、外れ値の影響を抑えるため中央値を採用。
+      const sorted = [...landSamples].sort(
+        (a, b) => a.orthometricHeightMeters - b.orthometricHeightMeters
+      );
+      const median = sorted[Math.floor(sorted.length / 2)];
+      trace?.(
+        "river-land:resolved",
+        `radius=${radiusMeters}m landSamples=${landSamples.length} orthometric=${median.orthometricHeightMeters.toFixed(2)}m`
+      );
+      return {
+        orthometricHeightMeters: median.orthometricHeightMeters,
+        distanceMeters: radiusMeters,
+        sample: median.sample,
+      };
+    }
+    trace?.("river-land:continue", `radius=${radiusMeters}m landSamples=0`);
+  }
+  trace?.("river-land:unresolved", "nearest-land DEM not found within 220m");
+  return null;
+}
+
 /**
  * 最終候補では候補座標自身のGSIジオイド高Nを取得してH/N/hを再構成する。
  * 交点探索時に地域Nを使ったGSI DEMサンプルならHをその値から復元し、
@@ -774,7 +860,8 @@ async function buildPointSpecificFinalCandidateGroundPoint(
   label: string,
   signal?: AbortSignal,
   sampledGeoidFallback?: number,
-  trace?: (stage: string, detail: string) => void
+  trace?: (stage: string, detail: string) => void,
+  forceOrthometricZero = false
 ): Promise<GroundPoint> {
   const base = buildCandidateGroundPoint(cartographic, subject, label);
   // 最終CameraModel探索のbestはGroundPointとして保持され、その後
@@ -825,7 +912,11 @@ async function buildPointSpecificFinalCandidateGroundPoint(
     ? (sampledGeoid as number)
     : (exactGeoid as number);
   const geoidForEllipsoidal = exactGeoid ?? geoidForOrthometric;
-  const orthometric = cartographic.height - geoidForOrthometric;
+  // 海面・広い河川/運河の水面はユーザー指定により平均海面基準H=0m。
+  // 内部のCesium座標は楕円体高なので、h=Nとして構成する。
+  const orthometric = forceOrthometricZero
+    ? 0
+    : cartographic.height - geoidForOrthometric;
   const ellipsoidal = orthometric + geoidForEllipsoidal;
   return {
     ...base,
@@ -1796,9 +1887,30 @@ async function calculateOneCandidates(
   // その数に比例して待たされる」という体感速度の問題を、通信回数自体は
   // 変えずに改善する（過去に撤回した変更は反復回数やサンプル数を"増やす"もの
   // だったため、ここでの"直列を並列にするだけ"の変更とは性質が異なる）。
+  // 初期交点候補をまとめてOSM水面ポリゴン判定する。
+  // natural=water / water=river|canal / waterway=riverbank の面内だけを
+  // 河川・運河水面とみなし、細い山間河川の線形waterwayは0m化しない。
+  let waterSurfaceKinds: Array<"none" | "river" | "sea-or-other-water"> =
+    initialSolutions.map(() => "none");
+  try {
+    const waterProbePoints = initialSolutions.map((initialSolution) =>
+      buildCandidateGroundPoint(
+        initialSolution.cartographic,
+        subject,
+        `${point.label}水面判定`
+      )
+    );
+    const waterContexts = await fetchSiteContexts(waterProbePoints, signal, false);
+    waterSurfaceKinds = waterContexts.map((context) => context.waterSurfaceKind);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    // 水面判定API障害で通常の三脚探索まで失敗させない。
+    console.warn(`[tripod-candidate] ${point.label}: OSM水面判定を取得できないため通常地形で継続`, error);
+  }
+
   const convergedResults = await Promise.allSettled(
-    initialSolutions.map((initialSolution) =>
-      processInitialSolution(initialSolution)
+    initialSolutions.map((initialSolution, index) =>
+      processInitialSolution(initialSolution, waterSurfaceKinds[index] ?? "none")
     )
   );
   const converged: TripodCandidate[] = [];
@@ -1836,7 +1948,8 @@ async function calculateOneCandidates(
   }
 
   async function processInitialSolution(
-    initialSolution: TerrainSolution
+    initialSolution: TerrainSolution,
+    mappedWaterSurfaceKind: "none" | "river" | "sea-or-other-water"
   ): Promise<TripodCandidate | null> {
     // 2026-08-29追記（実機診断より）: 「交点候補3件→確定1件」なのに
     // 「除外理由: なし」（reject()による正式な棄却が0件）という、数が
@@ -1853,7 +1966,7 @@ async function calculateOneCandidates(
     // 「processing-exception」として必ず記録するようにする
     // （挙動・精度は変更せず、診断の可視性だけを上げる）。
     try {
-      return await processInitialSolutionInner(initialSolution);
+      return await processInitialSolutionInner(initialSolution, mappedWaterSurfaceKind);
     } catch (error) {
       if (isAbortError(error)) throw error;
       reject("processing-exception", {
@@ -1868,7 +1981,8 @@ async function calculateOneCandidates(
   }
 
   async function processInitialSolutionInner(
-    initialSolution: TerrainSolution
+    initialSolution: TerrainSolution,
+    mappedWaterSurfaceKind: "none" | "river" | "sea-or-other-water"
   ): Promise<TripodCandidate | null> {
     abortIfRequested(signal);
     let solution = initialSolution;
@@ -1985,14 +2099,75 @@ async function calculateOneCandidates(
     // （被写体の真下であっても、その交点をそのまま候補として示す）。
     const refinementStartedAt = performance.now();
     trace("refinement:start", `seedDistance=${solution.distanceMeters.toFixed(2)}m`);
-    const finalGroundPoint = await buildPointSpecificFinalCandidateGroundPoint(
-      solution.cartographic,
-      subject,
-      `${point.label}三脚候補`,
-      signal,
-      geoidHeightMetersForTerrainSample(solution.cartographic),
-      trace
-    );
+    const gsiWaterNoData = terrainDataSource(solution.cartographic) === "GSI_WATER_ZERO";
+    const riverWaterSurface = mappedWaterSurfaceKind === "river";
+    const seaOrOtherWaterSurface =
+      mappedWaterSurfaceKind === "sea-or-other-water" || (gsiWaterNoData && !riverWaterSurface);
+
+    let finalGroundPoint: GroundPoint;
+    if (riverWaterSurface) {
+      const riverPoint = buildCandidateGroundPoint(
+        solution.cartographic,
+        subject,
+        `${point.label}河川水面`
+      );
+      const nearestLand = await estimateRiverOrthometricHeightFromNearestLand(
+        riverPoint,
+        signal,
+        trace
+      );
+      if (nearestLand) {
+        const candidateGeoid = geoidHeightMetersForTerrainSample(solution.cartographic);
+        const landGeoid = geoidHeightMetersForTerrainSample(nearestLand.sample);
+        const geoidForCandidate = Number.isFinite(candidateGeoid)
+          ? (candidateGeoid as number)
+          : (landGeoid as number);
+        const ellipsoidal = nearestLand.orthometricHeightMeters + geoidForCandidate;
+        finalGroundPoint = {
+          ...riverPoint,
+          height: ellipsoidal,
+          ellipsoidalHeightMeters: ellipsoidal,
+          orthometricHeightMeters: nearestLand.orthometricHeightMeters,
+          geoidHeightMeters: geoidForCandidate,
+          label: `${point.label}三脚候補`,
+        };
+        trace(
+          "river-surface:nearest-land",
+          `distance=${nearestLand.distanceMeters}m orthometric=${nearestLand.orthometricHeightMeters.toFixed(2)}m`
+        );
+      } else {
+        // 近傍陸地を確認できない河川を海抜0mに誤変換しない。
+        // 元の地形解を維持し、通常の地点別ジオイド処理へ戻す。
+        trace("river-surface:fallback", "nearest-land unavailable; keep terrain-derived height");
+        finalGroundPoint = await buildPointSpecificFinalCandidateGroundPoint(
+          solution.cartographic,
+          subject,
+          `${point.label}三脚候補`,
+          signal,
+          geoidHeightMetersForTerrainSample(solution.cartographic),
+          trace,
+          false
+        );
+      }
+    } else {
+      if (seaOrOtherWaterSurface) {
+        trace(
+          "water-surface:zero",
+          mappedWaterSurfaceKind === "sea-or-other-water"
+            ? "source=osm-sea-or-other-water orthometric=0m"
+            : "source=gsi-authoritative-no-data orthometric=0m"
+        );
+      }
+      finalGroundPoint = await buildPointSpecificFinalCandidateGroundPoint(
+        solution.cartographic,
+        subject,
+        `${point.label}三脚候補`,
+        signal,
+        geoidHeightMetersForTerrainSample(solution.cartographic),
+        trace,
+        seaOrOtherWaterSurface
+      );
+    }
     // 2026-09-01追記: solution.distanceMetersはレイに沿ったパラメータ距離
     // であり、候補地点（緯度経度）から被写体までの測地線距離とは、天体の
     // 高度がある分だけわずかに異なる（回帰テストで、レイ距離700mの交点の

@@ -20,6 +20,9 @@ import { shareInFlightRequest } from "../network/sharedRequests";
 let terrainPromise: ReturnType<typeof createWorldTerrainAsync> | null = null;
 const terrainSourceBySample = new WeakMap<Cartographic, TerrainDataSource>();
 const geoidHeightBySample = new WeakMap<Cartographic, number>();
+// GSI API自体は正常応答したが、全DEMソースで標高値が無かった地点。
+// 日本国内では海面等の「DEM非収載水面」を0mとして扱うための印。
+const authoritativeGsiNoDataBySample = new WeakSet<Cartographic>();
 let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
@@ -467,6 +470,16 @@ async function fetchGsiElevations(
       interpolationMode,
     }));
     const result = await fetchGsiElevationSamples(clientPoints, signal);
+    // 通信失敗と「APIは成功したがDEM値が無い」を混同しない。
+    // 全点の通信が成功した場合だけ、source/heightともnullの地点を
+    // authoritative no-dataとして記録する。通信障害時は絶対に0m化しない。
+    if (result.failedPointCount === 0) {
+      result.samples.forEach((sample, index) => {
+        if (sample.source === null && sample.heightMeters === null) {
+          authoritativeGsiNoDataBySample.add(points[index]);
+        }
+      });
+    }
     // Warm decoded tiles only after the authoritative API result is available.
     // This never delays the current search and makes later nearby searches local-first.
     prefetchGsiDeviceTilesForSamples(clientPoints, result.samples);
@@ -1129,9 +1142,11 @@ async function sampleTerrainWithGsiPriority(
     interpolationMode
   );
   const gsiEligibleIndexes = gsiSamples.map((sample, index) =>
-    sample.source !== null &&
-    typeof sample.heightMeters === "number" &&
-    Number.isFinite(sample.heightMeters)
+    (
+      sample.source !== null &&
+      typeof sample.heightMeters === "number" &&
+      Number.isFinite(sample.heightMeters)
+    ) || authoritativeGsiNoDataBySample.has(result[index])
       ? index
       : -1
   ).filter((index) => index >= 0);
@@ -1146,6 +1161,15 @@ async function sampleTerrainWithGsiPriority(
     const gsi = gsiSamples[index];
     const geoidHeightMeters = geoidHeightByRegion.get(geoidRegionKey(result[index]));
     if (
+      authoritativeGsiNoDataBySample.has(result[index]) &&
+      typeof geoidHeightMeters === "number"
+    ) {
+      // 海面等のGSI DEM非収載水面は平均海面基準H=0mとして扱う。
+      // Cesium内部は楕円体高hなので h = H + N = N とする。
+      result[index].height = geoidHeightMeters;
+      terrainSourceBySample.set(result[index], "GSI_WATER_ZERO");
+      geoidHeightBySample.set(result[index], geoidHeightMeters);
+    } else if (
       gsi &&
       gsi.source &&
       typeof gsi.heightMeters === "number" &&

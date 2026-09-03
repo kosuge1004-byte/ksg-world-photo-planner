@@ -2,6 +2,10 @@ import { spawnSync } from "node:child_process";
 
 const cases = [
   {
+    name: "water surface zero-elevation contracts",
+    arguments: ["./scripts/verify-water-surface-zero-20260903.mjs"],
+  },
+  {
     name: "production calculation regression",
     arguments: [
       "--import",

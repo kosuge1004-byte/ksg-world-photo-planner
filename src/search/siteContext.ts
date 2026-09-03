@@ -25,6 +25,12 @@ function isSiteContext(value: unknown): value is SiteContext {
     typeof value.restrictedAccess === "boolean" &&
     "onMotorRoad" in value &&
     typeof value.onMotorRoad === "boolean" &&
+    "onWaterSurface" in value &&
+    typeof value.onWaterSurface === "boolean" &&
+    "waterSurfaceKind" in value &&
+    (value.waterSurfaceKind === "none" ||
+      value.waterSurfaceKind === "river" ||
+      value.waterSurfaceKind === "sea-or-other-water") &&
     "nearbyLandmarks" in value &&
     Array.isArray(value.nearbyLandmarks) &&
     "nearbyBuildings" in value &&

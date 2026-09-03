@@ -4,6 +4,7 @@ export type TerrainDataSource =
   | "GSI_DEM5B_PHOTOGRAMMETRY"
   | "GSI_DEM5C_PHOTOGRAMMETRY"
   | "GSI_DEM10B_CONTOUR"
+  | "GSI_WATER_ZERO"
   | "CESIUM_WORLD_TERRAIN";
 
 export type GsiElevationApiSample = {
@@ -64,6 +65,8 @@ export type SiteContext = {
   onMappedWay: boolean;
   restrictedAccess: boolean;
   onMotorRoad: boolean;
+  onWaterSurface: boolean;
+  waterSurfaceKind: "none" | "river" | "sea-or-other-water";
   nearbyLandmarks: NearbyLandmark[];
   nearbyBuildings: NearbyBuilding[];
   nearbyStructures: NearbyStructure[];
