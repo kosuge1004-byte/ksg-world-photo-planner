@@ -1,0 +1,20 @@
+AstroSight 3D map input fix V2 - 2026-09-03
+
+Observed symptom:
+- Cesium 3D map is visible, but drag/pinch camera movement does not work on device.
+
+Confirmed implementation defects fixed:
+1. 2D placement overlay could cover 3D (fixed in V1): map-2d-placement-layer is now rendered only when mapDisplayMode === "2d".
+2. V2 root defect: the app sets viewer.useDefaultRenderLoop = false, but the custom 3D loop directly called viewer.scene.render(). Cesium's Viewer API contract says that when the default render loop is disabled, custom code must call Viewer.resize()/Viewer.render().
+3. 3D interactive mode now restores viewer.useDefaultRenderLoop = true. Returning to 2D disables it again to preserve the low-load preview architecture.
+4. A ResizeObserver now watches the 3D host in addition to window resize.
+5. previewSnapshot explicit renders now use viewer.render() rather than viewer.scene.render().
+
+Verification:
+- verify-3d-map-render-loop-20260903.mjs: 7/7 PASS
+- verify-3d-map-input-20260903.mjs: 6/6 PASS
+- Both tests registered in scripts/run-regression-tests.mjs.
+- Full build could not be completed in this environment because npm ci timed out and left dependencies incomplete (geo-tz, vite/client, @types/node, @cloudflare/workers-types missing). Do not interpret this as a build PASS.
+
+Reference:
+- Cesium Viewer.useDefaultRenderLoop documentation: when false, the application must manually call resize and render methods as part of a custom render loop.

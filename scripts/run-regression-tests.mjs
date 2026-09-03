@@ -2,6 +2,14 @@ import { spawnSync } from "node:child_process";
 
 const cases = [
   {
+    name: "3D map pointer overlay contract (2026-09-03)",
+    arguments: ["./scripts/verify-3d-map-input-20260903.mjs"],
+  },
+  {
+    name: "3D map Cesium render-loop contract (2026-09-03)",
+    arguments: ["./scripts/verify-3d-map-render-loop-20260903.mjs"],
+  },
+  {
     name: "production calculation regression",
     arguments: [
       "--import",

@@ -662,6 +662,16 @@ function App() {
     viewer.scene.screenSpaceCameraController.enableInputs = true;
     if (mapRef.current) mapRef.current.style.pointerEvents = "auto";
 
+    // 2026-09-03修正: Viewer作成後は2Dプレビューの負荷削減のため
+    // useDefaultRenderLoop=falseにしている。Cesium公式仕様では、この状態で
+    // 独自ループを使う場合はViewer#render()を呼ぶ必要があるが、従来コードは
+    // Scene#render()を直接呼んでいた。これではViewerが担う標準フレーム処理と
+    // 入力更新の契約から外れるため、3D地図を実際に操作する間はCesium自身の
+    // 標準レンダーループを復帰させる。
+    viewer.useDefaultRenderLoop = true;
+    viewer.resize();
+    viewer.scene.requestRender();
+
     const tapHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     tapHandler.setInputAction((movement: { position: Cartesian2 }) => {
       if (viewer.isDestroyed()) return;
@@ -676,18 +686,17 @@ function App() {
       });
     }, ScreenSpaceEventType.LEFT_CLICK);
 
-    let rafId: number | null = null;
-    const renderLoop = () => {
-      if (viewer.isDestroyed()) return;
-      viewer.scene.requestRender();
-      viewer.scene.render();
-      rafId = requestAnimationFrame(renderLoop);
-    };
-    rafId = requestAnimationFrame(renderLoop);
-    map3DRenderLoopRef.current = rafId;
+    // Viewerの標準ループがwindow resizeを処理するが、上下ペインのサイズ変更は
+    // window resizeを伴わない場合があるため、ホスト自体も監視して確実に追従する。
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          if (viewer.isDestroyed()) return;
+          viewer.resize();
+          viewer.scene.requestRender();
+        })
+      : null;
+    if (map3DHostRef.current) resizeObserver?.observe(map3DHostRef.current);
 
-    // 画面回転・キーボード表示等でホストのサイズが変わっても追従できる
-    // よう、3D表示中はwindowのresizeも監視する。
     const handleWindowResize = () => {
       if (viewer.isDestroyed()) return;
       viewer.resize();
@@ -697,10 +706,13 @@ function App() {
 
     return () => {
       tapHandler.destroy();
+      resizeObserver?.disconnect();
       window.removeEventListener("resize", handleWindowResize);
-      if (rafId !== null) cancelAnimationFrame(rafId);
       map3DRenderLoopRef.current = null;
       if (!viewer.isDestroyed()) {
+        // 2Dへ戻った後は上側プレビュー専用になるため、再び自動ループを止めて
+        // captureTripodPreview側の必要時描画だけに戻す。
+        viewer.useDefaultRenderLoop = false;
         viewer.scene.screenSpaceCameraController.enableInputs = false;
       }
       if (mapRef.current) mapRef.current.style.pointerEvents = "";
