@@ -812,6 +812,16 @@ async function estimateRiverOrthometricHeightFromNearestLand(
   signal?: AbortSignal,
   trace?: (stage: string, detail: string) => void
 ): Promise<{ orthometricHeightMeters: number; distanceMeters: number; sample: Cartographic } | null> {
+  // 2026-09-04追記（実機診断より）: 地理条件API（/api/osm-site-context）が
+  // 障害等で応答不能になっていると、10半径 × 最大25秒（8秒タイムアウト×3回
+  // 試行）で最悪250秒もの間、この副次的な推定処理だけで探索全体を止めて
+  // いた（「経過173秒・通信0回」報告の実際の原因）。1箇所の障害はほぼ
+  // 確実に他の半径でも再現するサービス単位の障害であり、半径を変えて
+  // 何度も同じ25秒待機を繰り返す価値は無い。連続で失敗した場合は早期に
+  // 諦め、探索全体を道連れにしない（河川陸地標高推定はあくまで
+  // ベストエフォートで、失敗時のフォールバックは呼び出し側に既にある）。
+  const CONSECUTIVE_FAILURE_LIMIT = 2;
+  let consecutiveContextFailures = 0;
   for (const radiusMeters of RIVER_NEAREST_LAND_RADII_METERS) {
     abortIfRequested(signal);
     const probes = RIVER_NEAREST_LAND_BEARINGS_DEGREES.map((bearingDegrees) => {
@@ -843,9 +853,18 @@ async function estimateRiverOrthometricHeightFromNearestLand(
     let contexts;
     try {
       contexts = await fetchSiteContexts(probeGroundPoints, signal, false);
+      consecutiveContextFailures = 0;
     } catch (error) {
       if (isAbortError(error)) throw error;
       trace?.("river-land:context-error", `radius=${radiusMeters}m error=${String(error)}`);
+      consecutiveContextFailures += 1;
+      if (consecutiveContextFailures >= CONSECUTIVE_FAILURE_LIMIT) {
+        trace?.(
+          "river-land:abandoned",
+          `地理条件APIが${consecutiveContextFailures}回連続で失敗したため、残り半径の試行を打ち切ります`
+        );
+        return null;
+      }
       // 水面/陸地を判別できない状態で陸地標高と断定しない。
       continue;
     }
