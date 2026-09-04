@@ -24,6 +24,12 @@ type Props = {
   onToggleFavorite: (record: SubjectRecord) => void;
   onRenameFavorite: (id: string, label: string) => void;
   justRegisteredFavoriteId: { token: number; id: string } | null;
+  /** 2026-09-04追記: 周辺データ（ローリングウィンドウ事前計算）が有効な被写体id一覧。 */
+  rollingWindowEnabledIds: ReadonlySet<string>;
+  /** 周辺データのダウンロードを（確認ダイアログ経由で）申し込む。 */
+  onRequestRollingWindowDownload: (record: SubjectRecord) => void;
+  /** お気に入りは残したまま、周辺データだけ端末から削除する。 */
+  onDeleteRollingWindowData: (record: SubjectRecord) => void;
 };
 
 /**
@@ -44,6 +50,9 @@ export function SpotSearchScreen({
   onToggleFavorite,
   onRenameFavorite,
   justRegisteredFavoriteId,
+  rollingWindowEnabledIds,
+  onRequestRollingWindowDownload,
+  onDeleteRollingWindowData,
 }: Props) {
   const [query, setQuery] = useState("");
   const [pinTarget, setPinTarget] = useState<"subject" | "tripod">("subject");
@@ -212,6 +221,29 @@ export function SpotSearchScreen({
                       </button>
                       {subjectListOpen === "favorites" && (
                         <button type="button" className="spot-list-rename" aria-label="名称を編集" onClick={() => startEditingFavorite(record)}>✎</button>
+                      )}
+                      {subjectListOpen === "favorites" && (
+                        rollingWindowEnabledIds.has(record.id) ? (
+                          <button
+                            type="button"
+                            className="spot-list-rolling-window active"
+                            aria-label="周辺データを端末から削除"
+                            title="周辺データを保存済み（タップで削除）"
+                            onClick={() => onDeleteRollingWindowData(record)}
+                          >
+                            ⬇︎
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="spot-list-rolling-window"
+                            aria-label="周辺データを端末に保存"
+                            title="周辺データを端末に保存"
+                            onClick={() => onRequestRollingWindowDownload(record)}
+                          >
+                            ⬇
+                          </button>
+                        )
                       )}
                       <button type="button" className="spot-list-favorite" aria-label="お気に入り切替" onClick={() => onToggleFavorite(record)}>
                         {favorites.some((favorite) => favorite.id === record.id) ? "★" : "☆"}

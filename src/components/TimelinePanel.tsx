@@ -13,7 +13,7 @@ import {
 import type { CalculationMode } from "../types/camera";
 import type { CelestialBodyId } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import { calculateCelestialHorizontalCoordinates } from "../cesium/celestial";
+import { calculateCelestialHorizontalCoordinates, findHorizonCrossing } from "../cesium/celestial";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import {
   dateFromZonedDateTimeLocal,
@@ -82,66 +82,6 @@ function bodyAltitude(
     calculationMode,
     refractionWeather
   ).altitudeDegrees;
-}
-
-function findHorizonCrossing(
-  id: CelestialBodyId,
-  direction: 1 | -1,
-  location: GroundPoint,
-  start: Date,
-  end: Date,
-  calculationMode: CalculationMode,
-  refractionWeather?: RefractionWeatherContext
-): Date | null {
-  const step = 2 * 60_000;
-  let previousTime = start.getTime();
-  let previousAltitude = bodyAltitude(
-    id,
-    start,
-    location,
-    calculationMode,
-    refractionWeather
-  );
-
-  for (
-    let currentTime = Math.min(previousTime + step, end.getTime());
-    currentTime <= end.getTime();
-    currentTime = Math.min(currentTime + step, end.getTime())
-  ) {
-    const currentAltitude = bodyAltitude(
-      id,
-      new Date(currentTime),
-      location,
-      calculationMode,
-      refractionWeather
-    );
-    const crossed =
-      direction === 1
-        ? previousAltitude < 0 && currentAltitude >= 0
-        : previousAltitude >= 0 && currentAltitude < 0;
-    if (crossed) {
-      let low = previousTime;
-      let high = currentTime;
-      // 表示は分単位だが、候補計算との一貫性を保つため秒未満まで絞り込む。
-      for (let index = 0; index < 18; index += 1) {
-        const middle = (low + high) / 2;
-        const altitude = bodyAltitude(
-          id,
-          new Date(middle),
-          location,
-          calculationMode,
-          refractionWeather
-        );
-        if (direction === 1 ? altitude >= 0 : altitude < 0) high = middle;
-        else low = middle;
-      }
-      return new Date(high);
-    }
-    if (currentTime === end.getTime()) break;
-    previousTime = currentTime;
-    previousAltitude = currentAltitude;
-  }
-  return null;
 }
 
 function formatWindowTime(

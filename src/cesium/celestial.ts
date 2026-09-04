@@ -154,6 +154,72 @@ export function calculateCelestialHorizontalCoordinates(
   };
 }
 
+/**
+ * 2026-09-04追記: TimelinePanel.tsx内に private だった日の出没・月の出没
+ * 探索ロジックを、お気に入り地点のローリングウィンドウ事前計算
+ * （tripodRollingWindowManager.ts）からも使い回せるよう、こちらへ
+ * 切り出してexportする。計算内容・精度は移動前と同一（2分刻み走査＋
+ * 18回二分探索で秒未満まで絞り込み）。
+ */
+export function findHorizonCrossing(
+  id: CelestialBodyId,
+  direction: 1 | -1,
+  location: GroundPoint,
+  start: Date,
+  end: Date,
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
+): Date | null {
+  const step = 2 * 60_000;
+  let previousTime = start.getTime();
+  let previousAltitude = calculateCelestialHorizontalCoordinates(
+    id,
+    start,
+    location,
+    calculationMode,
+    refractionWeather
+  ).altitudeDegrees;
+
+  for (
+    let currentTime = Math.min(previousTime + step, end.getTime());
+    currentTime <= end.getTime();
+    currentTime = Math.min(currentTime + step, end.getTime())
+  ) {
+    const currentAltitude = calculateCelestialHorizontalCoordinates(
+      id,
+      new Date(currentTime),
+      location,
+      calculationMode,
+      refractionWeather
+    ).altitudeDegrees;
+    const crossed =
+      direction === 1
+        ? previousAltitude < 0 && currentAltitude >= 0
+        : previousAltitude >= 0 && currentAltitude < 0;
+    if (crossed) {
+      let low = previousTime;
+      let high = currentTime;
+      for (let index = 0; index < 18; index += 1) {
+        const middle = (low + high) / 2;
+        const altitude = calculateCelestialHorizontalCoordinates(
+          id,
+          new Date(middle),
+          location,
+          calculationMode,
+          refractionWeather
+        ).altitudeDegrees;
+        if (direction === 1 ? altitude >= 0 : altitude < 0) high = middle;
+        else low = middle;
+      }
+      return new Date(high);
+    }
+    previousTime = currentTime;
+    previousAltitude = currentAltitude;
+    if (currentTime >= end.getTime()) break;
+  }
+  return null;
+}
+
 function observerAtLens(
   tripod: GroundPoint,
   settings: CameraSettings

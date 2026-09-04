@@ -1352,6 +1352,9 @@ button { cursor: pointer; }
 .spot-subject-list-item small { color: #8f9aad; }
 .spot-list-favorite { width: 48px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #ffd45a; font-size: 20px; }
 .spot-list-rename { width: 40px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #9db3cc; font-size: 15px; }
+/* 2026-09-04追記: お気に入りの周辺データ（ローリングウィンドウ事前計算）保存状態表示・削除ボタン。 */
+.spot-list-rolling-window { width: 40px; border: 0; border-left: 1px solid rgba(255,255,255,.08); background: transparent; color: #7c8aa0; font-size: 15px; }
+.spot-list-rolling-window.active { color: #6fb7ff; }
 .spot-list-favorite-rename { display: flex; align-items: center; gap: 6px; flex: 1; padding: 8px 10px; }
 .spot-list-favorite-rename input { flex: 1; min-width: 0; padding: 8px; border-radius: 6px; border: 1px solid #526176; background: #07101b; color: #fff; }
 .spot-list-favorite-rename button { border: 0; background: transparent; color: #9db3cc; font-size: 16px; padding: 4px 6px; }
@@ -1433,6 +1436,36 @@ button { cursor: pointer; }
   align-items: center;
   gap: 7px;
   min-height: 14px;
+}
+
+/* 2026-09-04追記: お気に入りの周辺データダウンロード用ゲージ。 */
+.rolling-window-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #303741;
+}
+.rolling-window-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #6fb7ff;
+  transition: width 200ms ease-out;
+}
+.rolling-window-period-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.rolling-window-period-choice {
+  padding: 6px 12px;
+  color: #c3cbd6;
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rolling-window-period-choice.active {
+  color: #0a0f16;
+  border-color: transparent;
+  background: #6fb7ff;
+  font-weight: 700;
 }
 
 .celestial-transit-progress-track {

@@ -32,7 +32,7 @@ function sameLocation(a: Pick<GroundPoint, "latitude" | "longitude">, b: Pick<Gr
   return Math.abs(a.latitude - b.latitude) < 0.000001 && Math.abs(a.longitude - b.longitude) < 0.000001;
 }
 
-function idFor(point: GroundPoint) {
+export function idFor(point: GroundPoint) {
   return `${point.latitude.toFixed(6)},${point.longitude.toFixed(6)}`;
 }
 
