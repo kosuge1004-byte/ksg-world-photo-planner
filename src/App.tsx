@@ -271,6 +271,13 @@ function normalizeCelestialVisibility(value: CelestialVisibility): CelestialVisi
 }
 
 const TRIPOD_CACHE_PREPARATION_TIMEOUT_MS = 2_000;
+// 2026-09-04追記: 三脚候補探索全体の最終防衛線タイムアウト。個々の通信
+// （fetch・IndexedDB等）には既にそれぞれタイムアウトがあるが、それらの
+// 網をすり抜けて「計算中…」のまま何分も進まなくなる不具合が実機で
+// 報告されたため、探索全体としての上限を別途設ける。個々のタイムアウトの
+// 合計より十分大きく（気象8秒×3回×通信断への耐性等を考慮しても収まる）、
+// かつユーザーを待たせすぎない値として90秒とする。
+const TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT_MS = 90_000;
 
 async function waitForOptionalTripodCache<T>(
   operation: Promise<T>,
@@ -1044,10 +1051,24 @@ function App() {
       }),
     ];
     lines.push("完全経路トレース（時刻ms / stage / detail）:");
-    for (const [label, entry] of Object.entries(diagnostics.perCelestialBody)) {
-      lines.push(`  [${label}]`);
-      for (const event of entry.traceEvents) {
-        lines.push(`    +${event.elapsedMs.toFixed(1)}ms ${event.stage}: ${event.detail}`);
+    // 2026-09-04追記: 以前はperCelestialBody[label].traceEventsだけを見て
+    // いたが、これはその天体の計算が完了した時にしか書き込まれないため、
+    // 計算がハングして完了しないケースでは何も表示されなかった
+    // （「経過173秒・通信0回」の報告時、この節が空だった原因）。
+    // liveTraceEventsはtrace()発生の都度リアルタイムに追記されるため、
+    // ハング中でも「最後に何をしていたか」が見える。こちらを正として使う。
+    if (diagnostics.liveTraceEvents.length > 0) {
+      for (const event of diagnostics.liveTraceEvents) {
+        lines.push(`  +${event.elapsedMs.toFixed(1)}ms [${event.celestialLabel}] ${event.stage}: ${event.detail}`);
+      }
+    } else {
+      // liveTraceEvents導入前の古いキャッシュ済み診断オブジェクトを開いた
+      // 場合のみ、従来のperCelestialBody側にフォールバックする。
+      for (const [label, entry] of Object.entries(diagnostics.perCelestialBody)) {
+        lines.push(`  [${label}]`);
+        for (const event of entry.traceEvents) {
+          lines.push(`    +${event.elapsedMs.toFixed(1)}ms ${event.stage}: ${event.detail}`);
+        }
       }
     }
 
@@ -1923,6 +1944,9 @@ function App() {
     const timer = window.setTimeout(() => {
       void (async () => {
         let operationStarted = false;
+        // watchdogTimedOutは catch ブロックからも参照するため、try の外側
+        // （operationStartedと同じスコープ）で宣言する。
+        const watchdogTimedOut = { current: false };
         try {
           // キャッシュは高速化専用。IndexedDB破損などで読み出せなくても、
           // authoritativeな通常探索は必ず開始して候補表示を止めない。
@@ -1973,51 +1997,75 @@ function App() {
             if (previewViewer) setPreviewWireframeMode(previewViewer, true);
           }
           operationStarted = true;
-          const candidates = await calculateTripodCandidates(
-            subjectPoint,
-            enabledPoints,
-            cameraSettings,
-            selectedDate,
-            calculationMode,
-            undefined,
-            controller.signal,
-            previewAspectRatio,
-            // 2026-09-02追記（明示指示により）: 距離ヒントが無い初回探索の
-            // 対象範囲を、精度設定で選べる上限（既定10km、最大50km）に
-            // 絞る。範囲を狭めることで、探索が触れる地形タイルの種類が
-            // 減り速度が向上する。距離ヒントがある再探索（時刻操作後の
-            // 微調整等）はmergedPreferredDistances側で個別に狭められる
-            // ため、ここでは初回探索の上限だけを制御する。
-            {
-              minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
-              maxMeters: precisionSettings.tripodSearchMaxDistanceMeters,
-            },
-            undefined,
-            previewRefractionWeather,
-            mergedPreferredDistances,
-            resolveTripodCandidateRefractionWeather,
-            precisionSettings.tripodCandidateDoubleCheckEnabled,
-            initialDirectionObserver,
-            // 2026-09-02変更（明示指示により）: 計算中の暫定候補は地図に
-            // 表示しない方針になったため、この通知を受けてもstateを更新
-            // しない（頻繁な再描画の発生源そのものを止める）。コールバック
-            // 自体は下層の探索ロジック（進捗診断等）に影響しないよう残す。
-            () => {},
-            (resolvedId, resolvedCandidates) => {
-              if (cancelled || controller.signal.aborted || resolvedCandidates.length === 0) return;
-              // 先に完了した天体の全交点を即時表示し、遅い天体の完了を待たない。
-              setTripodCandidates((current) => {
-                if (cancelled || controller.signal.aborted) return current;
-                const merged = [
-                  ...current.filter((candidate) => candidate.id !== resolvedId),
-                  ...resolvedCandidates,
-                ];
-                tripodCandidatesRef.current = merged;
-                return merged;
-              });
-            },
-            previewViewCorrection
-          );
+          // 2026-09-04追記（実機不具合報告より）: 個々のfetch・IndexedDB
+          // 操作にはそれぞれタイムアウトを設けているが、「探索全体として
+          // 何分経っても通信が1回も発生しない」という、個別タイムアウトの
+          // 網をすり抜ける詰まり方（未知の待機箇所・想定外の相互ロック等）
+          // が実機で報告された。個々の原因を特定できていなくても、
+          // ユーザーが「計算中…」のまま延々待たされ続けることだけは
+          // 避けたいため、探索全体に対する最終防衛線として上限時間を設け、
+          // 超過時は明示的に中断してエラー表示・再試行を可能にする。
+          let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+          const watchdogPromise = new Promise<never>((_, reject) => {
+            watchdogTimer = setTimeout(() => {
+              watchdogTimedOut.current = true;
+              controller.abort();
+              reject(new Error("TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT"));
+            }, TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT_MS);
+          });
+          let candidates: Awaited<ReturnType<typeof calculateTripodCandidates>>;
+          try {
+            candidates = await Promise.race([
+              calculateTripodCandidates(
+                subjectPoint,
+                enabledPoints,
+                cameraSettings,
+                selectedDate,
+                calculationMode,
+                undefined,
+                controller.signal,
+                previewAspectRatio,
+                // 2026-09-02追記（明示指示により）: 距離ヒントが無い初回探索の
+                // 対象範囲を、精度設定で選べる上限（既定10km、最大50km）に
+                // 絞る。範囲を狭めることで、探索が触れる地形タイルの種類が
+                // 減り速度が向上する。距離ヒントがある再探索（時刻操作後の
+                // 微調整等）はmergedPreferredDistances側で個別に狭められる
+                // ため、ここでは初回探索の上限だけを制御する。
+                {
+                  minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
+                  maxMeters: precisionSettings.tripodSearchMaxDistanceMeters,
+                },
+                undefined,
+                previewRefractionWeather,
+                mergedPreferredDistances,
+                resolveTripodCandidateRefractionWeather,
+                precisionSettings.tripodCandidateDoubleCheckEnabled,
+                initialDirectionObserver,
+                // 2026-09-02変更（明示指示により）: 計算中の暫定候補は地図に
+                // 表示しない方針になったため、この通知を受けてもstateを更新
+                // しない（頻繁な再描画の発生源そのものを止める）。コールバック
+                // 自体は下層の探索ロジック（進捗診断等）に影響しないよう残す。
+                () => {},
+                (resolvedId, resolvedCandidates) => {
+                  if (cancelled || controller.signal.aborted || resolvedCandidates.length === 0) return;
+                  // 先に完了した天体の全交点を即時表示し、遅い天体の完了を待たない。
+                  setTripodCandidates((current) => {
+                    if (cancelled || controller.signal.aborted) return current;
+                    const merged = [
+                      ...current.filter((candidate) => candidate.id !== resolvedId),
+                      ...resolvedCandidates,
+                    ];
+                    tripodCandidatesRef.current = merged;
+                    return merged;
+                  });
+                },
+                previewViewCorrection
+              ),
+              watchdogPromise,
+            ]);
+          } finally {
+            if (watchdogTimer !== undefined) clearTimeout(watchdogTimer);
+          }
           if (!cancelled) {
             const displayedCandidates = candidates;
             tripodCandidatesRef.current = displayedCandidates;
@@ -2036,7 +2084,7 @@ function App() {
             if (exactCacheKey) setExactTripodCandidates(exactCacheKey, candidates);
           }
         } catch (error) {
-          if (isAbortError(error)) return;
+          if (isAbortError(error) && !watchdogTimedOut.current) return;
           console.warn("三脚候補地点を計算できませんでした", error);
           if (!cancelled) {
             // 同一被写体の再計算失敗なら、直前の確定候補まで消して表示を跳ねさせない。
@@ -2053,10 +2101,13 @@ function App() {
             setTripodCandidateCalculationStatus("error");
             const isTerrainDataUnavailable =
               error instanceof Error && error.name === "TerrainDataUnavailableError";
+            const isWatchdogTimeout = watchdogTimedOut.current;
             showUserNotice({
               key: "tripod-candidate-calculation",
               tone: "error",
-              message: isTerrainDataUnavailable
+              message: isWatchdogTimeout
+                ? "三脚候補の計算が想定よりも大幅に時間がかかったため中断しました。通信状態をご確認のうえ再試行してください。"
+                : isTerrainDataUnavailable
                 ? `地形データを取得できず、三脚候補を計算できませんでした（${error.message}）。通信状態を確認して再試行してください。`
                 : "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",
               diagnosticDetail: buildDiagnosticDetail("三脚候補計算", error, {

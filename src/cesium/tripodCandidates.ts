@@ -174,6 +174,22 @@ export type TripodSearchDiagnostics = {
   localTileDecodeMissCount: number;
   /** 2026-08-29: 最終確定時間の実測内訳。計算結果には影響しない診断専用。 */
   totalElapsedMs: number | null;
+  /**
+   * 2026-09-04追記: 従来のtraceEvents（perCelestialBody配下）は、その
+   * 天体の計算が完了（成功/失敗）した時点でまとめて書き込まれるだけで、
+   * 計算が完了せずハングした場合は診断コピーを取っても一切内容が
+   * 見えなかった（「経過173秒・通信0回」の報告はこれが原因で原因箇所を
+   * 特定できなかった）。ここに、各trace()呼び出しの瞬間にリアルタイムで
+   * 追記する全天体共通のログを持たせる。ハング中でも「最後に何をしていた
+   * か」がそのまま見える。無制限に増えないよう直近件数で切り詰める
+   * （recordLiveTraceEvent参照）。
+   */
+  liveTraceEvents: Array<{
+    celestialLabel: string;
+    elapsedMs: number;
+    stage: string;
+    detail: string;
+  }>;
   perCelestialBody: Record<
     string,
     {
@@ -494,6 +510,24 @@ let lastCenterlineScanSamples: Array<{
 
 export function getLastTripodSearchDiagnostics(): TripodSearchDiagnostics | null {
   return lastSearchDiagnostics;
+}
+
+const LIVE_TRACE_EVENTS_MAX = 400;
+
+/**
+ * 2026-09-04追記: ハング中の診断コピーでも「最後に何をしていたか」が
+ * 見えるよう、trace()発生の都度リアルタイムで書き込む。無制限に増え
+ * 続けないよう、直近LIVE_TRACE_EVENTS_MAX件だけ保持する。
+ */
+function recordLiveTraceEvent(celestialLabel: string, elapsedMs: number, stage: string, detail: string): void {
+  if (!lastSearchDiagnostics) return;
+  lastSearchDiagnostics.liveTraceEvents.push({ celestialLabel, elapsedMs, stage, detail });
+  if (lastSearchDiagnostics.liveTraceEvents.length > LIVE_TRACE_EVENTS_MAX) {
+    lastSearchDiagnostics.liveTraceEvents.splice(
+      0,
+      lastSearchDiagnostics.liveTraceEvents.length - LIVE_TRACE_EVENTS_MAX
+    );
+  }
 }
 
 /**
@@ -1635,7 +1669,9 @@ async function calculateOneCandidates(
   const rejectionReasons: Record<string, number> = {};
   const traceEvents: TripodSearchDiagnostics["perCelestialBody"][string]["traceEvents"] = [];
   const trace = (stage: string, detail: string) => {
-    traceEvents.push({ elapsedMs: performance.now() - bodyStartedAt, stage, detail });
+    const elapsedMs = performance.now() - bodyStartedAt;
+    traceEvents.push({ elapsedMs, stage, detail });
+    recordLiveTraceEvent(point.label, elapsedMs, stage, detail);
   };
   trace("body:start", `date=${date.toISOString()} focal=${cameraSettings.focalLengthMm}mm cameraHeight=${lensCenterHeightMeters}m mode=${calculationMode}`);
   const finalEvaluations: TripodSearchDiagnostics["perCelestialBody"][string]["finalEvaluations"] = [];
@@ -2353,6 +2389,7 @@ export async function calculateTripodCandidates(
     finishedAtMs: null,
     liveRoundTripCount: 0,
     liveLastRoundTripFinishedAtMs: null,
+    liveTraceEvents: [],
     cacheHitBatchCount: 0,
     cacheMissBatchCount: 0,
     cacheMemoryHitCount: 0,
