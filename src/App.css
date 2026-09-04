@@ -336,6 +336,57 @@ button { cursor: pointer; }
    するため、そのホスト自体をposition: relativeにしておく。 */
 .preview-renderer-host { position: absolute; inset: 0; z-index: 0; overflow: hidden; }
 
+/* 2026-09-04追記: 3D地図表示中、プレビュー欄のCesiumキャンバスが
+   下部の地図欄へ一時的に移っている間に表示する案内。 */
+.preview-3d-map-placeholder {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 20px;
+  text-align: center;
+  background: #0a0f16;
+}
+.preview-3d-map-placeholder p {
+  margin: 0;
+  color: #c3cbd6;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.preview-3d-map-placeholder button {
+  padding: 7px 14px;
+  color: #0a0f16;
+  border: 0;
+  border-radius: 999px;
+  background: #6fb7ff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.preview-3d-map-placeholder-secondary {
+  color: #c3cbd6 !important;
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,.35) !important;
+}
+
+/* 2026-09-04追記: プレビュー同時表示ON中、プレビュー欄右上に置く終了ボタン。 */
+.preview-dual-viewer-stop {
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  right: 8px;
+  padding: 5px 10px;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 999px;
+  background: rgba(0,0,0,.55);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* 2026-09-02追記: 画面下部の地図（map-2d-stage）を3D表示に切り替えた際、
    MapLibreの代わりにこの位置へ表示するCesiumコンテナのホスト。
    mapRef要素は.preview-rendererのopacity:0/pointer-events:noneを
@@ -355,6 +406,44 @@ button { cursor: pointer; }
     linear-gradient(180deg, #071523 0%, #101722 48%, #05080d 100%);
 }
 .preview-gesture-layer { position: absolute; z-index: 22; inset: 0; cursor: zoom-in; touch-action: none; }
+
+/* 2026-09-04追記: 被写体ピン指定を長押しに変更したことに伴う進捗リング。
+   押している間だけ表示し、円環が既定時間かけて満ちていくアニメーションで
+   「もう少しで確定」がわかるようにする。JSからはleft/top/opacityと
+   .fillingクラスの付け外しだけを操作する。 */
+.preview-long-press-indicator {
+  position: absolute;
+  z-index: 23;
+  top: 0;
+  left: 0;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease-out;
+}
+.preview-long-press-indicator::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: #4db4ff;
+  transform: scale(0);
+  opacity: .85;
+}
+.preview-long-press-indicator.filling {
+  opacity: 1;
+}
+.preview-long-press-indicator.filling::before {
+  animation: preview-long-press-fill var(--long-press-duration, 550ms) linear forwards;
+}
+@keyframes preview-long-press-fill {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
 .preview-subject-center { position: absolute; z-index: 27; top: 50%; left: 50%; width: 5.6px; height: 8px; transform: translate(-50%, -100%); filter: drop-shadow(0 1px 1px #000); pointer-events: none; }
 .preview-subject-center svg { display: block; width: 5.6px; height: 8px; overflow: visible; }
 .preview-subject-center path { fill: #e53935; stroke: #fff; stroke-width: 3; }
@@ -3157,6 +3246,20 @@ body.pseudo-fullscreen-active {
 }
 .precision-subsection:first-of-type { border-top: 0; padding-top: 0; }
 .precision-subsection > strong { color: #e7edf4; font-size: 12px; }
+
+/* 2026-09-04追記: 「3D表示選択」パネル内へ移設した2D/3D切替ボタン。
+   同パネルの.precision-choice（元はlabel+input用）を流用しつつ、
+   ボタン要素向けに見た目をリセットする。 */
+.map-display-mode-toggle {
+  display: grid;
+  width: 100%;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+}
 
 
 /* 2026-09-03 consolidated 3D map controls:

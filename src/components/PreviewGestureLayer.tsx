@@ -26,10 +26,16 @@ function clampFocalLength(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, Math.round(value)));
 }
 
-// この距離未満・この時間未満の指の動きは「タップ」とみなす。
-// 通常時の短いタップは被写体ピン指定、ドラッグは従来どおり構図移動に使う。
+// この距離未満・この時間未満の指の動きは「タップ」とみなす（計測タップ用）。
 const TAP_MAX_MOVEMENT_PX = 10;
 const TAP_MAX_DURATION_MS = 400;
+
+// 2026-09-04追記: 被写体ピン指定は誤操作（構図をドラッグで動かそうとした
+// だけなのに指が一瞬止まってタップ判定されてしまう等）を防ぐため、
+// 短いタップではなく「長押し」で確定する方式に変更。長押し中の許容移動量は
+// 通常タップよりわずかに広く取り、指の自然なブレを吸収する。
+const LONG_PRESS_DURATION_MS = 550;
+const LONG_PRESS_MAX_MOVEMENT_PX = 14;
 
 export function PreviewGestureLayer({
   focalLengthMm,
@@ -44,12 +50,63 @@ export function PreviewGestureLayer({
   onSubjectTap,
 }: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
+  const indicatorRef = useRef<HTMLDivElement>(null);
   const pointersRef = useRef(new Map<number, PointerPosition>());
   const pinchRef = useRef<{ distance: number; focalLength: number } | null>(null);
   const panRef = useRef<PointerPosition | null>(null);
   const tapStartRef = useRef<{ position: PointerPosition; time: number } | null>(null);
   const dragActivatedRef = useRef(false);
   const lastWheelAtRef = useRef(0);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressPointerIdRef = useRef<number | null>(null);
+
+  function hideLongPressIndicator() {
+    const indicator = indicatorRef.current;
+    if (indicator) indicator.style.opacity = "0";
+  }
+
+  function cancelLongPress() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressPointerIdRef.current = null;
+    hideLongPressIndicator();
+  }
+
+  // 2026-09-04追記: 被写体ピン指定はタップではなく長押しで確定する。
+  // 押し始めた位置に進捗リングを表示し、既定時間まで指を動かさず
+  // 保持し続けたら確定する。移動量が閾値を超えたり途中で離したりした
+  // 場合はキャンセルする（＝構図ドラッグとして扱われる）。
+  function scheduleLongPress(pointerId: number, position: PointerPosition) {
+    cancelLongPress();
+    longPressPointerIdRef.current = pointerId;
+    const layer = layerRef.current;
+    const rect = layer?.getBoundingClientRect();
+    const indicator = indicatorRef.current;
+    if (indicator && rect) {
+      indicator.style.left = `${position.x - rect.left}px`;
+      indicator.style.top = `${position.y - rect.top}px`;
+      indicator.style.setProperty("--long-press-duration", `${LONG_PRESS_DURATION_MS}ms`);
+      // 直前のアニメーションをリセットしてから再生する。
+      indicator.classList.remove("filling");
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      indicator.offsetWidth;
+      indicator.style.opacity = "1";
+      indicator.classList.add("filling");
+    }
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      longPressPointerIdRef.current = null;
+      hideLongPressIndicator();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      const xPercent = ((position.x - rect.left) / rect.width) * 100;
+      const yPercent = ((position.y - rect.top) / rect.height) * 100;
+      onSubjectTap?.(xPercent, yPercent);
+      // 確定後はドラッグへ移行させない。
+      dragActivatedRef.current = true;
+    }, LONG_PRESS_DURATION_MS);
+  }
 
   const clamp = (value: number) =>
     clampFocalLength(value, minFocalLengthMm, maxFocalLengthMm);
@@ -80,6 +137,14 @@ export function PreviewGestureLayer({
     onChangeFocalLength,
   ]);
 
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -93,12 +158,17 @@ export function PreviewGestureLayer({
     if (points.length === 1) {
       tapStartRef.current = { position: points[0], time: performance.now() };
       dragActivatedRef.current = false;
+      // 被写体ピン指定は、明示的な「位置指定」モード中はタップで、
+      // それ以外の通常画面では長押しで確定する（誤操作防止）。
+      if (!measuring && !subjectPicking) scheduleLongPress(event.pointerId, points[0]);
     } else {
       tapStartRef.current = null;
       dragActivatedRef.current = false;
+      cancelLongPress();
     }
     if (measuring || subjectPicking) {
-      // 計測・明示的被写体指定モード中はドラッグで構図を動かさず、タップ位置だけを拾う。
+      // 計測モード中はドラッグで構図を動かさずタップ位置だけを拾う。
+      // 明示的被写体指定モード中もドラッグはさせず、長押しの確定だけを待つ。
       return;
     }
     if (points.length === 2) {
@@ -119,6 +189,17 @@ export function PreviewGestureLayer({
       x: event.clientX,
       y: event.clientY,
     });
+    // 長押し中に指が既定距離以上動いたら、被写体確定をキャンセルする。
+    if (
+      longPressPointerIdRef.current === event.pointerId &&
+      tapStartRef.current &&
+      distance(tapStartRef.current.position, {
+        x: event.clientX,
+        y: event.clientY,
+      }) > LONG_PRESS_MAX_MOVEMENT_PX
+    ) {
+      cancelLongPress();
+    }
     if (measuring || subjectPicking) return;
     const points = [...pointersRef.current.values()];
     if (points.length === 2 && pinchRef.current) {
@@ -158,7 +239,11 @@ export function PreviewGestureLayer({
   }
 
   function pointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
-    if (tapStartRef.current && pointersRef.current.has(event.pointerId)) {
+    // 計測モード、および明示的な被写体「位置指定」モード中は、
+    // 従来どおり短いタップで確定する。通常画面での被写体ピン指定は
+    // 長押し（scheduleLongPress）側で確定するため、ここでは離した時点で
+    // 未確定なら何もしない（＝キャンセル）。
+    if ((measuring || subjectPicking) && tapStartRef.current && pointersRef.current.has(event.pointerId)) {
       const start = tapStartRef.current;
       const end = { x: event.clientX, y: event.clientY };
       const layer = layerRef.current;
@@ -171,13 +256,12 @@ export function PreviewGestureLayer({
         if (rect.width > 0 && rect.height > 0) {
           const xPercent = ((end.x - rect.left) / rect.width) * 100;
           const yPercent = ((end.y - rect.top) / rect.height) * 100;
-          // 優先順位: 明示的被写体指定 > 計測 > 通常タップによる被写体指定。
           if (subjectPicking) onSubjectTap?.(xPercent, yPercent);
-          else if (measuring) onMeasureTap?.(xPercent, yPercent);
-          else onSubjectTap?.(xPercent, yPercent);
+          else onMeasureTap?.(xPercent, yPercent);
         }
       }
     }
+    if (longPressPointerIdRef.current === event.pointerId) cancelLongPress();
     tapStartRef.current = null;
     dragActivatedRef.current = false;
     pointersRef.current.delete(event.pointerId);
@@ -199,8 +283,10 @@ export function PreviewGestureLayer({
           ? "プレビューをタップして正式な被写体3D位置を指定"
           : measuring
           ? "プレビューをタップして2点間の距離を計測"
-          : "プレビューをタップで被写体ピン指定、ドラッグで構図調整、ホイールまたはピンチで拡大縮小"
+          : "プレビューを長押しで被写体ピン指定、ドラッグで構図調整、ホイールまたはピンチで拡大縮小"
       }
-    />
+    >
+      <div ref={indicatorRef} className="preview-long-press-indicator" aria-hidden="true" />
+    </div>
   );
 }

@@ -296,17 +296,20 @@ async function waitForOptionalTripodCache<T>(
 const LAST_MAP_STATE_STORAGE_KEY = "ksg-last-map-state-v1";
 
 type MapType = "roadmap" | "satellite";
+type MapDisplayMode = "2d" | "3d";
 
 type LastMapState = {
   center: { latitude: number; longitude: number };
   zoom: number;
   mapType: MapType;
+  displayMode: MapDisplayMode;
 };
 
 const DEFAULT_MAP_STATE: LastMapState = {
   center: { latitude: 35.658581, longitude: 139.745433 },
   zoom: 15,
   mapType: "roadmap",
+  displayMode: "2d",
 };
 
 function loadLastMapState(): LastMapState {
@@ -318,6 +321,9 @@ function loadLastMapState(): LastMapState {
     const longitude = parsed.center?.longitude;
     const zoom = parsed.zoom;
     const mapType = parsed.mapType ?? "roadmap";
+    // 2026-09-04追記: 起動時に前回表示していた2D/3Dを復元する
+    // （未保存・不正値の場合は既定どおり2Dにフォールバック）。
+    const displayMode = parsed.displayMode === "3d" ? "3d" : "2d";
     if (
       !Number.isFinite(latitude) || latitude! < -90 || latitude! > 90 ||
       !Number.isFinite(longitude) || longitude! < -180 || longitude! > 180 ||
@@ -330,6 +336,7 @@ function loadLastMapState(): LastMapState {
       center: { latitude: latitude!, longitude: longitude! },
       zoom: zoom!,
       mapType,
+      displayMode,
     };
   } catch {
     return DEFAULT_MAP_STATE;
@@ -443,6 +450,12 @@ function App() {
   const previewMapHostRef = useRef<HTMLDivElement>(null);
   const map3DHostRef = useRef<HTMLDivElement>(null);
   const mapViewerRef = useRef<Viewer | null>(null);
+  // 2026-09-04追記: 3D地図表示中は、地図用と共有していたCesiumキャンバスが
+  // プレビュー欄から離れるため、プレビューが空欄になっていた。ユーザーの
+  // 希望により、3D地図表示中でも希望すれば（ボタン操作で）プレビューを
+  // 同時表示できるよう、専用の2つ目のCesium Viewerをこのrefで管理する
+  // （負荷が増えるため既定はOFF）。
+  const previewSecondaryViewerRef = useRef<Viewer | null>(null);
   // Reactの再描画前に連続タップされても、配置対象を一意に判定する同期状態。
   const placementModeRef = useRef<PlacementMode>("none");
   const previewJobRef = useRef(0);
@@ -460,6 +473,11 @@ function App() {
   const [previewRefractionWeather, setPreviewRefractionWeather] =
     useState<RefractionWeatherContext | undefined>(undefined);
   const [mapReady, setMapReady] = useState(false);
+  // 2026-09-04追記: 3D地図表示中の「プレビューを同時表示」トグル。
+  // ONの間だけ2つ目のCesium Viewerを生成する（既定OFF、負荷を抑えるため）。
+  const [previewDualViewerActive, setPreviewDualViewerActive] = useState(false);
+  const [previewSecondaryViewerReady, setPreviewSecondaryViewerReady] = useState(false);
+  const [previewSecondaryViewerStatus, setPreviewSecondaryViewerStatus] = useState("");
   const [previewStatus, setPreviewStatus] = useState(
     "三脚ピンと被写体点を設定してください"
   );
@@ -534,7 +552,11 @@ function App() {
   const [arCameraOpen, setArCameraOpen] = useState(false);
   // 2026-09-02変更: 別画面のモーダルではなく、今の2Dマップ（画面下部の
   // map-section）自体を3D表示へ切り替えられる、永続的な設定にする。
-  const [mapDisplayMode, setMapDisplayMode] = useState<"2d" | "3d">("2d");
+  // 2026-09-04追記: 常に2Dで起動していた不具合を修正し、前回終了時に
+  // 表示していた2D/3Dを復元する（初回起動・未保存時は既定の2D）。
+  const [mapDisplayMode, setMapDisplayMode] = useState<"2d" | "3d">(
+    () => loadLastMapState().displayMode
+  );
   const map3DRenderLoopRef = useRef<number | null>(null);
   const [arTracking, setArTracking] = useState<ArTrackingSnapshot>({ location: null, orientation: null });
   const [arCameraProjection, setArCameraProjection] = useState<ArCameraProjection | null>(null);
@@ -2205,6 +2227,78 @@ function App() {
     showUserNotice,
   ]);
 
+  // 2026-09-04追記: プレビュー同時表示（previewDualViewerActive）がONの間
+  // だけ、プレビュー専用の2つ目のCesium Viewerを生成する。地図側の
+  // メインViewer（mapViewerRef）とは完全に独立しており、地図のインタラ
+  // クティブ操作・ピン表示には一切関与しない（撮影プレビューは三脚・被写体
+  // 座標から計算したカメラ位置を映すだけで、地図側のエンティティを必要と
+  // しないため）。OFFに戻す・3D地図を閉じる・アンマウント時に破棄する。
+  useEffect(() => {
+    if (mapDisplayMode !== "3d" || !previewDualViewerActive) {
+      previewSecondaryViewerRef.current = null;
+      setPreviewSecondaryViewerReady(false);
+      return;
+    }
+    const host = previewMapHostRef.current;
+    if (!host) return;
+
+    let disposed = false;
+    let localViewer: Viewer | null = null;
+    const accuracyMode = precisionSettings.accuracyMode;
+    setPreviewSecondaryViewerStatus("プレビュー用の3Dデータを読み込み中…");
+
+    const authorize = async (): Promise<{ available: boolean; token: string | undefined }> => {
+      if (accuracyMode !== "highest") return { available: true, token: undefined };
+      const cesiumToken = await getValidCesiumIonAccessToken();
+      if (!cesiumToken) return { available: false, token: undefined };
+      return { available: true, token: cesiumToken };
+    };
+
+    void authorize()
+      .then(({ available, token }) =>
+        createMapViewer(
+          host,
+          token,
+          available ? accuracyMode : "standard",
+          setPreviewSecondaryViewerStatus,
+          precisionSettings.terrainShadingEnabled
+        )
+      )
+      .then((viewer) => {
+        if (disposed) {
+          viewer.destroy();
+          return;
+        }
+        localViewer = viewer;
+        previewSecondaryViewerRef.current = viewer;
+        viewer.useDefaultRenderLoop = false;
+        setPreviewSecondaryViewerReady(true);
+        setPreviewSecondaryViewerStatus("");
+      })
+      .catch((error) => {
+        console.error("プレビュー同時表示用Viewerの初期化エラー:", error);
+        if (!disposed) {
+          setPreviewSecondaryViewerStatus(
+            toUserFacingErrorMessage(error, "map")
+          );
+        }
+      });
+
+    return () => {
+      disposed = true;
+      previewSecondaryViewerRef.current = null;
+      setPreviewSecondaryViewerReady(false);
+      if (localViewer && !localViewer.isDestroyed()) {
+        localViewer.destroy();
+      }
+    };
+  }, [
+    mapDisplayMode,
+    previewDualViewerActive,
+    precisionSettings.accuracyMode,
+    precisionSettings.terrainShadingEnabled,
+  ]);
+
   useEffect(() => {
     if (!celestialVisibility.milkyWay && lightPollutionEnabled) {
       setLightPollutionEnabled(false);
@@ -2274,9 +2368,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       LAST_MAP_STATE_STORAGE_KEY,
-      JSON.stringify({ center: mapCenter, zoom: mapZoom, mapType })
+      JSON.stringify({ center: mapCenter, zoom: mapZoom, mapType, displayMode: mapDisplayMode })
     );
-  }, [mapCenter, mapType, mapZoom]);
+  }, [mapCenter, mapType, mapZoom, mapDisplayMode]);
 
   useEffect(() => {
     const latitude = tripodPoint?.latitude ?? subjectPoint?.latitude;
@@ -2581,7 +2675,13 @@ function App() {
   }, [mapTool]);
 
   useEffect(() => {
-    const viewer = mapViewerRef.current;
+    // 2026-09-04追記: 3D地図表示中に「プレビューを同時表示」がONの間は、
+    // 地図操作と競合しない専用の2つ目のViewer（previewSecondaryViewerRef）
+    // を使ってプレビューを撮影する。OFFの間は従来どおり一時停止する。
+    const dualActive = mapDisplayMode === "3d" && previewDualViewerActive;
+    const viewer = mapDisplayMode === "3d"
+      ? (dualActive ? previewSecondaryViewerRef.current : null)
+      : mapViewerRef.current;
     const previewCanvas = previewCanvasRef.current;
 
     // 時刻操作中は風景Canvasを再撮影せず、軽量な天体DOMだけを追従させる。
@@ -2591,10 +2691,16 @@ function App() {
     // 2026-09-02追記: 画面下部の地図を3D表示にしている間（Googleタイル
     // モード等を対話的に見る、プレビューと同じCesiumインスタンスを共有）
     // は、ユーザーが自由にカメラを操作しているため、プレビュー側が同じ
-    // カメラを勝手に動かして撮影すると操作と競合する。3D表示中は
-    // プレビュー更新を一時停止する（2D表示へ戻せば自動的に再開する）。
-    if (mapDisplayMode === "3d") {
+    // カメラを勝手に動かして撮影すると操作と競合する。3D表示中かつ
+    // 同時表示OFFの間はプレビュー更新を一時停止する（2D表示へ戻すか
+    // 同時表示をONにすれば自動的に再開する）。
+    if (mapDisplayMode === "3d" && !dualActive) {
       setPreviewStatus("地図を3D表示中はプレビューを一時停止しています");
+      return;
+    }
+
+    if (mapDisplayMode === "3d" && dualActive && !previewSecondaryViewerReady) {
+      setPreviewStatus(previewSecondaryViewerStatus || "プレビュー用の3Dデータを読み込み中…");
       return;
     }
 
@@ -2748,6 +2854,9 @@ function App() {
     previewRetrySequence,
     showUserNotice,
     mapDisplayMode,
+    previewDualViewerActive,
+    previewSecondaryViewerReady,
+    previewSecondaryViewerStatus,
   ]);
 
   function stopPlacementMode() {
@@ -2808,85 +2917,6 @@ function App() {
       );
       setPendingPlacementBusy(false);
     }
-  }
-
-  /**
-   * 2026-09-01追記: 「検索開始ボタンを押した直後に地図が動いてほしい」
-   * （Googleマップ同様の体感）という要望に対応する。従来は地面確定・
-   * 建物屋根合わせ・OSM高さ推定の3つがすべて終わるまで地図を動かさな
-   * かったため、緯度経度自体は一瞬で決まる地名でも、体感的な検索完了
-   * までが長く見えていた。地面確定（DEM、単一地点で比較的速い）だけを
-   * 待って即座にピンを立てて地図を動かし、屋根合わせ・OSM高さ推定は
-   * バックグラウンドで継続して、より良い高さが見つかり次第そっと
-   * 差し替える。地面確定自体の速度・精度は変更しない。
-   */
-  function refineSearchSubjectHeightInBackground(
-    latitude: number,
-    longitude: number,
-    label: string,
-    groundPointPromise: Promise<GroundPoint>
-  ): void {
-    void (async () => {
-      const viewer = mapViewerRef.current;
-      const roofPointPromise: Promise<GroundPoint | null> = (async () => {
-        if (!viewer || viewer.isDestroyed()) return null;
-        try {
-          if (precisionSettings.accuracyMode === "highest") {
-            await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
-            if (viewer.isDestroyed()) return null;
-          }
-          return await resolvePlateauRoofGroundPoint(viewer, latitude, longitude, label);
-        } catch (error) {
-          console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
-          return null;
-        }
-      })();
-      const osmHintPromise = findOsmSubjectHeightHint(latitude, longitude).catch((error) => {
-        console.warn("被写体地点のOSM高さ推定に失敗しました", error);
-        return null;
-      });
-      const [groundPoint, roofPoint, osmHint] = await Promise.all([
-        groundPointPromise,
-        roofPointPromise,
-        osmHintPromise,
-      ]);
-      const osmPoint = osmHint ? applyOsmSubjectHeightHint(groundPoint, osmHint, label) : null;
-      const candidates = [roofPoint, osmPoint].filter(
-        (point): point is GroundPoint => point !== null
-      );
-      if (candidates.length === 0) return;
-      const refined = candidates.reduce((tallest, current) =>
-        ellipsoidalHeightMeters(current) > ellipsoidalHeightMeters(tallest) ? current : tallest
-      );
-      if (ellipsoidalHeightMeters(refined) <= ellipsoidalHeightMeters(groundPoint)) return;
-
-      // 待っている間にユーザーが別の被写体へ移動・変更していたら、
-      // 古い検索結果で上書きしない（同じ地点かどうかを緯度経度で確認）。
-      setSubjectPoint((current) => {
-        if (
-          !current ||
-          Math.abs(current.latitude - latitude) > 0.0005 ||
-          Math.abs(current.longitude - longitude) > 0.0005
-        ) {
-          return current;
-        }
-        const refinedWithLabel = { ...refined, label: current.label };
-        const activeViewer = mapViewerRef.current;
-        if (activeViewer && !activeViewer.isDestroyed()) {
-          return setSubjectPinFromPosition(
-            activeViewer,
-            Cartesian3.fromDegrees(
-              refinedWithLabel.longitude,
-              refinedWithLabel.latitude,
-              refinedWithLabel.height
-            ),
-            refinedWithLabel.label,
-            refinedWithLabel
-          );
-        }
-        return refinedWithLabel;
-      });
-    })();
   }
 
   async function resolveSearchSubject(
@@ -3180,16 +3210,19 @@ ${diagnosticMessage}
       return;
     }
 
-    // 2026-09-01追記: 地面確定（DEM）だけを待って即座にピンを立て・地図を
-    // 動かす。屋根合わせ・OSM高さ推定はバックグラウンドへ回し、より良い
-    // 高さが見つかり次第そっと差し替える（Googleマップ同様、検索結果へ
-    // すぐ移動してから詳細を追いかける体感にするため）。
-    const groundPointPromise = resolveGroundPoint(
+    // 2026-09-04修正: 以前は地面確定（DEM）だけを待って即座にピンを立て、
+    // 建物屋根への合わせ込みはバックグラウンドへ回して後から静かに差し替え
+    // ていた（2026-09-01の速度優先の変更）。しかしこの方式では、通信が
+    // 遅い・タイムアウトする等の理由でバックグラウンド更新が実質的に
+    // 気づかれず、「検索すると地面にピンが立ったまま」に見える不具合が
+    // 生じていた。ユーザー指摘により、建物屋根合わせ・OSM高さ推定を含めて
+    // 待ってから被写体ピンを配置する方式（resolveSearchSubject、スポット
+    // プリセット等と同じ経路）に戻す。
+    const subject = await resolveSearchSubject(
       location.latitude,
       location.longitude,
       location.label
     );
-    const subject = await groundPointPromise;
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const pinned = viewer && !viewer.isDestroyed()
       ? setSubjectPinFromPosition(
@@ -3221,12 +3254,6 @@ ${diagnosticMessage}
     }
     setSpotSearchOpen(false);
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
-    refineSearchSubjectHeightInBackground(
-      location.latitude,
-      location.longitude,
-      location.label,
-      groundPointPromise
-    );
   }
 
   function applyStoredSubject(record: SubjectRecord) {
@@ -3987,7 +4014,7 @@ ${diagnosticMessage}
   }
 
   function handle2dMapPlacement(
-    event: ReactMouseEvent<HTMLButtonElement>
+    event: { clientX: number; clientY: number }
   ) {
     const placementMode = placementModeRef.current;
     if (placementMode === "none") return;
@@ -4654,6 +4681,39 @@ ${diagnosticMessage}
               （後述のuseEffect）。ポータル先を切り替えるだけなので、
               Cesiumインスタンス・WebGLコンテキストは維持される。 */}
           <div ref={previewMapHostRef} className="preview-renderer-host" />
+          {mapDisplayMode === "3d" && !previewDualViewerActive && (
+            // 2026-09-04追記: Cesiumキャンバスは1つしかなく、3D地図表示中は
+            // 下部の地図欄へ移っているため、プレビュー欄はこの間なにも
+            // 描画されず単に空欄に見えていた（「プレビューが表示されない」
+            // という報告の原因）。見た目上壊れているように見えないよう、
+            // 状態を説明するプレースホルダーを表示する。あわせて、負荷増を
+            // 許容のうえ2つ目のViewerでプレビューを同時表示するボタンも置く。
+            <div className="preview-3d-map-placeholder" role="status">
+              <p>
+                地図を3D表示中はプレビューを一時停止しています。
+              </p>
+              <button type="button" onClick={() => setPreviewDualViewerActive(true)}>
+                プレビューを表示（データ通信・端末負荷が増えます）
+              </button>
+              <button type="button" className="preview-3d-map-placeholder-secondary" onClick={toggleMapDisplayMode}>
+                2D地図に戻してプレビューを再開
+              </button>
+            </div>
+          )}
+          {mapDisplayMode === "3d" && previewDualViewerActive && !previewSecondaryViewerReady && (
+            <div className="preview-3d-map-placeholder" role="status">
+              <p>{previewSecondaryViewerStatus || "プレビュー用の3Dデータを読み込み中…"}</p>
+            </div>
+          )}
+          {mapDisplayMode === "3d" && previewDualViewerActive && (
+            <button
+              type="button"
+              className="preview-dual-viewer-stop"
+              onClick={() => setPreviewDualViewerActive(false)}
+            >
+              プレビューを終了
+            </button>
+          )}
           <canvas
             ref={previewCanvasRef}
             className="preview-canvas"

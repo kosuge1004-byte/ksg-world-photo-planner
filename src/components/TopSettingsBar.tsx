@@ -210,7 +210,7 @@ export function TopSettingsBar({
             <button type="button" className="menu-close-button" onClick={() => { closeDetailPanels(); setModeMenuOpen(false); }} aria-label="メニューを閉じる">閉じる</button>
           </div>
           <button type="button" onClick={() => toggleDetailPanel("3d")} aria-expanded={threeDSourceMenuOpen}>
-            <b>3D表示選択</b><small>無料・有料の3Dデータを切替</small>
+            <b>3D表示選択</b><small>3Dマップの表示データと2D/3D切替</small>
           </button>
           <button type="button" onClick={() => {
             setModeMenuOpen(false);
@@ -229,15 +229,6 @@ export function TopSettingsBar({
             onOpenArCamera();
           }}>
             <b>ARカメラ</b><small>実景と3D・天体を重ねて確認</small>
-          </button>
-          <button type="button" onClick={() => {
-            setModeMenuOpen(false);
-            onOpenMap3D();
-          }}>
-            <b>地図を{mapDisplayMode === "3d" ? "2D" : "3D"}表示に切替</b>
-            <small>{mapDisplayMode === "3d"
-              ? "通常の2D地図に戻す"
-              : "対話的な3D表示（タップで三脚配置・ダブルタップでズーム）"}</small>
           </button>
           {pwaInstall.supported && !pwaInstall.installed && (
             <>
@@ -352,6 +343,26 @@ export function TopSettingsBar({
             <fieldset className="precision-settings-panel">
               <legend>3D表示選択</legend>
               <div className="menu-panel-header"><strong>表示データ</strong><button type="button" onClick={() => setThreeDSourceMenuOpen(false)}>閉じる</button></div>
+              <div className="precision-subsection">
+                <strong>地図の表示</strong>
+                <button
+                  type="button"
+                  className="precision-choice map-display-mode-toggle"
+                  onClick={() => {
+                    setModeMenuOpen(false);
+                    onOpenMap3D();
+                  }}
+                >
+                  <span className="precision-choice-copy">
+                    <span className="precision-choice-title">
+                      <b>地図を{mapDisplayMode === "3d" ? "2D" : "3D"}表示に切替</b>
+                    </span>
+                    <small>{mapDisplayMode === "3d"
+                      ? "通常の2D地図に戻す"
+                      : "対話的な3D表示（タップで三脚配置・ダブルタップでズーム）"}</small>
+                  </span>
+                </button>
+              </div>
               <label className="precision-choice">
                 <input
                   type="radio"
