@@ -172,7 +172,15 @@
 .project-dialog-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 420;
+  /* 2026-09-05修正: 従来420だったが、画面下部に固定表示される.app-status
+     （「確定した三脚候補」等の案内バー、z-index:900）より低かったため、
+     確認ダイアログの下半分がそのバーの裏に隠れ、はみ出た端だけが画面の
+     一番下にちらっと見える不具合が起きていた（お気に入り登録直後の
+     ダウンロード確認ダイアログで実機報告）。ユーザーに判断を求める
+     モーダルは、常に背景の案内バーより優先して見えるべきなので、
+     .app-statusより確実に高くする。最上位の.user-notice（エラー通知、
+     13000）よりは低くし、致命的なエラー通知が隠れないようにする。 */
+  z-index: 1000;
   background: rgba(0,0,0,.82);
   /* 2026-09-04追記: 以前は display:grid; place-items:center; で中央寄せ
      していたが、実機（特にAndroid WebViewのdvh未対応環境）ではダイアログが
@@ -268,13 +276,33 @@
 
 .calendar-nav { display: flex; justify-content: space-between; align-items: center; padding: 14px; }
 .calendar-week,
-.calendar-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 4px; padding: 0 10px; }
+.calendar-grid,
+.moon-calendar-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 4px; padding: 0 10px; }
 .calendar-week b { text-align: center; padding: 8px; }
 .calendar-grid > button,
-.calendar-grid > span { min-height: 58px; }
-.calendar-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.calendar-grid > span,
+.moon-calendar-grid > button,
+.moon-calendar-grid > span { min-height: 58px; }
+.calendar-grid button,
+.moon-calendar-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .calendar-grid i { font-style: normal; color: #4db4ff; font-size: 10px; }
-.calendar-grid .selected { outline: 2px solid #4db4ff; }
+.calendar-grid .selected,
+.moon-calendar-grid .selected { outline: 2px solid #4db4ff; }
+/* 2026-09-05追記: MoonAgeCalendarScreen.tsx専用のクラスが未定義だったため
+   最低限のスタイルを補う（本題のグリッド崩れ修正のついでに発見）。 */
+.moon-calendar-offline-note { margin: 0; padding: 0 14px 10px; color: #8ea0b8; font-size: 12px; }
+.moon-day-detail {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 14px;
+  padding: 14px;
+  border: 1px solid #526176;
+  border-radius: 10px;
+  background: #101d2c;
+}
+.moon-day-detail h2 { margin: 0 0 4px; font-size: 15px; }
+.moon-day-detail p { margin: 2px 0; color: #c3cbd6; font-size: 12px; }
 .calendar-projects button { display: flex; justify-content: space-between; }
 
 /* Phone portrait: input uses full width, two wide horizontal action buttons below. */
