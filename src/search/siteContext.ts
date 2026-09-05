@@ -13,6 +13,8 @@ type SiteContextResponse = {
 
 const SITE_CONTEXT_BATCH_SIZE = 8;
 
+export type SiteContextPurpose = "full" | "height-only";
+
 function isSiteContext(value: unknown): value is SiteContext {
   return (
     typeof value === "object" &&
@@ -59,7 +61,8 @@ export function passesMappedSiteConstraints(
 async function fetchSiteContextBatch(
   points: GroundPoint[],
   signal?: AbortSignal,
-  includeDetails = true
+  includeDetails = true,
+  purpose: SiteContextPurpose = "full"
 ): Promise<SiteContext[]> {
   const requestBody = {
     points: points.map((point) => ({
@@ -67,12 +70,13 @@ async function fetchSiteContextBatch(
       longitude: point.longitude,
     })),
     includeDetails,
+    purpose,
   };
   const cacheKeyPoints = points.map((point) => ({
     latitude: Number(point.latitude.toFixed(5)),
     longitude: Number(point.longitude.toFixed(5)),
   }));
-  const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${JSON.stringify(cacheKeyPoints)}`;
+  const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${purpose}:${JSON.stringify(cacheKeyPoints)}`;
   const result = await shareInFlightRequest({
     key: requestKey,
     category: "osm-site-context",
@@ -111,7 +115,8 @@ async function fetchSiteContextBatch(
 export async function fetchSiteContexts(
   points: GroundPoint[],
   signal?: AbortSignal,
-  includeDetails = true
+  includeDetails = true,
+  purpose: SiteContextPurpose = "full"
 ): Promise<SiteContext[]> {
   if (points.length === 0) return [];
   const contexts: SiteContext[] = [];
@@ -120,7 +125,8 @@ export async function fetchSiteContexts(
     contexts.push(...await fetchSiteContextBatch(
       points.slice(offset, offset + SITE_CONTEXT_BATCH_SIZE),
       signal,
-      includeDetails
+      includeDetails,
+      purpose
     ));
   }
   return contexts;

@@ -558,14 +558,32 @@ function combinedLandmarks(
     .slice(0, 16);
 }
 
+/**
+ * 2026-09-05追記（実機報告：「スカイツリー」検索が長時間停止して見えた
+ * 問題の根本原因）: この関数は元々、三脚候補探索の「歩行可能か・私有地か・
+ * 車道上か・水面上か」判定用に、access系の統計（highway・私有地・水面・
+ * 河川敷・公園・駐車場等）を含む大掛かりなOverpassクエリを組み立てていた。
+ * ところが被写体の高さ推定（findOsmSubjectHeightHint）は、この判定結果を
+ * 一切使わず、塔・建物などの構造物情報（detailStatements側）だけを必要と
+ * している。にもかかわらず、これまでaccessStatementsは常に含まれており、
+ * 東京スカイツリーのような情報量の多い都心部では、使いもしないaccess系の
+ * 問い合わせが無料の公開Overpass APIへの負荷・応答時間を無駄に押し上げて
+ * いた（タイムアウトの根本原因はこちら側にもあった）。
+ * purpose="height-only"の場合はaccessStatementsを完全に省略する。この時
+ * 返るwalkingAccessible等のアクセス関連フィールドは実際には問い合わせて
+ * いないため意味を持たない（呼び出し側はこれらを参照しないこと）。
+ */
+export type SiteContextPurpose = "full" | "height-only";
+
 function queryForPoints(
   points: OsmContextRequestPoint[],
-  includeDetails: boolean
+  includeDetails: boolean,
+  purpose: SiteContextPurpose = "full"
 ): string {
   const statements = points.flatMap((point) => {
     const aroundAccess = `(around:120,${point.latitude},${point.longitude})`;
     const aroundLandmark = `(around:600,${point.latitude},${point.longitude})`;
-    const accessStatements = [
+    const accessStatements = purpose === "full" ? [
       `way${aroundAccess}["highway"]`,
       `nwr${aroundAccess}["access"~"^(private|no|customers|permit)$"]`,
       `nwr${aroundAccess}["foot"~"^(private|no)$"]`,
@@ -586,7 +604,7 @@ function queryForPoints(
       `way${aroundAccess}["leisure"="sports_centre"]`,
       `way${aroundAccess}["leisure"="stadium"]`,
       `way${aroundAccess}["leisure"="track"]`,
-    ];
+    ] : [];
     const detailStatements = [
       `nwr${aroundLandmark}["amenity"="place_of_worship"]`,
       `nwr${aroundLandmark}["ceremonial_gate"="torii"]`,
@@ -683,7 +701,8 @@ export async function fetchOverpass(
 export async function lookupOsmSiteContexts(
   points: OsmContextRequestPoint[],
   signal?: AbortSignal,
-  includeDetails = true
+  includeDetails = true,
+  purpose: SiteContextPurpose = "full"
 ): Promise<OsmSiteContext[]> {
   if (points.length === 0 || points.length > 8) {
     throw new Error("一度に判定できる候補地点は1〜8点です");
@@ -700,7 +719,7 @@ export async function lookupOsmSiteContexts(
       throw new Error("地理条件の判定座標が不正です");
     }
   }
-  const elements = await fetchOverpass(queryForPoints(points, includeDetails), signal);
+  const elements = await fetchOverpass(queryForPoints(points, includeDetails, purpose), signal);
   return points.map((point) => {
     const structures = nearbyStructures(elements, point);
     const waterSurfaceKind = mappedWaterSurfaceKind(elements, point);

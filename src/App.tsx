@@ -3058,7 +3058,22 @@ function App() {
     // 残っていた。roofPointの有無で早期returnせず、OSM高さ推定も必ず
     // 並行して取得し、両方が得られた場合はより高い（＝構造物の本体をより
     // よく捉えている可能性が高い）方を採用するよう修正する。
-    const osmHintPromise = findOsmSubjectHeightHint(latitude, longitude).catch((error) => {
+    const osmHintPromise = Promise.race([
+      findOsmSubjectHeightHint(latitude, longitude),
+      // 2026-09-05追記（実機報告：「スカイツリー」検索が0%のまま無反応）:
+      // findOsmSubjectHeightHintはfetchSiteContexts（OSM/Overpass経由）を
+      // 呼ぶが、これは最悪8秒×3回=24秒かかりうる（他の箇所で繰り返し
+      // 確認済みの同種API）。スカイツリーはこの関数のdocコメントにも
+      // 名指しされている典型例（PLATEAUに構造物データが無い塔）で、まさに
+      // この経路が使われる。resolveSearchSubjectはPromise.allで待つため、
+      // ここが遅いと進捗表示が一切更新されないまま被写体検索全体が
+      // 24秒近く固まって見えていた。この推定はあくまでベストエフォートの
+      // 補正（失敗時は元々DEM地面高のままにするフォールバックがある）なので、
+      // 短いタイムアウトで打ち切って構わない。
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 6_000);
+      }),
+    ]).catch((error) => {
       console.warn("被写体地点のOSM高さ推定に失敗しました", error);
       return null;
     });
@@ -3305,6 +3320,14 @@ ${diagnosticMessage}
       setSearchMessage(`${tripod.label}に三脚ピンを設置しました`);
       return;
     }
+
+    // 2026-09-05追記（実機報告：進捗表示が0%のまま動かないように見えた）:
+    // 三脚側は分岐直後にonProgress(45%)を出しているのに、被写体側は
+    // resolveSearchSubject完了までonProgressを一切呼んでいなかった。
+    // 実際には（最悪でも数秒〜今回のタイムアウト修正後は最大6秒程度）
+    // 動いているだけで、進捗バーだけが更新されず「固まって見える」
+    // 状態になっていた。同様に途中経過を出す。
+    onProgress("被写体の標高・建物高さを確認しています…", 45);
 
     // 2026-09-04修正: 以前は地面確定（DEM）だけを待って即座にピンを立て、
     // 建物屋根への合わせ込みはバックグラウンドへ回して後から静かに差し替え

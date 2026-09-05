@@ -49,10 +49,16 @@ export async function findOsmSubjectHeightHint(
 ): Promise<OsmSubjectHeightHint | null> {
   let contexts;
   try {
+    // 2026-09-05修正: この関数はnearbyStructures/nearbyBuildingsしか
+    // 使わない（walkingAccessible等のaccess系フィールドは一切見ない）ため、
+    // purpose="height-only"でaccess系のOverpass問い合わせ自体を省略する。
+    // 「スカイツリー」等、情報量の多い都心部で使いもしないaccess判定に
+    // 時間がかかり検索全体が長時間停止して見えていた問題の実質的な対策。
     contexts = await fetchSiteContexts(
       [{ latitude, longitude, height: 0, label: "被写体高さ推定用" }],
       signal,
-      true
+      true,
+      "height-only"
     );
   } catch (error) {
     console.warn("被写体の高さ推定用OSM情報を取得できませんでした", error);

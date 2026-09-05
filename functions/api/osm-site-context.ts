@@ -1,6 +1,7 @@
 import {
   lookupOsmSiteContexts,
   type OsmContextRequestPoint,
+  type SiteContextPurpose,
 } from "../../server/osmSiteContext.ts";
 import {
   configureCloudflareServerRuntime,
@@ -49,8 +50,19 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     }
     const includeDetails = !(typeof body === "object" && body !== null &&
       "includeDetails" in body && body.includeDetails === false);
+    // 2026-09-05追記: purpose="height-only"の場合、access系（歩行可否・
+    // 私有地・車道・水面判定用）のOverpass問い合わせを完全に省略し、
+    // 構造物・建物の高さ情報だけを取得する（詳しい経緯はosmSiteContext.ts
+    // 冒頭コメント参照）。三脚候補探索など、access判定が必要な既存の
+    // 呼び出しには一切影響しない（未指定時は従来どおり"full"）。
+    const purpose: SiteContextPurpose =
+      typeof body === "object" && body !== null &&
+      "purpose" in body && body.purpose === "height-only"
+        ? "height-only"
+        : "full";
     const cacheKeyInput = {
       includeDetails,
+      purpose,
       points: points.map((point) => ({
         latitude: Number(point.latitude.toFixed(5)),
         longitude: Number(point.longitude.toFixed(5)),
@@ -59,7 +71,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, cacheKeyInput, {
       namespace: "osm-site-context", version: "v1", ttlSeconds: 7 * 86400,
     }, async () => ({
-      contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails),
+      contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails, purpose),
       attribution: "© OpenStreetMap contributors / 国土地理院 標高タイル",
     }), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=300");
