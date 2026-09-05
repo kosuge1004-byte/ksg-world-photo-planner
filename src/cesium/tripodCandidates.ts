@@ -80,7 +80,7 @@ const DEFAULT_SAMPLE_COUNT = 32;
 // 数値変更ではなく、23件目で追加した「初期交点の内訳」診断で実際に
 // 何が起きているか（候補がそもそも見つからないのか、見つかった上で
 // 別の理由で失敗しているのか）を確認してから判断する。
-const ADAPTIVE_COARSE_MAX_SPAN_METERS = 30;
+export const ADAPTIVE_COARSE_MAX_SPAN_METERS = 30;
 const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
 // 2026-08-26追記: 以前は「距離に比例して広がる」高さ差の許容値
 // （0.12度 × 距離 × 0.05）を使っており、遠距離の候補ほど「レイに近い」と
@@ -92,7 +92,7 @@ const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
 // 緩くてよい」という誤った前提を持っていたのは筋が通っていなかったため、
 // 距離に依存しない固定のメートル単位の許容値に変更する。
 const ADAPTIVE_NEAR_RAY_ABSOLUTE_METERS = 6;
-const ADAPTIVE_MAX_TOTAL_SAMPLES = 640;
+export const ADAPTIVE_MAX_TOTAL_SAMPLES = 640;
 // 精密化は固定575点取得ではなく、交差区間だけを32分割して2段階で絞る。
 // 32^2=1024分割相当となるため、従来の576分割より最終距離分解能は高い。
 // 各段階で使うDEMは従来どおり1m指定のままなので、高さ精度も落とさない。
@@ -1029,7 +1029,7 @@ export type TripodSearchProfile = {
   preferredDistanceMeters?: number;
 };
 
-function logarithmicDistances(
+export function logarithmicDistances(
   distanceRange?: TripodDistanceRange,
   sampleCount = DEFAULT_SAMPLE_COUNT
 ): number[] {
@@ -1064,7 +1064,7 @@ function uniqueSortedDistances(values: number[]): number[] {
     .filter((value, index, all) => index === 0 || Math.abs(value - all[index - 1]) >= 0.01);
 }
 
-function densifyDistanceIntervals(
+export function densifyDistanceIntervals(
   distances: number[],
   maximumSpanMeters: number,
   maximumTotalSamples = ADAPTIVE_MAX_TOTAL_SAMPLES

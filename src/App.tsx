@@ -204,12 +204,13 @@ import type { PlannerProject } from "./types/project";
 import { deleteProject, loadProjects, upsertProject } from "./projectStorage";
 import { addSubjectHistory, idFor, isFavoriteSubject, loadFavoriteSubjects, loadSubjectHistory, renameFavoriteSubject, toggleFavoriteSubject } from "./subjectStorage";
 import {
-  backfillRollingWindow,
-  disableRollingWindow,
-  enableRollingWindow,
-  listRollingWindowOptIns,
-} from "./cache/tripodRollingWindowManager";
-import { RollingWindowDownloadDialog, type RollingWindowDialogState } from "./components/RollingWindowDownloadDialog";
+  backfillBearingProfiles,
+  disableBearingProfile,
+  enableBearingProfile,
+  listBearingProfileOptIns,
+  tryUseBearingProfileCache,
+} from "./cache/tripodBearingProfileManager";
+import { BearingProfileDownloadDialog, type BearingProfileDialogState } from "./components/BearingProfileDownloadDialog";
 import type { SubjectRecord } from "./subjectStorage";
 import {
   dateFromZonedDateTimeLocal,
@@ -595,13 +596,13 @@ function App() {
   const [justRegisteredFavorite, setJustRegisteredFavorite] =
     useState<{ token: number; id: string } | null>(null);
   const favoriteRegistrationTokenRef = useRef(0);
-  // 2026-09-04追記: お気に入り登録時の「周辺データを端末に保存しますか」
+  // 2026-09-05追記: お気に入り登録時の「三脚候補データを端末に保存しますか」
   // ダイアログの状態と、ダウンロード中断用のAbortController。
-  const [rollingWindowDialog, setRollingWindowDialog] = useState<RollingWindowDialogState | null>(null);
-  const rollingWindowPendingRef = useRef<SubjectRecord | null>(null);
-  const rollingWindowAbortRef = useRef<AbortController | null>(null);
-  const [rollingWindowEnabledIds, setRollingWindowEnabledIds] = useState<Set<string>>(
-    () => new Set(listRollingWindowOptIns().map((item) => item.subjectId))
+  const [bearingProfileDialog, setBearingProfileDialog] = useState<BearingProfileDialogState | null>(null);
+  const bearingProfilePendingRef = useRef<SubjectRecord | null>(null);
+  const bearingProfileAbortRef = useRef<AbortController | null>(null);
+  const [bearingProfileEnabledIds, setBearingProfileEnabledIds] = useState<Set<string>>(
+    () => new Set(listBearingProfileOptIns().map((item) => item.subjectId))
   );
   const [sharedImportPayload, setSharedImportPayload] =
     useState<SharedProjectPayloadV1 | null>(null);
@@ -1963,6 +1964,34 @@ function App() {
         // （operationStartedと同じスコープ）で宣言する。
         const watchdogTimedOut = { current: false };
         try {
+          // 2026-09-05追記（全面設計変更）: 「方位ごとに実測地形プロファイルを
+          // 保存し、高度（＝時刻）に関わらずどのパターンでも使い回す」方式。
+          // 日付・時刻には一切依存しない。合わなければ即座に下のtry本体
+          // （既存の通常探索）へフォールバックするだけの安全設計。
+          const bearingProfileResult = await tryUseBearingProfileCache(
+            subjectPoint,
+            enabledPoints,
+            cameraSettings,
+            selectedDate,
+            calculationMode,
+            previewRefractionWeather,
+            initialDirectionObserver,
+            controller.signal
+          );
+          if (cancelled || controller.signal.aborted) return;
+          if (bearingProfileResult) {
+            tripodCandidatesRef.current = bearingProfileResult;
+            lastConfirmedTripodCandidatesRef.current = bearingProfileResult;
+            lastConfirmedTripodSubjectRef.current = {
+              latitude: subjectPoint.latitude,
+              longitude: subjectPoint.longitude,
+            };
+            setTripodCandidates(bearingProfileResult);
+            setTripodCandidateCalculationStatus("complete");
+            if (exactCacheKey) setExactTripodCandidates(exactCacheKey, bearingProfileResult);
+            return;
+          }
+
           // キャッシュは高速化専用。IndexedDB破損などで読み出せなくても、
           // authoritativeな通常探索は必ず開始して候補表示を止めない。
           let persistedSeeds: Awaited<ReturnType<typeof loadPersistentTripodSeeds>> = {};
@@ -3362,14 +3391,14 @@ ${diagnosticMessage}
         ? { token: favoriteRegistrationTokenRef.current, id: updated[0].id }
         : null
     );
-    // 2026-09-04追記: 新規お気に入り登録時だけ、周辺データの端末保存を
+    // 2026-09-05追記: 新規お気に入り登録時だけ、三脚候補データの端末保存を
     // 確認するダイアログを出す（外した時・既存お気に入りの操作では出さない）。
     if (!wasFavorite && updated[0]) {
-      offerRollingWindowDownload(updated[0]);
+      offerBearingProfileDownload(updated[0]);
     } else if (wasFavorite) {
       // お気に入りを解除した場合は、そのぶんの事前計算データも不要になるため
       // 端末から削除し、次回また登録した際は改めて確認する。
-      void handleDeleteRollingWindowData(idFor(subjectPoint));
+      void handleDeleteBearingProfileData(idFor(subjectPoint));
     }
   }
 
@@ -3377,26 +3406,26 @@ ${diagnosticMessage}
     const wasFavorite = favoriteSubjects.some((item) => item.id === record.id);
     setFavoriteSubjects(toggleFavoriteSubject(record));
     if (!wasFavorite) {
-      offerRollingWindowDownload(record);
+      offerBearingProfileDownload(record);
     } else {
-      void handleDeleteRollingWindowData(record.id);
+      void handleDeleteBearingProfileData(record.id);
     }
   }
 
-  function offerRollingWindowDownload(record: SubjectRecord) {
-    rollingWindowPendingRef.current = record;
-    setRollingWindowDialog({ subjectLabel: record.label || "この地点", progress: null });
+  function offerBearingProfileDownload(record: SubjectRecord) {
+    bearingProfilePendingRef.current = record;
+    setBearingProfileDialog({ subjectLabel: record.label || "この地点", progress: null });
   }
 
-  function declineRollingWindowDownload() {
-    rollingWindowPendingRef.current = null;
-    setRollingWindowDialog(null);
+  function declineBearingProfileDownload() {
+    bearingProfilePendingRef.current = null;
+    setBearingProfileDialog(null);
   }
 
-  /** お気に入りは残したまま（または既に外した後でも）、周辺データの事前計算だけを端末から削除する。 */
-  async function handleDeleteRollingWindowData(subjectId: string): Promise<void> {
-    await disableRollingWindow(subjectId);
-    setRollingWindowEnabledIds((current) => {
+  /** お気に入りは残したまま（または既に外した後でも）、三脚候補データの事前計算だけを端末から削除する。 */
+  async function handleDeleteBearingProfileData(subjectId: string): Promise<void> {
+    await disableBearingProfile(subjectId);
+    setBearingProfileEnabledIds((current) => {
       if (!current.has(subjectId)) return current;
       const next = new Set(current);
       next.delete(subjectId);
@@ -3404,55 +3433,51 @@ ${diagnosticMessage}
     });
   }
 
-  async function confirmRollingWindowDownload(windowDays: number) {
-    const record = rollingWindowPendingRef.current;
+  async function confirmBearingProfileDownload() {
+    const record = bearingProfilePendingRef.current;
     if (!record || !subjectPoint) {
-      setRollingWindowDialog(null);
+      setBearingProfileDialog(null);
       return;
     }
-    enableRollingWindow(record.id, record.label || "この地点", windowDays);
-    setRollingWindowEnabledIds((current) => new Set(current).add(record.id));
+    enableBearingProfile(record.id, record.label || "この地点");
+    setBearingProfileEnabledIds((current) => new Set(current).add(record.id));
     const controller = new AbortController();
-    rollingWindowAbortRef.current = controller;
-    setRollingWindowDialog({
+    bearingProfileAbortRef.current = controller;
+    setBearingProfileDialog({
       subjectLabel: record.label || "この地点",
-      progress: { totalSteps: 0, completedSteps: 0, currentDateText: null },
+      progress: { totalSteps: 0, completedSteps: 0, currentBearingDegrees: null },
     });
     try {
-      await backfillRollingWindow({
+      await backfillBearingProfiles({
         subjectId: record.id,
         subjectPoint,
         cameraSettings,
-        calculationMode,
-        timeZone,
-        windowDays,
-        refractionWeather: previewRefractionWeather,
         signal: controller.signal,
         onProgress: (progress) => {
-          if (rollingWindowAbortRef.current !== controller) return;
-          setRollingWindowDialog({ subjectLabel: record.label || "この地点", progress });
+          if (bearingProfileAbortRef.current !== controller) return;
+          setBearingProfileDialog({ subjectLabel: record.label || "この地点", progress });
         },
       });
-      if (rollingWindowAbortRef.current === controller) {
-        setSearchMessage(`${record.label || "この地点"}の周辺データを保存しました`);
+      if (bearingProfileAbortRef.current === controller) {
+        setSearchMessage(`${record.label || "この地点"}の三脚候補データを保存しました`);
       }
     } catch (error) {
       if (!isAbortError(error)) {
-        console.warn("ローリングウィンドウの事前計算に失敗しました", error);
-        setSearchMessage("周辺データの保存中にエラーが発生しました");
+        console.warn("方位プロファイルの事前計算に失敗しました", error);
+        setSearchMessage("三脚候補データの保存中にエラーが発生しました");
       }
     } finally {
-      if (rollingWindowAbortRef.current === controller) {
-        rollingWindowAbortRef.current = null;
-        setRollingWindowDialog(null);
+      if (bearingProfileAbortRef.current === controller) {
+        bearingProfileAbortRef.current = null;
+        setBearingProfileDialog(null);
       }
     }
   }
 
-  function cancelRollingWindowDownload() {
-    rollingWindowAbortRef.current?.abort();
-    rollingWindowAbortRef.current = null;
-    setRollingWindowDialog(null);
+  function cancelBearingProfileDownload() {
+    bearingProfileAbortRef.current?.abort();
+    bearingProfileAbortRef.current = null;
+    setBearingProfileDialog(null);
   }
 
   async function applySpotPreset(result: SpotPresetResult): Promise<void> {
@@ -5534,15 +5559,15 @@ ${diagnosticMessage}
         onToggleFavorite={toggleFavoriteFromList}
         onRenameFavorite={(id, label) => setFavoriteSubjects(renameFavoriteSubject(id, label))}
         justRegisteredFavoriteId={justRegisteredFavorite}
-        rollingWindowEnabledIds={rollingWindowEnabledIds}
-        onRequestRollingWindowDownload={offerRollingWindowDownload}
-        onDeleteRollingWindowData={(record) => void handleDeleteRollingWindowData(record.id)}
+        bearingProfileEnabledIds={bearingProfileEnabledIds}
+        onRequestBearingProfileDownload={offerBearingProfileDownload}
+        onDeleteBearingProfileData={(record) => void handleDeleteBearingProfileData(record.id)}
       />
-      <RollingWindowDownloadDialog
-        state={rollingWindowDialog}
-        onConfirm={(windowDays) => void confirmRollingWindowDownload(windowDays)}
-        onDecline={declineRollingWindowDownload}
-        onCancelDownload={cancelRollingWindowDownload}
+      <BearingProfileDownloadDialog
+        state={bearingProfileDialog}
+        onConfirm={() => void confirmBearingProfileDownload()}
+        onDecline={declineBearingProfileDownload}
+        onCancelDownload={cancelBearingProfileDownload}
       />
       {savedPlansOpen && (
         <Suspense fallback={null}>

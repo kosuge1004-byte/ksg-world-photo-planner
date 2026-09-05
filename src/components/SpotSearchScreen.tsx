@@ -24,12 +24,12 @@ type Props = {
   onToggleFavorite: (record: SubjectRecord) => void;
   onRenameFavorite: (id: string, label: string) => void;
   justRegisteredFavoriteId: { token: number; id: string } | null;
-  /** 2026-09-04追記: 周辺データ（ローリングウィンドウ事前計算）が有効な被写体id一覧。 */
-  rollingWindowEnabledIds: ReadonlySet<string>;
-  /** 周辺データのダウンロードを（確認ダイアログ経由で）申し込む。 */
-  onRequestRollingWindowDownload: (record: SubjectRecord) => void;
-  /** お気に入りは残したまま、周辺データだけ端末から削除する。 */
-  onDeleteRollingWindowData: (record: SubjectRecord) => void;
+  /** 2026-09-05追記: 三脚候補データ（方位プロファイル事前計算）が有効な被写体id一覧。 */
+  bearingProfileEnabledIds: ReadonlySet<string>;
+  /** 三脚候補データのダウンロードを（確認ダイアログ経由で）申し込む。 */
+  onRequestBearingProfileDownload: (record: SubjectRecord) => void;
+  /** お気に入りは残したまま、三脚候補データだけ端末から削除する。 */
+  onDeleteBearingProfileData: (record: SubjectRecord) => void;
 };
 
 /**
@@ -50,9 +50,9 @@ export function SpotSearchScreen({
   onToggleFavorite,
   onRenameFavorite,
   justRegisteredFavoriteId,
-  rollingWindowEnabledIds,
-  onRequestRollingWindowDownload,
-  onDeleteRollingWindowData,
+  bearingProfileEnabledIds,
+  onRequestBearingProfileDownload,
+  onDeleteBearingProfileData,
 }: Props) {
   const [query, setQuery] = useState("");
   const [pinTarget, setPinTarget] = useState<"subject" | "tripod">("subject");
@@ -223,13 +223,13 @@ export function SpotSearchScreen({
                         <button type="button" className="spot-list-rename" aria-label="名称を編集" onClick={() => startEditingFavorite(record)}>✎</button>
                       )}
                       {subjectListOpen === "favorites" && (
-                        rollingWindowEnabledIds.has(record.id) ? (
+                        bearingProfileEnabledIds.has(record.id) ? (
                           <button
                             type="button"
                             className="spot-list-rolling-window active"
-                            aria-label="周辺データを端末から削除"
-                            title="周辺データを保存済み（タップで削除）"
-                            onClick={() => onDeleteRollingWindowData(record)}
+                            aria-label="三脚候補データを端末から削除"
+                            title="三脚候補データを保存済み（タップで削除）"
+                            onClick={() => onDeleteBearingProfileData(record)}
                           >
                             ⬇︎
                           </button>
@@ -237,9 +237,9 @@ export function SpotSearchScreen({
                           <button
                             type="button"
                             className="spot-list-rolling-window"
-                            aria-label="周辺データを端末に保存"
-                            title="周辺データを端末に保存"
-                            onClick={() => onRequestRollingWindowDownload(record)}
+                            aria-label="三脚候補データを端末に保存"
+                            title="三脚候補データを端末に保存"
+                            onClick={() => onRequestBearingProfileDownload(record)}
                           >
                             ⬇
                           </button>
