@@ -371,10 +371,14 @@ button { cursor: pointer; }
   border: 1px solid rgba(255,255,255,.35) !important;
 }
 
-/* 2026-09-04追記: プレビュー同時表示ON中、プレビュー欄右上に置く終了ボタン。 */
+/* 2026-09-04追記: プレビュー同時表示ON中、プレビュー欄右上に置く終了ボタン。
+   2026-09-05修正: 同時表示が準備完了すると.preview-gesture-layer
+   （z-index:22）が再度全面を覆うため、このボタン（旧z-index:6）が
+   タップを奪われ押せなくなっていた（実機報告）。ジェスチャー層より
+   確実に高くする。 */
 .preview-dual-viewer-stop {
   position: absolute;
-  z-index: 6;
+  z-index: 23;
   top: 8px;
   right: 8px;
   padding: 5px 10px;
@@ -2005,6 +2009,16 @@ button { cursor: pointer; }
   line-height: 1.4;
 }
 .cesium-ion-connection-status button {
+  /* 2026-09-05追記: .calculation-mode-menu buttonのdisplay:grid;
+     grid-template-columns指定が、深い階層のこのボタンにも及んでいた。
+     「接続を解除」（5文字）はたまたま収まっていたが、「Cesium ion
+     アカウントに接続」のような長い文言では同じ折り返し崩れが起きうる
+     ため、明示的に上書きしておく（フリーズ診断ボタンと同種の修正）。 */
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
   padding: 6px 12px;
   color: #fff;
   border: 1px solid rgba(255, 255, 255, .4);
@@ -2013,6 +2027,8 @@ button { cursor: pointer; }
   font: inherit;
   font-size: 10px;
   font-weight: 700;
+  white-space: normal;
+  text-align: center;
 }
 .cesium-ion-connection-status button:active { background: rgba(255, 255, 255, .22); }
 
@@ -2077,8 +2093,29 @@ button { cursor: pointer; }
 }
 .freeze-diagnostics-section button,
 .offline-tile-cache button {
+  /* 2026-09-05再修正: 前回の指定漏れ。.calculation-mode-menu buttonが
+     どんな深さのボタンにも display:grid; grid-template-columns:
+     minmax(122px,40%) minmax(0,1fr) を強制するため、単純な文字列だけの
+     ボタンがその122px幅の列に押し込められ、文字が異常に折り返されて
+     いた（実機報告）。display・幅・フォントサイズまで明示的に上書きする。 */
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
   justify-self: start;
+  align-items: center;
+  padding: 6px 12px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .4);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .1);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: normal;
+  text-align: center;
 }
+.freeze-diagnostics-section button:active,
+.offline-tile-cache button:active { background: rgba(255, 255, 255, .22); }
 .precision-setting-intro {
   display: block;
   margin: 4px 0 6px;

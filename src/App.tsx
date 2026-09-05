@@ -4902,26 +4902,36 @@ ${diagnosticMessage}
             className="preview-canvas"
           />
 
-          <PreviewGestureLayer
-            focalLengthMm={cameraSettings.focalLengthMm}
-            minFocalLengthMm={FOCAL_LENGTH_MIN}
-            maxFocalLengthMm={FOCAL_LENGTH_MAX}
-            aspectRatio={previewAspectRatio}
-            onChangeFocalLength={changePreviewFocalLength}
-            onPan={(azimuthDeltaDegrees, altitudeDeltaDegrees) => {
-              setPreviewViewCorrection((current) => ({
-                azimuthDegrees: current.azimuthDegrees + azimuthDeltaDegrees,
-                altitudeDegrees: Math.min(
-                  89,
-                  Math.max(-89, current.altitudeDegrees + altitudeDeltaDegrees)
-                ),
-              }));
-            }}
-            measuring={previewMeasuring}
-            onMeasureTap={handlePreviewMeasureTap}
-            subjectPicking={previewSubjectPicking}
-            onSubjectTap={(xPercent, yPercent) => void handlePreviewSubjectTap(xPercent, yPercent)}
-          />
+          {/* 2026-09-05追記（実機報告：「プレビューを表示」タップしても
+              無反応）: PreviewGestureLayerは常時レンダリングされ、
+              z-index:22でプレビュー全面を覆っていたため、その下にある
+              このプレースホルダーのボタン（z-index:5）へのタップを
+              全て奪っていた。実際に操作できる映像が無い間
+              （3D地図表示中、かつ同時表示の準備ができていない間）は
+              ジェスチャー層自体を描画しないようにし、タップがボタンへ
+              正しく届くようにする。 */}
+          {!(mapDisplayMode === "3d" && !previewSecondaryViewerReady) && (
+            <PreviewGestureLayer
+              focalLengthMm={cameraSettings.focalLengthMm}
+              minFocalLengthMm={FOCAL_LENGTH_MIN}
+              maxFocalLengthMm={FOCAL_LENGTH_MAX}
+              aspectRatio={previewAspectRatio}
+              onChangeFocalLength={changePreviewFocalLength}
+              onPan={(azimuthDeltaDegrees, altitudeDeltaDegrees) => {
+                setPreviewViewCorrection((current) => ({
+                  azimuthDegrees: current.azimuthDegrees + azimuthDeltaDegrees,
+                  altitudeDegrees: Math.min(
+                    89,
+                    Math.max(-89, current.altitudeDegrees + altitudeDeltaDegrees)
+                  ),
+                }));
+              }}
+              measuring={previewMeasuring}
+              onMeasureTap={handlePreviewMeasureTap}
+              subjectPicking={previewSubjectPicking}
+              onSubjectTap={(xPercent, yPercent) => void handlePreviewSubjectTap(xPercent, yPercent)}
+            />
+          )}
 
           {previewSubjectPicking && (
             <div className="preview-subject-pick-instruction" role="status">
