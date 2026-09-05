@@ -454,26 +454,25 @@ export function TopSettingsBar({
               <div className="menu-panel-header"><strong>三脚候補・補正</strong><button type="button" onClick={() => setPrecisionMenuOpen(false)}>閉じる</button></div>
               <div className="precision-subsection">
                 <strong>三脚候補の初回探索範囲</strong>
-                <label className="precision-choice">
+                <div className="precision-range-control">
+                  <span className="precision-choice-title">
+                    <b>最大{(precisionSettings.tripodSearchMaxDistanceMeters / 1000).toFixed(0)}km</b>
+                    {precisionSettings.tripodSearchMaxDistanceMeters === TRIPOD_SEARCH_MAX_DISTANCE_DEFAULT_METERS && <small>初期値</small>}
+                  </span>
                   <input
                     type="range"
                     min={1000}
                     max={TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS}
                     step={1000}
                     value={precisionSettings.tripodSearchMaxDistanceMeters}
+                    aria-label="三脚候補の初回探索範囲（km）"
                     onChange={(event) => onPrecisionSettingsChange({
                       ...precisionSettings,
                       tripodSearchMaxDistanceMeters: Number(event.target.value),
                     })}
                   />
-                  <span className="precision-choice-copy">
-                    <span className="precision-choice-title">
-                      <b>最大{(precisionSettings.tripodSearchMaxDistanceMeters / 1000).toFixed(0)}km</b>
-                      {precisionSettings.tripodSearchMaxDistanceMeters === TRIPOD_SEARCH_MAX_DISTANCE_DEFAULT_METERS && <small>初期値</small>}
-                    </span>
-                    <small>距離ヒントが無い初回探索（新しい被写体・天体）で対象とする最大距離。狭くすると探索が触れる地形タイルの範囲が減り速くなりますが、これより遠い候補は見つかりません。最大{(TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS / 1000).toFixed(0)}kmまで広げられます。</small>
-                  </span>
-                </label>
+                  <small>距離ヒントが無い初回探索（新しい被写体・天体）で対象とする最大距離。狭くすると探索が触れる地形タイルの範囲が減り速くなりますが、これより遠い候補は見つかりません。1kmから最大{(TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS / 1000).toFixed(0)}kmまで選べます。</small>
+                </div>
               </div>
               <div className="precision-subsection">
                 <strong>地形の陰影表現</strong>

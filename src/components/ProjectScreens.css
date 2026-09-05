@@ -182,12 +182,25 @@
 .calendar-grid > button,
 .calendar-grid > span,
 .moon-calendar-grid > button,
-.moon-calendar-grid > span { min-height: 58px; }
+.moon-calendar-grid > span {
+  min-height: 58px;
+  /* 2026-09-05追記: グリッドアイテムは既定でmin-width:autoのため、中身
+     （アイコン＋テキスト）が列幅より広いと縮まずに右へはみ出し、以降の
+     列ごと画面外へ押し出されてしまっていた（実機報告：土曜列が見えない）。
+     0にして列幅に収まるよう縮小・折り返しを許可する。 */
+  min-width: 0;
+  overflow: hidden;
+}
 .calendar-grid button,
-.moon-calendar-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.moon-calendar-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 4px 2px; }
 .calendar-grid i { font-style: normal; color: #4db4ff; font-size: 10px; }
 .calendar-grid .selected,
 .moon-calendar-grid .selected { outline: 2px solid #4db4ff; }
+/* 2026-09-05追記: 月齢カレンダーは日付＋アイコン＋「月齢X.X」の3要素を
+   1マスに収める必要があり、狭い列幅（7列）では既定サイズだと収まらない。 */
+.moon-calendar-grid button > span:first-child { font-size: 12px; line-height: 1; }
+.moon-calendar-grid .moon-age-icon { max-width: 70%; height: auto; flex-shrink: 0; }
+.moon-calendar-grid button small { font-size: 8px; line-height: 1.1; white-space: nowrap; }
 /* 2026-09-05追記: MoonAgeCalendarScreen.tsx専用のクラスが未定義だったため
    最低限のスタイルを補う（本題のグリッド崩れ修正のついでに発見）。 */
 .moon-calendar-offline-note { margin: 0; padding: 0 14px 10px; color: #8ea0b8; font-size: 12px; }

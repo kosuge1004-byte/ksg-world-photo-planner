@@ -1052,6 +1052,10 @@ button { cursor: pointer; }
 .map-2d-pin > svg { display: block; width: 14px; height: 20px; overflow: visible; }
 .map-2d-pin path { fill: #e53935; stroke: #fff; stroke-width: 2; }
 .map-2d-pin circle { fill: #fff; }
+/* 2026-09-05追記: 被写体・三脚どちらのピンも同じ赤色になっており、
+   地図上で見分けが付かなかった（体系的なclassName総点検で判明）。
+   三脚ピンは青系に変えて区別できるようにする。 */
+.map-2d-tripod-pin path { fill: #1e88e5; }
 .map-2d-tripod-pin path { fill: #1976d2; }
 .map-tripod-distance { position: absolute; top: calc(100% + 2px); left: 50%; padding: 1px 3px; color: #fff; border-radius: 3px; background: rgba(0,0,0,.64); font-size: 6px; font-weight: 700; line-height: 1.15; white-space: nowrap; transform: translateX(-50%); }
 .map-2d-placement-layer { position: absolute; z-index: 30; inset: 0; width: 100%; height: 100%; padding: 0; color: #fff; border: 0; outline: 0; background: rgba(0, 25, 55, .06); cursor: crosshair; }
@@ -1979,6 +1983,11 @@ button { cursor: pointer; }
   font-size: 8px;
   line-height: 1.45;
 }
+.precision-range-control > small {
+  color: #aeb9c7;
+  font-size: 8px;
+  line-height: 1.45;
+}
 .cesium-ion-connection-status {
   display: flex;
   flex-direction: column;
@@ -2013,6 +2022,24 @@ button { cursor: pointer; }
   margin: 0;
   accent-color: #ffdc25;
 }
+/* 2026-09-05追記: 上のルールがtype=rangeのスライダーにも適用され、
+   15x15pxへ押し込められて操作できない小さな丸（ラジオボタンに見える）
+   になってしまっていた（実機報告）。専用のレイアウトで幅いっぱいの
+   スライダーとして表示する。 */
+.precision-range-control {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #333c47;
+  border-radius: 10px;
+  background: #0d1520;
+}
+.precision-settings-panel .precision-range-control input[type="range"] {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  accent-color: #ffdc25;
+}
 
 .precision-settings-panel small {
   color: #8ea0b3;
@@ -2029,6 +2056,29 @@ button { cursor: pointer; }
 }
 .precision-data-guide strong { color: #edf2f7; font-size: 10px; }
 .precision-data-guide small b { color: #dce8f5; }
+/* 2026-09-05追記: freeze-diagnostics-section・offline-tile-cacheに
+   スタイル定義が無く、内容が詰まって表示される不具合を発見（体系的な
+   className総点検により判明）。隣接する.precision-data-guideと
+   揃えた見た目にする。 */
+.freeze-diagnostics-section,
+.offline-tile-cache {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border-top: 1px solid #313944;
+  color: #aeb9c7;
+}
+.freeze-diagnostics-section small,
+.offline-tile-cache p {
+  margin: 0;
+  color: #8ea0b3;
+  font-size: 8px;
+  line-height: 1.45;
+}
+.freeze-diagnostics-section button,
+.offline-tile-cache button {
+  justify-self: start;
+}
 .precision-setting-intro {
   display: block;
   margin: 4px 0 6px;
@@ -2461,6 +2511,7 @@ body.pseudo-fullscreen-active {
 
 /* 2026-08-05: improve readability of explanatory text in hamburger-menu detail settings. */
 .calculation-mode-menu.precision-open .precision-choice-copy > small,
+.calculation-mode-menu.precision-open .precision-range-control > small,
 .calculation-mode-menu.precision-open .precision-settings-panel > small,
 .calculation-mode-menu.precision-open .precision-settings-panel .precision-setting-intro,
 .calculation-mode-menu.precision-open .precision-settings-panel .precision-control-help,
@@ -3285,9 +3336,15 @@ body.pseudo-fullscreen-active {
 
 /* 2026-09-04追記: 「3D表示選択」パネル内へ移設した2D/3D切替ボタン。
    同パネルの.precision-choice（元はlabel+input用）を流用しつつ、
-   ボタン要素向けに見た目をリセットする。 */
-.map-display-mode-toggle {
+   ボタン要素向けに見た目をリセットする。
+   2026-09-05修正: .precision-settings-panel .precision-choiceが
+   grid-template-columns: 18px minmax(0,1fr)（ラジオボタン用の1列目）を
+   指定しており、こちらは子要素が1つ（.precision-choice-copyのみ）しか
+   無いため、その18px幅の1列目に押し込まれ、文字が縦に1文字ずつ
+   折り返される不具合になっていた（実機報告）。詳細度で上書きする。 */
+.precision-settings-panel .map-display-mode-toggle {
   display: grid;
+  grid-template-columns: 1fr;
   width: 100%;
   margin: 0;
   color: inherit;
