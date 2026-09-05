@@ -220,6 +220,8 @@ export type TripodSearchDiagnostics = {
        */
       initialScanMs: number;
       weatherResolveMs: number;
+      /** 2026-09-05追記: OSM水面判定（fetchSiteContexts）にかかった時間。 */
+      waterSurfaceCheckMs: number;
       convergenceLoopMs: number;
       refinementMs: number;
       doubleCheckMs: number;
@@ -1684,6 +1686,12 @@ async function calculateOneCandidates(
   let initialScanMs = 0;
   let weatherResolveMs = 0;
   let doubleCheckMs = 0;
+  // 2026-09-05追記（実機診断より）: OSM水面判定（fetchSiteContexts）が
+  // trace()もされず、どの内訳時間にも計上されていなかったため、実際には
+  // ここで6秒以上かかっていても診断上は「原因不明の空白」にしか見えず、
+  // 内訳の合計（初期探索+気象+収束反復+精密化+ダブルチェック）が天体総
+  // 時間と一致しない不整合の原因にもなっていた。専用の集計変数を設ける。
+  let waterSurfaceCheckMs = 0;
   const bodyStartedAt = performance.now();
   const rejectionReasons: Record<string, number> = {};
   const traceEvents: TripodSearchDiagnostics["perCelestialBody"][string]["traceEvents"] = [];
@@ -1922,6 +1930,7 @@ async function calculateOneCandidates(
       terrainRoundTripTotalMs,
       initialScanMs,
       weatherResolveMs,
+      waterSurfaceCheckMs,
       convergenceLoopMs: convergenceLoopTotalMs,
       refinementMs: refinementTotalMs,
       doubleCheckMs,
@@ -1947,20 +1956,45 @@ async function calculateOneCandidates(
   // 河川・運河水面とみなし、細い山間河川の線形waterwayは0m化しない。
   let waterSurfaceKinds: Array<"none" | "river" | "sea-or-other-water"> =
     initialSolutions.map(() => "none");
-  try {
-    const waterProbePoints = initialSolutions.map((initialSolution) =>
-      buildCandidateGroundPoint(
-        initialSolution.cartographic,
-        subject,
-        `${point.label}水面判定`
-      )
-    );
-    const waterContexts = await fetchSiteContexts(waterProbePoints, signal, false);
-    waterSurfaceKinds = waterContexts.map((context) => context.waterSurfaceKind);
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    // 水面判定API障害で通常の三脚探索まで失敗させない。
-    console.warn(`[tripod-candidate] ${point.label}: OSM水面判定を取得できないため通常地形で継続`, error);
+  {
+    const waterSurfaceStartedAt = performance.now();
+    // 2026-09-05追記: このAPIは実機で数秒〜二十数秒かかることが確認されて
+    // いる（河川陸地判定と同じ地理条件API）。失敗時のフォールバックは
+    // 元々あったが、「遅いが失敗はしない」場合は無制限に待ってしまって
+    // いた。検索全体を巻き込まないよう、ここだけ独自に5秒で打ち切る
+    // （タイムアウト時もfetchSiteContexts自体は裏で継続するが、結果は
+    // 使わずデフォルト値のまま進む＝失敗時と同じ安全な扱い）。
+    const WATER_SURFACE_CHECK_TIMEOUT_MS = 5_000;
+    trace("water-surface:start", `points=${initialSolutions.length}`);
+    let waterSurfaceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const waterProbePoints = initialSolutions.map((initialSolution) =>
+        buildCandidateGroundPoint(
+          initialSolution.cartographic,
+          subject,
+          `${point.label}水面判定`
+        )
+      );
+      const waterContexts = await Promise.race([
+        fetchSiteContexts(waterProbePoints, signal, false),
+        new Promise<never>((_, reject) => {
+          waterSurfaceTimeoutId = setTimeout(
+            () => reject(new Error(`水面判定がタイムアウトしました（${WATER_SURFACE_CHECK_TIMEOUT_MS}ms）`)),
+            WATER_SURFACE_CHECK_TIMEOUT_MS
+          );
+        }),
+      ]);
+      waterSurfaceKinds = waterContexts.map((context) => context.waterSurfaceKind);
+      trace("water-surface:end", `elapsed=${(performance.now() - waterSurfaceStartedAt).toFixed(1)}ms`);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      trace("water-surface:error", `error=${String(error)} elapsed=${(performance.now() - waterSurfaceStartedAt).toFixed(1)}ms`);
+      // 水面判定API障害・タイムアウトで通常の三脚探索まで失敗させない。
+      console.warn(`[tripod-candidate] ${point.label}: OSM水面判定を取得できないため通常地形で継続`, error);
+    } finally {
+      if (waterSurfaceTimeoutId !== undefined) clearTimeout(waterSurfaceTimeoutId);
+    }
+    waterSurfaceCheckMs += performance.now() - waterSurfaceStartedAt;
   }
 
   const convergedResults = await Promise.allSettled(
@@ -2333,6 +2367,7 @@ async function calculateOneCandidates(
     terrainRoundTripTotalMs,
     initialScanMs,
     weatherResolveMs,
+    waterSurfaceCheckMs,
     convergenceLoopMs: convergenceLoopTotalMs,
     refinementMs: refinementTotalMs,
     doubleCheckMs,

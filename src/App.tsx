@@ -1018,6 +1018,7 @@ function App() {
           `平均${entry.terrainRoundTripCount > 0 ? Math.round(entry.terrainRoundTripTotalMs / entry.terrainRoundTripCount) : 0}ms/回）` +
           `（初期探索${(entry.initialScanMs / 1000).toFixed(2)}秒・` +
           `気象${(entry.weatherResolveMs / 1000).toFixed(2)}秒・` +
+          `水面判定${(entry.waterSurfaceCheckMs / 1000).toFixed(2)}秒・` +
           `収束反復${(entry.convergenceLoopMs / 1000).toFixed(2)}秒・` +
           `精密化${(entry.refinementMs / 1000).toFixed(2)}秒・` +
           `ダブルチェック${(entry.doubleCheckMs / 1000).toFixed(2)}秒・` +
