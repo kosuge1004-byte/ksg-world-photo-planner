@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { BearingBackfillProgress } from "../cache/tripodBearingProfileManager";
 
 export type BearingProfileDialogState = {
@@ -14,6 +15,20 @@ type Props = {
 };
 
 export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCancelDownload }: Props) {
+  const dialogRef = useRef<HTMLElement>(null);
+
+  // 2026-09-05追記（実機で繰り返し報告されたため）: position:fixed;
+  // inset:0 のバックドロップは、CSSのdvh/vh計算だけに頼ると、実機
+  // （特に古いAndroid WebView）で実際に見えている画面より大きく計算され、
+  // 中身（.project-dialog）がその「見えない下側」に押し出されてしまう
+  // ことがある。CSS側の調整だけでは直せなかったため、開いた瞬間に
+  // JavaScriptで確実に画面内へスクロールさせる、CSSに依存しない
+  // 安全策を追加する。
+  useEffect(() => {
+    if (!state) return;
+    dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
+  }, [state]);
+
   if (!state) return null;
   const { subjectLabel, progress } = state;
   const isDownloading = progress !== null;
@@ -27,6 +42,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
   return (
     <div className="project-dialog-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="project-dialog"
         role="dialog"
         aria-modal="true"

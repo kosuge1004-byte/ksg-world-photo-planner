@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Props = {
   open: boolean;
@@ -31,11 +31,20 @@ type Props = {
  */
 export function CesiumIonConsentDialog({ open, onConfirm, onCancel }: Props) {
   const [singleDeviceAcknowledged, setSingleDeviceAcknowledged] = useState(false);
+  const dialogRef = useRef<HTMLElement>(null);
+
+  // 2026-09-05追記: position:fixed;inset:0のバックドロップが実機（特に
+  // 古いAndroid WebView）でdvh計算を誤り、中身が画面外へ押し出される
+  // ことがあるため、開いた瞬間にJavaScriptで確実に画面内へスクロールする。
+  useEffect(() => {
+    if (open) dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
+  }, [open]);
 
   if (!open) return null;
   return (
     <div className="project-dialog-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="project-dialog cesium-ion-consent-dialog"
         role="dialog"
         aria-modal="true"

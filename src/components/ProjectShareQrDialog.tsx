@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { generateShareQrDataUrl } from "../sharing/projectShareQr";
 
 type Props = {
@@ -12,6 +12,7 @@ type Props = {
 export function ProjectShareQrDialog({ open, url, projectName, onClose, onShareLink }: Props) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open || !url) {
@@ -33,11 +34,19 @@ export function ProjectShareQrDialog({ open, url, projectName, onClose, onShareL
     };
   }, [open, url]);
 
+  // 2026-09-05追記: position:fixed;inset:0のバックドロップが実機（特に
+  // 古いAndroid WebView）でdvh計算を誤り、中身が画面外へ押し出される
+  // ことがあるため、開いた瞬間にJavaScriptで確実に画面内へスクロールする。
+  useEffect(() => {
+    if (open && url) dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
+  }, [open, url]);
+
   if (!open || !url) return null;
 
   return (
     <div className="project-dialog-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="project-dialog qr-share-dialog"
         role="dialog"
         aria-modal="true"

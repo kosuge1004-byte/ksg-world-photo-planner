@@ -58,8 +58,8 @@
   white-space: nowrap;
 }
 
-.primary { background: #1769aa !important; }
-.danger { border-color: #a33 !important; }
+/* .primary / .danger は常時マウントされるダイアログのボタンにも
+   使われるため、遅延読み込みされないApp.css側へ移した。 */
 
 /* Project import: keep both actions horizontal and readable. */
 .project-import-panel {
@@ -167,114 +167,14 @@
   color: white;
 }
 
-/* Dialogs must be above .project-screen (z-index:260).
-   Previously they were z-index:120, so QR camera/import confirmation opened behind the project screen. */
-.project-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  /* 2026-09-05修正: 従来420だったが、画面下部に固定表示される.app-status
-     （「確定した三脚候補」等の案内バー、z-index:900）より低かったため、
-     確認ダイアログの下半分がそのバーの裏に隠れ、はみ出た端だけが画面の
-     一番下にちらっと見える不具合が起きていた（お気に入り登録直後の
-     ダウンロード確認ダイアログで実機報告）。ユーザーに判断を求める
-     モーダルは、常に背景の案内バーより優先して見えるべきなので、
-     .app-statusより確実に高くする。最上位の.user-notice（エラー通知、
-     13000）よりは低くし、致命的なエラー通知が隠れないようにする。 */
-  z-index: 1000;
-  background: rgba(0,0,0,.82);
-  /* 2026-09-04追記: 以前は display:grid; place-items:center; で中央寄せ
-     していたが、実機（特にAndroid WebViewのdvh未対応環境）ではダイアログが
-     画面の実表示領域より大きく計算され、はみ出した部分が中央寄せの上下に
-     半分ずつ隠れてスクロールしても届かない状態になっていた
-     （overflowも未設定で逃げ場がなかった）。
-     display:flexとmargin:auto（.project-dialog側）の組み合わせに変更する
-     ことで、収まる時は中央寄せ、収まらない時は上端から自然に流れて
-     overflow-yで最後までスクロールできるようにする。 */
-  display: flex;
-  justify-content: center;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: 16px;
-  padding-top: max(16px, env(safe-area-inset-top));
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
-}
-
-.project-dialog {
-  width: min(560px, 100%);
-  max-height: none;
-  flex: 0 0 auto;
-  margin: auto 0;
-  background: #101d2c;
-  color: #fff;
-  border: 1px solid #526176;
-  border-radius: 14px;
-  padding: 18px;
-  display: grid;
-  gap: 16px;
-  box-shadow: 0 24px 80px rgba(0,0,0,.55);
-}
-
-.project-dialog h2 { margin: 0; text-align: center; }
-.project-dialog label { display: grid; gap: 7px; }
-.project-dialog input[type=text],
-.project-dialog input:not([type]) {
-  padding: 11px;
-  border-radius: 8px;
-  border: 1px solid #526176;
-  background: #07101b;
-  color: #fff;
-}
-.project-dialog-check { display: flex !important; align-items: center; }
-.project-dialog > div { display: flex; justify-content: flex-end; gap: 8px; }
-.project-dialog button {
-  padding: 10px 15px;
-  border-radius: 8px;
-  border: 1px solid #526176;
-  background: #172436;
-  color: #fff;
-}
-.project-dialog dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  margin: 0;
-  font-size: 14px;
-}
-.project-dialog dt { color: #a8b4c5; }
-.project-dialog dd { margin: 0; }
-.project-dialog-note { margin: 0; font-size: 13px; color: #a8b4c5; }
-.project-dialog-error { margin: 0; font-size: 13px; color: #ff8080; }
-
-/* QR scanner: wide camera viewport instead of a tall narrow portrait frame. */
-.qr-scan-dialog { width: min(720px, 100%); }
-.qr-scan-mode-tabs { display: flex !important; gap: 8px; }
-.qr-scan-mode-tabs button { flex: 1; white-space: nowrap; }
-.qr-scan-camera-wrap { display: grid !important; gap: 8px; width: 100%; }
-.qr-scan-video {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  max-height: 58dvh;
-  border-radius: 12px;
-  border: 1px solid #526176;
-  background: #000;
-  object-fit: cover;
-}
-.qr-scan-image-wrap { display: grid !important; gap: 8px; }
-.qr-scan-image-label {
-  display: grid;
-  gap: 8px;
-  padding: 14px;
-  border: 1px dashed #526176;
-  border-radius: 10px;
-  text-align: center;
-  color: #c9d3de;
-  font-size: 13px;
-}
-
-.placement-offset-input { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
-.placement-offset-input input { width: 80px; }
-
+/* 2026-09-05修正: .project-dialog-backdrop / .project-dialog とその関連
+   （.primary / .danger / .placement-offset-input / qr-scan系 / qr-share系含む）
+   は、常時マウントされるダイアログが依存するためsrc/App.css側へ移した
+   （詳しい理由はApp.css内の同名コメント参照）。ここには、実際に遅延
+   読み込み画面（ProjectsScreen/CalendarScreen/MoonAgeCalendarScreen）の
+   中でしか使われないスタイルだけを残す。 */
 .calendar-nav { display: flex; justify-content: space-between; align-items: center; padding: 14px; }
+
 .calendar-week,
 .calendar-grid,
 .moon-calendar-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 4px; padding: 0 10px; }
@@ -315,8 +215,6 @@
   .project-scan-button { gap: 6px; }
   .project-card-actions { display: grid; grid-template-columns: 1fr repeat(3, auto); }
   .project-calendar-check { margin-right: 0; }
-  .project-dialog-backdrop { padding: 10px; }
-  .qr-scan-video { max-height: 52dvh; }
 }
 
 @media (max-width: 390px) {

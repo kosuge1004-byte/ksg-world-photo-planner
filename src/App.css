@@ -2901,9 +2901,12 @@ body.pseudo-fullscreen-active {
   margin: 0;
 }
 
-/* AR camera phase 6: dialogs launched from the full-screen AR shell must remain above it. */
-.celestial-transit-backdrop,
-.project-dialog-backdrop {
+/* 2026-09-05修正: .project-dialog-backdropのz-indexは
+   src/components/ProjectScreens.css側に一本化した（AR全画面シェルより
+   上、という要件も含めて11000に統一済み）。ここに重複定義があると
+   バンドル順序次第でどちらが勝つか不安定になるため、.celestial-transit-
+   backdropの分だけ残す。 */
+.celestial-transit-backdrop {
   z-index: 11000;
 }
 
@@ -3351,4 +3354,157 @@ body.pseudo-fullscreen-active {
   font-weight: 700;
   line-height: 1.05;
   white-space: nowrap;
+}
+
+/* ============================================================
+   2026-09-05追記（重要・根本原因の修正）:
+   .project-dialog-backdrop / .project-dialog 等の"共有ダイアログ"の
+   基本スタイルは、元々 src/components/ProjectScreens.css にあった。
+   しかしProjectScreens.cssは、ProjectsScreen / CalendarScreen /
+   MoonAgeCalendarScreen という3つの遅延読み込み（React.lazy）画面からしか
+   importされておらず、Viteのコード分割によって「それらの画面を一度も
+   開いていないと読み込まれない、別のCSSチャンク」になっていた。
+   ところが実際にこれらのクラスを使うダイアログ
+   （PlacementConfirmDialog・BearingProfileDownloadDialog・
+   ProjectSaveDialog・ProjectShareQrDialog・ProjectQrScanDialog・
+   CesiumIonConsentDialog・SharedProjectImportDialog）は、いずれも
+   Suspense無しで常時マウントされている（open/state propで表示可否だけを
+   切り替えている）ため、ユーザーがカレンダー等の画面を一度も開かないまま
+   これらのダイアログを開くと、対応するCSSチャンクがまだ読み込まれておらず
+   「枠も背景も無い、ただの生の見出しテキストが画面下部に表示される」
+   という不具合になっていた（実機で複数回報告）。
+   z-indexの手直しだけでは直らなかったのはこれが理由——スタイル自体が
+   存在しなかった。常時マウントされるダイアログの基本スタイルは、
+   常に最初から読み込まれるこのApp.cssへ移し、ProjectScreens.css側からは
+   削除する（本当に遅延画面専用のスタイルだけをProjectScreens.cssに残す）。
+   ============================================================ */
+.primary { background: #1769aa !important; }
+.danger { border-color: #a33 !important; }
+
+.project-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  /* AR全画面シェル（.ar-camera-screen、z-index:10000）より確実に上、
+     最上位のエラー通知（.user-notice、13000）よりは低い値にする。 */
+  z-index: 11000;
+  background: rgba(0,0,0,.82);
+  /* 2026-09-04追記: 以前は display:grid; place-items:center; で中央寄せ
+     していたが、実機（特にAndroid WebViewのdvh未対応環境）ではダイアログが
+     画面の実表示領域より大きく計算され、はみ出した部分が中央寄せの上下に
+     半分ずつ隠れてスクロールしても届かない状態になっていた
+     （overflowも未設定で逃げ場がなかった）。
+     display:flexとmargin:auto（.project-dialog側）の組み合わせに変更する
+     ことで、収まる時は中央寄せ、収まらない時は上端から自然に流れて
+     overflow-yで最後までスクロールできるようにする。 */
+  display: flex;
+  justify-content: center;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.project-dialog {
+  width: min(560px, 100%);
+  max-height: none;
+  flex: 0 0 auto;
+  margin: auto 0;
+  background: #101d2c;
+  color: #fff;
+  border: 1px solid #526176;
+  border-radius: 14px;
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.55);
+}
+
+.project-dialog h2 { margin: 0; text-align: center; }
+.project-dialog label { display: grid; gap: 7px; }
+.project-dialog input[type=text],
+.project-dialog input:not([type]) {
+  padding: 11px;
+  border-radius: 8px;
+  border: 1px solid #526176;
+  background: #07101b;
+  color: #fff;
+}
+.project-dialog-check { display: flex !important; align-items: center; }
+.project-dialog > div { display: flex; justify-content: flex-end; gap: 8px; }
+.project-dialog button {
+  padding: 10px 15px;
+  border-radius: 8px;
+  border: 1px solid #526176;
+  background: #172436;
+  color: #fff;
+}
+.project-dialog dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+.project-dialog dt { color: #a8b4c5; }
+.project-dialog dd { margin: 0; }
+.project-dialog-note { margin: 0; font-size: 13px; color: #a8b4c5; }
+.project-dialog-error { margin: 0; font-size: 13px; color: #ff8080; }
+
+.placement-offset-input { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.placement-offset-input input { width: 80px; }
+
+/* QR scanner: wide camera viewport instead of a tall narrow portrait frame. */
+.qr-scan-dialog { width: min(720px, 100%); }
+.qr-scan-mode-tabs { display: flex !important; gap: 8px; }
+.qr-scan-mode-tabs button { flex: 1; white-space: nowrap; }
+.qr-scan-camera-wrap { display: grid !important; gap: 8px; width: 100%; }
+.qr-scan-video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 58dvh;
+  border-radius: 12px;
+  border: 1px solid #526176;
+  background: #000;
+  object-fit: cover;
+}
+.qr-scan-image-wrap { display: grid !important; gap: 8px; }
+.qr-scan-image-label {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px dashed #526176;
+  border-radius: 10px;
+  text-align: center;
+  color: #c9d3de;
+  font-size: 13px;
+}
+
+/* 2026-09-05追記: ProjectShareQrDialog.tsxが参照しているが、
+   これまでどこにもスタイル定義が無かった（未発見の同種不具合）。 */
+.qr-share-dialog { width: min(420px, 100%); text-align: center; }
+.qr-share-image-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+.qr-share-image-wrap img { border-radius: 8px; background: #fff; padding: 8px; }
+.qr-share-image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 240px;
+  height: 240px;
+  border: 1px dashed #526176;
+  border-radius: 8px;
+  color: #8fa1b8;
+  font-size: 13px;
+  text-align: center;
+  padding: 12px;
+}
+
+@media (max-width: 560px) {
+  .project-dialog-backdrop { padding: 10px; }
+  .qr-scan-video { max-height: 52dvh; }
 }

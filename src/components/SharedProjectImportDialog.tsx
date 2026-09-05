@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { SharedProjectPayloadV1 } from "../sharing/projectShareCode";
 
 type Props = {
@@ -17,10 +18,20 @@ export function SharedProjectImportDialog({
   onCancel,
   onImport,
 }: Props) {
+  const dialogRef = useRef<HTMLElement>(null);
+
+  // 2026-09-05追記: position:fixed;inset:0のバックドロップが実機（特に
+  // 古いAndroid WebView）でdvh計算を誤り、中身が画面外へ押し出される
+  // ことがあるため、開いた瞬間にJavaScriptで確実に画面内へスクロールする。
+  useEffect(() => {
+    if (open && payload) dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
+  }, [open, payload]);
+
   if (!open || !payload) return null;
   return (
     <div className="project-dialog-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="project-dialog"
         role="dialog"
         aria-modal="true"

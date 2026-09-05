@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 const KIND_LABEL: Record<"subject" | "tripod" | "person", string> = {
   subject: "被写体",
   tripod: "三脚",
@@ -25,12 +27,26 @@ export function PlacementConfirmDialog({
   onConfirm,
   onCancel,
 }: Props) {
+  const dialogRef = useRef<HTMLElement>(null);
+
+  // 2026-09-05追記（実機で繰り返し報告されたため）: position:fixed;
+  // inset:0 のバックドロップは、CSSのdvh/vh計算だけに頼ると実機
+  // （特に古いAndroid WebView）で実際に見えている画面より大きく計算され、
+  // 中身がその「見えない下側」に押し出されてしまうことがある。CSS側の
+  // 調整だけでは直せなかったため、開いた瞬間にJavaScriptで確実に画面内へ
+  // スクロールさせる、CSSに依存しない安全策を追加する。
+  useEffect(() => {
+    if (!open || !kind) return;
+    dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
+  }, [open, kind]);
+
   if (!open || !kind) return null;
   const label = KIND_LABEL[kind];
   const allowsHeightOffset = kind === "person";
   return (
     <div className="project-dialog-backdrop" role="presentation">
       <section
+        ref={dialogRef}
         className="project-dialog"
         role="dialog"
         aria-modal="true"
