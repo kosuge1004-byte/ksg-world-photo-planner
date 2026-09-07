@@ -20,6 +20,12 @@ import { FOCAL_LENGTH_MAX, FOCAL_LENGTH_MIN } from "../types/camera";
 import { parseFocalLengthInput } from "../utils/focalLengthInput";
 import { usePwaInstall, clearOfflineTileCache } from "../pwa/install";
 import { getRecordedFreezes, clearRecordedFreezes } from "../diagnostics/freezeDetector";
+import {
+  CESIUM_ION_USAGE_STOP_THRESHOLD,
+  CESIUM_ION_USAGE_WARNING_THRESHOLD,
+  getCesiumIonMonthlyUsageCount,
+  setCesiumIonMonthlyUsageCountFromOfficialUsage,
+} from "../precision/cesiumIonConnection";
 
 type Props = {
   settings: CameraSettings;
@@ -84,6 +90,38 @@ export function TopSettingsBar({
   const [lightPollutionGuideOpen, setLightPollutionGuideOpen] = useState(false);
   const [freezeDiagnosticsCopyState, setFreezeDiagnosticsCopyState] =
     useState<"idle" | "copied" | "empty" | "failed">("idle");
+  const [cesiumUsageCount, setCesiumUsageCount] = useState(() => getCesiumIonMonthlyUsageCount());
+
+  useEffect(() => {
+    if (threeDSourceMenuOpen) {
+      setCesiumUsageCount(getCesiumIonMonthlyUsageCount());
+    }
+  }, [threeDSourceMenuOpen]);
+
+  const openCesiumIonUsage = () => {
+    // Cesium公式ドキュメントが案内しているion DashboardのUsageページ。
+    // 公式Usage値は公開APIで取得できないため、ユーザー自身がここで実値を確認する。
+    window.open("https://ion.cesium.com/usage", "_blank", "noopener,noreferrer");
+  };
+  const syncCesiumUsageFromOfficial = () => {
+    const raw = window.prompt(
+      "Cesium ion の Usage 画面に表示されている Google Photorealistic 3D Tiles の今月の値を入力してください。\n複数端末を使っている場合も、Cesium ion側の合計値を入力してください。",
+      String(getCesiumIonMonthlyUsageCount())
+    );
+    if (raw === null) return;
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      window.alert("0以上の整数を入力してください。");
+      return;
+    }
+    try {
+      const synced = setCesiumIonMonthlyUsageCountFromOfficialUsage(Number(trimmed));
+      setCesiumUsageCount(synced);
+      window.alert(`Cesium ion公式Usageの値 ${synced} 回に同期しました。`);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Usage値を保存できませんでした。");
+    }
+  };
   const handleCopyFreezeDiagnostics = async () => {
     const freezes = getRecordedFreezes();
     if (freezes.length === 0) {
@@ -405,12 +443,17 @@ export function TopSettingsBar({
                 {cesiumIonConnected ? (
                   <>
                     <small>✓ ご自身のCesium ionアカウントに接続済みです。</small>
+                    <small>AstroSight端末内カウント：今月 {cesiumUsageCount} 回（{CESIUM_ION_USAGE_WARNING_THRESHOLD}回で注意／{CESIUM_ION_USAGE_STOP_THRESHOLD}回で新規Googleタイル停止）</small>
+                    <button type="button" onClick={openCesiumIonUsage}>Cesium ion公式Usageを確認</button>
+                    <button type="button" onClick={syncCesiumUsageFromOfficial}>公式Usageの値を手動反映</button>
+                    <small>公式UsageはCesium ion側の実カウントです。複数端末で同じアカウントを使用した分もCesium ion側では合算されます。月途中の更新・別端末利用がある場合は、公式値を確認して同期してください。</small>
                     <button type="button" onClick={onDisconnectCesiumIon}>接続を解除</button>
                   </>
                 ) : (
                   <>
                     <small>Google Photorealistic 3D Tilesの利用には、ご自身のCesium ionアカウントの接続が必要です。</small>
                     <button type="button" onClick={onConnectCesiumIon}>Cesium ionアカウントに接続</button>
+                    <button type="button" onClick={openCesiumIonUsage}>Cesium ion公式Usageを確認</button>
                   </>
                 )}
               </div>

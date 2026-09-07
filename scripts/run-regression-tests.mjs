@@ -109,6 +109,10 @@ const cases = [
     arguments: ["./scripts/verify-3d-map-input-20260903.mjs"],
   },
   {
+    name: "Cesium Google Photorealistic root usage counter matches root-request unit",
+    arguments: ["./scripts/verify-cesium-root-usage-counter-20260907.mjs"],
+  },
+  {
     name: "final source cleanup and strict TypeScript contracts",
     arguments: ["./scripts/verify-final-cleanup.mjs"],
   },
@@ -177,6 +181,10 @@ const cases = [
   {
     name: "tripod candidate speed caches preserve exact-result safety (persistent per-device seed cache disabled)",
     arguments: ["--experimental-strip-types", "./scripts/verify-tripod-speed-cache-20260829.mjs"],
+  },
+  {
+    name: "tripod timeout-elimination: bounded abortable water/river helpers",
+    arguments: ["./scripts/verify-tripod-timeout-elimination-20260907.mjs"],
   },
   {
     name: "Cloudflare API and geo-tz runtime contracts",

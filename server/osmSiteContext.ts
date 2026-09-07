@@ -573,13 +573,28 @@ function combinedLandmarks(
  * 返るwalkingAccessible等のアクセス関連フィールドは実際には問い合わせて
  * いないため意味を持たない（呼び出し側はこれらを参照しないこと）。
  */
-export type SiteContextPurpose = "full" | "height-only";
+export type SiteContextPurpose = "full" | "height-only" | "water-only";
 
 function queryForPoints(
   points: OsmContextRequestPoint[],
   includeDetails: boolean,
   purpose: SiteContextPurpose = "full"
 ): string {
+  if (purpose === "water-only") {
+    // 河川最近傍陸地判定専用。各点ごとにhighway/access/公園/建物等を
+    // 問い合わせず、水面ポリゴンだけを取得する。最大80点を1回に束ねても
+    // クエリ内容は4種類×地点数に限定され、従来のfullより大幅に軽い。
+    const statements = points.flatMap((point) => {
+      const around = `(around:120,${point.latitude},${point.longitude})`;
+      return [
+        `nwr${around}["natural"="water"]`,
+        `nwr${around}["water"="river"]`,
+        `nwr${around}["water"="canal"]`,
+        `way${around}["waterway"="riverbank"]`,
+      ].map((statement) => `${statement};`);
+    });
+    return `[out:json][timeout:12];(${statements.join("")});out tags center geom;`;
+  }
   const statements = points.flatMap((point) => {
     const aroundAccess = `(around:120,${point.latitude},${point.longitude})`;
     const aroundLandmark = `(around:600,${point.latitude},${point.longitude})`;
@@ -704,8 +719,9 @@ export async function lookupOsmSiteContexts(
   includeDetails = true,
   purpose: SiteContextPurpose = "full"
 ): Promise<OsmSiteContext[]> {
-  if (points.length === 0 || points.length > 8) {
-    throw new Error("一度に判定できる候補地点は1〜8点です");
+  const maximumPoints = purpose === "water-only" ? 80 : 8;
+  if (points.length === 0 || points.length > maximumPoints) {
+    throw new Error(`一度に判定できる候補地点は1〜${maximumPoints}点です`);
   }
   for (const point of points) {
     if (
@@ -721,8 +737,21 @@ export async function lookupOsmSiteContexts(
   }
   const elements = await fetchOverpass(queryForPoints(points, includeDetails, purpose), signal);
   return points.map((point) => {
-    const structures = nearbyStructures(elements, point);
     const waterSurfaceKind = mappedWaterSurfaceKind(elements, point);
+    if (purpose === "water-only") {
+      return {
+        walkingAccessible: false,
+        onMappedWay: false,
+        restrictedAccess: false,
+        onMotorRoad: false,
+        onWaterSurface: waterSurfaceKind !== "none",
+        waterSurfaceKind,
+        nearbyLandmarks: [],
+        nearbyBuildings: [],
+        nearbyStructures: [],
+      };
+    }
+    const structures = nearbyStructures(elements, point);
     return {
       walkingAccessible: elements.some((element) => isWalkable(element, point)) ||
         elements.some((element) => isOnOpenPublicLand(element, point)),

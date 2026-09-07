@@ -1,3 +1,10 @@
+// 2026-09-07: LEGACY / quota authorityではない。
+// このPages Functionは旧「3時間セッション」方式の残存エンドポイントで、
+// 現在のクライアント(src/)からは呼ばれていない。Cesium ionのGoogle Photorealistic
+// 3D Tiles quota（root tileset request）を数える用途には使用禁止。現行の500警告・
+// 800停止は src/precision/cesiumIonConnection.ts と src/cesium/createMapViewer.ts で、
+// createGooglePhotorealistic3DTileset() の新規開始単位に実装している。
+
 import type { CloudflareEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
 

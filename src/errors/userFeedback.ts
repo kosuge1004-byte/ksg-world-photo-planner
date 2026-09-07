@@ -123,6 +123,10 @@ export function toUserFacingErrorMessage(
   const message = technicalMessage(error);
   const lower = message.toLocaleLowerCase();
 
+  if (message.includes("安全利用上限") && message.includes("Googleタイル")) {
+    return message;
+  }
+
   if (context === "google-maps-url") {
     // サーバー側（functions/api/resolve-google-maps.ts）が返す詳細
     // （例: GOOGLE_HTTP_ERROR、REDIRECT_LIMIT、INVALID_GOOGLE_MAPS_URL等の

@@ -55,10 +55,13 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     // 構造物・建物の高さ情報だけを取得する（詳しい経緯はosmSiteContext.ts
     // 冒頭コメント参照）。三脚候補探索など、access判定が必要な既存の
     // 呼び出しには一切影響しない（未指定時は従来どおり"full"）。
+    const requestedPurpose =
+      typeof body === "object" && body !== null && "purpose" in body
+        ? body.purpose
+        : undefined;
     const purpose: SiteContextPurpose =
-      typeof body === "object" && body !== null &&
-      "purpose" in body && body.purpose === "height-only"
-        ? "height-only"
+      requestedPurpose === "height-only" || requestedPurpose === "water-only"
+        ? requestedPurpose
         : "full";
     const cacheKeyInput = {
       includeDetails,

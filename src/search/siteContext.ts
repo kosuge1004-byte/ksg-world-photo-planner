@@ -13,7 +13,7 @@ type SiteContextResponse = {
 
 const SITE_CONTEXT_BATCH_SIZE = 8;
 
-export type SiteContextPurpose = "full" | "height-only";
+export type SiteContextPurpose = "full" | "height-only" | "water-only";
 
 function isSiteContext(value: unknown): value is SiteContext {
   return (
@@ -77,26 +77,34 @@ async function fetchSiteContextBatch(
     longitude: Number(point.longitude.toFixed(5)),
   }));
   const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${purpose}:${JSON.stringify(cacheKeyPoints)}`;
-  const result = await shareInFlightRequest({
-    key: requestKey,
-    category: "osm-site-context",
-    signal,
-    factory: async () => {
-      const response = await diagnosticFetch("osm-site-context", "/api/osm-site-context", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(requestBody),
+  const request = async () => {
+    const response = await diagnosticFetch("osm-site-context", "/api/osm-site-context", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: (await response.json()) as SiteContextResponse,
+    };
+  };
+  // water-only は三脚探索の時間制限付き補助判定で使う。共有要求にすると、
+  // 呼出側のAbortSignalは「待機」だけを中止し基礎fetchが裏で残るため、
+  // タイムアウト後も通信が競合する。water-onlyだけは共有せず、abortを
+  // 実fetchへ直接伝播させる。full/height-onlyの既存共有挙動は維持する。
+  const result = purpose === "water-only"
+    ? await request()
+    : await shareInFlightRequest({
+        key: requestKey,
+        category: "osm-site-context",
+        signal,
+        factory: request,
       });
-      return {
-        ok: response.ok,
-        status: response.status,
-        data: (await response.json()) as SiteContextResponse,
-      };
-    },
-  });
   const { data } = result;
   const response = { ok: result.ok, status: result.status };
   if (!response.ok || !Array.isArray(data.contexts)) {
@@ -119,8 +127,14 @@ export async function fetchSiteContexts(
   purpose: SiteContextPurpose = "full"
 ): Promise<SiteContext[]> {
   if (points.length === 0) return [];
+  // water-only はサーバー側で最大80地点を1回の軽量Overpass問い合わせへ
+  // 集約できる。河川の最近傍陸地探索（10半径×8方向）を10回直列通信に
+  // しないため、ここでは1リクエストで送る。
+  if (purpose === "water-only") {
+    return fetchSiteContextBatch(points, signal, false, purpose);
+  }
   const contexts: SiteContext[] = [];
-  // Overpass側の1要求上限を守りながら、結果確定後に最大8地点ずつまとめて照合する。
+  // 従来用途はOverpass側の1要求上限を守りながら最大8地点ずつ照合する。
   for (let offset = 0; offset < points.length; offset += SITE_CONTEXT_BATCH_SIZE) {
     contexts.push(...await fetchSiteContextBatch(
       points.slice(offset, offset + SITE_CONTEXT_BATCH_SIZE),

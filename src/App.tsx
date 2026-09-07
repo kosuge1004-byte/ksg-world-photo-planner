@@ -102,8 +102,6 @@ import {
   getValidCesiumIonAccessToken,
   isCesiumIonConnected,
   disconnectCesiumIon,
-  recordCesiumIonHighPrecisionUsage,
-  CESIUM_ION_USAGE_WARNING_THRESHOLD,
 } from "./precision/cesiumIonConnection";
 
 import {
@@ -2037,7 +2035,17 @@ function App() {
           // フレーム（形だけ）に切り替え、テクスチャ読み込みを省略して
           // 探索側の通信と取り合わないようにする。地面はGoogleタイルモード
           // では対象外（setPreviewWireframeMode内でGoogle 3Dは除外済み）。
-          {
+          // 2026-09-05修正（実機報告：「3Dマップ表示中、時間を動かすたびに
+          // 地図が読み込み直される」）: このmapViewerRefは2D表示中は小さな
+          // プレビュー欄（隠れている）を指すが、3D地図表示中は同じ
+          // インスタンスがユーザーが実際に操作している画面下の3D地図
+          // そのものになる。3D地図表示中にもワイヤーフレーム化していた
+          // ため、時間スライダーを動かすたびに探索の開始・終了で
+          // ユーザーが見ている地図のテクスチャが消えて（ワイヤーフレーム化）
+          // また現れる（元に戻る）、という「読み込み直し」に見える動きに
+          // なっていた。3D地図表示中はこの最適化自体を行わない
+          // （プレビューが隠れている2D表示中だけ有効にする）。
+          if (mapDisplayMode !== "3d") {
             const previewViewer = mapViewerRef.current;
             if (previewViewer) setPreviewWireframeMode(previewViewer, true);
           }
@@ -2247,21 +2255,10 @@ function App() {
         return { available: false, token: undefined };
       }
 
-      // 2026-08-26追記: 「1つのCesium ionアカウントを複数端末で使い回して
-      // いないか」を検知する目的の利用回数記録。ただしAstroSightは
-      // ユーザーアカウントを持たないため、この端末単体でのカウントに
-      // とどまる（詳細はcesiumIonConnection.tsのコメント参照）。
-      // 500回（1人の通常利用ではまず届かない水準）に達しても利用は
-      // 止めず、複数端末で使っている可能性を案内する警告を出すのみとする。
-      const usageCount = recordCesiumIonHighPrecisionUsage();
-      if (usageCount === CESIUM_ION_USAGE_WARNING_THRESHOLD) {
-        showUserNotice({
-          key: "cesium-ion-usage-warning",
-          tone: "warning",
-          prominent: true,
-          message: `このCesium ionアカウントは、この端末だけで今月すでに${usageCount}回、Googleタイルモードを利用しています。1つのアカウントは1台の端末でのみ利用する前提のため、この回数がそのままアカウント全体の今月の利用実績です（他の端末でも使っている場合は、実際はさらに多くなります）。Cesium ion無料プラン（Community）の上限に近づいている、または超えている可能性があります。プランの確認は設定画面から行えます。`,
-        });
-      }
+      // 2026-09-07修正: 利用量カウントはここ（Googleモード認可時）では行わない。
+      // 実際のroot tileset取得と1対1に近づけるため、
+      // createMapViewer.ts の createGooglePhotorealistic3DTileset() 呼び出し直前で
+      // 記録・500警告・800停止を一元管理する。
       return { available: true, token: cesiumToken };
     };
 

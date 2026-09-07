@@ -814,65 +814,81 @@ async function estimateRiverOrthometricHeightFromNearestLand(
   signal?: AbortSignal,
   trace?: (stage: string, detail: string) => void
 ): Promise<{ orthometricHeightMeters: number; distanceMeters: number; sample: Cartographic } | null> {
-  // 2026-09-04追記（実機診断より）: 地理条件API（/api/osm-site-context）が
-  // 障害等で応答不能になっていると、10半径 × 最大25秒（8秒タイムアウト×3回
-  // 試行）で最悪250秒もの間、この副次的な推定処理だけで探索全体を止めて
-  // いた（「経過173秒・通信0回」報告の実際の原因）。1箇所の障害はほぼ
-  // 確実に他の半径でも再現するサービス単位の障害であり、半径を変えて
-  // 何度も同じ25秒待機を繰り返す価値は無い。連続で失敗した場合は早期に
-  // 諦め、探索全体を道連れにしない（河川陸地標高推定はあくまで
-  // ベストエフォートで、失敗時のフォールバックは呼び出し側に既にある）。
-  const CONSECUTIVE_FAILURE_LIMIT = 2;
-  let consecutiveContextFailures = 0;
-  for (const radiusMeters of RIVER_NEAREST_LAND_RADII_METERS) {
-    abortIfRequested(signal);
-    const probes = RIVER_NEAREST_LAND_BEARINGS_DEGREES.map((bearingDegrees) => {
+  // 2026-09-07修正: 旧実装は10半径を直列に処理し、各半径でDEM取得→
+  // OSM full判定を繰り返していた。公開Overpassが遅い場合、これだけで
+  // 探索全体watchdog(90秒)を使い切れる。精度条件（同じ10半径×8方向）は
+  // 変更せず、全80地点を一括DEM取得し、水面だけを専用のwater-only APIで
+  // 1回判定する。外部APIは7秒で実fetchごとabortし、失敗時は既存の
+  // terrain-derived heightへフォールバックするため探索全体を停止させない。
+  const probes = RIVER_NEAREST_LAND_RADII_METERS.flatMap((radiusMeters) =>
+    RIVER_NEAREST_LAND_BEARINGS_DEGREES.map((bearingDegrees) => {
       const destination = calculateKarneyDestinationPoint(
         riverPoint,
         bearingDegrees,
         radiusMeters
       );
-      return Cartographic.fromDegrees(destination.longitude, destination.latitude, 0);
-    });
+      return {
+        radiusMeters,
+        bearingDegrees,
+        cartographic: Cartographic.fromDegrees(destination.longitude, destination.latitude, 0),
+      };
+    })
+  );
+  abortIfRequested(signal);
 
-    let sampled: Cartographic[];
-    try {
-      sampled = await sampleWorldTerrain(probes, signal, "10m");
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      trace?.("river-land:terrain-error", `radius=${radiusMeters}m error=${String(error)}`);
-      continue;
-    }
-
-    const probeGroundPoints = sampled.map((sample, index) =>
-      buildCandidateGroundPoint(
-        sample,
-        riverPoint,
-        `河川近傍陸地 ${radiusMeters}m/${RIVER_NEAREST_LAND_BEARINGS_DEGREES[index]}°`
-      )
+  let sampled: Cartographic[];
+  try {
+    sampled = await sampleWorldTerrain(
+      probes.map((probe) => probe.cartographic),
+      signal,
+      "10m"
     );
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    trace?.("river-land:terrain-error", `batchedPoints=${probes.length} error=${String(error)}`);
+    return null;
+  }
 
-    let contexts;
-    try {
-      contexts = await fetchSiteContexts(probeGroundPoints, signal, false);
-      consecutiveContextFailures = 0;
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      trace?.("river-land:context-error", `radius=${radiusMeters}m error=${String(error)}`);
-      consecutiveContextFailures += 1;
-      if (consecutiveContextFailures >= CONSECUTIVE_FAILURE_LIMIT) {
-        trace?.(
-          "river-land:abandoned",
-          `地理条件APIが${consecutiveContextFailures}回連続で失敗したため、残り半径の試行を打ち切ります`
-        );
-        return null;
-      }
-      // 水面/陸地を判別できない状態で陸地標高と断定しない。
-      continue;
-    }
+  const probeGroundPoints = sampled.map((sample, index) =>
+    buildCandidateGroundPoint(
+      sample,
+      riverPoint,
+      `河川近傍陸地 ${probes[index].radiusMeters}m/${probes[index].bearingDegrees}°`
+    )
+  );
 
+  const WATER_ONLY_TIMEOUT_MS = 7_000;
+  const waterController = new AbortController();
+  const forwardAbort = () => waterController.abort(signal?.reason);
+  signal?.addEventListener("abort", forwardAbort, { once: true });
+  const timeoutId = setTimeout(
+    () => waterController.abort(),
+    WATER_ONLY_TIMEOUT_MS
+  );
+  let contexts;
+  try {
+    contexts = await fetchSiteContexts(
+      probeGroundPoints,
+      waterController.signal,
+      false,
+      "water-only"
+    );
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    trace?.(
+      "river-land:context-fallback",
+      `water-only unavailable within ${WATER_ONLY_TIMEOUT_MS}ms; error=${String(error)}`
+    );
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+
+  for (const radiusMeters of RIVER_NEAREST_LAND_RADII_METERS) {
     const landSamples = sampled
       .map((sample, index) => {
+        if (probes[index].radiusMeters !== radiusMeters) return null;
         if (contexts[index]?.onWaterSurface) return null;
         const geoid = geoidHeightMetersForTerrainSample(sample);
         if (!Number.isFinite(geoid) || !Number.isFinite(sample.height)) return null;
@@ -883,14 +899,13 @@ async function estimateRiverOrthometricHeightFromNearestLand(
       .filter((value): value is { sample: Cartographic; orthometricHeightMeters: number } => value !== null);
 
     if (landSamples.length > 0) {
-      // 同一半径で複数陸地点が見つかった場合、外れ値の影響を抑えるため中央値を採用。
       const sorted = [...landSamples].sort(
         (a, b) => a.orthometricHeightMeters - b.orthometricHeightMeters
       );
       const median = sorted[Math.floor(sorted.length / 2)];
       trace?.(
         "river-land:resolved",
-        `radius=${radiusMeters}m landSamples=${landSamples.length} orthometric=${median.orthometricHeightMeters.toFixed(2)}m`
+        `radius=${radiusMeters}m landSamples=${landSamples.length} orthometric=${median.orthometricHeightMeters.toFixed(2)}m batched=true`
       );
       return {
         orthometricHeightMeters: median.orthometricHeightMeters,
@@ -898,9 +913,8 @@ async function estimateRiverOrthometricHeightFromNearestLand(
         sample: median.sample,
       };
     }
-    trace?.("river-land:continue", `radius=${radiusMeters}m landSamples=0`);
   }
-  trace?.("river-land:unresolved", "nearest-land DEM not found within 220m");
+  trace?.("river-land:unresolved", "nearest-land DEM not found within 220m (batched water-only)");
   return null;
 }
 
@@ -1959,14 +1973,18 @@ async function calculateOneCandidates(
   {
     const waterSurfaceStartedAt = performance.now();
     // 2026-09-05追記: このAPIは実機で数秒〜二十数秒かかることが確認されて
-    // いる（河川陸地判定と同じ地理条件API）。失敗時のフォールバックは
-    // 元々あったが、「遅いが失敗はしない」場合は無制限に待ってしまって
-    // いた。検索全体を巻き込まないよう、ここだけ独自に5秒で打ち切る
-    // （タイムアウト時もfetchSiteContexts自体は裏で継続するが、結果は
-    // 使わずデフォルト値のまま進む＝失敗時と同じ安全な扱い）。
+    // いる（河川陸地判定と同じ地理条件API）。検索全体を巻き込まないよう
+    // 5秒の工程予算を設け、超過時はAbortControllerで実fetch自体を停止する。
+    // 結果を取得できない場合は通常地形へフォールバックして探索を継続する。
     const WATER_SURFACE_CHECK_TIMEOUT_MS = 5_000;
     trace("water-surface:start", `points=${initialSolutions.length}`);
-    let waterSurfaceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const waterController = new AbortController();
+    const forwardWaterAbort = () => waterController.abort(signal?.reason);
+    signal?.addEventListener("abort", forwardWaterAbort, { once: true });
+    const waterSurfaceTimeoutId = setTimeout(
+      () => waterController.abort(),
+      WATER_SURFACE_CHECK_TIMEOUT_MS
+    );
     try {
       const waterProbePoints = initialSolutions.map((initialSolution) =>
         buildCandidateGroundPoint(
@@ -1975,24 +1993,23 @@ async function calculateOneCandidates(
           `${point.label}水面判定`
         )
       );
-      const waterContexts = await Promise.race([
-        fetchSiteContexts(waterProbePoints, signal, false),
-        new Promise<never>((_, reject) => {
-          waterSurfaceTimeoutId = setTimeout(
-            () => reject(new Error(`水面判定がタイムアウトしました（${WATER_SURFACE_CHECK_TIMEOUT_MS}ms）`)),
-            WATER_SURFACE_CHECK_TIMEOUT_MS
-          );
-        }),
-      ]);
+      const waterContexts = await fetchSiteContexts(
+        waterProbePoints,
+        waterController.signal,
+        false,
+        "water-only"
+      );
       waterSurfaceKinds = waterContexts.map((context) => context.waterSurfaceKind);
       trace("water-surface:end", `elapsed=${(performance.now() - waterSurfaceStartedAt).toFixed(1)}ms`);
     } catch (error) {
-      if (isAbortError(error)) throw error;
-      trace("water-surface:error", `error=${String(error)} elapsed=${(performance.now() - waterSurfaceStartedAt).toFixed(1)}ms`);
-      // 水面判定API障害・タイムアウトで通常の三脚探索まで失敗させない。
-      console.warn(`[tripod-candidate] ${point.label}: OSM水面判定を取得できないため通常地形で継続`, error);
+      if (signal?.aborted) throw error;
+      trace("water-surface:fallback", `error=${String(error)} elapsed=${(performance.now() - waterSurfaceStartedAt).toFixed(1)}ms`);
+      // 水面判定の時間枠超過・API障害は候補計算全体を失敗させない。
+      // water-onlyは共有要求を使わないため、abort時に実fetchも停止する。
+      console.warn(`[tripod-candidate] ${point.label}: OSM水面判定を打ち切り通常地形で継続`, error);
     } finally {
-      if (waterSurfaceTimeoutId !== undefined) clearTimeout(waterSurfaceTimeoutId);
+      clearTimeout(waterSurfaceTimeoutId);
+      signal?.removeEventListener("abort", forwardWaterAbort);
     }
     waterSurfaceCheckMs += performance.now() - waterSurfaceStartedAt;
   }

@@ -4,10 +4,10 @@ import {
   Cesium3DTileset,
   Cesium3DTileStyle,
   CesiumTerrainProvider,
-  createGooglePhotorealistic3DTileset,
   Ellipsoid,
   ImageryLayer,
   Ion,
+  IonResource,
   IonGeocodeProviderType,
   Math as CesiumMath,
   ScreenSpaceEventHandler,
@@ -19,10 +19,15 @@ import {
 import type { AccuracyMode } from "../types/precision";
 import { markAsGoogleTileset } from "./googleTilesetMarker";
 import { pickSceneSurfacePosition } from "./surfacePicking";
+import {
+  CESIUM_ION_USAGE_STOP_THRESHOLD,
+  CESIUM_ION_USAGE_WARNING_THRESHOLD,
+  CesiumIonRootTileLimitError,
+  startCesiumIonRootTilesetRequest,
+} from "../precision/cesiumIonConnection";
+import { publishUserNotice } from "../errors/userFeedback";
 
-export type GooglePhotorealisticTileset = Awaited<
-  ReturnType<typeof createGooglePhotorealistic3DTileset>
->;
+export type GooglePhotorealisticTileset = Cesium3DTileset;
 
 const TILESET_INITIALIZATION_TIMEOUT_MS = 35_000;
 const TILESET_INITIALIZATION_ATTEMPTS = 2;
@@ -118,38 +123,84 @@ export function setPreviewWireframeMode(viewer: Viewer, enabled: boolean): void 
     if (primitive[HIDDEN_PLATEAU_HEIGHT_LOOKUP_MARKER]) continue; // 当たり判定専用の透明タイルセットは対象外
     primitive.debugWireframe = enabled;
   }
-  // 2026-09-02修正（実機診断より）: Googleタイルモード（highest精度、
-  // createHighestPrecisionViewerでglobe: falseにて作成）ではglobe自体が
-  // 存在せず、Cesiumの仕様上 scene.imageryLayers（延いてはviewer.
-  // imageryLayers）はglobeが無いとundefinedを返す
-  // （node_modules/cesium内のScene.imageryLayersゲッター実装で確認）。
-  // 未定義を考慮せず.lengthへアクセスしていたため、「地形データを取得
-  // できず、三脚候補を計算できませんでした」という無関係な文言で三脚
-  // 候補計算全体が落ちる実害が実機で発生した。このモードではそもそも
-  // 地面の画像レイヤーが存在しない（見た目はGoogle 3D Tilesの実写のみ）
-  // ため、存在しなければ何もしないだけでよい。
-  if (viewer.imageryLayers) {
-    for (let index = 0; index < viewer.imageryLayers.length; index += 1) {
-      const layer = viewer.imageryLayers.get(index);
-      if (layer) layer.show = !enabled;
-    }
-  }
+  // 2026-09-05修正（実機報告：「プレビューが表示されない／真っ黒になる」）:
+  // 以前はここで地面の画像レイヤー（imageryLayers）自体をshow=falseで
+  // 完全に非表示にしていた。これは「ワイヤーフレーム（形だけ）表示」という
+  // コメントの意図に反し、実際には地面の色・写真が何も無い状態
+  // （Cesiumのデフォルト背景色＝ほぼ黒）になり、時間スライダーを動かす
+  // たびに毎回発生する三脚候補探索の間、プレビュー・3D地図（2D表示中は
+  // 隠れているはずのプレビューが対象）が丸ごと真っ黒に見える不具合の
+  // 直接の原因になっていた。建物3Dタイルセットのワイヤーフレーム化
+  // （上のループ）だけで十分に軽量化の目的は果たせるため、地面の
+  // 画像レイヤーを隠す処理自体を廃止する。
+}
+
+const GOOGLE_PHOTOREALISTIC_ION_ASSET_ID = 2275207;
+let googlePhotorealisticIonResourcePromise: ReturnType<typeof IonResource.fromAssetId> | undefined;
+
+function getGooglePhotorealisticIonResource() {
+  // CesiumJS 1.143 の createGooglePhotorealistic3DTileset() と同じ ion asset を使う。
+  // Cesium公式実装はこの metadata/endpoint 解決を終えた後に
+  // Cesium3DTileset.fromUrl(resource) で root tileset を要求する。
+  // root quota と無関係な endpoint 解決失敗を誤カウントしないよう、同じ順序を明示する。
+  googlePhotorealisticIonResourcePromise ??= IonResource.fromAssetId(
+    GOOGLE_PHOTOREALISTIC_ION_ASSET_ID
+  );
+  return googlePhotorealisticIonResourcePromise;
 }
 
 async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotorealisticTileset> {
   let timedOut = false;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const request = createGooglePhotorealistic3DTileset(
-    {
-      onlyUsingWithGoogleGeocoder: true,
-    },
-    {
-      // Googleの公式ポリシー（Map Tiles API Policies）はCesiumJSでの利用時、
-      // showCreditsOnScreenを有効にしてタイルの著作権表示を行うことを明示的に
-      // 要求している。これを付けないと契約上必須の属性表示ができない。
-      showCreditsOnScreen: true,
+
+  // CesiumJS 1.143 の実装順に合わせ、まず ion asset endpoint を解決する。
+  // ここで失敗した場合は Google root tileset request はまだ開始されていないため、
+  // AstroSight の root カウンターは増やさない。
+  const rootResource = await getGooglePhotorealisticIonResource();
+
+  let usageCount: number;
+  let request: Promise<Cesium3DTileset>;
+  try {
+    const started = startCesiumIonRootTilesetRequest(() =>
+      Cesium3DTileset.fromUrl(rootResource, {
+        // CesiumJS createGooglePhotorealistic3DTileset() の既定値を維持する。
+        cacheBytes: 1536 * 1024 * 1024,
+        maximumCacheOverflowBytes: 1024 * 1024 * 1024,
+        enableCollision: true,
+        // Google Map Tiles API Policies に従い、帰属表示を常時有効化する。
+        showCreditsOnScreen: true,
+      })
+    );
+    request = started.request;
+    usageCount = started.count;
+  } catch (error) {
+    if (error instanceof CesiumIonRootTileLimitError) {
+      publishUserNotice({
+        key: "cesium-ion-root-limit",
+        tone: "warning",
+        prominent: true,
+        message: `${error.message} ※同じCesium ionアカウントを複数端末で使用している場合、他端末の利用分はこの端末では把握できません。実際の利用量はCesium ionのUsage画面も確認してください。`,
+      });
     }
-  );
+    throw error;
+  }
+
+  if (usageCount === CESIUM_ION_USAGE_WARNING_THRESHOLD) {
+    publishUserNotice({
+      key: "cesium-ion-root-warning-500",
+      tone: "warning",
+      prominent: true,
+      message: `Google 3Dマップの今月のroot取得カウントが${usageCount}回に達しました。${CESIUM_ION_USAGE_STOP_THRESHOLD}回に達すると、無料枠保護のため新しいGoogleタイル取得を停止します。※同じCesium ionアカウントを複数端末で使用している場合、他端末の利用分はこの端末では把握できません。実際の利用量はCesium ionのUsage画面も確認してください。`,
+    });
+  } else if (usageCount === CESIUM_ION_USAGE_STOP_THRESHOLD) {
+    publishUserNotice({
+      key: "cesium-ion-root-reached-800",
+      tone: "warning",
+      prominent: true,
+      message: `Google 3Dマップの今月の安全利用上限（${usageCount}回）に達しました。現在開始したGoogleタイルはそのまま表示できますが、これ以降の新しいroot取得は翌月まで停止します。※同じCesium ionアカウントを複数端末で使用している場合、他端末の利用分はこの端末では把握できません。実際の利用量はCesium ionのUsage画面も確認してください。`,
+    });
+  }
+
   try {
     return await Promise.race([
       request,

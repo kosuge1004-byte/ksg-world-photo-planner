@@ -202,19 +202,21 @@ export function isCesiumIonConnected(): boolean {
   return loadCesiumIonConnection() !== null;
 }
 
-// 2026-08-26追記: 「1つのCesium ionアカウントの利用が、複数端末で使い
-// 回されていないか」を検知する目的で導入。ただしAstroSightはユーザー
-// アカウントを持たない設計のため、サーバー側で複数端末を横断して
-// 名寄せする手段がない。そのため、この端末単体での利用回数のみを
-// 数える（=複数端末で使い回された場合、それぞれの端末は無自覚に低い
-// カウントのままになる）。この limitation はユーザーに正直に案内し
-// （「これは端末ごとのカウントであり、複数端末で同じアカウントを使う
-// 場合は合算で無料枠を超える可能性がある」）、実際の判断はユーザー
-// 自身の申告・注意に委ねる設計とする。
+// 2026-09-07修正: Cesium ion Community の Google Photorealistic 3D Tiles は
+// 「1,000 root tiles / month」。Google Map Tiles API も Photorealistic 3D Tiles の
+// quota 単位を root tileset query としており、1つの root から発行された timed session
+// による renderer-originating tile requests（パン・ズーム・移動で読む子タイル）は別扱い。
+// そのため従来の「3時間以内は1回」という端末独自セッションカウントを廃止し、
+// createGooglePhotorealistic3DTileset() を新規に開始する直前の各試行を1回として数える。
+//
+// 注意: Cesium ion は Usage 値をアプリから取得する公開APIを提供していないため、これは
+// 公式Usageそのものではなく「AstroSightが発生させようとしたroot取得」の端末内ミラー。
+// createGooglePhotorealistic3DTileset() の全呼び出しを共通ローダーに集約し、再試行も
+// 各1回として数えることで、公式のroot-request単位に可能な限り一致させる。
+// 複数端末で同じCesium ionアカウントを使った場合、他端末分はこの端末では把握できない。
 const USAGE_COUNT_STORAGE_KEY = "ksg-cesium-ion-usage-count";
-const USAGE_SESSION_STORAGE_KEY = "ksg-cesium-ion-usage-session";
-const USAGE_SESSION_TTL_MS = 3 * 60 * 60 * 1000; // 3時間: 同一セッション内の再利用は1回として数える
 export const CESIUM_ION_USAGE_WARNING_THRESHOLD = 500;
+export const CESIUM_ION_USAGE_STOP_THRESHOLD = 800;
 
 type UsageRecord = { month: string; count: number };
 
@@ -231,32 +233,83 @@ function loadUsageRecord(): UsageRecord {
     if (typeof parsed.month !== "string" || typeof parsed.count !== "number") {
       return { month: currentMonthKey(), count: 0 };
     }
-    // 月が変わっていたらリセットする。
+    // Cesium ion quotaと同じく暦月単位で管理する。端末のローカル暦月が変わった
+    // 最初の参照時に0へ戻す。旧方式で同じキーに保存済みの当月値は安全側の
+    // 下限値としてそのまま引き継ぎ、更新によって突然0へ戻ることを避ける。
     if (parsed.month !== currentMonthKey()) return { month: currentMonthKey(), count: 0 };
-    return parsed as UsageRecord;
+    return { month: parsed.month, count: Math.max(0, Math.floor(parsed.count)) };
   } catch {
     return { month: currentMonthKey(), count: 0 };
   }
 }
 
-/**
- * 高精度モード（Googleタイルモード）を1回利用するたびに呼び出す。
- * 同一セッション（3時間）内の重複呼び出しはカウントしない。
- * 戻り値は「この端末での今月の利用回数」。
- */
-export function recordCesiumIonHighPrecisionUsage(): number {
-  const now = Date.now();
-  const lastSessionAt = Number(sessionStorage.getItem(USAGE_SESSION_STORAGE_KEY) ?? "0");
-  const record = loadUsageRecord();
-  if (Number.isFinite(lastSessionAt) && now - lastSessionAt < USAGE_SESSION_TTL_MS) {
-    return record.count;
+export class CesiumIonRootTileLimitError extends Error {
+  readonly count: number;
+
+  constructor(count: number) {
+    super(
+      `Google 3Dマップの今月の安全利用上限（${CESIUM_ION_USAGE_STOP_THRESHOLD}回）に達したため、新しいGoogleタイルの取得を停止しました。翌月に自動的に利用可能になります。`
+    );
+    this.name = "CesiumIonRootTileLimitError";
+    this.count = count;
   }
-  sessionStorage.setItem(USAGE_SESSION_STORAGE_KEY, String(now));
-  const updated: UsageRecord = { month: currentMonthKey(), count: record.count + 1 };
-  localStorage.setItem(USAGE_COUNT_STORAGE_KEY, JSON.stringify(updated));
-  return updated.count;
+}
+
+/**
+ * Google Photorealistic 3D Tiles の新しい root tileset 取得を開始する直前に、
+ * 必ず1回だけ呼ぶ。800回に既に到達している場合はカウントせず遮断する。
+ * 800回目そのものは許可し、その後の新規root取得を禁止する。
+ *
+ * この関数を「Googleモードを開いた時」など上位UIから呼んではいけない。
+ * 実際の createGooglePhotorealistic3DTileset() 呼び出し直前だけを計測点とする。
+ */
+function saveUsageRecord(record: UsageRecord): void {
+  // カウンターを保存できない状態でGoogle root requestだけを進めると、
+  // Cesium公式UsageよりAstroSightが少なくなる危険がある。そのため保存不能時は
+  // root requestを開始しない（安全側に停止）。
+  localStorage.setItem(USAGE_COUNT_STORAGE_KEY, JSON.stringify(record));
+}
+
+export function startCesiumIonRootTilesetRequest<T>(startRequest: () => T): { request: T; count: number } {
+  const record = loadUsageRecord();
+  if (record.count >= CESIUM_ION_USAGE_STOP_THRESHOLD) {
+    throw new CesiumIonRootTileLimitError(record.count);
+  }
+
+  const updated: UsageRecord = {
+    month: currentMonthKey(),
+    count: record.count + 1,
+  };
+
+  // 先に1回分を予約保存し、その後にroot requestを開始する。
+  // これによりlocalStorage保存失敗時に公式側だけ増える「過少カウント」を防ぐ。
+  // startRequestが同期的に失敗した場合だけ、root request未開始と判断して予約を戻す。
+  saveUsageRecord(updated);
+  try {
+    const request = startRequest();
+    return { request, count: updated.count };
+  } catch (error) {
+    try {
+      saveUsageRecord(record);
+    } catch {
+      // rollback保存まで失敗した場合は、安全側に過大カウントを残す。
+    }
+    throw error;
+  }
 }
 
 export function getCesiumIonMonthlyUsageCount(): number {
   return loadUsageRecord().count;
 }
+
+export function setCesiumIonMonthlyUsageCountFromOfficialUsage(count: number): number {
+  if (!Number.isFinite(count)) throw new Error("Cesium ion Usageの値が数値ではありません");
+  const normalized = Math.max(0, Math.floor(count));
+  saveUsageRecord({ month: currentMonthKey(), count: normalized });
+  return normalized;
+}
+
+export function isCesiumIonRootTilesetRequestAllowed(): boolean {
+  return loadUsageRecord().count < CESIUM_ION_USAGE_STOP_THRESHOLD;
+}
+
