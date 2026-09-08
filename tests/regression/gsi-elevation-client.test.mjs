@@ -50,13 +50,19 @@ test("large DEM requests split until Cloudflare can complete them", async () => 
   assert.equal(result.samples.length, 100);
   assert.equal(result.failedPointCount, 0);
   assert.ok(result.samples.every((sample) => sample.source === "DEM5A"));
-  // 1024点以下は1本で送り、失敗時だけ8点以下まで半分に分割する。
-  assert.ok(requestSizes.includes(100));
-  assert.ok(requestSizes.includes(50));
-  assert.ok(requestSizes.includes(25));
+  // 2026-09-01/09-02の並列分割変更後、100点（PARALLEL_SPLIT_MIN_POINTS=96以上）は
+  // 最初からchunkSizeForRequest(100)=48点ずつ（ceil(100/48)=3バッチ: 48,48,4）に
+  // 分割して送られる。48点バッチは8点超のため524で失敗し、24→12→6と半分に
+  // 分割しながら再送され、6点(MIN_RECOVERY_SPLIT_SIZE=8以下)で成功する。
+  assert.ok(requestSizes.includes(48));
+  assert.ok(requestSizes.includes(24));
+  assert.ok(requestSizes.includes(12));
   assert.ok(requestSizes.some((size) => size <= 8));
   assert.ok(Math.max(...requestSizes) <= 1024);
-  assert.ok(maximumActiveRequests <= 8);
+  // グローバル共有キュー（sharedQueue/MAX_CONCURRENT_REQUESTS）が唯一の実行主体
+  // であり、再帰的な分割がいくつ並行していても同時実行数はアプリ全体で
+  // MAX_CONCURRENT_REQUESTS(10)を超えない。
+  assert.ok(maximumActiveRequests <= 10);
 });
 
 test("an unrecoverable DEM point does not discard its neighboring points", async () => {
@@ -118,18 +124,21 @@ test("tile cache diagnostics aggregate every server cache path across batches", 
 
   const result = await fetchGsiElevationSamples(points(1500), undefined, fetcher);
 
-  assert.equal(calls, 2, "1500 points should use 1024 + 476 point batches");
-  assert.equal(result.tileCacheHitCount, 2);
-  assert.equal(result.tileCacheMissCount, 4);
-  assert.equal(result.tileMemoryHitCount, 6);
-  assert.equal(result.tileCacheSharedCount, 8);
-  assert.equal(result.tileCacheBypassCount, 10);
+  // 2026-09-01/09-02の並列分割変更（chunkSizeForRequest / MAX_CONCURRENT_REQUESTS=10）
+  // により、96点以上はMAX_CONCURRENT_REQUESTS本へほぼ均等分割されるようになった。
+  // 1500点はceil(1500/10)=150点ずつ、ちょうど10バッチになる。
+  assert.equal(calls, 10, "1500 points should split into 10 even 150-point batches");
+  assert.equal(result.tileCacheHitCount, 10);
+  assert.equal(result.tileCacheMissCount, 20);
+  assert.equal(result.tileMemoryHitCount, 30);
+  assert.equal(result.tileCacheSharedCount, 40);
+  assert.equal(result.tileCacheBypassCount, 50);
   assert.deepEqual(getGsiElevationCacheStats(), {
-    hit: 2,
-    miss: 4,
-    memoryHit: 6,
-    shared: 8,
-    bypass: 10,
+    hit: 10,
+    miss: 20,
+    memoryHit: 30,
+    shared: 40,
+    bypass: 50,
   });
 });
 

@@ -41,14 +41,20 @@ type Props = {
 };
 
 type MapLibreLngLat = { lat: number; lng: number };
+// MapLibreの`on`/`off`はイベント名ごとにペイロード形状が異なる（load/styledataは
+// 引数なし、clickはlngLatを持つ、errorはerrorまたはmessageを持つ等）。CDN経由で
+// 動的importしているためmaplibre-glパッケージ自体の型は使えず、handleClick /
+// handleError側で必要なプロパティだけを安全にnarrowingして読み出す。
+type MapLibreMouseEvent = { lngLat?: MapLibreLngLat };
+type MapLibreErrorEvent = { error?: { message?: string }; message?: string };
 type MapLibreMapLike = {
   remove: () => void;
   resize: () => void;
   getCenter: () => MapLibreLngLat;
   getZoom: () => number;
   jumpTo: (options: { center?: [number, number]; zoom?: number; bearing?: number; pitch?: number }) => void;
-  on: (event: string, listener: (event?: any) => void) => void;
-  off: (event: string, listener: (event?: any) => void) => void;
+  on: (event: string, listener: (event?: unknown) => void) => void;
+  off: (event: string, listener: (event?: unknown) => void) => void;
   isStyleLoaded: () => boolean;
   getSource: (id: string) => unknown;
   addSource: (id: string, source: Record<string, unknown>) => void;
@@ -208,13 +214,14 @@ export function MapLibre2DMap({
           if (disposed || mapRef.current !== map) return;
           syncSatelliteLayer(map, mapTypeRef.current);
         };
-        const handleClick = (event?: any) => {
-          const lngLat = event?.lngLat;
+        const handleClick = (event?: unknown) => {
+          const lngLat = (event as MapLibreMouseEvent | undefined)?.lngLat;
           if (!lngLat || !onTapRef.current) return;
           onTapRef.current({ latitude: lngLat.lat, longitude: lngLat.lng });
         };
-        const handleError = (event?: any) => {
-          const detail = event?.error?.message || event?.message;
+        const handleError = (event?: unknown) => {
+          const typedEvent = event as MapLibreErrorEvent | undefined;
+          const detail = typedEvent?.error?.message || typedEvent?.message;
           onErrorRef.current?.(
             detail
               ? `2D地図を読み込めませんでした：${String(detail)}`

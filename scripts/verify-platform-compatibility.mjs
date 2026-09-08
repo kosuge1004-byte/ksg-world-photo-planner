@@ -11,7 +11,7 @@ const appCss = read("src/App.css");
 const projectCss = read("src/components/ProjectScreens.css");
 const fullscreen = read("src/ui/fullscreen.ts");
 const previewGesture = read("src/components/PreviewGestureLayer.tsx");
-const mapGesture = read("src/components/Map2DInteractionLayer.tsx");
+const mapOverlay = read("src/components/Map2DOverlay.tsx");
 const location = read("src/device/locationSettings.ts");
 const backgroundSearch = read("src/search/backgroundSpotSearch.ts");
 const app = read("src/App.tsx");
@@ -42,8 +42,11 @@ const required = [
   [fullscreen, "ios-pseudo-fullscreen", "iPhone fullscreen fallback"],
   [previewGesture, "setPointerCapture", "preview pointer capture"],
   [previewGesture, 'passive: false', "preview non-passive wheel"],
-  [mapGesture, "setPointerCapture", "map pointer capture"],
-  [mapGesture, 'passive: false', "map non-passive wheel"],
+  // 2026-08-30のMap2DInteractionLayer廃止後、2Dマップのタップ/ドラッグ配置は
+  // Map2DOverlayが担う。ホイールズーム/ピンチのnon-passiveリスナーは現在
+  // maplibre-gl本体が内部で管理しており、アプリ側ソースには存在しないため
+  // ここでは検証しない。
+  [mapOverlay, "setPointerCapture", "map pointer capture"],
   [location, "navigator.permissions?.query", "Safari permissions API guard"],
   [location, "if (!navigator.geolocation)", "geolocation API guard"],
   [backgroundSearch, "runtimeCrypto?.randomUUID", "randomUUID compatibility guard"],

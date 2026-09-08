@@ -101,7 +101,9 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFav
                     ? "端末への保存を確定しています…"
                     : progress.totalSteps === 0
                       ? "既に最新の状態です。"
-                      : `${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}`}
+                      : progress.phase === "terrain" && progress.currentBearingDegrees !== null
+                        ? `${progress.completedSteps} / ${progress.totalSteps} 方位（${progress.currentBearingDegrees}°）・${progress.terrainStage === "high-precision" ? "高精度DEM保存中" : "地形プロファイル取得中"}`
+                        : `${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}`}
             </p>
             <div>
               <button type="button" onClick={onCancelDownload}>

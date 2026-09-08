@@ -40,6 +40,31 @@ const TOTAL_BEARINGS = Math.round(360 / ALL_BEARINGS_STEP_DEGREES);
 
 const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 
+const BEARING_TERRAIN_STAGE_TIMEOUT_MS = 45_000;
+
+async function runBearingTerrainStage<T>(
+  operation: (signal: AbortSignal | undefined) => Promise<T>,
+  parentSignal?: AbortSignal
+): Promise<T> {
+  if (parentSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  parentSignal?.addEventListener("abort", onAbort, { once: true });
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`方位地形取得が${Math.round(BEARING_TERRAIN_STAGE_TIMEOUT_MS / 1000)}秒でタイムアウトしました`));
+    }, BEARING_TERRAIN_STAGE_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    parentSignal?.removeEventListener("abort", onAbort);
+  }
+}
+
 export type BearingProfileOptIn = {
   subjectId: string;
   label: string;
@@ -87,6 +112,7 @@ export type BearingBackfillProgress = {
   profilePoints?: number;
   highPrecisionPoints?: number;
   phase?: "terrain" | "water" | "osm" | "finalizing";
+  terrainStage?: "profile" | "high-precision";
 };
 
 export type BearingBackfillResult = {
@@ -156,7 +182,7 @@ export async function backfillBearingProfiles(params: {
 
   for (const bearing of pendingBearings) {
     if (signal?.aborted) break;
-    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing, profilePoints, highPrecisionPoints, phase: "terrain" });
+    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing, profilePoints, highPrecisionPoints, phase: "terrain", terrainStage: "profile" });
 
     const cartographicPoints = baseDistances.map((distanceMeters) => {
       const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, distanceMeters);
@@ -165,12 +191,15 @@ export async function backfillBearingProfiles(params: {
 
     let sampled;
     try {
-      sampled = await sampleWorldTerrain(
-        cartographicPoints.map(({ destination }) =>
-          Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
+      sampled = await runBearingTerrainStage(
+        (stageSignal) => sampleWorldTerrain(
+          cartographicPoints.map(({ destination }) =>
+            Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
+          ),
+          stageSignal,
+          "10m"
         ),
-        signal,
-        "10m"
+        signal
       );
     } catch (error) {
       if (signal?.aborted) break;
@@ -197,17 +226,21 @@ export async function backfillBearingProfiles(params: {
     // 探索線上を利用可能な最詳細GSI DEM（1m要求、未整備域は既存の5m/10m
     // 優先順位へフォールバック）でも取得する。neutral補間を使うため、実際の
     // 三脚候補精密計算と同じ端末DEMタイルキャッシュを温める。
+    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing, profilePoints, highPrecisionPoints, phase: "terrain", terrainStage: "high-precision" });
     try {
       recordGsiDeviceTileReferencesForPoints(
         subjectId,
         cartographicPoints.map(({ destination }) => ({ latitude: destination.latitude, longitude: destination.longitude }))
       );
-      await sampleWorldTerrainNeutral(
-        cartographicPoints.map(({ destination }) =>
-          Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
+      await runBearingTerrainStage(
+        (stageSignal) => sampleWorldTerrainNeutral(
+          cartographicPoints.map(({ destination }) =>
+            Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
+          ),
+          stageSignal,
+          "1m"
         ),
-        signal,
-        "1m"
+        signal
       );
       highPrecisionPoints += cartographicPoints.length;
       // 水面判定は全23万点をOverpassへ投げず、各方位を均等に8点だけ抽出。

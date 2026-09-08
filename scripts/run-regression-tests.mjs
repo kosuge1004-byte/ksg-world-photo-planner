@@ -4,6 +4,10 @@ const cases = [
   { name: "downloaded data audit fixes", arguments: ["./scripts/verify-downloaded-data-audit-fixes-20260908.mjs"] },
   "scripts/verify-river-point-geoid-final-20260908.mjs",
   {
+    name: "bearing profile download stall guard",
+    script: "scripts/verify-bearing-profile-download-stall-fix-20260908.mjs",
+  },
+  {
     name: "downloaded spot high precision cache",
     arguments: ["./scripts/verify-downloaded-spot-high-precision-20260908.mjs"],
   },
