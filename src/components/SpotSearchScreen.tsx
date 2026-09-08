@@ -22,6 +22,7 @@ type Props = {
   favorites: SubjectRecord[];
   currentSubjectIsFavorite: boolean;
   onSelectStoredSubject: (record: SubjectRecord) => void;
+  onSelectDownloadedSpotData: (record: DownloadedSpotDataRecord) => void;
   onToggleCurrentFavorite: () => void;
   onToggleFavorite: (record: SubjectRecord) => void;
   onRenameFavorite: (id: string, label: string) => void;
@@ -53,6 +54,7 @@ export function SpotSearchScreen({
   favorites,
   currentSubjectIsFavorite,
   onSelectStoredSubject,
+  onSelectDownloadedSpotData,
   onToggleCurrentFavorite,
   onToggleFavorite,
   onRenameFavorite,
@@ -257,7 +259,7 @@ export function SpotSearchScreen({
                     <label className="spot-download-select" aria-label={`${record.label}を選択`}>
                       <input type="checkbox" checked={selectedDownloadedIds.has(record.subjectId)} onChange={() => toggleDownloadedSelection(record.subjectId)} />
                     </label>
-                    <button type="button" onClick={() => onSelectStoredSubject({ id: record.subjectId, label: record.label, latitude: record.latitude, longitude: record.longitude, searchType: "saved", createdAt: record.downloadedAtIso, lastUsedAt: record.downloadedAtIso })}>
+                    <button type="button" onClick={() => onSelectDownloadedSpotData(record)}>
                       <strong>{record.label} <span className={`spot-download-state ${stats?.state ?? "partial"}`}>{stateLabel}</span></strong>
                       <small>高精度DEM {record.highPrecisionPoints.toLocaleString()}点 / 地形 {record.profilePoints.toLocaleString()}点</small>
                       <small>DEM {formatBytes(stats?.demBytes ?? record.demTileBytes)} / {stats?.demLiveTiles ?? record.demTileCount ?? 0}タイル ・ 地形プロファイル {formatBytes(stats?.profileBytes)} / {stats?.profileEntries ?? 0}方位</small>

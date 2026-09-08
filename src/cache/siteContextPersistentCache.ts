@@ -1,6 +1,5 @@
 import type { SiteContext } from "../types/geospatial";
-import type { GroundPoint } from "../types/points";
-import type { SiteContextPurpose } from "../search/siteContext";
+import type { SiteContextPoint, SiteContextPurpose } from "../search/siteContext";
 
 const DB_NAME = "astrosight-site-context-cache-v1";
 const DB_VERSION = 1;
@@ -11,14 +10,46 @@ const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 type Cached = { key: string; context: SiteContext; storedAt: number };
 type SpotRefs = { subjectId: string; keys: string[] };
 
-function keyFor(point: GroundPoint, purpose: SiteContextPurpose, includeDetails: boolean): string {
+type IdbRequest<T> = {
+  result: T;
+  onsuccess: (() => void) | null;
+  onerror: (() => void) | null;
+  onupgradeneeded?: (() => void) | null;
+};
+
+type IdbStore = {
+  get: (key: string) => IdbRequest<unknown>;
+  put: (value: unknown) => IdbRequest<unknown>;
+  delete: (key: string) => IdbRequest<unknown>;
+  getAll: () => IdbRequest<unknown>;
+};
+
+type IdbTransaction = {
+  objectStore: (name: string) => IdbStore;
+  oncomplete: (() => void) | null;
+  onerror: (() => void) | null;
+  onabort: (() => void) | null;
+};
+
+type IdbDatabase = {
+  objectStoreNames: { contains: (name: string) => boolean };
+  createObjectStore: (name: string, options: { keyPath: string }) => IdbStore;
+  transaction: (name: string | string[], mode: "readonly" | "readwrite") => IdbTransaction;
+};
+
+type IdbFactory = {
+  open: (name: string, version: number) => IdbRequest<IdbDatabase>;
+};
+
+function keyFor(point: SiteContextPoint, purpose: SiteContextPurpose, includeDetails: boolean): string {
   return `${purpose}:${includeDetails ? 1 : 0}:${point.latitude.toFixed(5)}:${point.longitude.toFixed(5)}`;
 }
 
-function openDb(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+function openDb(): Promise<IdbDatabase | null> {
+  const indexedDb = (globalThis as unknown as { indexedDB?: IdbFactory }).indexedDB;
+  if (!indexedDb) return Promise.resolve(null);
   return new Promise((resolve) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDb.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "key" });
@@ -29,7 +60,7 @@ function openDb(): Promise<IDBDatabase | null> {
   });
 }
 
-export async function readPersistentSiteContexts(points: GroundPoint[], purpose: SiteContextPurpose, includeDetails: boolean): Promise<Array<SiteContext | null>> {
+export async function readPersistentSiteContexts(points: SiteContextPoint[], purpose: SiteContextPurpose, includeDetails: boolean): Promise<Array<SiteContext | null>> {
   const db = await openDb();
   if (!db) return points.map(() => null);
   const now = Date.now();
@@ -44,14 +75,14 @@ export async function readPersistentSiteContexts(points: GroundPoint[], purpose:
   })));
 }
 
-export async function writePersistentSiteContexts(points: GroundPoint[], contexts: SiteContext[], purpose: SiteContextPurpose, includeDetails: boolean, subjectId?: string): Promise<void> {
+export async function writePersistentSiteContexts(points: SiteContextPoint[], contexts: SiteContext[], purpose: SiteContextPurpose, includeDetails: boolean, subjectId?: string): Promise<void> {
   const db = await openDb();
   if (!db || points.length !== contexts.length) return;
   const keys = points.map((point) => keyFor(point, purpose, includeDetails));
   await new Promise<void>((resolve) => {
     const tx = db.transaction(STORE, "readwrite");
     const store = tx.objectStore(STORE);
-    points.forEach((point, i) => store.put({ key: keys[i], context: contexts[i], storedAt: Date.now() } satisfies Cached));
+    contexts.forEach((context, i) => store.put({ key: keys[i], context, storedAt: Date.now() } satisfies Cached));
     tx.oncomplete = () => resolve(); tx.onerror = () => resolve(); tx.onabort = () => resolve();
   });
   if (!subjectId) return;

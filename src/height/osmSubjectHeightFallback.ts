@@ -55,7 +55,7 @@ export async function findOsmSubjectHeightHint(
     // 「スカイツリー」等、情報量の多い都心部で使いもしないaccess判定に
     // 時間がかかり検索全体が長時間停止して見えていた問題の実質的な対策。
     contexts = await fetchSiteContexts(
-      [{ latitude, longitude, height: 0, label: "被写体高さ推定用" }],
+      [{ latitude, longitude }],
       signal,
       true,
       "height-only"

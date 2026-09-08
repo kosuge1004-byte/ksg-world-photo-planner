@@ -6,6 +6,8 @@ const app = fs.readFileSync('src/App.tsx','utf8');
 const checks = [
  ['persistent cache read before network', site.includes('readPersistentSiteContexts(points, purpose, includeDetails)')],
  ['persistent cache writes live results', site.includes('writePersistentSiteContexts(missingPoints, fetched')],
+ ['coordinate-only point contract', site.includes('SiteContextPoint = Pick<GroundPoint, "latitude" | "longitude">') && mgr.includes('SiteContextPoint[]')],
+ ['IndexedDB is runtime-guarded for non-browser builds', cache.includes('globalThis as unknown as { indexedDB?: IdbFactory }')],
  ['water-only prefetched', mgr.includes('waterPrefetchPoints') && mgr.includes('"water-only"')],
  ['full OSM near subject prefetched', mgr.includes('detailPoints') && mgr.includes('"full"')],
  ['spot refs stored', cache.includes('REF_STORE') && cache.includes('subjectId, keys')],

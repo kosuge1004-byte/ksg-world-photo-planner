@@ -3427,6 +3427,30 @@ ${diagnosticMessage}
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
 
+  async function applyDownloadedSpotData(record: DownloadedSpotDataRecord): Promise<void> {
+    setSearchMessage(`${record.label || "保存済みスポット"}の高度を確認しています…`);
+    try {
+      // DownloadedSpotDataRecordはキャッシュ管理用の緯度経度だけを保存する。
+      // 被写体として再配置する際は0mを補わず、現在の正式な高度解決経路を通す。
+      const point = await resolveSearchSubject(
+        record.latitude,
+        record.longitude,
+        record.label || "保存済みスポット"
+      );
+      applyStoredSubject({
+        ...point,
+        id: record.subjectId,
+        label: record.label || point.label,
+        searchType: "saved",
+        createdAt: record.downloadedAtIso,
+        lastUsedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.warn("ダウンロード済みスポットの高度を解決できませんでした", error);
+      setSearchMessage(toUserFacingErrorMessage(error, "spot-search"));
+    }
+  }
+
   function toggleCurrentSubjectFavorite() {
     if (!subjectPoint) return;
     const wasFavorite = isFavoriteSubject(favoriteSubjects, subjectPoint);
@@ -3528,23 +3552,33 @@ ${diagnosticMessage}
     setSearchMessage(`${records.length}スポットの保存データを削除しました（DEM ${totalDeletedTiles}枚削除 / 共有${totalRetainedSharedTiles}枚保持 / OSM・水面${totalDeletedSiteContexts}件削除 / 約${freedMb.toFixed(freedMb >= 10 ? 0 : 1)}MB解放）`);
   }
 
-  function refreshDownloadedSpotData(record: DownloadedSpotDataRecord): void {
-    const point: GroundPoint = { latitude: record.latitude, longitude: record.longitude, height: 0 };
-    const subjectRecord: SubjectRecord = {
-      id: record.subjectId,
-      label: record.label,
-      latitude: record.latitude,
-      longitude: record.longitude,
-      searchType: "saved",
-      createdAt: record.downloadedAtIso,
-      lastUsedAt: new Date().toISOString(),
-    };
-    bearingProfilePendingRef.current = { record: subjectRecord, subjectPoint: point, forceRefresh: true };
-    setBearingProfileDialog({
-      subjectLabel: record.label || "この地点",
-      mode: "favorite",
-      progress: null,
-    });
+  async function refreshDownloadedSpotData(record: DownloadedSpotDataRecord): Promise<void> {
+    setSearchMessage(`${record.label || "この地点"}の標高を確認しています…`);
+    try {
+      // 更新時も0mの仮高度を作らず、地点別DEM・ジオイド処理を通した地表点を使う。
+      const point = await resolveGroundPoint(
+        record.latitude,
+        record.longitude,
+        record.label || "保存済みスポット"
+      );
+      const subjectRecord: SubjectRecord = {
+        ...point,
+        id: record.subjectId,
+        label: record.label || point.label,
+        searchType: "saved",
+        createdAt: record.downloadedAtIso,
+        lastUsedAt: new Date().toISOString(),
+      };
+      bearingProfilePendingRef.current = { record: subjectRecord, subjectPoint: point, forceRefresh: true };
+      setBearingProfileDialog({
+        subjectLabel: record.label || "この地点",
+        mode: "favorite",
+        progress: null,
+      });
+    } catch (error) {
+      console.warn("ダウンロード済みスポットの更新用標高を解決できませんでした", error);
+      setSearchMessage(toUserFacingErrorMessage(error, "spot-search"));
+    }
   }
 
   async function confirmBearingProfileDownload(registerFavorite = false) {
@@ -5734,6 +5768,7 @@ ${diagnosticMessage}
         favorites={favoriteSubjects}
         currentSubjectIsFavorite={isFavoriteSubject(favoriteSubjects, subjectPoint)}
         onSelectStoredSubject={applyStoredSubject}
+        onSelectDownloadedSpotData={(record) => void applyDownloadedSpotData(record)}
         onToggleCurrentFavorite={toggleCurrentSubjectFavorite}
         onToggleFavorite={toggleFavoriteFromList}
         onRenameFavorite={(id, label) => setFavoriteSubjects(renameFavoriteSubject(id, label))}
@@ -5745,7 +5780,7 @@ ${diagnosticMessage}
         downloadedSpotStorageSummary={downloadedSpotStorageSummary}
         onDeleteDownloadedSpotData={(record) => void handleDeleteBearingProfileData(record.subjectId)}
         onDeleteDownloadedSpotDataBulk={(records) => void handleDeleteDownloadedSpotDataBulk(records)}
-        onRefreshDownloadedSpotData={refreshDownloadedSpotData}
+        onRefreshDownloadedSpotData={(record) => void refreshDownloadedSpotData(record)}
       />
       <BearingProfileDownloadDialog
         state={bearingProfileDialog}

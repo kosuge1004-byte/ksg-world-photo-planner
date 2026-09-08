@@ -14,6 +14,15 @@ check('download list shows DEM/profile/OSM sizes', spot.includes('DEM') && spot.
 check('download list supports multi select delete', spot.includes('選択削除') && spot.includes('selectedDownloadedIds'));
 check('download list supports delete all', spot.includes('全削除') && spot.includes('deleteAllDownloads'));
 check('download list supports refresh', spot.includes('onRefreshDownloadedSpotData'));
+check('download selection resolves current subject height',
+  spot.includes('onSelectDownloadedSpotData(record)') &&
+  app.includes('async function applyDownloadedSpotData') &&
+  app.includes('const point = await resolveSearchSubject('));
+check('download refresh resolves current ground height',
+  app.includes('async function refreshDownloadedSpotData') &&
+  app.includes('const point = await resolveGroundPoint('));
+check('download paths do not fabricate zero-meter ground points',
+  !app.includes('const point: GroundPoint = { latitude: record.latitude, longitude: record.longitude, height: 0 }'));
 check('download state distinguishes complete/partial/update', spot.includes('保存完了') && spot.includes('一部不足') && spot.includes('更新が必要'));
 check('app wires bulk delete', app.includes('handleDeleteDownloadedSpotDataBulk'));
 check('app refreshes storage inspection', app.includes('inspectDownloadedSpotStorage(downloadedSpotData)'));

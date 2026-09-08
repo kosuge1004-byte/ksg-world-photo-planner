@@ -7,6 +7,8 @@ import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
 import { readPersistentSiteContexts, writePersistentSiteContexts } from "../cache/siteContextPersistentCache";
 
+export type SiteContextPoint = Pick<GroundPoint, "latitude" | "longitude">;
+
 type SiteContextResponse = {
   contexts?: unknown;
   error?: unknown;
@@ -60,7 +62,7 @@ export function passesMappedSiteConstraints(
 }
 
 async function fetchSiteContextBatch(
-  points: GroundPoint[],
+  points: SiteContextPoint[],
   signal?: AbortSignal,
   includeDetails = true,
   purpose: SiteContextPurpose = "full"
@@ -122,7 +124,7 @@ async function fetchSiteContextBatch(
 }
 
 export async function fetchSiteContexts(
-  points: GroundPoint[],
+  points: SiteContextPoint[],
   signal?: AbortSignal,
   includeDetails = true,
   purpose: SiteContextPurpose = "full"

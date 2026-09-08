@@ -113,6 +113,7 @@ type IdbStore = {
 
 type IdbTransaction = {
   objectStore: (name: string) => IdbStore;
+  abort: () => void;
   oncomplete: (() => void) | null;
   onerror: (() => void) | null;
   onabort: (() => void) | null;

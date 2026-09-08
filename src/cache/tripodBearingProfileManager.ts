@@ -18,7 +18,7 @@ import type { GroundPoint } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
-import { fetchSiteContexts } from "../search/siteContext";
+import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
 import { writePersistentSiteContexts } from "./siteContextPersistentCache";
 import {
   BEARING_STEP_DEGREES,
@@ -136,7 +136,7 @@ export async function backfillBearingProfiles(params: {
   let completedSteps = 0;
   let profilePoints = 0;
   let highPrecisionPoints = 0;
-  const waterPrefetchPoints: GroundPoint[] = [];
+  const waterPrefetchPoints: SiteContextPoint[] = [];
   onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "terrain" });
   if (totalSteps === 0) {
     const captured = await finishGsiDeviceTileCapture(subjectId);
@@ -215,7 +215,7 @@ export async function backfillBearingProfiles(params: {
       const stride = Math.max(1, Math.floor(cartographicPoints.length / 8));
       for (let i = 0; i < cartographicPoints.length && waterPrefetchPoints.length < TOTAL_BEARINGS * 8; i += stride) {
         const d = cartographicPoints[i].destination;
-        waterPrefetchPoints.push({ latitude: d.latitude, longitude: d.longitude, height: 0 });
+        waterPrefetchPoints.push({ latitude: d.latitude, longitude: d.longitude });
       }
     } catch (error) {
       if (signal?.aborted) break;
@@ -243,11 +243,14 @@ export async function backfillBearingProfiles(params: {
     onProgress?.({ totalSteps: Math.max(1, waterBatches), completedSteps: waterCompleted, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "water" });
   }
   // 被写体直近は道路・立入・建物等を含むfull Site Contextも保存する。
-  const detailPoints: GroundPoint[] = [{ ...subjectPoint }];
+  const detailPoints: SiteContextPoint[] = [{
+    latitude: subjectPoint.latitude,
+    longitude: subjectPoint.longitude,
+  }];
   for (const radius of [25, 100]) {
     for (const bearing of [0, 45, 90, 135, 180, 225, 270, 315]) {
       const d = calculateKarneyDestinationPoint(subjectPoint, bearing, radius);
-      detailPoints.push({ latitude: d.latitude, longitude: d.longitude, height: 0 });
+      detailPoints.push({ latitude: d.latitude, longitude: d.longitude });
     }
   }
   onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "osm" });

@@ -6,7 +6,7 @@ const MAX_POINTS_PER_REQUEST = 8;
 
 /** バックグラウンド処理から相対HTTP APIを経由せず、同じOSM判定を直接実行する。 */
 export async function fetchServerSiteContexts(
-  points: GroundPoint[],
+  points: Array<Pick<GroundPoint, "latitude" | "longitude">>,
   signal?: AbortSignal,
   includeDetails = true
 ): Promise<SiteContext[]> {
