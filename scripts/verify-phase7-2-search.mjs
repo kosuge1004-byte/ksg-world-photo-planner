@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const spotScreen = await read("src/components/SpotSearchScreen.tsx");
+const app = await read("src/App.tsx");
 const spotSearch = await read("src/search/spotPresetSearch.ts");
 const googleUrl = await read("src/search/googleMapsUrl.ts");
 const nativeResolver = await read("src/search/nativeGoogleMapsResolver.ts");
@@ -12,8 +13,14 @@ const progress = await read("src/search/searchProgress.ts");
 assert.match(spotScreen, /new AbortController\(\)/u);
 assert.match(spotScreen, /controllerRef\.current\?\.abort\(\)/u);
 assert.match(spotScreen, /setIsSearching\(false\)/u);
-assert.match(spotScreen, /onResumeSearch/u);
-assert.match(spotScreen, /isPaused/u);
+// The long-running date/composition search was intentionally removed from this
+// screen. It now performs only abortable subject/tripod place lookup; date and
+// celestial searches live in their dedicated main-screen flow.
+assert.match(spotScreen, /onLocatePin/u);
+assert.match(spotScreen, /ここでは場所だけを検索します/u);
+assert.doesNotMatch(spotScreen, /onResumeSearch/u);
+assert.doesNotMatch(spotScreen, /isPaused/u);
+assert.match(app, /onLocatePin=\{locatePinFromSpotScreen\}/u);
 assert.match(spotSearch, /extractGoogleMapsSharedUrl/u);
 assert.match(spotSearch, /resolveGoogleMapsSharedUrlNatively/u);
 assert.match(googleUrl, /maps\.app\.goo\.gl/u);

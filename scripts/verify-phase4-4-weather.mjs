@@ -10,7 +10,7 @@ const checks = [
   [app.includes("now: new Date()"), "Preview weather must use actual current time"],
   [app.includes("preview-weather-unavailable"), "Preview weather failure must be visible"],
   [dialog.includes("now: new Date()"), "Transit search must use actual current time"],
-  [weather.includes('accuracyMode === "standard"'), "Standard mode must avoid weather communication"],
+  [weather.includes('void options.accuracyMode') && weather.includes('options.mode === "standard"'), "Weather/refraction must be controlled by refraction mode, not paid accuracy mode"],
   [weather.includes("inFlightRequests"), "Weather requests must be deduplicated"],
   [weather.includes("climatologyByMonthHour"), "Out-of-range dates must have climatology support"],
 ];

@@ -3602,3 +3602,31 @@ body.pseudo-fullscreen-active {
   .project-dialog-backdrop { padding: 10px; }
   .qr-scan-video { max-height: 52dvh; }
 }
+
+/* 2026-09-08: スポット検索直後の周辺データ3択。長い日本語ラベルをスマホ幅でも切らさない。 */
+.bearing-profile-choice-buttons {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+.bearing-profile-choice-buttons button {
+  width: 100%;
+  min-height: 48px;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+/* 2026-09-08: ダウンロード済みスポットの容量・状態・一括管理 */
+.spot-downloaded-data-summary { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.1); display: flex; flex-direction: column; gap: 4px; }
+.spot-downloaded-data-summary small { color: #8f9aad; }
+.spot-downloaded-data-actions { display: flex; gap: 8px; margin-top: 6px; }
+.spot-downloaded-data-actions button { flex: 1; min-height: 34px; }
+.spot-downloaded-data-item { align-items: center; }
+.spot-download-select { display: flex; align-items: center; justify-content: center; padding: 0 4px 0 10px; }
+.spot-download-select input { width: 18px; height: 18px; }
+.spot-downloaded-data-item > button:first-of-type { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; color: inherit; padding: 11px 8px; display: flex; flex-direction: column; gap: 3px; }
+.spot-downloaded-data-item-actions { display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 6px 8px 6px 2px; }
+.spot-downloaded-data-item-actions button { min-width: 52px; min-height: 30px; }
+.spot-download-state { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid currentColor; border-radius: 999px; font-size: 10px; font-weight: 600; vertical-align: 1px; }
+.spot-download-state.complete { opacity: .85; }
+.spot-download-state.partial, .spot-download-state.needs-update { opacity: 1; }

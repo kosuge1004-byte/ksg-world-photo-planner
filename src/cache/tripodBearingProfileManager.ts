@@ -9,7 +9,8 @@ import {
   logarithmicDistances,
   rayCartographicAtDistance,
 } from "../cesium/tripodCandidates";
-import { sampleWorldTerrain } from "../cesium/worldTerrain";
+import { sampleWorldTerrain, sampleWorldTerrainNeutral } from "../cesium/worldTerrain";
+import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, recordGsiDeviceTileReferencesForPoints } from "../cesium/gsiDemTileCache";
 import { idFor } from "../subjectStorage";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type { CelestialScreenPoint, TripodCandidate } from "../types/celestial";
@@ -17,6 +18,8 @@ import type { GroundPoint } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
+import { fetchSiteContexts } from "../search/siteContext";
+import { writePersistentSiteContexts } from "./siteContextPersistentCache";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -81,6 +84,17 @@ export type BearingBackfillProgress = {
   totalSteps: number;
   completedSteps: number;
   currentBearingDegrees: number | null;
+  profilePoints?: number;
+  highPrecisionPoints?: number;
+  phase?: "terrain" | "water" | "osm" | "finalizing";
+};
+
+export type BearingBackfillResult = {
+  profilePoints: number;
+  highPrecisionPoints: number;
+  demTileCount: number;
+  demTileBytes: number;
+  storageWriteFailures: number;
 };
 
 /**
@@ -95,8 +109,10 @@ export async function backfillBearingProfiles(params: {
   cameraSettings: CameraSettings;
   signal?: AbortSignal;
   onProgress?: (progress: BearingBackfillProgress) => void;
-}): Promise<void> {
-  const { subjectId, subjectPoint, cameraSettings, signal, onProgress } = params;
+  forceRefresh?: boolean;
+}): Promise<BearingBackfillResult> {
+  const { subjectId, subjectPoint, cameraSettings, signal, onProgress, forceRefresh = false } = params;
+  beginGsiDeviceTileCapture(subjectId);
   const bearings = Array.from(
     { length: TOTAL_BEARINGS },
     (_, index) => index * ALL_BEARINGS_STEP_DEGREES
@@ -104,19 +120,28 @@ export async function backfillBearingProfiles(params: {
 
   const pendingBearings: number[] = [];
   for (const bearing of bearings) {
-    if (signal?.aborted) return;
+    if (signal?.aborted) {
+      const captured = await finishGsiDeviceTileCapture(subjectId);
+      return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures };
+    }
     const existing = await getBearingProfile(
       subjectId,
       cameraSettings.lensCenterHeightMeters,
       bearing
     );
-    if (!existing) pendingBearings.push(bearing);
+    if (forceRefresh || !existing) pendingBearings.push(bearing);
   }
 
   const totalSteps = pendingBearings.length;
   let completedSteps = 0;
-  onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: null });
-  if (totalSteps === 0) return;
+  let profilePoints = 0;
+  let highPrecisionPoints = 0;
+  const waterPrefetchPoints: GroundPoint[] = [];
+  onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "terrain" });
+  if (totalSteps === 0) {
+    const captured = await finishGsiDeviceTileCapture(subjectId);
+    return { profilePoints, highPrecisionPoints, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures };
+  }
 
   // 通常探索の粗探索と同じ距離配列・同じ密度規則を使う（0.5m単位まで
   // 密にはしない＝あくまで交点の存在をブラケット検出するための密度で、
@@ -130,8 +155,8 @@ export async function backfillBearingProfiles(params: {
   );
 
   for (const bearing of pendingBearings) {
-    if (signal?.aborted) return;
-    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing });
+    if (signal?.aborted) break;
+    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing, profilePoints, highPrecisionPoints, phase: "terrain" });
 
     const cartographicPoints = baseDistances.map((distanceMeters) => {
       const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, distanceMeters);
@@ -148,7 +173,7 @@ export async function backfillBearingProfiles(params: {
         "10m"
       );
     } catch (error) {
-      if (signal?.aborted) return;
+      if (signal?.aborted) break;
       console.warn(`[bearing-profile] 方位${bearing}°の地形取得に失敗しました`, error);
       completedSteps += 1;
       onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing });
@@ -166,10 +191,77 @@ export async function backfillBearingProfiles(params: {
       computedAtIso: new Date().toISOString(),
     };
     await setBearingProfile(subjectId, cameraSettings.lensCenterHeightMeters, bearing, entry);
+    profilePoints += entry.points.length;
+
+    // 2026-09-08: 周辺データ保存では粗い10mプロファイルだけでなく、同じ
+    // 探索線上を利用可能な最詳細GSI DEM（1m要求、未整備域は既存の5m/10m
+    // 優先順位へフォールバック）でも取得する。neutral補間を使うため、実際の
+    // 三脚候補精密計算と同じ端末DEMタイルキャッシュを温める。
+    try {
+      recordGsiDeviceTileReferencesForPoints(
+        subjectId,
+        cartographicPoints.map(({ destination }) => ({ latitude: destination.latitude, longitude: destination.longitude }))
+      );
+      await sampleWorldTerrainNeutral(
+        cartographicPoints.map(({ destination }) =>
+          Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
+        ),
+        signal,
+        "1m"
+      );
+      highPrecisionPoints += cartographicPoints.length;
+      // 水面判定は全23万点をOverpassへ投げず、各方位を均等に8点だけ抽出。
+      // 実際の精密計算で照合した追加地点もsiteContext.tsが自動永続保存する。
+      const stride = Math.max(1, Math.floor(cartographicPoints.length / 8));
+      for (let i = 0; i < cartographicPoints.length && waterPrefetchPoints.length < TOTAL_BEARINGS * 8; i += stride) {
+        const d = cartographicPoints[i].destination;
+        waterPrefetchPoints.push({ latitude: d.latitude, longitude: d.longitude, height: 0 });
+      }
+    } catch (error) {
+      if (signal?.aborted) break;
+      console.warn(`[bearing-profile] 方位${bearing}°の高精度DEM事前取得に失敗しました`, error);
+    }
 
     completedSteps += 1;
-    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing });
+    onProgress?.({ totalSteps, completedSteps, currentBearingDegrees: bearing, profilePoints, highPrecisionPoints, phase: "terrain" });
   }
+  // 2026-09-08: 河川・海判定を端末へ事前保存。最大80地点/要求で分割し、
+  // ダウンロードスポットとの参照関係も記録する。失敗してもDEM保存済みデータは有効。
+  const waterBatches = Math.ceil(waterPrefetchPoints.length / 80);
+  let waterCompleted = 0;
+  onProgress?.({ totalSteps: Math.max(1, waterBatches), completedSteps: 0, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "water" });
+  for (let offset = 0; offset < waterPrefetchPoints.length && !signal?.aborted; offset += 80) {
+    const batch = waterPrefetchPoints.slice(offset, offset + 80);
+    try {
+      const contexts = await fetchSiteContexts(batch, signal, false, "water-only");
+      await writePersistentSiteContexts(batch, contexts, "water-only", false, subjectId);
+    } catch (error) {
+      if (signal?.aborted) break;
+      console.warn("[bearing-profile] 水面・河川情報の事前保存に失敗しました", error);
+    }
+    waterCompleted += 1;
+    onProgress?.({ totalSteps: Math.max(1, waterBatches), completedSteps: waterCompleted, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "water" });
+  }
+  // 被写体直近は道路・立入・建物等を含むfull Site Contextも保存する。
+  const detailPoints: GroundPoint[] = [{ ...subjectPoint }];
+  for (const radius of [25, 100]) {
+    for (const bearing of [0, 45, 90, 135, 180, 225, 270, 315]) {
+      const d = calculateKarneyDestinationPoint(subjectPoint, bearing, radius);
+      detailPoints.push({ latitude: d.latitude, longitude: d.longitude, height: 0 });
+    }
+  }
+  onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "osm" });
+  try {
+    const contexts = await fetchSiteContexts(detailPoints, signal, true, "full");
+    await writePersistentSiteContexts(detailPoints, contexts, "full", true, subjectId);
+  } catch (error) {
+    if (!signal?.aborted) console.warn("[bearing-profile] OSM周辺情報の事前保存に失敗しました", error);
+  }
+  onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "osm" });
+  onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "finalizing" });
+  const captured = await finishGsiDeviceTileCapture(subjectId);
+  onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, profilePoints, highPrecisionPoints, phase: "finalizing" });
+  return { profilePoints, highPrecisionPoints, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures };
 }
 
 /**

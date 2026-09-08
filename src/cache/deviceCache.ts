@@ -303,6 +303,42 @@ export async function clearDeviceCacheNamespace(namespace: string): Promise<void
   );
 }
 
+
+export type DeviceCacheNamespaceStats = {
+  entryCount: number;
+  valueBytes: number;
+  expiredCount: number;
+};
+
+function estimateJsonBytes(value: unknown): number {
+  try { return new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { return 0; }
+}
+
+export async function getDeviceCacheNamespaceStats(namespace: string): Promise<DeviceCacheNamespaceStats> {
+  const database = await openDatabase();
+  if (!database) return { entryCount: 0, valueBytes: 0, expiredCount: 0 };
+  const records = await boundedCacheOperation(
+    new Promise<Array<CacheRecord<unknown>>>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const index = transaction.objectStore(STORE_NAME).index("namespace");
+      const request = index.getAll(namespace);
+      request.onsuccess = () => resolve((request.result as Array<CacheRecord<unknown>>) ?? []);
+      request.onerror = () => resolve([]);
+    }),
+    []
+  );
+  const now = Date.now();
+  let valueBytes = 0;
+  let expiredCount = 0;
+  let entryCount = 0;
+  for (const record of records) {
+    if (record.expiresAt <= now) { expiredCount += 1; continue; }
+    entryCount += 1;
+    valueBytes += estimateJsonBytes(record.value);
+  }
+  return { entryCount, valueBytes, expiredCount };
+}
+
 export async function setDeviceCache<T>(
   policy: DeviceCachePolicy,
   key: string,

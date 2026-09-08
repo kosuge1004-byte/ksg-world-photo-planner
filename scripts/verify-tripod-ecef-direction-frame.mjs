@@ -6,12 +6,12 @@ const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const checks = [
   ['horizontal angles are converted in their own observer ENU frame', /horizontalToEcefUnitDirection\(\s*directionObserver,\s*celestialAzimuthDegrees,\s*geometricAltitudeDegrees\s*\)/s.test(tripodSource)],
   ['backward ray accepts an explicit direction observer', /buildCelestialBackwardRay\([\s\S]*?directionObserver: GroundPoint = subject/s.test(tripodSource)],
-  ['candidate reconvergence rebuilds ECEF direction at candidate lens observer', /buildCelestialBackwardRay\(\s*subject,\s*horizontal\.azimuthDegrees,\s*geometricRayAltitudeDegrees,\s*candidateLensObserver\s*\)/s.test(tripodSource)],
-  ['preview tripod lens observer is forwarded with shared lens-height helper', /withLensCenterHeight\(\s*tripodPoint,\s*cameraSettings\.lensCenterHeightMeters,\s*"三脚候補初期方向観測点"\s*\)/s.test(appSource)],
+  ['candidate reconvergence rebuilds ECEF direction at candidate lens observer', /buildCelestialBackwardRay\(\s*subject,\s*horizontal\.azimuthDegrees,\s*refinedRayAltitudeDegrees,\s*candidateLensObserver\s*\)/s.test(tripodSource)],
+  ['preview tripod lens observer is forwarded with shared lens-height helper', /withLensCenterHeight\(\s*tripodPointRef\.current,\s*cameraSettings\.lensCenterHeightMeters,\s*"三脚候補初期方向観測点"\s*\)/s.test(appSource)],
   ['old candidate az-alt to subject ENU shortcut is absent', !/buildCelestialBackwardRay\(subject, horizontal\.azimuthDegrees, horizontal\.altitudeDegrees\)/.test(tripodSource)],
-  ['initial ECEF ray uses celestial geometric altitude directly', /initialGeometricRayAltitudeDegrees\s*=\s*Number\.isFinite\(point\.geometricAltitudeDegrees\)/s.test(tripodSource)],
-  ['reconverged ECEF ray uses celestial geometric altitude directly', /geometricRayAltitudeDegrees\s*=\s*Number\.isFinite\(horizontal\.geometricAltitudeDegrees\)/s.test(tripodSource)],
-  ['terrestrial refraction is not subtracted from celestial altitude', !/horizontal\.altitudeDegrees\s*-\s*groundRefractionDegrees/.test(tripodSource)],
+  ['initial ECEF ray converts preview apparent altitude to geometric ECEF ray altitude', /initialRayAltitudeDegrees\s*=\s*point\.altitudeDegrees\s*-\s*initialGroundRefractionDegrees/s.test(tripodSource)],
+  ['reconverged ECEF ray converts candidate apparent altitude to geometric ECEF ray altitude', /refinedRayAltitudeDegrees\s*=\s*horizontal\.altitudeDegrees\s*-\s*groundRefractionDegrees/s.test(tripodSource)],
+  ['terrestrial apparent/geometric delta is removed before ECEF conversion', /horizontal\.altitudeDegrees\s*-\s*groundRefractionDegrees/.test(tripodSource)],
 ];
 
 let failed = false;

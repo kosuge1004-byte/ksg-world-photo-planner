@@ -933,13 +933,9 @@ async function buildPointSpecificFinalCandidateGroundPoint(
   forceOrthometricZero = false
 ): Promise<GroundPoint> {
   const base = buildCandidateGroundPoint(cartographic, subject, label);
-  // 最終CameraModel探索のbestはGroundPointとして保持され、その後
-  // Cartographic.fromDegrees()で最終候補を再構成する。この再構成で
-  // worldTerrain側WeakMapの「このDEMサンプルに使ったジオイドN」が失われる。
-  // その結果、地点別ジオイドAPIが一時失敗しただけでfallback不能となり、
-  // manual-refinement-exceptionで正しい候補全体を棄却していた。
-  // 元のDEM評価点が保持していたNを明示的に引き継ぎ、API取得は従来どおり
-  // 優先するが、失敗時には同じDEMサンプルのNへ確実にfallbackできるようにする。
+  // Cartographicを再構成する経路ではworldTerrain側WeakMapに保持した
+  // 「このDEMサンプルに使ったジオイドN」を失う場合がある。元のDEM評価点のNを
+  // 明示的に引き継ぎ、地点別APIを優先しつつ失敗時は同一サンプルNへfallbackする。
   const mappedGeoid = geoidHeightMetersForTerrainSample(cartographic);
   const sampledGeoid = Number.isFinite(mappedGeoid)
     ? mappedGeoid
@@ -1154,8 +1150,6 @@ type TerrainSolution = {
   cartographic: Cartographic;
   distanceMeters: number;
   altitudeErrorDegrees: number;
-  /** seedの由来。最終採否には使わず、幾何レイ再収束を適用するかの制御だけに使う。 */
-  seedKind?: "geometric-ray" | "apparent-preview" | "centerline";
 };
 
 async function scanTerrainDistanceRange(
@@ -1779,14 +1773,36 @@ async function calculateOneCandidates(
     }
   };
 
-  // 気象連動屈折（自動モード）は約0.05度（≈5.5km）格子でキャッシュされており、
-  // 三脚候補の探索範囲（通常は被写体から数百m〜数km）はほぼ必ず同じ格子内に
-  // 収まる。そのため、解が収束するたびに候補地点で再取得しても得られる値は
-  // 事実上変わらない。ここで被写体地点を代表点として一度だけ解決し、以降の
-  // 全交点・全反復で使い回すことで、同じキャッシュ値への冗長な非同期呼び出し
-  // （IndexedDB読み出し）を削減する。天体方位・高度そのものは従来どおり
-  // 各反復で候補地点ごとに再計算するため、精度への影響はない。
+  // 気象連動屈折は候補地点ごとに0.05°セルを判定し、別セルへ移動した場合は
+  // その候補地点で再解決する。同一セル内は探索内Promiseキャッシュとresolver側の
+  // 永続/in-flightキャッシュを併用し、精度を維持したまま重複I/Oを抑える。
   let activeRefractionWeather = refractionWeather;
+  // 候補地点の気象は0.05°セル単位で再解決する。resolver側にも永続/in-flight
+  // キャッシュがあるが、探索内でもPromiseを共有して候補・再収束間の重複呼出しを防ぐ。
+  // activeRefractionWeatherはプレビューの三脚地点由来の場合があるため、由来セルを
+  // 推測してこのMapへ事前投入しない。候補セルは必ずresolverで正しい地点を解決する。
+  const candidateWeatherByCell = new Map<string, Promise<RefractionWeatherContext | undefined>>();
+  const weatherCellKey = (candidate: GroundPoint): string =>
+    `${(Math.round(candidate.latitude * 20) / 20).toFixed(2)}:${(Math.round(candidate.longitude * 20) / 20).toFixed(2)}`;
+  const resolveCandidateWeather = async (candidate: GroundPoint): Promise<RefractionWeatherContext | undefined> => {
+    if (!refractionWeatherResolver) return activeRefractionWeather;
+    const key = weatherCellKey(candidate);
+    let pending = candidateWeatherByCell.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const startedAt = performance.now();
+        try {
+          return await refractionWeatherResolver(candidate, signal);
+        } finally {
+          weatherResolveMs += performance.now() - startedAt;
+        }
+      })();
+      candidateWeatherByCell.set(key, pending);
+    }
+    const resolved = await pending;
+    abortIfRequested(signal);
+    return resolved ?? activeRefractionWeather;
+  };
   // 仕様3-C: 主計算は「天体中心→被写体→後方」のECEF 3Dレイと地形表面の
   // 交点として求める。pointのaz/altを計算した観測地点のENUでECEF化してから
   // 被写体へ平行移動する。観測地点が不明な検索経路だけ被写体地点を使う。
@@ -1917,7 +1933,7 @@ async function calculateOneCandidates(
   // 2026-08-30復元: 本計算の主seedを「天体中心→被写体中心→後方」の
   // ECEF 3DレイとDEM地形の全交点へ戻す。Karney地表測地線や距離総当たりの
   // centerline solverを最終候補座標の生成器にはしない。ここで得た交点はseedであり、
-  // 後段の候補地点再計算・1m DEM・CameraModel round-tripを必ず通す。
+  // 後段で候補地点自身の天体方向へ再収束し、1m最大詳細DEMと地点別ジオイドを通す。
   const initialSolutions = (await scanRayTerrainIntersections(
     initialRay,
     lensCenterHeightMeters,
@@ -1927,7 +1943,7 @@ async function calculateOneCandidates(
     searchProfile,
     directSeedDistance ?? searchProfile?.preferredDistanceMeters,
     true
-  )).map((solution) => ({ ...solution, seedKind: "geometric-ray" as const }));
+  ));
 
   initialScanMs += performance.now() - initialScanStartedAt;
   if (initialSolutions.length === 0) {
@@ -2098,13 +2114,10 @@ async function calculateOneCandidates(
     // 分けて計測し、「謎の時間」の所在を特定できるようにする。
     const convergenceLoopStartedAt = performance.now();
 
-    // 幾何ECEFレイ由来のseedだけは、従来どおり候補地点の最新天体方向へ
-    // 最大3回再収束させる。一方、apparent-preview seedは実プレビューと同じ
-    // 見かけ高度の逆解から得た点なので、ここで幾何レイへ強制的に戻すと
-    // せっかく得た正解側seedを再び真空幾何交点へ引き戻してしまう。
-    // apparent-preview seedはそのままCameraModel詳細探索へ渡す。
-    if (initialSolution.seedKind === "geometric-ray") {
-      for (let iteration = 0; iteration < 3; iteration += 1) {
+    // 各ECEF地形交点を、候補地点自身から見た最新の天体方向へ最大3回再収束する。
+    // 天体の見かけ高度と地表視線の apparent/geometric 差から幾何ECEFレイへ戻す
+    // 現行方式に統一し、旧方式のseed種別による分岐は持たない。
+    for (let iteration = 0; iteration < 3; iteration += 1) {
       const candidatePoint = buildCandidateGroundPoint(
         solution.cartographic,
         subject,
@@ -2115,12 +2128,13 @@ async function calculateOneCandidates(
         lensCenterHeightMeters,
         `${point.label}三脚候補レンズ中心`
       );
+      const candidateRefractionWeather = await resolveCandidateWeather(candidatePoint);
       const horizontal = calculateCelestialHorizontalCoordinates(
         point.id,
         date,
         candidateLensObserver,
         calculationMode,
-        activeRefractionWeather
+        candidateRefractionWeather
       );
       if (horizontal.altitudeDegrees <= 0.25) break;
 
@@ -2184,7 +2198,58 @@ async function calculateOneCandidates(
           ? candidate
           : nearest
       );
-      }
+    }
+
+    // 再収束ループは最大反復数や局所地形解なしで終了する場合があるため、
+    // ループを抜けただけでは収束済みとみなさない。最終地形解そのものを観測点にして
+    // 候補地点の気象を再解決し、プレビューと同じ見かけ高度・方位で最終残差を検証する。
+    // これにより「3回反復したが未収束」「局所再探索が空でbreak」の候補を確定扱いしない。
+    const finalConvergencePoint = buildCandidateGroundPoint(
+      solution.cartographic,
+      subject,
+      `${point.label}三脚候補最終収束確認`
+    );
+    const finalConvergenceObserver = withLensCenterHeight(
+      finalConvergencePoint,
+      lensCenterHeightMeters,
+      `${point.label}三脚候補最終収束確認レンズ中心`
+    );
+    const finalCandidateWeather = await resolveCandidateWeather(finalConvergencePoint);
+    const finalHorizontal = calculateCelestialHorizontalCoordinates(
+      point.id,
+      date,
+      finalConvergenceObserver,
+      calculationMode,
+      finalCandidateWeather
+    );
+    const finalSubjectElevation = computeApparentElevation(
+      finalConvergenceObserver,
+      subject,
+      calculationMode
+    );
+    const finalAltitudeError = Math.abs(
+      finalSubjectElevation.apparentAltitudeDegrees - finalHorizontal.altitudeDegrees
+    );
+    const finalSubjectBearing = calculateKarneyLineMetrics(
+      finalConvergencePoint,
+      subject
+    ).bearingDegrees;
+    const finalAzimuthError = angularDifferenceDegrees(
+      finalSubjectBearing,
+      finalHorizontal.azimuthDegrees
+    );
+    if (
+      !Number.isFinite(finalHorizontal.altitudeDegrees) ||
+      finalHorizontal.altitudeDegrees <= 0.25 ||
+      finalAltitudeError > CONVERGED_HORIZONTAL_DEGREES ||
+      finalAzimuthError > CONVERGED_HORIZONTAL_DEGREES
+    ) {
+      reject("final-horizontal-not-converged", {
+        distanceMeters: solution.distanceMeters,
+        altitudeErrorDegrees: finalAltitudeError,
+        azimuthErrorDegrees: finalAzimuthError,
+      });
+      return null;
     }
 
     if (!Number.isFinite(solution.cartographic.height)) {
@@ -2229,14 +2294,23 @@ async function calculateOneCandidates(
           ? (candidateGeoid as number)
           : (landGeoid as number);
         const ellipsoidal = nearestLand.orthometricHeightMeters + geoidForCandidate;
-        finalGroundPoint = {
-          ...riverPoint,
-          height: ellipsoidal,
-          ellipsoidalHeightMeters: ellipsoidal,
-          orthometricHeightMeters: nearestLand.orthometricHeightMeters,
-          geoidHeightMeters: geoidForCandidate,
-          label: `${point.label}三脚候補`,
-        };
+        // 河川も最終候補地点自身のジオイドNを優先する。近傍陸地から得た
+        // orthometric H は維持し、候補地点で N を再解決して h = H + N を再構成する。
+        // 地点別Nが取得できない場合だけ、同じ候補/近傍陸地サンプル由来Nへfallbackする。
+        const riverCandidateCartographic = Cartographic.fromRadians(
+          solution.cartographic.longitude,
+          solution.cartographic.latitude,
+          ellipsoidal
+        );
+        finalGroundPoint = await buildPointSpecificFinalCandidateGroundPoint(
+          riverCandidateCartographic,
+          subject,
+          `${point.label}三脚候補`,
+          signal,
+          geoidForCandidate,
+          trace,
+          false
+        );
         trace(
           "river-surface:nearest-land",
           `distance=${nearestLand.distanceMeters}m orthometric=${nearestLand.orthometricHeightMeters.toFixed(2)}m`

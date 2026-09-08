@@ -5,6 +5,7 @@ import type {
 import type { GroundPoint } from "../types/points";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
+import { readPersistentSiteContexts, writePersistentSiteContexts } from "../cache/siteContextPersistentCache";
 
 type SiteContextResponse = {
   contexts?: unknown;
@@ -127,21 +128,29 @@ export async function fetchSiteContexts(
   purpose: SiteContextPurpose = "full"
 ): Promise<SiteContext[]> {
   if (points.length === 0) return [];
+  // 2026-09-08: 端末永続キャッシュを最優先。ダウンロード済み地点や過去に
+  // 照合した地点はOverpassへ再問い合わせせず、その場で返す。
+  const cached = await readPersistentSiteContexts(points, purpose, includeDetails);
+  if (cached.every((value) => value !== null)) return cached as SiteContext[];
+  const missingIndexes = cached.map((value, index) => value === null ? index : -1).filter((index) => index >= 0);
+  const missingPoints = missingIndexes.map((index) => points[index]);
+  let fetched: SiteContext[];
   // water-only はサーバー側で最大80地点を1回の軽量Overpass問い合わせへ
   // 集約できる。河川の最近傍陸地探索（10半径×8方向）を10回直列通信に
   // しないため、ここでは1リクエストで送る。
   if (purpose === "water-only") {
-    return fetchSiteContextBatch(points, signal, false, purpose);
+    fetched = await fetchSiteContextBatch(missingPoints, signal, false, purpose);
+  } else {
+    fetched = [];
+    // 従来用途はOverpass側の1要求上限を守りながら最大8地点ずつ照合する。
+    for (let offset = 0; offset < missingPoints.length; offset += SITE_CONTEXT_BATCH_SIZE) {
+      fetched.push(...await fetchSiteContextBatch(
+        missingPoints.slice(offset, offset + SITE_CONTEXT_BATCH_SIZE), signal, includeDetails, purpose
+      ));
+    }
   }
-  const contexts: SiteContext[] = [];
-  // 従来用途はOverpass側の1要求上限を守りながら最大8地点ずつ照合する。
-  for (let offset = 0; offset < points.length; offset += SITE_CONTEXT_BATCH_SIZE) {
-    contexts.push(...await fetchSiteContextBatch(
-      points.slice(offset, offset + SITE_CONTEXT_BATCH_SIZE),
-      signal,
-      includeDetails,
-      purpose
-    ));
-  }
-  return contexts;
+  await writePersistentSiteContexts(missingPoints, fetched, purpose, includeDetails);
+  const result = [...cached] as Array<SiteContext | null>;
+  missingIndexes.forEach((originalIndex, fetchedIndex) => { result[originalIndex] = fetched[fetchedIndex]; });
+  return result as SiteContext[];
 }

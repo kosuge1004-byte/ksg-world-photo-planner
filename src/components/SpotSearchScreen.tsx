@@ -5,6 +5,8 @@ import type { GroundPoint } from "../types/points";
 import type { SubjectRecord } from "../subjectStorage";
 import { toUserFacingErrorMessage } from "../errors/userFeedback";
 import { isAbortError } from "../utils/runtimeErrors";
+import type { DownloadedSpotDataRecord } from "../cache/downloadedSpotData";
+import type { DownloadedSpotStorageSummary } from "../cache/downloadedSpotDataStats";
 
 type Props = {
   open: boolean;
@@ -30,6 +32,11 @@ type Props = {
   onRequestBearingProfileDownload: (record: SubjectRecord) => void;
   /** お気に入りは残したまま、三脚候補データだけ端末から削除する。 */
   onDeleteBearingProfileData: (record: SubjectRecord) => void;
+  downloadedSpotData: DownloadedSpotDataRecord[];
+  downloadedSpotStorageSummary: DownloadedSpotStorageSummary | null;
+  onDeleteDownloadedSpotData: (record: DownloadedSpotDataRecord) => void;
+  onDeleteDownloadedSpotDataBulk: (records: DownloadedSpotDataRecord[]) => void;
+  onRefreshDownloadedSpotData: (record: DownloadedSpotDataRecord) => void;
 };
 
 /**
@@ -53,15 +60,21 @@ export function SpotSearchScreen({
   bearingProfileEnabledIds,
   onRequestBearingProfileDownload,
   onDeleteBearingProfileData,
+  downloadedSpotData,
+  downloadedSpotStorageSummary,
+  onDeleteDownloadedSpotData,
+  onDeleteDownloadedSpotDataBulk,
+  onRefreshDownloadedSpotData,
 }: Props) {
   const [query, setQuery] = useState("");
   const [pinTarget, setPinTarget] = useState<"subject" | "tripod">("subject");
-  const [subjectListOpen, setSubjectListOpen] = useState<"history" | "favorites" | null>(null);
+  const [subjectListOpen, setSubjectListOpen] = useState<"history" | "favorites" | "downloads" | null>(null);
   const [editingFavoriteId, setEditingFavoriteId] = useState<string | null>(null);
   const [editingFavoriteLabel, setEditingFavoriteLabel] = useState("");
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [selectedDownloadedIds, setSelectedDownloadedIds] = useState<Set<string>>(new Set());
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -82,6 +95,7 @@ export function SpotSearchScreen({
     setMessage("");
     setProgressPercent(0);
     setSubjectListOpen(null);
+    setSelectedDownloadedIds(new Set());
   }, [open]);
 
   function startEditingFavorite(record: SubjectRecord): void {
@@ -127,6 +141,37 @@ export function SpotSearchScreen({
         setIsSearching(false);
       }
     }
+  }
+
+  function formatBytes(bytes: number | null | undefined): string {
+    if (bytes == null || !Number.isFinite(bytes)) return "未計測";
+    if (bytes < 1024) return `${Math.round(bytes)}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)}GB`;
+  }
+
+  function toggleDownloadedSelection(subjectId: string): void {
+    setSelectedDownloadedIds((current) => {
+      const next = new Set(current);
+      if (next.has(subjectId)) next.delete(subjectId); else next.add(subjectId);
+      return next;
+    });
+  }
+
+  function deleteSelectedDownloads(): void {
+    const selected = downloadedSpotData.filter((record) => selectedDownloadedIds.has(record.subjectId));
+    if (selected.length === 0) return;
+    if (!window.confirm(`選択した${selected.length}スポットのダウンロードデータを削除しますか？`)) return;
+    onDeleteDownloadedSpotDataBulk(selected);
+    setSelectedDownloadedIds(new Set());
+  }
+
+  function deleteAllDownloads(): void {
+    if (downloadedSpotData.length === 0) return;
+    if (!window.confirm(`ダウンロード済み${downloadedSpotData.length}スポットのデータをすべて削除しますか？`)) return;
+    onDeleteDownloadedSpotDataBulk(downloadedSpotData);
+    setSelectedDownloadedIds(new Set());
   }
 
   function closeScreen(): void {
@@ -181,16 +226,53 @@ export function SpotSearchScreen({
               <button type="button" className={currentSubjectIsFavorite ? "spot-subject-icon active" : "spot-subject-icon"} aria-label="現在の被写体をお気に入り登録" disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentFavorite}>★</button>
               <button type="button" className="spot-subject-icon" aria-label="お気に入りを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "favorites" ? null : "favorites")}>☆</button>
               <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>◷</button>
+              <button type="button" className="spot-subject-icon" aria-label="ダウンロード済みデータを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "downloads" ? null : "downloads")}>⇩</button>
             </div>
           </label>
 
           {subjectListOpen && (
-            <section className="spot-subject-list" aria-label={subjectListOpen === "history" ? "検索履歴" : "お気に入り"}>
+            <section className="spot-subject-list" aria-label={subjectListOpen === "history" ? "検索履歴" : subjectListOpen === "favorites" ? "お気に入り" : "ダウンロード済みデータ"}>
               <header>
-                <strong>{subjectListOpen === "history" ? "最近の検索" : "お気に入り"}</strong>
+                <strong>{subjectListOpen === "history" ? "最近の検索" : subjectListOpen === "favorites" ? "お気に入り" : "ダウンロード済みデータ"}</strong>
                 <button type="button" onClick={() => setSubjectListOpen(null)} aria-label="閉じる">×</button>
               </header>
-              {listedSubjects.length === 0 ? (
+              {subjectListOpen === "downloads" ? (
+                downloadedSpotData.length === 0 ? <p>ダウンロード済みデータはありません</p> : <>
+                  <div className="spot-downloaded-data-summary">
+                    <strong>{downloadedSpotData.length}スポット / 管理対象 {formatBytes(downloadedSpotStorageSummary?.uniqueManagedBytes)}</strong>
+                    <small>DEM {formatBytes(downloadedSpotStorageSummary?.uniqueDemBytes)} ・ 地形プロファイル {formatBytes(downloadedSpotStorageSummary?.profileBytes)} ・ OSM/水面 {formatBytes(downloadedSpotStorageSummary?.uniqueSiteContextBytes)}</small>
+                    {downloadedSpotStorageSummary?.originUsageBytes != null && (
+                      <small>AstroSight全体の端末使用量 {formatBytes(downloadedSpotStorageSummary.originUsageBytes)}{downloadedSpotStorageSummary.originQuotaBytes != null ? ` / 利用可能枠 ${formatBytes(downloadedSpotStorageSummary.originQuotaBytes)}` : ""}</small>
+                    )}
+                    <div className="spot-downloaded-data-actions">
+                      <button type="button" disabled={selectedDownloadedIds.size === 0} onClick={deleteSelectedDownloads}>選択削除 ({selectedDownloadedIds.size})</button>
+                      <button type="button" onClick={deleteAllDownloads}>全削除</button>
+                    </div>
+                  </div>
+                  {downloadedSpotData.map((record) => {
+                    const stats = downloadedSpotStorageSummary?.bySubjectId[record.subjectId];
+                    const stateLabel = stats?.state === "complete" ? "保存完了" : stats?.state === "needs-update" ? "更新が必要" : "一部不足";
+                    return (
+                  <div className="spot-subject-list-item spot-downloaded-data-item" key={record.subjectId}>
+                    <label className="spot-download-select" aria-label={`${record.label}を選択`}>
+                      <input type="checkbox" checked={selectedDownloadedIds.has(record.subjectId)} onChange={() => toggleDownloadedSelection(record.subjectId)} />
+                    </label>
+                    <button type="button" onClick={() => onSelectStoredSubject({ id: record.subjectId, label: record.label, latitude: record.latitude, longitude: record.longitude, searchType: "saved", createdAt: record.downloadedAtIso, lastUsedAt: record.downloadedAtIso })}>
+                      <strong>{record.label} <span className={`spot-download-state ${stats?.state ?? "partial"}`}>{stateLabel}</span></strong>
+                      <small>高精度DEM {record.highPrecisionPoints.toLocaleString()}点 / 地形 {record.profilePoints.toLocaleString()}点</small>
+                      <small>DEM {formatBytes(stats?.demBytes ?? record.demTileBytes)} / {stats?.demLiveTiles ?? record.demTileCount ?? 0}タイル ・ 地形プロファイル {formatBytes(stats?.profileBytes)} / {stats?.profileEntries ?? 0}方位</small>
+                      <small>OSM・水面 {formatBytes(stats?.siteContextBytes)} / {stats?.siteContextLiveCount ?? 0}件</small>
+                      <small>{new Date(record.downloadedAtIso).toLocaleString()} ・ {favorites.some((favorite) => favorite.id === record.subjectId) ? "お気に入り登録済み" : "お気に入り未登録"}</small>
+                    </button>
+                    <div className="spot-downloaded-data-item-actions">
+                      <button type="button" aria-label="ダウンロードデータを更新" onClick={() => onRefreshDownloadedSpotData(record)}>更新</button>
+                      <button type="button" aria-label="ダウンロード済みデータを削除" onClick={() => onDeleteDownloadedSpotData(record)}>削除</button>
+                    </div>
+                  </div>
+                    );
+                  })}
+                </>
+              ) : listedSubjects.length === 0 ? (
                 <p>{subjectListOpen === "history" ? "検索履歴はありません" : "お気に入りはありません"}</p>
               ) : listedSubjects.map((record) => (
                 <div className="spot-subject-list-item" key={record.id}>

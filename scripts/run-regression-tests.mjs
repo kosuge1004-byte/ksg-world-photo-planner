@@ -1,6 +1,24 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "downloaded data audit fixes", arguments: ["./scripts/verify-downloaded-data-audit-fixes-20260908.mjs"] },
+  "scripts/verify-river-point-geoid-final-20260908.mjs",
+  {
+    name: "downloaded spot high precision cache",
+    arguments: ["./scripts/verify-downloaded-spot-high-precision-20260908.mjs"],
+  },
+  {
+    name: "downloaded site context cache",
+    arguments: ["./scripts/verify-downloaded-site-context-cache-20260908.mjs"],
+  },
+  {
+    name: "downloaded data detailed management",
+    arguments: ["./scripts/verify-downloaded-data-management-detail-20260908.mjs"],
+  },
+  {
+    name: "downloaded spot shared DEM reference management",
+    arguments: ["./scripts/verify-downloaded-spot-shared-dem-refs-20260908.mjs"],
+  },
   {
     name: "water surface zero-elevation contracts",
     arguments: ["./scripts/verify-water-surface-zero-20260903.mjs"],
@@ -183,8 +201,16 @@ const cases = [
     arguments: ["--experimental-strip-types", "./scripts/verify-tripod-speed-cache-20260829.mjs"],
   },
   {
+    command: process.execPath,
+    arguments: ["./scripts/verify-tripod-candidate-weather-cell-20260908.mjs"],
+  },
+  {
     name: "tripod timeout-elimination: bounded abortable water/river helpers",
     arguments: ["./scripts/verify-tripod-timeout-elimination-20260907.mjs"],
+  },
+  {
+    name: "spot search surrounding-data three-choice flow",
+    arguments: ["./scripts/verify-spot-search-surrounding-download-choice-20260908.mjs"],
   },
   {
     name: "Cloudflare API and geo-tz runtime contracts",

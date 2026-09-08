@@ -9,7 +9,7 @@ const checks = [
   [terrain.includes('geoidHeightBySample.set(result[originalIndex], geoidHeightMeters as number)'), 'device-cache samples retain the N used for conversion'],
   [terrain.includes('geoidHeightBySample.set(result[index], geoidHeightMeters)'), 'network GSI samples retain the N used for conversion'],
   [terrain.includes('geoidHeightMeters: geoidHeightBySample.get(point)'), 'persistent terrain cache stores sample geoid metadata'],
-  [tripod.includes('if (!Number.isFinite(sampledGeoid)) throw error'), 'point-specific geoid timeout falls back only when sampled N is available'],
+  [tripod.includes('if (!Number.isFinite(sampledGeoid)) {') && tripod.includes('throw error;'), 'point-specific geoid timeout falls back only when sampled N is available'],
   [tripod.includes('geoidForEllipsoidal = exactGeoid ?? geoidForOrthometric'), 'final candidate can preserve valid sampled datum on point-specific geoid failure'],
 ];
 let failed = 0;

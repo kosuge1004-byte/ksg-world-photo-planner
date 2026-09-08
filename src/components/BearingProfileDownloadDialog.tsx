@@ -3,18 +3,21 @@ import type { BearingBackfillProgress } from "../cache/tripodBearingProfileManag
 
 export type BearingProfileDialogState = {
   subjectLabel: string;
-  /** null: 確認待ち（ダウンロードするか聞いている段階）。値あり: ダウンロード中の進捗。 */
+  /** favorite: お気に入り画面からの従来確認 / spot-search: スポット検索直後の3択。 */
+  mode: "favorite" | "spot-search";
+  /** null: 確認待ち。値あり: ダウンロード中の進捗。 */
   progress: BearingBackfillProgress | null;
 };
 
 type Props = {
   state: BearingProfileDialogState | null;
   onConfirm: () => void;
+  onConfirmAndFavorite: () => void;
   onDecline: () => void;
   onCancelDownload: () => void;
 };
 
-export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCancelDownload }: Props) {
+export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFavorite, onDecline, onCancelDownload }: Props) {
   const dialogRef = useRef<HTMLElement>(null);
 
   // 2026-09-05追記（実機で繰り返し報告されたため）: position:fixed;
@@ -30,7 +33,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
   }, [state]);
 
   if (!state) return null;
-  const { subjectLabel, progress } = state;
+  const { subjectLabel, progress, mode } = state;
   const isDownloading = progress !== null;
   const percent =
     isDownloading && progress.totalSteps > 0
@@ -50,25 +53,38 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
       >
         {!isDownloading ? (
           <>
-            <h2>「{subjectLabel}」の三脚候補データを端末に保存しますか？</h2>
+            <h2>{mode === "spot-search" ? `「${subjectLabel}」の周辺データをダウンロードしますか？` : `「${subjectLabel}」の三脚候補データを端末に保存しますか？`}</h2>
             <p className="project-dialog-note">
-              この地点を囲む全方位（360方位）の地形を実測して保存します。保存後は、太陽・月がどの高さ・
-              どの日時にあっても、通信なしで即座に三脚候補を確認できるようになります
-              （方位ごとに地形が変わらない限り、季節や年をまたいでもずっと使えます）。
+              この地点を囲む全方位（360方位）の三脚候補点計算用地形データを端末に保存します。
+              保存済みデータは次回以降の三脚候補点計算で再利用されます。
             </p>
             <p className="project-dialog-note">
               容量は数十MB程度、計算に数分かかることがあります。バックグラウンドで進み、途中でやめても
               後から再開できます。カメラの高さを変えると、その分だけ保存し直します
               （焦点距離の変更では保存し直しません）。
             </p>
-            <div>
-              <button type="button" onClick={onDecline}>
-                保存しない
-              </button>
-              <button type="button" className="primary" onClick={onConfirm}>
-                保存する
-              </button>
-            </div>
+            {mode === "spot-search" ? (
+              <div className="bearing-profile-choice-buttons">
+                <button type="button" className="primary" onClick={onConfirmAndFavorite}>
+                  ダウンロードしてお気に入りに登録
+                </button>
+                <button type="button" onClick={onConfirm}>
+                  ダウンロードしてお気に入りには登録しない
+                </button>
+                <button type="button" onClick={onDecline}>
+                  ダウンロードしない
+                </button>
+              </div>
+            ) : (
+              <div>
+                <button type="button" onClick={onDecline}>
+                  保存しない
+                </button>
+                <button type="button" className="primary" onClick={onConfirm}>
+                  保存する
+                </button>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -77,9 +93,15 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
               <div className="rolling-window-progress-fill" style={{ width: `${percent}%` }} />
             </div>
             <p className="project-dialog-note">
-              {progress.totalSteps === 0
-                ? "既に最新の状態です。"
-                : `${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}`}
+              {progress.phase === "water"
+                ? `水面・河川情報 ${progress.completedSteps} / ${progress.totalSteps}`
+                : progress.phase === "osm"
+                  ? "道路・立入・建物情報を保存しています…"
+                  : progress.phase === "finalizing"
+                    ? "端末への保存を確定しています…"
+                    : progress.totalSteps === 0
+                      ? "既に最新の状態です。"
+                      : `${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}`}
             </p>
             <div>
               <button type="button" onClick={onCancelDownload}>

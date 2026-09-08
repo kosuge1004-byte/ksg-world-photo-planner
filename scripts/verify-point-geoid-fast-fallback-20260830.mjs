@@ -4,7 +4,7 @@ const w=fs.readFileSync(new URL('../src/cesium/worldTerrain.ts', import.meta.url
 const checks=[
  ['fallback時1.2秒', t.includes('hasSampleFallback ? 1_200 : 15_000')],
  ['fallback不能時15秒維持', t.includes('hasSampleFallback ? 1_200 : 15_000')],
- ['sample Nを引継ぎ', t.includes('best.candidatePoint.geoidHeightMeters')],
+ ['sample Nを引継ぎ', t.includes('geoidHeightMetersForTerrainSample(solution.cartographic)')],
  ['地点別成功を優先', t.includes('const geoidForEllipsoidal = exactGeoid ?? geoidForOrthometric')],
  ['point開始trace', t.includes('geoid:point:start')],
  ['point成功trace', t.includes('geoid:point:end')],

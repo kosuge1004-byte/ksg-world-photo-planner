@@ -10,10 +10,10 @@ const checks = [
   ['preview still renders requested high-quality canvas', preview.includes('pixelRatio = Math.min(window.devicePixelRatio || 1, 2)')],
   ['delayed final preview waits for stable map camera after user movement', app.includes('waitForCameraIdle') && app.includes('700') && app.includes('sameCamera(current, mapCameraAtSchedule)')],
   ['final preview pass remains enabled', app.includes('プレビュー最終更新中') && app.includes('3200')],
-  ['2D mode still stops hidden Cesium render loop', app.includes('viewer.useDefaultRenderLoop = mapViewMode === "3d"')],
+  ['Cesium default render loop stays disabled for controlled/manual rendering', app.includes('viewer.useDefaultRenderLoop = false')],
   ['Google 3D LOD quality setting unchanged', viewer.includes('tileset.maximumScreenSpaceError = 24')],
   ['PLATEAU 3D LOD quality setting unchanged', viewer.includes('buildings.maximumScreenSpaceError = 8')],
-  ['terrain vertex normals remain enabled', viewer.includes('requestVertexNormals: true')],
+  ['terrain vertex normals follow the optional terrain shading setting', viewer.includes('requestVertexNormals: terrainShadingEnabled')],
 ];
 
 let failed = 0;

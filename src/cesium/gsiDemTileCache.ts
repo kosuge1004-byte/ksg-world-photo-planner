@@ -61,6 +61,7 @@ export function getLocalTileCacheStats(): {
 
 const DB_NAME = "ksg-world-photo-planner-dem-tiles-v1";
 const STORE_NAME = "tiles";
+const SPOT_REF_STORE_NAME = "spotRefs";
 const CACHE_SCHEMA_VERSION = "gsi-dem-device-v1";
 const MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
@@ -74,7 +75,7 @@ const TILE_SIZE = 256;
 // （1枚あたり256x256px、概算1枚256KB程度として最大64MB前後）へ拡大し、
 // 1回の探索内での重複デコードを減らす。
 const MEMORY_MAX_ENTRIES = 256;
-const PERSISTED_MAX_ENTRIES = 192;
+const PERSISTED_MAX_ENTRIES = Number.POSITIVE_INFINITY; // 2026-09-08: user-managed downloaded spots; do not evict valid tiles by count
 const PREFETCH_CONCURRENCY = 2;
 const PREFETCH_MAX_TILES_PER_CALL = 24;
 
@@ -142,11 +143,14 @@ function openDatabase(): Promise<IdbDatabase | null> {
   const indexedDb = getIndexedDbFactory();
   if (!indexedDb) return Promise.resolve(null);
   databasePromise ??= new Promise((resolve) => {
-    const request = indexedDb.open(DB_NAME, 1);
+    const request = indexedDb.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         database.createObjectStore(STORE_NAME, { keyPath: "key" });
+      }
+      if (!database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) {
+        database.createObjectStore(SPOT_REF_STORE_NAME, { keyPath: "subjectId" });
       }
     };
     request.onsuccess = () => {
@@ -163,6 +167,199 @@ function openDatabase(): Promise<IdbDatabase | null> {
     };
   });
   return databasePromise;
+}
+
+
+
+type SpotTileReferenceRecord = {
+  subjectId: string;
+  tileKeys: string[];
+  updatedAt: number;
+};
+
+type ActiveSpotTileCapture = { keys: Set<string>; writeFailureStart: number };
+const activeSpotTileCaptures = new Map<string, ActiveSpotTileCapture>();
+let persistentTileWriteFailures = 0;
+
+/** Begin collecting DEM tile keys requested while one downloaded spot is being prepared. */
+export function beginGsiDeviceTileCapture(subjectId: string): void {
+  activeSpotTileCaptures.set(subjectId, { keys: new Set<string>(), writeFailureStart: persistentTileWriteFailures });
+}
+
+export function recordGsiDeviceTileReferencesForPoints(
+  subjectId: string,
+  points: Array<{ latitude: number; longitude: number }>
+): void {
+  const capture = activeSpotTileCaptures.get(subjectId);
+  if (!capture) return;
+  const keys = capture.keys;
+  for (const point of points) {
+    if (!isJapaneseCoverage(point.latitude, point.longitude)) continue;
+    for (const source of SOURCES) {
+      const coordinate = tileCoordinates(point.latitude, point.longitude, source.zoom);
+      for (const offset of neighborOffsets(coordinate.pixelX, coordinate.pixelY)) {
+        keys.add(tileKey(source, coordinate.x + offset.x, coordinate.y + offset.y));
+      }
+    }
+  }
+}
+
+async function writeSpotTileReferences(subjectId: string, tileKeys: string[]): Promise<void> {
+  const database = await openDatabase();
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(SPOT_REF_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(SPOT_REF_STORE_NAME);
+    const getRequest = store.get(subjectId);
+    getRequest.onsuccess = () => {
+      const previous = getRequest.result as SpotTileReferenceRecord | undefined;
+      const merged = new Set(previous?.tileKeys ?? []);
+      tileKeys.forEach((key) => merged.add(key));
+      store.put({ subjectId, tileKeys: [...merged], updatedAt: Date.now() } satisfies SpotTileReferenceRecord);
+    };
+    getRequest.onerror = () => {
+      // Do not replace a possibly-existing reference set when it cannot be read safely.
+      transaction.abort();
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+}
+
+async function readAllSpotTileReferences(): Promise<SpotTileReferenceRecord[]> {
+  const database = await openDatabase();
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return [];
+  return await new Promise<SpotTileReferenceRecord[]>((resolve) => {
+    const transaction = database.transaction(SPOT_REF_STORE_NAME, "readonly");
+    const request = transaction.objectStore(SPOT_REF_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result as SpotTileReferenceRecord[] : []);
+    request.onerror = () => resolve([]);
+  });
+}
+
+export async function finishGsiDeviceTileCapture(subjectId: string): Promise<{ tileCount: number; bytes: number; writeFailures: number }> {
+  const capture = activeSpotTileCaptures.get(subjectId);
+  const keys = [...(capture?.keys ?? new Set<string>())];
+  const writeFailures = Math.max(0, persistentTileWriteFailures - (capture?.writeFailureStart ?? persistentTileWriteFailures));
+  activeSpotTileCaptures.delete(subjectId);
+  const waits = keys.map((key) => inFlightPrefetch.get(key)).filter((value): value is Promise<void> => Boolean(value));
+  if (waits.length > 0) await Promise.allSettled(waits);
+  await writeSpotTileReferences(subjectId, keys);
+  const database = await openDatabase();
+  if (!database || keys.length === 0) return { tileCount: keys.length, bytes: 0, writeFailures };
+  let bytes = 0;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+    let remaining = keys.length;
+    for (const key of keys) {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const record = request.result as StoredTile | undefined;
+        if (record) bytes += record.heightsBuffer?.byteLength ?? 0;
+        remaining -= 1;
+        if (remaining === 0) resolve();
+      };
+      request.onerror = () => { remaining -= 1; if (remaining === 0) resolve(); };
+    }
+  });
+  return { tileCount: keys.length, bytes, writeFailures };
+}
+
+
+export async function getGsiDeviceTileStorageStatsForDownloadedSpot(subjectId: string): Promise<{ referencedTiles: number; liveTiles: number; bytes: number; expiredTiles: number }> {
+  const database = await openDatabase();
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return { referencedTiles: 0, liveTiles: 0, bytes: 0, expiredTiles: 0 };
+  const references = await readAllSpotTileReferences();
+  const target = references.find((record) => record.subjectId === subjectId);
+  const keys = target?.tileKeys ?? [];
+  if (keys.length === 0) return { referencedTiles: 0, liveTiles: 0, bytes: 0, expiredTiles: 0 };
+  const now = Date.now();
+  let liveTiles = 0; let expiredTiles = 0; let bytes = 0;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+    let remaining = keys.length;
+    for (const key of keys) {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const record = request.result as StoredTile | undefined;
+        if (!record || now - record.updatedAt > MAX_AGE_MS) expiredTiles += 1;
+        else { liveTiles += 1; bytes += record.heightsBuffer?.byteLength ?? 0; }
+        remaining -= 1; if (remaining === 0) resolve();
+      };
+      request.onerror = () => { expiredTiles += 1; remaining -= 1; if (remaining === 0) resolve(); };
+    }
+  });
+  return { referencedTiles: keys.length, liveTiles, bytes, expiredTiles };
+}
+
+export async function getGsiDownloadedSpotsTotalStorageStats(): Promise<{ uniqueLiveTiles: number; bytes: number }> {
+  const database = await openDatabase();
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return { uniqueLiveTiles: 0, bytes: 0 };
+  const references = await readAllSpotTileReferences();
+  const keys = [...new Set(references.flatMap((record) => record.tileKeys))];
+  if (keys.length === 0) return { uniqueLiveTiles: 0, bytes: 0 };
+  const now = Date.now(); let uniqueLiveTiles = 0; let bytes = 0;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+    let remaining = keys.length;
+    for (const key of keys) {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const record = request.result as StoredTile | undefined;
+        if (record && now - record.updatedAt <= MAX_AGE_MS) { uniqueLiveTiles += 1; bytes += record.heightsBuffer?.byteLength ?? 0; }
+        remaining -= 1; if (remaining === 0) resolve();
+      };
+      request.onerror = () => { remaining -= 1; if (remaining === 0) resolve(); };
+    }
+  });
+  return { uniqueLiveTiles, bytes };
+}
+
+/** Delete only DEM tiles no other downloaded spot references. Ordinary cache misses are safe and refetchable. */
+export async function deleteGsiDeviceTilesForDownloadedSpot(subjectId: string): Promise<{ deletedTiles: number; retainedSharedTiles: number; deletedBytes: number }> {
+  const database = await openDatabase();
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) {
+    return { deletedTiles: 0, retainedSharedTiles: 0, deletedBytes: 0 };
+  }
+  const references = await readAllSpotTileReferences();
+  const target = references.find((record) => record.subjectId === subjectId);
+  if (!target) return { deletedTiles: 0, retainedSharedTiles: 0, deletedBytes: 0 };
+  const referencedElsewhere = new Set(
+    references.filter((record) => record.subjectId !== subjectId).flatMap((record) => record.tileKeys)
+  );
+  const deletable = target.tileKeys.filter((key) => !referencedElsewhere.has(key));
+  const retainedSharedTiles = target.tileKeys.length - deletable.length;
+  let deletedBytes = 0;
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    let pendingReads = deletable.length;
+    if (pendingReads === 0) { resolve(); return; }
+    for (const key of deletable) {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const record = request.result as StoredTile | undefined;
+        if (record) deletedBytes += record.heightsBuffer?.byteLength ?? 0;
+        store.delete(key);
+        memoryCache.delete(key);
+        pendingReads -= 1;
+        if (pendingReads === 0) resolve();
+      };
+      request.onerror = () => { pendingReads -= 1; if (pendingReads === 0) resolve(); };
+    }
+  });
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(SPOT_REF_STORE_NAME, "readwrite");
+    transaction.objectStore(SPOT_REF_STORE_NAME).delete(subjectId);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+  return { deletedTiles: deletable.length, retainedSharedTiles, deletedBytes };
 }
 
 function tileKey(source: SourceDefinition, x: number, y: number): string {
@@ -374,13 +571,17 @@ async function writeTile(
         updatedAt: now,
         accessedAt: now,
       };
-  await new Promise<void>((resolve) => {
+  const persisted = await new Promise<boolean>((resolve) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(record);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
+    transaction.oncomplete = () => resolve(true);
+    transaction.onerror = () => resolve(false);
+    transaction.onabort = () => resolve(false);
   });
+  if (!persisted) {
+    persistentTileWriteFailures += 1;
+    return;
+  }
   writesSinceCleanup += 1;
   if (writesSinceCleanup >= 16) {
     writesSinceCleanup = 0;

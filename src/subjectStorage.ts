@@ -58,6 +58,20 @@ export function loadFavoriteSubjects(): SubjectRecord[] {
   return read(FAVORITES_KEY);
 }
 
+export function addFavoriteSubject(point: GroundPoint): SubjectRecord[] {
+  const current = loadFavoriteSubjects();
+  if (current.some((item) => sameLocation(item, point))) return current;
+  const now = new Date().toISOString();
+  const next: SubjectRecord = {
+    ...point,
+    id: idFor(point),
+    searchType: "saved",
+    createdAt: now,
+    lastUsedAt: now,
+  };
+  return write(FAVORITES_KEY, [next, ...current]);
+}
+
 export function toggleFavoriteSubject(point: GroundPoint): SubjectRecord[] {
   const current = loadFavoriteSubjects();
   const exists = current.some((item) => sameLocation(item, point));

@@ -7,7 +7,8 @@ const app = fs.readFileSync("src/App.tsx", "utf8");
 const storage = fs.readFileSync("src/precision/precisionSettingsStorage.ts", "utf8");
 
 assert.match(weather, /accuracyMode: AccuracyMode/);
-assert.match(weather, /options\.accuracyMode === "standard"/);
+assert.match(weather, /void options\.accuracyMode/);
+assert.match(weather, /options\.mode === "standard"/);
 assert.match(dialog, /accuracyMode: precisionSettings\.accuracyMode/);
 assert.match(app, /loadPrecisionSettingsFromStorage/);
 assert.match(app, /savePrecisionSettingsToStorage\(precisionSettings\)/);

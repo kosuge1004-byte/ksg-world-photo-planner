@@ -37,7 +37,7 @@ assert(viewer.includes('tileset = await createPhotorealisticTilesetWithTimeout()
 assert(ar.includes('loadGooglePhotorealisticTilesetWithRetry('), 'AR must use the shared counted loader');
 assert(!app.includes('recordCesiumIonHighPrecisionUsage'), 'App-level legacy mode-use counter must be removed');
 assert(settings.includes('Cesium ion公式Usageを確認'), 'official Usage link is missing');
-assert(settings.includes('公式Usageの値に同期'), 'official Usage manual sync control is missing');
+assert(settings.includes('公式Usageの値を手動反映'), 'official Usage manual reflect control is missing');
 
 console.log('Cesium root usage counter verification: PASS');
 console.log('- ion asset endpoint resolution happens before counting');

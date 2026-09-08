@@ -1,4 +1,4 @@
-import { getDeviceCache, setDeviceCache, clearDeviceCacheNamespace } from "./deviceCache";
+import { getDeviceCache, setDeviceCache, clearDeviceCacheNamespace, getDeviceCacheNamespaceStats } from "./deviceCache";
 
 /**
  * 2026-09-05追記（全面設計変更）: 「日時ごとに1候補だけ覚える」方式
@@ -97,4 +97,9 @@ export async function setBearingProfile(
 
 export async function clearBearingProfileCacheForSubject(subjectId: string): Promise<void> {
   await clearDeviceCacheNamespace(namespaceFor(subjectId));
+}
+
+export async function getBearingProfileStorageStats(subjectId: string): Promise<{ entryCount: number; bytes: number }> {
+  const stats = await getDeviceCacheNamespaceStats(namespaceFor(subjectId));
+  return { entryCount: stats.entryCount, bytes: stats.valueBytes };
 }

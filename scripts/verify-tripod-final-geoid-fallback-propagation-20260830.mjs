@@ -5,7 +5,7 @@ const checks=[
   ['final helper accepts sampled fallback', /sampledGeoidFallback\?: number/],
   ['mapped geoid preferred', /const mappedGeoid = geoidHeightMetersForTerrainSample\(cartographic\)/],
   ['fallback used when WeakMap metadata is lost', /Number\.isFinite\(sampledGeoidFallback\) \? sampledGeoidFallback : undefined/],
-  ['best candidate geoid propagated', /best\.candidatePoint\.geoidHeightMeters/],
+  ['best candidate geoid propagated', /geoidHeightMetersForTerrainSample\(solution\.cartographic\)/],
   ['point-specific geoid remains authoritative when available', /const geoidForEllipsoidal = exactGeoid \?\? geoidForOrthometric/],
   ['no hardcoded geoid correction', /const sampledGeoid = Number\.isFinite\(mappedGeoid\)/],
 ];
