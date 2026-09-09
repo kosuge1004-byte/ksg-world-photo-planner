@@ -9,8 +9,8 @@ import {
   logarithmicDistances,
   rayCartographicAtDistance,
 } from "../cesium/tripodCandidates";
-import { sampleWorldTerrain, sampleWorldTerrainNeutral, terrainDataSource } from "../cesium/worldTerrain";
-import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, recordGsiDeviceTileReferencesForPoints } from "../cesium/gsiDemTileCache";
+import { sampleWorldTerrainNeutral, terrainDataSource } from "../cesium/worldTerrain";
+import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, flushGsiDeviceTilePrefetchQueue, pauseGsiDeviceTilePrefetch, recordGsiDeviceTileReferencesForPoints, resumeGsiDeviceTilePrefetch } from "../cesium/gsiDemTileCache";
 import { idFor } from "../subjectStorage";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type { CelestialScreenPoint, TripodCandidate } from "../types/celestial";
@@ -53,8 +53,13 @@ const TOTAL_BEARINGS = Math.round(360 / ALL_BEARINGS_STEP_DEGREES);
 const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 
 // 2026-09-09修正: 通常は数秒で返るDEM取得を45秒まで待つと、障害時に
-// 10m+1mだけで約90秒/方位になっていた。API側の再試行時間も含めて20秒で
+// 1段階だけでも長時間停止して見えるため、API側の再試行時間も含めて20秒で
 // 打ち切り、異常を長時間「進行中」に見せない。精度やDEM点数は変更しない。
+// 2026-09-09追加修正: ダウンロード成功時に保存されるのは1m優先の
+// sampleWorldTerrainNeutral結果だけで、先行10m結果は一切使われていなかった。
+// 同じ640地点を10m→1mと二重取得していた冗長経路を削除し、最初から
+// authoritativeな1m優先取得のみ実行する。これは精度低下ではなく、最終保存値と
+// 同一の取得を1回だけ行う変更。
 const BEARING_TERRAIN_STAGE_TIMEOUT_MS = 20_000;
 // 方位同士は独立しているが、各方位内でもDEM APIが並列取得を行うため
 // 過剰並列にはしない。2方位だけ重ね、待ち時間を隠しつつGSI/Cloudflareを保護する。
@@ -153,8 +158,9 @@ export type BearingBackfillResult = {
  * IndexedDBへ保存する。2026-09-08にサーバー側ジョブ化を試みたが、
  * Cloudflare Workers無料プランのsubrequest上限（50回/呼び出し）に
  * 抵触したため、この直接方式へ差し戻した（ファイル冒頭コメント参照）。
- * 1段階（10m/1m取得）ごとにタイムアウトを設け、通信がハングしても
- * 永遠に固まらないようにする（2026-09-08のダウンロード停止修正）。
+ * 高精度DEM取得段階にタイムアウトを設け、通信がハングしても永遠に
+ * 固まらないようにする（2026-09-08のダウンロード停止修正）。
+ * 2026-09-09以降、成功時に使われない10m先行取得は行わない。
  */
 export async function backfillBearingProfiles(params: {
   subjectId: string;
@@ -166,6 +172,16 @@ export async function backfillBearingProfiles(params: {
 }): Promise<BearingBackfillResult> {
   const { subjectId, subjectPoint, cameraSettings, signal, onProgress, forceRefresh = false } = params;
   beginGsiDeviceTileCapture(subjectId);
+  // During the latency-sensitive 360-bearing terrain pass, decoded DEM-tile
+  // persistence is queued instead of competing for the same-origin/network slots.
+  // The queued tiles are drained once, after all foreground elevation requests.
+  pauseGsiDeviceTilePrefetch();
+  let deviceTilePrefetchPaused = true;
+  const resumeDeviceTilePrefetch = (): void => {
+    if (!deviceTilePrefetchPaused) return;
+    deviceTilePrefetchPaused = false;
+    resumeGsiDeviceTilePrefetch();
+  };
   const bearings = Array.from(
     { length: TOTAL_BEARINGS },
     (_, index) => index * ALL_BEARINGS_STEP_DEGREES
@@ -174,6 +190,7 @@ export async function backfillBearingProfiles(params: {
   const pendingBearings: number[] = [];
   for (const bearing of bearings) {
     if (signal?.aborted) {
+      resumeDeviceTilePrefetch();
       const captured = await finishGsiDeviceTileCapture(subjectId);
       return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures, requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: true };
     }
@@ -184,6 +201,7 @@ export async function backfillBearingProfiles(params: {
   const totalSteps = pendingBearings.length;
   onProgress?.({ totalSteps, completedSteps: 0, currentBearingDegrees: null, phase: "terrain" });
   if (totalSteps === 0) {
+    resumeDeviceTilePrefetch();
     const captured = await finishGsiDeviceTileCapture(subjectId);
     return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures, requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: false };
   }
@@ -223,24 +241,6 @@ export async function backfillBearingProfiles(params: {
     const terrainPoints = cartographicPoints.map(({ destination }) =>
       Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
     );
-
-    let coarse;
-    try {
-      coarse = await runBearingTerrainStage(
-        (stageSignal) => sampleWorldTerrain(terrainPoints, stageSignal, "10m"),
-        signal
-      );
-    } catch (error) {
-      if (isAbortError(error)) return;
-      failedBearings += 1;
-      completedAttempts += 1;
-      console.warn(`[bearing-profile] 方位${bearing}°の10m地形取得に失敗しました`, error);
-      if (successfulBearings === 0 && failedBearings >= FAILURE_ABORT_THRESHOLD) {
-        abortReason = `DEM取得が${failedBearings}方位連続で失敗したため中止しました`;
-      }
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "profile", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
-      return;
-    }
 
     onProgress?.({
       totalSteps,
@@ -289,7 +289,7 @@ export async function backfillBearingProfiles(params: {
         distanceMeters,
         longitude: destination.longitude,
         latitude: destination.latitude,
-        ellipsoidalHeightMeters: precise[i]?.height ?? coarse[i]?.height ?? 0,
+        ellipsoidalHeightMeters: precise[i]?.height ?? 0,
       })),
       computedAtIso: new Date().toISOString(),
     };
@@ -328,9 +328,15 @@ export async function backfillBearingProfiles(params: {
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   if (abortReason) {
+    resumeDeviceTilePrefetch();
     const captured = await finishGsiDeviceTileCapture(subjectId);
     throw new Error(`${abortReason}（成功${successfulBearings} / 失敗${failedBearings}）`);
   }
+
+  // Foreground DEM work is complete. Persist the queued decoded tiles now, with
+  // one global low-priority worker, then continue to the ancillary downloads.
+  resumeDeviceTilePrefetch();
+  if (!signal?.aborted) await flushGsiDeviceTilePrefetchQueue();
 
   if (!signal?.aborted && waterPrefetchPoints.length > 0) {
     onProgress?.({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });

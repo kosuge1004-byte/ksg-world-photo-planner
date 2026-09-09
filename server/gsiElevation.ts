@@ -848,13 +848,42 @@ export async function lookupGsiElevations(
   }
   if (unresolved.size > 0 && remainingSources.length > 0) {
     if (signal?.aborted) throw createAbortError();
-    const targetIndices = new Set(unresolved);
-    const tierResults = await Promise.all(
-      remainingSources.map((source) => resolveSourceTier(source, targetIndices))
-    );
-    // remainingSourcesの並び（優先順位）どおりに適用する。先に適用した
-    // ものが優先され、後続はunresolvedから外れているため上書きしない。
-    for (const resolved of tierResults) applyResolved(resolved);
+
+    // 2026-09-09: 以前は DEM5A/5B/5C/DEM10B を同時に開始していた。
+    // その方式は最終的に5m DEMで解決できる地点についてもDEM10Bを必ず
+    // 取得するため、1mプロファイルの連続ダウンロード中に不要なGSI/R2
+    // subrequestを発生させ、同じWorker invocationの外向き接続枠を圧迫する。
+    // 精度優先順位を変えずに通信量だけを減らすため、DEM5Aを先に解決し、
+    // その未解決地点だけDEM5B/5Cを並列取得する。さらに残った地点だけ
+    // DEM10Bへ進む段階方式にする。
+    const fiveMeterSources = remainingSources.filter((source) => source.label !== "DEM10B");
+    const dem5aSource = fiveMeterSources.find((source) => source.label === "DEM5A");
+    const lowerFiveMeterSources = fiveMeterSources.filter((source) => source.label !== "DEM5A");
+    const tenMeterSource = remainingSources.find((source) => source.label === "DEM10B");
+
+    // DEM5A は5m系の最優先ソースなので、まず未解決地点だけをDEM5Aで解決する。
+    // 以前は5A/5B/5Cを同時取得していたため、5Aだけで解決できる地点でも
+    // 5B/5CのR2/GSI取得が必ず発生していた。精度優先順位はそのままに、
+    // 下位5mソースはDEM5Aで残った地点だけへ限定する。
+    if (dem5aSource && unresolved.size > 0) {
+      applyResolved(await resolveSourceTier(dem5aSource, new Set(unresolved)));
+    }
+
+    // DEM5B/5Cは同じ「5mの下位フォールバック群」として、DEM5Aで
+    // 解決できなかった地点に限って並列取得する。ここでは待ち時間を抑えつつ、
+    // DEM5Aが存在する地域での不要通信を除去する。
+    if (unresolved.size > 0 && lowerFiveMeterSources.length > 0) {
+      const targetIndices = new Set(unresolved);
+      const lowerFiveMeterResults = await Promise.all(
+        lowerFiveMeterSources.map((source) => resolveSourceTier(source, targetIndices))
+      );
+      for (const resolved of lowerFiveMeterResults) applyResolved(resolved);
+    }
+
+    if (unresolved.size > 0 && tenMeterSource) {
+      if (signal?.aborted) throw createAbortError();
+      applyResolved(await resolveSourceTier(tenMeterSource, new Set(unresolved)));
+    }
   }
 
   return results;

@@ -76,7 +76,12 @@ const TILE_SIZE = 256;
 // 1回の探索内での重複デコードを減らす。
 const MEMORY_MAX_ENTRIES = 256;
 const PERSISTED_MAX_ENTRIES = Number.POSITIVE_INFINITY; // 2026-09-08: user-managed downloaded spots; do not evict valid tiles by count
-const PREFETCH_CONCURRENCY = 2;
+// Background DEM-tile persistence must never compete aggressively with the
+// foreground /api/gsi-elevation requests. Previously every elevation call
+// started its own two-worker prefetch pool, so repeated bearing downloads could
+// create many extra /api/gsi-dem-tile requests while the next bearing was still
+// resolving. Keep one global low-priority worker instead.
+const PREFETCH_CONCURRENCY = 1;
 const PREFETCH_MAX_TILES_PER_CALL = 24;
 
 type StoredTile = {
@@ -131,6 +136,10 @@ type IdbFactory = { open: (name: string, version: number) => IdbRequest<IdbDatab
 
 const memoryCache = new Map<string, TileLookup>();
 const inFlightPrefetch = new Map<string, Promise<void>>();
+const queuedPrefetch = new Map<string, { source: SourceDefinition; x: number; y: number }>();
+let activePrefetchWorkers = 0;
+let prefetchPauseDepth = 0;
+const prefetchDrainWaiters: Array<() => void> = [];
 const inFlightReads = new Map<string, Promise<TileLookup | null>>();
 let databasePromise: Promise<IdbDatabase | null> | null = null;
 let writesSinceCleanup = 0;
@@ -903,6 +912,51 @@ function tileRequestsForSample(
   return [...requests.values()];
 }
 
+function resolvePrefetchDrainWaitersIfIdle(): void {
+  if (queuedPrefetch.size > 0 || activePrefetchWorkers > 0 || inFlightPrefetch.size > 0) return;
+  while (prefetchDrainWaiters.length > 0) prefetchDrainWaiters.shift()?.();
+}
+
+function pumpPrefetchQueue(): void {
+  if (prefetchPauseDepth > 0) return;
+  while (activePrefetchWorkers < PREFETCH_CONCURRENCY && queuedPrefetch.size > 0) {
+    const first = queuedPrefetch.entries().next().value as
+      | [string, { source: SourceDefinition; x: number; y: number }]
+      | undefined;
+    if (!first) break;
+    const [key, request] = first;
+    queuedPrefetch.delete(key);
+    activePrefetchWorkers += 1;
+    void fetchAndStoreTile(request.source, request.x, request.y).finally(() => {
+      activePrefetchWorkers = Math.max(0, activePrefetchWorkers - 1);
+      pumpPrefetchQueue();
+      resolvePrefetchDrainWaitersIfIdle();
+    });
+  }
+  resolvePrefetchDrainWaitersIfIdle();
+}
+
+/** Pause low-priority decoded-tile persistence while latency-sensitive elevation
+ * requests are running. Nested callers are supported. */
+export function pauseGsiDeviceTilePrefetch(): void {
+  prefetchPauseDepth += 1;
+}
+
+/** Resume low-priority tile persistence and drain queued work with one global worker. */
+export function resumeGsiDeviceTilePrefetch(): void {
+  prefetchPauseDepth = Math.max(0, prefetchPauseDepth - 1);
+  pumpPrefetchQueue();
+}
+
+/** Wait until every currently queued/in-flight low-priority tile persistence task
+ * has settled. This is used only at the finalization boundary of an explicit
+ * downloaded-spot operation, never in the foreground terrain solver. */
+export async function flushGsiDeviceTilePrefetchQueue(): Promise<void> {
+  pumpPrefetchQueue();
+  if (queuedPrefetch.size === 0 && activePrefetchWorkers === 0 && inFlightPrefetch.size === 0) return;
+  await new Promise<void>((resolve) => prefetchDrainWaiters.push(resolve));
+}
+
 async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number): Promise<void> {
   const key = tileKey(source, x, y);
   if (await readTile(source, x, y)) return;
@@ -957,18 +1011,12 @@ export function prefetchGsiDeviceTilesForSamples(
   });
   const queue = [...requests.values()].slice(0, PREFETCH_MAX_TILES_PER_CALL);
   if (queue.length === 0) return;
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < queue.length) {
-      const index = next;
-      next += 1;
-      const request = queue[index];
-      await fetchAndStoreTile(request.source, request.x, request.y);
-    }
-  };
-  void Promise.all(
-    Array.from({ length: Math.min(PREFETCH_CONCURRENCY, queue.length) }, () => worker())
-  );
+  for (const request of queue) {
+    const key = tileKey(request.source, request.x, request.y);
+    if (inFlightPrefetch.has(key) || queuedPrefetch.has(key)) continue;
+    queuedPrefetch.set(key, request);
+  }
+  pumpPrefetchQueue();
 }
 
 export const __testGsiDemTileCacheInternals = { tileCoordinates, interpolateNeighborhood, interpolateBilinear };

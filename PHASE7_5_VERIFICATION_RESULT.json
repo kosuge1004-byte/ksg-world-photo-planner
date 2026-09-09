@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T10:27:54.516Z",
+  "generatedAt": "2026-09-09T14:23:21.509Z",
   "staticChecks": [
     {
       "name": "Capacitor app identity",
@@ -30,7 +30,7 @@
     {
       "suite": "verify:phase6-5",
       "status": "FAIL",
-      "output": "> astrosight@1.0.0 verify:phase6-5\n> node scripts/verify-phase6-5-final.mjs\n\nfile:///mnt/data/cont/audit_batch/scripts/verify-phase6-5-final.mjs:15\n  if (!fs.existsSync(path)) throw new Error(`Missing final artifact: ${path}`);\n                                  ^\n\nError: Missing final artifact: PHASE6_1_LOS_PERFORMANCE.md\n    at file:///mnt/data/cont/audit_batch/scripts/verify-phase6-5-final.mjs:15:35\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0"
+      "output": "> astrosight@1.0.0 verify:phase6-5\n> node scripts/verify-phase6-5-final.mjs\n\nfile:///mnt/data/astrosight_final_audit/scripts/verify-phase6-5-final.mjs:15\n  if (!fs.existsSync(path)) throw new Error(`Missing final artifact: ${path}`);\n                                  ^\n\nError: Missing final artifact: PHASE6_1_LOS_PERFORMANCE.md\n    at \u001b[90mfile:///mnt/data/astrosight_final_audit/\u001b[39mscripts/verify-phase6-5-final.mjs:15:35\n\u001b[90m    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\u001b[39m\n\u001b[90m    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\u001b[39m\n\u001b[90m    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\u001b[39m\n\nNode.js v22.16.0"
     },
     {
       "suite": "verify:phase7-1",
@@ -39,8 +39,8 @@
     },
     {
       "suite": "verify:phase7-2",
-      "status": "FAIL",
-      "output": "           onChange={(event) => setQuery(event.target.value)}\\n' +\n    '                placeholder=\"地名 / Googleマップ共有URL\"\\n' +\n    '                autoComplete=\"off\"\\n' +\n    '                disabled={isSearching}\\n' +\n    '              />\\n' +\n    '              <button type=\"button\" className={currentSubjectIsFavorite ? \"spot-subject-icon active\" : \"spot-subject-icon\"} aria-label=\"現在の被写体をお気に入り登録\" disabled={pinTarget !== \"subject\" || !currentSubject} onClick={onToggleCurrentFavorite}>★</button>\\n' +\n    '              <button type=\"button\" className=\"spot-subject-icon\" aria-label=\"お気に入りを表示\" disabled={pinTarget !== \"subject\"} onClick={() => setSubjectListOpen((value) => value === \"favorites\" ? null : \"favorites\")}>☆</button>\\n' +\n    '              <button type=\"button\" className=\"spot-subject-icon\" aria-label=\"検索履歴を表示\" disabled={pinTarget !== \"subject\"} onClick={() => setSubjectListOpen((value) => value === \"history\" ? null : \"history\")}>◷</button>\\n' +\n    '              <button type=\"button\" className=\"spot-subject-icon\" aria-label=\"ダウンロード済みデータを表示\" disabled={pinTarget !== \"subject\"} onClick={() => setSubjectListOpen((value) => value === \"downloads\" ? null : \"downloads\")}>⇩</button>\\n' +\n    '            </div>\\n' +\n    '          </label>\\n' +\n    '\\n' +\n    '          {subjectListOpen && (\\n' +\n    '            <section className=\"spot-subject-list\" aria-label={subjectListOpen === \"history\" ? \"検索履歴\" : subjectListOpen === \"favorites\" ? \"お気に入り\" : \"ダウンロード済みデータ\"}>\\n' +\n    '              <header>\\n' +\n    '                <strong>{subjectListOpen === \"history\" ? \"最近の検索\" : subjectListOpen === \"favorites\" ? \"お気に入り\" : \"ダウンロード済みデータ\"}</strong>\\n' +\n    '                <button type=\"button\" onClick={() => setSubjectListOpen(null)} aria-label=\"閉じる\">×</button>\\n' +\n    '              </header>\\n' +\n    '              {subjectListOpen === \"downloads\" ? (\\n' +\n    '           '... 7934 more characters,\n  expected: /onResumeSearch/u,\n  operator: 'match'\n}\n\nNode.js v22.16.0"
+      "status": "PASS",
+      "output": "> astrosight@1.0.0 verify:phase7-2\n> node scripts/verify-phase7-2-search.mjs\n\nPhase7-2 search integration verification: PASS"
     },
     {
       "suite": "verify:phase7-3",
@@ -70,7 +70,7 @@
   ],
   "build": {
     "status": "BLOCKED_DEPENDENCY",
-    "detail": "> astrosight@1.0.0 prebuild\n> node scripts/prepare-cloudflare-geo-tz-assets.mjs\n\nnode:internal/modules/package_json_reader:256\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\n        ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find package 'geo-tz' imported from /mnt/data/cont/audit_batch/scripts/prepare-cloudflare-geo-tz-assets.mjs\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:256:9)\n    at packageResolve (node:internal/modules/esm/resolve:768:81)\n    at moduleResolve (node:internal/modules/esm/resolve:854:18)\n    at defaultResolve (node:internal/modules/esm/resolve:984:11)\n    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:739:38)\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:762:52)\n    at Object.resolve (node:internal/modules/esm/initialize_import_meta:35:25)\n    at file:///mnt/data/cont/audit_batch/scripts/prepare-cloudflare-geo-tz-assets.mjs:7:46 {\n  code: 'ERR_MODULE_NOT_FOUND'\n}\n\nNode.js v22.16.0"
+    "detail": "> astrosight@1.0.0 prebuild\n> node scripts/prepare-cloudflare-geo-tz-assets.mjs\n\nnode:internal/modules/package_json_reader:256\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\n        ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find package 'geo-tz' imported from /mnt/data/astrosight_final_audit/scripts/prepare-cloudflare-geo-tz-assets.mjs\n\u001b[90m    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:256:9)\u001b[39m\n\u001b[90m    at packageResolve (node:internal/modules/esm/resolve:768:81)\u001b[39m\n\u001b[90m    at moduleResolve (node:internal/modules/esm/resolve:854:18)\u001b[39m\n\u001b[90m    at defaultResolve (node:internal/modules/esm/resolve:984:11)\u001b[39m\n\u001b[90m    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)\u001b[39m\n\u001b[90m    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)\u001b[39m\n\u001b[90m    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:739:38)\u001b[39m\n\u001b[90m    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:762:52)\u001b[39m\n\u001b[90m    at Object.resolve (node:internal/modules/esm/initialize_import_meta:35:25)\u001b[39m\n    at \u001b[90mfile:///mnt/data/astrosight_final_audit/\u001b[39mscripts/prepare-cloudflare-geo-tz-assets.mjs:7:46 {\n  code: \u001b[32m'ERR_MODULE_NOT_FOUND'\u001b[39m\n}\n\nNode.js v22.16.0"
   },
   "androidWebAssetsPresent": false,
   "iosProjectPresent": false

@@ -383,10 +383,16 @@ async function requestBatchWithRecovery(
 // 組み立て方は一切変更せず、「1要求に何点詰め込むか」だけを変える。
 const PARALLEL_SPLIT_MIN_POINTS = 96;
 const MIN_PARALLEL_CHUNK_SIZE = 48;
+const PER_CALL_WORKER_RESERVE = 2;
+const MAX_PER_CALL_WORKERS = Math.max(1, MAX_CONCURRENT_REQUESTS - PER_CALL_WORKER_RESERVE);
 
 function chunkSizeForRequest(totalPoints: number): number {
   if (totalPoints < PARALLEL_SPLIT_MIN_POINTS) return REQUEST_BATCH_SIZE;
-  const evenSplitSize = Math.ceil(totalPoints / MAX_CONCURRENT_REQUESTS);
+  // 2026-09-09: 分割数はグローバル上限ではなく、この呼び出しが実際に
+  // 同時実行できるワーカー数に合わせる。従来は640点を約6分割していたが、
+  // per-call上限は4本なので2バッチが必ず第2波へ回り、HTTP往復だけ増えていた。
+  // 640点なら約160点×4本となり、同じ640点・同じ精度を1波で処理できる。
+  const evenSplitSize = Math.ceil(totalPoints / MAX_PER_CALL_WORKERS);
   return Math.min(REQUEST_BATCH_SIZE, Math.max(MIN_PARALLEL_CHUNK_SIZE, evenSplitSize));
 }
 
@@ -436,10 +442,9 @@ export async function fetchGsiElevationSamples(
   // 応答がないまま失敗して見える不具合が実機で確認された。1回の呼び出しが
   // 使うワーカー数にアプリ内キャップを設け、常に他の同時通信のための
   // 枠を残す（大規模探索自体の並列化効果は維持しつつ、独占だけを防ぐ）。
-  const PER_CALL_WORKER_RESERVE = 2;
   const workerCount = Math.max(
     1,
-    Math.min(MAX_CONCURRENT_REQUESTS - PER_CALL_WORKER_RESERVE, batches.length)
+    Math.min(MAX_PER_CALL_WORKERS, batches.length)
   );
   await Promise.all(Array.from(
     { length: workerCount },
