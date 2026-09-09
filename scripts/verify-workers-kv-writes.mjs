@@ -7,6 +7,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoots = ["server", "functions", "workers", "src"];
 const allowedPutCountsByFile = new Map([
   ["server/spotSearchJobs.ts", 1],
+  // 2026-09-08追記: 三脚候補周辺データダウンロードのサーバー側ジョブ用KV書き込み。
+  // spotSearchJobs.tsと同じ設計（1箇所のsetXxxJob関数だけがkv.putを呼ぶ）。
+  ["server/bearingProfileDownloadJobs.ts", 1],
 ]);
 const ignoredDirectories = new Set(["node_modules", "dist", ".git"]);
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);

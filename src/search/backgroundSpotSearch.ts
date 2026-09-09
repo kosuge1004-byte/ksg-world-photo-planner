@@ -53,7 +53,7 @@ export type ActiveSpotSearchJob = {
   jobId: string;
 };
 
-function newId(): string {
+export function newId(): string {
   const runtimeCrypto = globalThis.crypto;
   if (typeof runtimeCrypto?.randomUUID === "function") {
     return runtimeCrypto.randomUUID();
@@ -74,6 +74,14 @@ function clientId(): string {
   const created = newId();
   localStorage.setItem(CLIENT_ID_KEY, created);
   return created;
+}
+
+/**
+ * 2026-09-08追記: 三脚候補周辺データダウンロード（tripodBearingProfileManager.ts）
+ * もサーバー側バックグラウンドジョブ化するにあたり、同じ端末識別子を共有する。
+ */
+export function deviceClientId(): string {
+  return clientId();
 }
 
 function saveActiveJob(job: ActiveSpotSearchJob): void {

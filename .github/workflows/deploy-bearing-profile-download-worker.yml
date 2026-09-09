@@ -1,0 +1,41 @@
+name: Deploy bearing profile download consumer worker
+
+# main ブランチに push されるたびに、三脚候補周辺データダウンロードの
+# バックグラウンドジョブを処理する Cloudflare Worker
+# (astrosight-bearing-profile-download-consumer) を自動でデプロイします。
+#
+# ターミナル操作は不要です。この仕組みが動くために必要なのは
+# 「CLOUDFLARE_API_TOKEN」という GitHub リポジトリの Secret 登録だけです。
+# （README_DEPLOY_PREWARM_WORKER.md の手順1・2で既に登録済みならそのまま使えます）
+#
+# 設定手順は README_BEARING_PROFILE_DOWNLOAD_JOB_SETUP.md を参照してください。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "workers/bearing-profile-download-consumer.ts"
+      - "server/**"
+      - "src/**"
+      - "wrangler.bearing-profile-download.jsonc"
+      - ".github/workflows/deploy-bearing-profile-download-worker.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy bearing-profile-download-consumer worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy --config wrangler.bearing-profile-download.jsonc

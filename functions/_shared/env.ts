@@ -4,11 +4,22 @@ import type {
   SpotSearchJobKv,
   SpotSearchQueueMessage,
 } from "../../server/spotSearchJobs.ts";
+import type {
+  BearingProfileDownloadJobKv,
+  BearingProfileDownloadQueueMessage,
+} from "../../server/bearingProfileDownloadJobs.ts";
 
 export interface CloudflareEnv {
   ASSETS: Fetcher;
   SPOT_SEARCH_JOBS: KVNamespace;
   SPOT_SEARCH_QUEUE: Queue<SpotSearchQueueMessage>;
+  /**
+   * 2026-09-08追記: 三脚候補周辺データダウンロードのサーバー側バックグラウンド
+   * ジョブ用。R2/D1と同じ理由で、実際に作成するまではoptionalとして扱い、
+   * 未設定でもPages/Workerのビルド・デプロイ自体は失敗しない。
+   */
+  BEARING_PROFILE_DOWNLOAD_JOBS?: KVNamespace;
+  BEARING_PROFILE_DOWNLOAD_QUEUE?: Queue<BearingProfileDownloadQueueMessage>;
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
   GOOGLE_MAPS_API_KEY?: string;
@@ -24,6 +35,12 @@ export interface CloudflareEnv {
 
 export function spotSearchJobKv(env: CloudflareEnv): SpotSearchJobKv {
   return env.SPOT_SEARCH_JOBS as unknown as SpotSearchJobKv;
+}
+
+export function bearingProfileDownloadJobKv(env: CloudflareEnv): BearingProfileDownloadJobKv | null {
+  return env.BEARING_PROFILE_DOWNLOAD_JOBS
+    ? (env.BEARING_PROFILE_DOWNLOAD_JOBS as unknown as BearingProfileDownloadJobKv)
+    : null;
 }
 
 export function configureCloudflareServerRuntime(

@@ -11,6 +11,14 @@
     {
       "binding": "SPOT_SEARCH_JOBS",
       "id": "92197c38d81d48489ef4fdd25b1b9a58"
+    },
+    // 2026-09-08追記: 三脚候補周辺データダウンロードのサーバー側バックグラウンド
+    // ジョブ用。SPOT_SEARCH_JOBSとは別ネームスペースにして、既存のスポット検索
+    // ジョブの空き容量・書き込み予算に一切影響を与えないようにする。
+    // 手順: README_BEARING_PROFILE_DOWNLOAD_JOB_SETUP.md を参照。
+    {
+      "binding": "BEARING_PROFILE_DOWNLOAD_JOBS",
+      "id": "2fb4bcb1132140a6bfbfd73ddab4a9f0"
     }
   ],
   // 地形標高（GSI DEMタイル）・気象等のサーバー側キャッシュにR2を使う
@@ -52,6 +60,10 @@
       {
         "binding": "SPOT_SEARCH_QUEUE",
         "queue": "astrosight-spot-search"
+      },
+      {
+        "binding": "BEARING_PROFILE_DOWNLOAD_QUEUE",
+        "queue": "astrosight-bearing-profile-download"
       }
     ]
   },

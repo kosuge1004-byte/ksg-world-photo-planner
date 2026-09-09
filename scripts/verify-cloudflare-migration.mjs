@@ -49,6 +49,7 @@ for (const dependency of [
 
 const pagesConfig = read("wrangler.jsonc");
 const consumerConfig = read("wrangler.spot-search.jsonc");
+const bearingConsumerConfig = read("wrangler.bearing-profile-download.jsonc");
 // JSONC（行コメント付き）のため、素のJSON.parse前にコメントを取り除く。
 const stripJsonComments = (text) =>
   text
@@ -58,9 +59,14 @@ const stripJsonComments = (text) =>
     .join("\n");
 const pagesConfigJson = JSON.parse(stripJsonComments(pagesConfig));
 const consumerConfigJson = JSON.parse(stripJsonComments(consumerConfig));
+const bearingConsumerConfigJson = JSON.parse(stripJsonComments(bearingConsumerConfig));
 const expectedKvNamespaceId = "92197c38d81d48489ef4fdd25b1b9a58";
 const expectedKvBinding = "SPOT_SEARCH_JOBS";
 const expectedQueue = "astrosight-spot-search";
+// 2026-09-08追記: 三脚候補周辺データダウンロードのサーバー側バックグラウンド
+// ジョブ用。SPOT_SEARCH_JOBSとは別ネームスペース・別Queueとして共存する。
+const expectedBearingKvBinding = "BEARING_PROFILE_DOWNLOAD_JOBS";
+const expectedBearingQueue = "astrosight-bearing-profile-download";
 
 if (pagesConfigJson.name !== "astrosight") {
   throw new Error("Pages project name must be astrosight");
@@ -71,11 +77,31 @@ for (const [configName, config] of [
 ]) {
   const kvBindings = config.kv_namespaces ?? [];
   const kvBinding = kvBindings.find((entry) => entry.binding === expectedKvBinding);
-  if (kvBindings.length !== 1 || kvBinding?.id !== expectedKvNamespaceId) {
+  if (!kvBinding || kvBinding.id !== expectedKvNamespaceId) {
     throw new Error(`${configName} KV binding must map ${expectedKvBinding} to ${expectedKvNamespaceId}`);
   }
-  if ("preview_id" in kvBinding || /REPLACE_WITH_/.test(JSON.stringify(config))) {
-    throw new Error(`${configName} KV binding contains a preview ID or placeholder`);
+  if ("preview_id" in kvBinding) {
+    throw new Error(`${configName} KV binding contains a preview ID`);
+  }
+}
+// BEARING_PROFILE_DOWNLOAD_JOBSは、Pages本体とConsumer Workerの両方で
+// 同じ実IDを指していることだけを確認する（SPOT_SEARCH_JOBSと違い、IDは
+// ユーザーごとに異なるため固定値では検証しない）。
+{
+  const pagesBearingKv = (pagesConfigJson.kv_namespaces ?? []).find(
+    (entry) => entry.binding === expectedBearingKvBinding,
+  );
+  const consumerBearingKv = (bearingConsumerConfigJson.kv_namespaces ?? []).find(
+    (entry) => entry.binding === expectedBearingKvBinding,
+  );
+  if (!pagesBearingKv || !consumerBearingKv) {
+    throw new Error(`${expectedBearingKvBinding} binding is missing from Pages or its consumer config`);
+  }
+  if (pagesBearingKv.id !== consumerBearingKv.id) {
+    throw new Error(`${expectedBearingKvBinding} must use the same KV namespace ID in both configs`);
+  }
+  if (!pagesBearingKv.id || /REPLACE_WITH_/.test(pagesBearingKv.id) || "preview_id" in pagesBearingKv) {
+    throw new Error(`${expectedBearingKvBinding} still has a placeholder or preview ID`);
   }
 }
 
@@ -88,6 +114,17 @@ if (queueProducer?.queue !== expectedQueue) {
 if (consumerConfigJson.main !== "./workers/spot-search-consumer.ts" ||
     consumerConfigJson.queues?.consumers?.[0]?.queue !== expectedQueue) {
   throw new Error("Queue consumer configuration is incomplete");
+}
+
+const bearingQueueProducer = pagesConfigJson.queues?.producers?.find(
+  (entry) => entry.binding === "BEARING_PROFILE_DOWNLOAD_QUEUE",
+);
+if (bearingQueueProducer?.queue !== expectedBearingQueue) {
+  throw new Error("Pages queue producer binding for bearing profile download is incomplete");
+}
+if (bearingConsumerConfigJson.main !== "./workers/bearing-profile-download-consumer.ts" ||
+    bearingConsumerConfigJson.queues?.consumers?.[0]?.queue !== expectedBearingQueue) {
+  throw new Error("Bearing profile download queue consumer configuration is incomplete");
 }
 
 const gitignore = read(".gitignore");

@@ -59,8 +59,9 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFav
               保存済みデータは次回以降の三脚候補点計算で再利用されます。
             </p>
             <p className="project-dialog-note">
-              容量は数十MB程度、計算に数分かかることがあります。バックグラウンドで進み、途中でやめても
-              後から再開できます。カメラの高さを変えると、その分だけ保存し直します
+              容量は数十MB程度、計算に数分かかることがあります。サーバー側で処理するため、
+              アプリを閉じても中断されず、途中でこの画面を閉じても後から再開できます。
+              カメラの高さを変えると、その分だけ保存し直します
               （焦点距離の変更では保存し直しません）。
             </p>
             {mode === "spot-search" ? (
@@ -93,7 +94,9 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFav
               <div className="rolling-window-progress-fill" style={{ width: `${percent}%` }} />
             </div>
             <p className="project-dialog-note">
-              {progress.phase === "water"
+              {progress.serverMessage
+                ? progress.serverMessage
+                : progress.phase === "water"
                 ? `水面・河川情報 ${progress.completedSteps} / ${progress.totalSteps}`
                 : progress.phase === "osm"
                   ? "道路・立入・建物情報を保存しています…"

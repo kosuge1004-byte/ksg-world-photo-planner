@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "astrosight-bearing-profile-download-consumer",
+  "main": "./workers/bearing-profile-download-consumer.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "BEARING_PROFILE_DOWNLOAD_JOBS",
+      "id": "2fb4bcb1132140a6bfbfd73ddab4a9f0"
+    }
+  ],
+  // wrangler.spot-search.jsonc と同じ理由でR2は未設定でも動く（NETWORK_CACHE
+  // 未設定時はpersistentCacheFromR2が保存だけをスキップし通信自体は成功する）。
+  // 既にastrosight-network-cacheバケットを作成済みなら、そのまま束縛して
+  // ライブ三脚探索・スポット検索と同じDEMタイルキャッシュを共有できる。
+  "r2_buckets": [
+    {
+      "binding": "NETWORK_CACHE",
+      "bucket_name": "astrosight-network-cache"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "astrosight-bearing-profile-download",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3
+      }
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

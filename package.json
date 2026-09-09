@@ -41,6 +41,8 @@
     "cf:pages:deploy": "npm run build && wrangler pages deploy dist",
     "cf:consumer:dev": "wrangler dev --config wrangler.spot-search.jsonc",
     "cf:consumer:deploy": "wrangler deploy --config wrangler.spot-search.jsonc",
+    "cf:bearing-consumer:dev": "wrangler dev --config wrangler.bearing-profile-download.jsonc",
+    "cf:bearing-consumer:deploy": "wrangler deploy --config wrangler.bearing-profile-download.jsonc",
     "verify:workers-kv-writes": "node scripts/verify-workers-kv-writes.mjs",
     "verify:person-display": "node scripts/verify-person-display.mjs",
     "verify:phase4-1": "node scripts/verify-phase4-1-precision-mode.mjs",
