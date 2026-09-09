@@ -35,10 +35,10 @@ const checks = [
   // 実際の重い処理（地形・水面・OSM取得）がサーバー側で完結する。
   ['heavy work actually runs server-side in the queue consumer',
     consumer.includes('runBearingProfileDownloadJob') && jobRunner.includes('sampleServerWorldTerrain')],
-  // サーバーは1方位失敗しても全体を止めず、必ず進捗を更新し続ける
-  // （個々の失敗がプロセス全体をハングさせない設計は维持）。
-  ['single bearing failure does not halt the whole job',
-    /catch \(error\) \{\s*\/\/ 1方位の失敗で全体を止めない/.test(jobRunner)],
+  // 1方位だけの孤立した失敗では止めないが、最初から全滅する場合は
+  // システム障害として早期中止する（2026-09-09追記の安全策）。両方を検証する。
+  ['single bearing failure does not halt the whole job, but early systemic failure does',
+    jobRunner.includes('successCount += 1') && jobRunner.includes('successCount === 0 && failureCount >= FAILURE_ABORT_THRESHOLD')],
   ['dialog shows the live server progress message',
     dialog.includes('progress.serverMessage')],
 ];
