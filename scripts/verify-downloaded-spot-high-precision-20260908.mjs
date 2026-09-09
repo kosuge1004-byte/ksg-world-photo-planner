@@ -7,7 +7,10 @@ const jobRunner=fs.readFileSync('server/runBearingProfileDownloadJob.ts','utf8')
 const checks=[
  ['download registry wired', app.includes('upsertDownloadedSpotData') && app.includes('downloadedSpotData={downloadedSpotData}')],
  ['download list menu', screen.includes('ダウンロード済みデータ') && screen.includes('onDeleteDownloadedSpotData')],
- ['favorite state shown separately', screen.includes('お気に入り未登録')],
+ // 2026-09-09追記: 「お気に入り」はダウンロード済みデータへ統合されたため、
+ // 別々に表示していた「お気に入り登録済み／未登録」の表示は廃止し、代わりに
+ // ダウンロード済みデータ自体に名称変更機能が付いたことを検証する。
+ ['downloaded data list supports renaming (absorbed the favorite label-edit feature)', screen.includes('startEditingDownloadedLabel') && screen.includes('commitDownloadedLabelRename')],
  // 2026-09-08追記: 1m高精度取得はサーバー側ジョブ(computeBearingProfile)へ
  // 移動した。10m粗探索→1m高精度で上書きする二段構えの方針自体は不変。
  ['high precision DEM sampled server-side', jobRunner.includes('"10m"') && jobRunner.includes('"1m"')],

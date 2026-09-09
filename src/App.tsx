@@ -200,17 +200,16 @@ import type {
 import type { SpotSearchJob } from "./types/backgroundSearch";
 import type { PlannerProject } from "./types/project";
 import { deleteProject, loadProjects, upsertProject } from "./projectStorage";
-import { addFavoriteSubject, addSubjectHistory, idFor, isFavoriteSubject, loadFavoriteSubjects, loadSubjectHistory, renameFavoriteSubject, toggleFavoriteSubject } from "./subjectStorage";
+import { addSubjectHistory, idFor, loadSubjectHistory } from "./subjectStorage";
 import {
   backfillBearingProfiles,
   disableBearingProfile,
   enableBearingProfile,
-  listBearingProfileOptIns,
   tryUseBearingProfileCache,
 } from "./cache/tripodBearingProfileManager";
 import { BearingProfileDownloadDialog, type BearingProfileDialogState } from "./components/BearingProfileDownloadDialog";
 import type { SubjectRecord } from "./subjectStorage";
-import { listDownloadedSpotData, removeDownloadedSpotData, upsertDownloadedSpotData, type DownloadedSpotDataRecord } from "./cache/downloadedSpotData";
+import { listDownloadedSpotData, removeDownloadedSpotData, renameDownloadedSpotData, upsertDownloadedSpotData, type DownloadedSpotDataRecord } from "./cache/downloadedSpotData";
 import { inspectDownloadedSpotStorage, type DownloadedSpotStorageSummary } from "./cache/downloadedSpotDataStats";
 import { deletePersistentSiteContextsForSpot } from "./cache/siteContextPersistentCache";
 import { deleteGsiDeviceTilesForDownloadedSpot } from "./cesium/gsiDemTileCache";
@@ -594,18 +593,21 @@ function App() {
   const [projectSaveOpen, setProjectSaveOpen] = useState(false);
   const [projects, setProjects] = useState<PlannerProject[]>(loadProjects);
   const [subjectHistory, setSubjectHistory] = useState<SubjectRecord[]>(loadSubjectHistory);
-  const [favoriteSubjects, setFavoriteSubjects] = useState<SubjectRecord[]>(loadFavoriteSubjects);
-  const [justRegisteredFavorite, setJustRegisteredFavorite] =
+  // 2026-09-09追記: 新規保存が完了した直後だけ、一覧を開いて名称編集欄を出すための通知。
+  const [justSavedDownload, setJustSavedDownload] =
     useState<{ token: number; id: string } | null>(null);
-  const favoriteRegistrationTokenRef = useRef(0);
+  const justSavedDownloadTokenRef = useRef(0);
+  // 2026-09-09追記（お気に入り機能の廃止）: 「お気に入り」は「ダウンロード済み
+  // データ」と実質的に同じ役割を担っていたため統合した。保存対象の選択は
+  // downloadedSpotDataそのものが担い、名称編集もそちらへ移管した
+  // （renameDownloadedSpotData参照）。
   // 2026-09-05追記: お気に入り登録時の「三脚候補データを端末に保存しますか」
   // ダイアログの状態と、ダウンロード中断用のAbortController。
   const [bearingProfileDialog, setBearingProfileDialog] = useState<BearingProfileDialogState | null>(null);
   const bearingProfilePendingRef = useRef<{ record: SubjectRecord; subjectPoint: GroundPoint; forceRefresh?: boolean } | null>(null);
   const bearingProfileAbortRef = useRef<AbortController | null>(null);
-  const [bearingProfileEnabledIds, setBearingProfileEnabledIds] = useState<Set<string>>(
-    () => new Set(listBearingProfileOptIns().map((item) => item.subjectId))
-  );
+  // 2026-09-09追記: 「保存済みか」はdownloadedSpotDataだけを唯一の情報源とする
+  // ようにしたため、UI専用に保持していたbearingProfileEnabledIdsは廃止した。
   const [downloadedSpotData, setDownloadedSpotData] = useState<DownloadedSpotDataRecord[]>(
     () => listDownloadedSpotData()
   );
@@ -3396,7 +3398,7 @@ ${diagnosticMessage}
     setSearchMessage(`${pinned.label}を被写体として表示しました`);
     const searchedRecord = updatedHistory[0];
     if (searchedRecord) {
-      offerSpotSearchBearingProfileDownload(searchedRecord, pinned);
+      offerBearingProfileDownload(searchedRecord);
     }
   }
 
@@ -3451,54 +3453,29 @@ ${diagnosticMessage}
     }
   }
 
-  function toggleCurrentSubjectFavorite() {
+  function toggleCurrentSubjectSaved() {
     if (!subjectPoint) return;
-    const wasFavorite = isFavoriteSubject(favoriteSubjects, subjectPoint);
-    const updated = toggleFavoriteSubject(subjectPoint);
-    setFavoriteSubjects(updated);
-    // 登録時にすぐ名称を変更できるよう、新規登録した項目のidを通知する。
-    // 同じ地点を再登録した場合もidだけでは変化がないため、毎回増えるトークンと組にする。
-    favoriteRegistrationTokenRef.current += 1;
-    setJustRegisteredFavorite(
-      !wasFavorite && updated[0]
-        ? { token: favoriteRegistrationTokenRef.current, id: updated[0].id }
-        : null
-    );
-    // 2026-09-05追記: 新規お気に入り登録時だけ、三脚候補データの端末保存を
-    // 確認するダイアログを出す（外した時・既存お気に入りの操作では出さない）。
-    if (!wasFavorite && updated[0]) {
-      offerBearingProfileDownload(updated[0]);
-    } else if (wasFavorite) {
-      // お気に入りを解除した場合は、そのぶんの事前計算データも不要になるため
-      // 端末から削除し、次回また登録した際は改めて確認する。
-      void handleDeleteBearingProfileData(idFor(subjectPoint));
+    const subjectId = idFor(subjectPoint);
+    const isSaved = downloadedSpotData.some((item) => item.subjectId === subjectId);
+    if (isSaved) {
+      // 保存済みの場合は「保存を解除」＝端末上のダウンロード済みデータを削除する。
+      void handleDeleteBearingProfileData(subjectId);
+      return;
     }
-  }
-
-  function toggleFavoriteFromList(record: SubjectRecord) {
-    const wasFavorite = favoriteSubjects.some((item) => item.id === record.id);
-    setFavoriteSubjects(toggleFavoriteSubject(record));
-    if (!wasFavorite) {
-      offerBearingProfileDownload(record);
-    } else {
-      void handleDeleteBearingProfileData(record.id);
-    }
+    const now = new Date().toISOString();
+    offerBearingProfileDownload({
+      ...subjectPoint,
+      id: subjectId,
+      searchType: "saved",
+      createdAt: now,
+      lastUsedAt: now,
+    });
   }
 
   function offerBearingProfileDownload(record: SubjectRecord) {
     bearingProfilePendingRef.current = { record, subjectPoint: record };
     setBearingProfileDialog({
       subjectLabel: record.label || "この地点",
-      mode: "favorite",
-      progress: null,
-    });
-  }
-
-  function offerSpotSearchBearingProfileDownload(record: SubjectRecord, point: GroundPoint) {
-    bearingProfilePendingRef.current = { record, subjectPoint: point };
-    setBearingProfileDialog({
-      subjectLabel: record.label || "この地点",
-      mode: "spot-search",
       progress: null,
     });
   }
@@ -3518,12 +3495,6 @@ ${diagnosticMessage}
       const freedMb = deletedDem.deletedBytes / (1024 * 1024);
       setSearchMessage(`保存データを削除しました（DEM ${deletedDem.deletedTiles}枚削除 / 共有${deletedDem.retainedSharedTiles}枚保持 / OSM・水面${deletedSiteContext.deleted}件削除 / 約${freedMb.toFixed(freedMb >= 10 ? 0 : 1)}MB解放）`);
     }
-    setBearingProfileEnabledIds((current) => {
-      if (!current.has(subjectId)) return current;
-      const next = new Set(current);
-      next.delete(subjectId);
-      return next;
-    });
   }
 
   async function handleDeleteDownloadedSpotDataBulk(records: DownloadedSpotDataRecord[]): Promise<void> {
@@ -3543,11 +3514,6 @@ ${diagnosticMessage}
     let next = listDownloadedSpotData();
     for (const record of records) next = removeDownloadedSpotData(record.subjectId);
     setDownloadedSpotData(next);
-    setBearingProfileEnabledIds((current) => {
-      const nextIds = new Set(current);
-      records.forEach((record) => nextIds.delete(record.subjectId));
-      return nextIds;
-    });
     const freedMb = totalDeletedBytes / (1024 * 1024);
     setSearchMessage(`${records.length}スポットの保存データを削除しました（DEM ${totalDeletedTiles}枚削除 / 共有${totalRetainedSharedTiles}枚保持 / OSM・水面${totalDeletedSiteContexts}件削除 / 約${freedMb.toFixed(freedMb >= 10 ? 0 : 1)}MB解放）`);
   }
@@ -3572,7 +3538,6 @@ ${diagnosticMessage}
       bearingProfilePendingRef.current = { record: subjectRecord, subjectPoint: point, forceRefresh: true };
       setBearingProfileDialog({
         subjectLabel: record.label || "この地点",
-        mode: "favorite",
         progress: null,
       });
     } catch (error) {
@@ -3581,16 +3546,13 @@ ${diagnosticMessage}
     }
   }
 
-  async function confirmBearingProfileDownload(registerFavorite = false) {
+  async function confirmBearingProfileDownload() {
     const pending = bearingProfilePendingRef.current;
     if (!pending) {
       setBearingProfileDialog(null);
       return;
     }
     const { record, subjectPoint: downloadPoint, forceRefresh = false } = pending;
-    if (registerFavorite) {
-      setFavoriteSubjects(addFavoriteSubject(downloadPoint));
-    }
     // Preflight storage guard. Estimate from already-managed spots when available;
     // otherwise use a conservative 32 MiB planning estimate. This is only a guard;
     // actual IndexedDB write failures are also detected below.
@@ -3614,13 +3576,10 @@ ${diagnosticMessage}
       // StorageManager unavailable: continue and rely on write-failure detection.
     }
     enableBearingProfile(record.id, record.label || "この地点");
-    setBearingProfileEnabledIds((current) => new Set(current).add(record.id));
     const controller = new AbortController();
     bearingProfileAbortRef.current = controller;
-    const dialogMode = bearingProfileDialog?.mode ?? "favorite";
     setBearingProfileDialog({
       subjectLabel: record.label || "この地点",
-      mode: dialogMode,
       progress: { totalSteps: 0, completedSteps: 0, currentBearingDegrees: null },
     });
     let latestDownloadProgress = { profilePoints: 0, highPrecisionPoints: 0 };
@@ -3639,7 +3598,6 @@ ${diagnosticMessage}
           if (bearingProfileAbortRef.current !== controller) return;
           setBearingProfileDialog({
             subjectLabel: record.label || "この地点",
-            mode: dialogMode,
             progress,
           });
         },
@@ -3661,6 +3619,8 @@ ${diagnosticMessage}
           demTileCount: backfillResult.demTileCount,
           demTileBytes: backfillResult.demTileBytes,
         }));
+        justSavedDownloadTokenRef.current += 1;
+        setJustSavedDownload({ token: justSavedDownloadTokenRef.current, id: record.id });
         setSearchMessage(`${record.label || "この地点"}の高精度周辺データを保存しました`);
       }
     } catch (error) {
@@ -5765,17 +5725,12 @@ ${diagnosticMessage}
         onLocatePin={locatePinFromSpotScreen}
         currentSubject={currentSubjectPoint()}
         history={subjectHistory}
-        favorites={favoriteSubjects}
-        currentSubjectIsFavorite={isFavoriteSubject(favoriteSubjects, subjectPoint)}
+        currentSubjectIsSaved={Boolean(subjectPoint) && downloadedSpotData.some((item) => item.subjectId === idFor(subjectPoint!))}
         onSelectStoredSubject={applyStoredSubject}
         onSelectDownloadedSpotData={(record) => void applyDownloadedSpotData(record)}
-        onToggleCurrentFavorite={toggleCurrentSubjectFavorite}
-        onToggleFavorite={toggleFavoriteFromList}
-        onRenameFavorite={(id, label) => setFavoriteSubjects(renameFavoriteSubject(id, label))}
-        justRegisteredFavoriteId={justRegisteredFavorite}
-        bearingProfileEnabledIds={bearingProfileEnabledIds}
-        onRequestBearingProfileDownload={offerBearingProfileDownload}
-        onDeleteBearingProfileData={(record) => void handleDeleteBearingProfileData(record.id)}
+        onToggleCurrentSaved={toggleCurrentSubjectSaved}
+        onRenameDownloadedSpotData={(subjectId, label) => setDownloadedSpotData(renameDownloadedSpotData(subjectId, label))}
+        justSavedDownloadId={justSavedDownload}
         downloadedSpotData={downloadedSpotData}
         downloadedSpotStorageSummary={downloadedSpotStorageSummary}
         onDeleteDownloadedSpotData={(record) => void handleDeleteBearingProfileData(record.subjectId)}
@@ -5784,8 +5739,7 @@ ${diagnosticMessage}
       />
       <BearingProfileDownloadDialog
         state={bearingProfileDialog}
-        onConfirm={() => void confirmBearingProfileDownload(false)}
-        onConfirmAndFavorite={() => void confirmBearingProfileDownload(true)}
+        onConfirm={() => void confirmBearingProfileDownload()}
         onDecline={declineBearingProfileDownload}
         onCancelDownload={cancelBearingProfileDownload}
       />

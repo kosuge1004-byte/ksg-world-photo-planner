@@ -3,8 +3,6 @@ import type { BearingBackfillProgress } from "../cache/tripodBearingProfileManag
 
 export type BearingProfileDialogState = {
   subjectLabel: string;
-  /** favorite: お気に入り画面からの従来確認 / spot-search: スポット検索直後の3択。 */
-  mode: "favorite" | "spot-search";
   /** null: 確認待ち。値あり: ダウンロード中の進捗。 */
   progress: BearingBackfillProgress | null;
 };
@@ -12,12 +10,11 @@ export type BearingProfileDialogState = {
 type Props = {
   state: BearingProfileDialogState | null;
   onConfirm: () => void;
-  onConfirmAndFavorite: () => void;
   onDecline: () => void;
   onCancelDownload: () => void;
 };
 
-export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFavorite, onDecline, onCancelDownload }: Props) {
+export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCancelDownload }: Props) {
   const dialogRef = useRef<HTMLElement>(null);
 
   // 2026-09-05追記（実機で繰り返し報告されたため）: position:fixed;
@@ -33,7 +30,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFav
   }, [state]);
 
   if (!state) return null;
-  const { subjectLabel, progress, mode } = state;
+  const { subjectLabel, progress } = state;
   const isDownloading = progress !== null;
   const percent =
     isDownloading && progress.totalSteps > 0
@@ -53,7 +50,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFav
       >
         {!isDownloading ? (
           <>
-            <h2>{mode === "spot-search" ? `「${subjectLabel}」の周辺データをダウンロードしますか？` : `「${subjectLabel}」の三脚候補データを端末に保存しますか？`}</h2>
+            <h2>「{subjectLabel}」の三脚候補データを端末に保存しますか？</h2>
             <p className="project-dialog-note">
               この地点を囲む全方位（360方位）の三脚候補点計算用地形データを端末に保存します。
               保存済みデータは次回以降の三脚候補点計算で再利用されます。
@@ -64,28 +61,14 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onConfirmAndFav
               カメラの高さを変えると、その分だけ保存し直します
               （焦点距離の変更では保存し直しません）。
             </p>
-            {mode === "spot-search" ? (
-              <div className="bearing-profile-choice-buttons">
-                <button type="button" className="primary" onClick={onConfirmAndFavorite}>
-                  ダウンロードしてお気に入りに登録
-                </button>
-                <button type="button" onClick={onConfirm}>
-                  ダウンロードしてお気に入りには登録しない
-                </button>
-                <button type="button" onClick={onDecline}>
-                  ダウンロードしない
-                </button>
-              </div>
-            ) : (
-              <div>
-                <button type="button" onClick={onDecline}>
-                  保存しない
-                </button>
-                <button type="button" className="primary" onClick={onConfirm}>
-                  保存する
-                </button>
-              </div>
-            )}
+            <div>
+              <button type="button" onClick={onDecline}>
+                保存しない
+              </button>
+              <button type="button" className="primary" onClick={onConfirm}>
+                保存する
+              </button>
+            </div>
           </>
         ) : (
           <>

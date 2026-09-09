@@ -19,20 +19,15 @@ type Props = {
   ) => Promise<void>;
   currentSubject: GroundPoint | null;
   history: SubjectRecord[];
-  favorites: SubjectRecord[];
-  currentSubjectIsFavorite: boolean;
+  /** 現在の被写体が既にダウンロード済みデータとして保存されているか。 */
+  currentSubjectIsSaved: boolean;
   onSelectStoredSubject: (record: SubjectRecord) => void;
   onSelectDownloadedSpotData: (record: DownloadedSpotDataRecord) => void;
-  onToggleCurrentFavorite: () => void;
-  onToggleFavorite: (record: SubjectRecord) => void;
-  onRenameFavorite: (id: string, label: string) => void;
-  justRegisteredFavoriteId: { token: number; id: string } | null;
-  /** 2026-09-05追記: 三脚候補データ（方位プロファイル事前計算）が有効な被写体id一覧。 */
-  bearingProfileEnabledIds: ReadonlySet<string>;
-  /** 三脚候補データのダウンロードを（確認ダイアログ経由で）申し込む。 */
-  onRequestBearingProfileDownload: (record: SubjectRecord) => void;
-  /** お気に入りは残したまま、三脚候補データだけ端末から削除する。 */
-  onDeleteBearingProfileData: (record: SubjectRecord) => void;
+  /** 現在の被写体の保存（未保存ならダウンロード開始、保存済みなら削除）を切り替える。 */
+  onToggleCurrentSaved: () => void;
+  onRenameDownloadedSpotData: (subjectId: string, label: string) => void;
+  /** 2026-09-09追記: 新規保存が完了した直後だけ、一覧を開いて名称編集欄を出す。 */
+  justSavedDownloadId: { token: number; id: string } | null;
   downloadedSpotData: DownloadedSpotDataRecord[];
   downloadedSpotStorageSummary: DownloadedSpotStorageSummary | null;
   onDeleteDownloadedSpotData: (record: DownloadedSpotDataRecord) => void;
@@ -51,17 +46,12 @@ export function SpotSearchScreen({
   onLocatePin,
   currentSubject,
   history,
-  favorites,
-  currentSubjectIsFavorite,
+  currentSubjectIsSaved,
   onSelectStoredSubject,
   onSelectDownloadedSpotData,
-  onToggleCurrentFavorite,
-  onToggleFavorite,
-  onRenameFavorite,
-  justRegisteredFavoriteId,
-  bearingProfileEnabledIds,
-  onRequestBearingProfileDownload,
-  onDeleteBearingProfileData,
+  onToggleCurrentSaved,
+  onRenameDownloadedSpotData,
+  justSavedDownloadId,
   downloadedSpotData,
   downloadedSpotStorageSummary,
   onDeleteDownloadedSpotData,
@@ -70,9 +60,9 @@ export function SpotSearchScreen({
 }: Props) {
   const [query, setQuery] = useState("");
   const [pinTarget, setPinTarget] = useState<"subject" | "tripod">("subject");
-  const [subjectListOpen, setSubjectListOpen] = useState<"history" | "favorites" | "downloads" | null>(null);
-  const [editingFavoriteId, setEditingFavoriteId] = useState<string | null>(null);
-  const [editingFavoriteLabel, setEditingFavoriteLabel] = useState("");
+  const [subjectListOpen, setSubjectListOpen] = useState<"history" | "downloads" | null>(null);
+  const [editingDownloadedLabelId, setEditingDownloadedLabelId] = useState<string | null>(null);
+  const [editingDownloadedLabel, setEditingDownloadedLabel] = useState("");
   const [message, setMessage] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -80,13 +70,13 @@ export function SpotSearchScreen({
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!justRegisteredFavoriteId) return;
-    setSubjectListOpen("favorites");
-    const registered = favorites.find((item) => item.id === justRegisteredFavoriteId.id);
-    setEditingFavoriteId(justRegisteredFavoriteId.id);
-    setEditingFavoriteLabel(registered?.label ?? "");
+    if (!justSavedDownloadId) return;
+    setSubjectListOpen("downloads");
+    const saved = downloadedSpotData.find((item) => item.subjectId === justSavedDownloadId.id);
+    setEditingDownloadedLabelId(justSavedDownloadId.id);
+    setEditingDownloadedLabel(saved?.label ?? "");
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [justRegisteredFavoriteId?.token]);
+  }, [justSavedDownloadId?.token]);
 
   useEffect(() => {
     if (!open) {
@@ -100,15 +90,15 @@ export function SpotSearchScreen({
     setSelectedDownloadedIds(new Set());
   }, [open]);
 
-  function startEditingFavorite(record: SubjectRecord): void {
-    setEditingFavoriteId(record.id);
-    setEditingFavoriteLabel(record.label);
+  function startEditingDownloadedLabel(record: DownloadedSpotDataRecord): void {
+    setEditingDownloadedLabelId(record.subjectId);
+    setEditingDownloadedLabel(record.label);
   }
 
-  function commitFavoriteRename(): void {
-    if (editingFavoriteId) onRenameFavorite(editingFavoriteId, editingFavoriteLabel);
-    setEditingFavoriteId(null);
-    setEditingFavoriteLabel("");
+  function commitDownloadedLabelRename(): void {
+    if (editingDownloadedLabelId) onRenameDownloadedSpotData(editingDownloadedLabelId, editingDownloadedLabel);
+    setEditingDownloadedLabelId(null);
+    setEditingDownloadedLabel("");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -185,7 +175,7 @@ export function SpotSearchScreen({
 
   if (!open) return null;
 
-  const listedSubjects = subjectListOpen === "history" ? history : favorites;
+  const listedSubjects = history;
 
   return (
     <section className="spot-search-screen" aria-label="スポット検索">
@@ -225,17 +215,16 @@ export function SpotSearchScreen({
                 autoComplete="off"
                 disabled={isSearching}
               />
-              <button type="button" className={currentSubjectIsFavorite ? "spot-subject-icon active" : "spot-subject-icon"} aria-label="現在の被写体をお気に入り登録" disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentFavorite}>★</button>
-              <button type="button" className="spot-subject-icon" aria-label="お気に入りを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "favorites" ? null : "favorites")}>☆</button>
+              <button type="button" className={currentSubjectIsSaved ? "spot-subject-icon active" : "spot-subject-icon"} aria-label={currentSubjectIsSaved ? "保存済みデータを削除" : "この地点の三脚候補データを保存"} disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentSaved}>{currentSubjectIsSaved ? "★" : "☆"}</button>
               <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>◷</button>
               <button type="button" className="spot-subject-icon" aria-label="ダウンロード済みデータを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "downloads" ? null : "downloads")}>⇩</button>
             </div>
           </label>
 
           {subjectListOpen && (
-            <section className="spot-subject-list" aria-label={subjectListOpen === "history" ? "検索履歴" : subjectListOpen === "favorites" ? "お気に入り" : "ダウンロード済みデータ"}>
+            <section className="spot-subject-list" aria-label={subjectListOpen === "history" ? "検索履歴" : "ダウンロード済みデータ"}>
               <header>
-                <strong>{subjectListOpen === "history" ? "最近の検索" : subjectListOpen === "favorites" ? "お気に入り" : "ダウンロード済みデータ"}</strong>
+                <strong>{subjectListOpen === "history" ? "最近の検索" : "ダウンロード済みデータ"}</strong>
                 <button type="button" onClick={() => setSubjectListOpen(null)} aria-label="閉じる">×</button>
               </header>
               {subjectListOpen === "downloads" ? (
@@ -259,14 +248,36 @@ export function SpotSearchScreen({
                     <label className="spot-download-select" aria-label={`${record.label}を選択`}>
                       <input type="checkbox" checked={selectedDownloadedIds.has(record.subjectId)} onChange={() => toggleDownloadedSelection(record.subjectId)} />
                     </label>
-                    <button type="button" onClick={() => onSelectDownloadedSpotData(record)}>
-                      <strong>{record.label} <span className={`spot-download-state ${stats?.state ?? "partial"}`}>{stateLabel}</span></strong>
-                      <small>高精度DEM {record.highPrecisionPoints.toLocaleString()}点 / 地形 {record.profilePoints.toLocaleString()}点</small>
-                      <small>DEM {formatBytes(stats?.demBytes ?? record.demTileBytes)} / {stats?.demLiveTiles ?? record.demTileCount ?? 0}タイル ・ 地形プロファイル {formatBytes(stats?.profileBytes)} / {stats?.profileEntries ?? 0}方位</small>
-                      <small>OSM・水面 {formatBytes(stats?.siteContextBytes)} / {stats?.siteContextLiveCount ?? 0}件</small>
-                      <small>{new Date(record.downloadedAtIso).toLocaleString()} ・ {favorites.some((favorite) => favorite.id === record.subjectId) ? "お気に入り登録済み" : "お気に入り未登録"}</small>
-                    </button>
+                    {editingDownloadedLabelId === record.subjectId ? (
+                      <div className="spot-list-rename-field">
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingDownloadedLabel}
+                          onChange={(event) => setEditingDownloadedLabel(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitDownloadedLabelRename();
+                            }
+                          }}
+                          placeholder="名称"
+                          aria-label="保存済みデータの名称"
+                        />
+                        <button type="button" onClick={commitDownloadedLabelRename} aria-label="名称を保存">✓</button>
+                        <button type="button" aria-label="編集をキャンセル" onClick={() => { setEditingDownloadedLabelId(null); setEditingDownloadedLabel(""); }}>×</button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => onSelectDownloadedSpotData(record)}>
+                        <strong>{record.label} <span className={`spot-download-state ${stats?.state ?? "partial"}`}>{stateLabel}</span></strong>
+                        <small>高精度DEM {record.highPrecisionPoints.toLocaleString()}点 / 地形 {record.profilePoints.toLocaleString()}点</small>
+                        <small>DEM {formatBytes(stats?.demBytes ?? record.demTileBytes)} / {stats?.demLiveTiles ?? record.demTileCount ?? 0}タイル ・ 地形プロファイル {formatBytes(stats?.profileBytes)} / {stats?.profileEntries ?? 0}方位</small>
+                        <small>OSM・水面 {formatBytes(stats?.siteContextBytes)} / {stats?.siteContextLiveCount ?? 0}件</small>
+                        <small>{new Date(record.downloadedAtIso).toLocaleString()}</small>
+                      </button>
+                    )}
                     <div className="spot-downloaded-data-item-actions">
+                      <button type="button" className="spot-list-rename" aria-label="名称を編集" onClick={() => startEditingDownloadedLabel(record)}>✎</button>
                       <button type="button" aria-label="ダウンロードデータを更新" onClick={() => onRefreshDownloadedSpotData(record)}>更新</button>
                       <button type="button" aria-label="ダウンロード済みデータを削除" onClick={() => onDeleteDownloadedSpotData(record)}>削除</button>
                     </div>
@@ -275,65 +286,13 @@ export function SpotSearchScreen({
                   })}
                 </>
               ) : listedSubjects.length === 0 ? (
-                <p>{subjectListOpen === "history" ? "検索履歴はありません" : "お気に入りはありません"}</p>
+                <p>検索履歴はありません</p>
               ) : listedSubjects.map((record) => (
                 <div className="spot-subject-list-item" key={record.id}>
-                  {subjectListOpen === "favorites" && editingFavoriteId === record.id ? (
-                    <div className="spot-list-favorite-rename">
-                      <input
-                        autoFocus
-                        type="text"
-                        value={editingFavoriteLabel}
-                        onChange={(event) => setEditingFavoriteLabel(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            commitFavoriteRename();
-                          }
-                        }}
-                        placeholder="名称"
-                        aria-label="お気に入りの名称"
-                      />
-                      <button type="button" onClick={commitFavoriteRename} aria-label="名称を保存">✓</button>
-                      <button type="button" aria-label="編集をキャンセル" onClick={() => { setEditingFavoriteId(null); setEditingFavoriteLabel(""); }}>×</button>
-                    </div>
-                  ) : (
-                    <>
-                      <button type="button" onClick={() => onSelectStoredSubject(record)}>
-                        <strong>{record.label}</strong>
-                        <small>{record.latitude.toFixed(6)}, {record.longitude.toFixed(6)}</small>
-                      </button>
-                      {subjectListOpen === "favorites" && (
-                        <button type="button" className="spot-list-rename" aria-label="名称を編集" onClick={() => startEditingFavorite(record)}>✎</button>
-                      )}
-                      {subjectListOpen === "favorites" && (
-                        bearingProfileEnabledIds.has(record.id) ? (
-                          <button
-                            type="button"
-                            className="spot-list-rolling-window active"
-                            aria-label="三脚候補データを端末から削除"
-                            title="三脚候補データを保存済み（タップで削除）"
-                            onClick={() => onDeleteBearingProfileData(record)}
-                          >
-                            ⬇︎
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="spot-list-rolling-window"
-                            aria-label="三脚候補データを端末に保存"
-                            title="三脚候補データを端末に保存"
-                            onClick={() => onRequestBearingProfileDownload(record)}
-                          >
-                            ⬇
-                          </button>
-                        )
-                      )}
-                      <button type="button" className="spot-list-favorite" aria-label="お気に入り切替" onClick={() => onToggleFavorite(record)}>
-                        {favorites.some((favorite) => favorite.id === record.id) ? "★" : "☆"}
-                      </button>
-                    </>
-                  )}
+                  <button type="button" onClick={() => onSelectStoredSubject(record)}>
+                    <strong>{record.label}</strong>
+                    <small>{record.latitude.toFixed(6)}, {record.longitude.toFixed(6)}</small>
+                  </button>
                 </div>
               ))}
             </section>
