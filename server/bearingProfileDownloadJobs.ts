@@ -161,14 +161,29 @@ export function createBearingProfileDownloadJobUpdater(
 ): (update: JobUpdate) => Promise<BearingProfileDownloadJob> {
   let current = initialJob;
   let lastPersistedSignature = persistedJobSignature(initialJob);
+  let lastPersistedAtMs = 0;
+  // 2026-09-09追記（実機での動作確認で判明した不具合の修正）: 進捗率・進捗
+  // メッセージだけの更新はstatus/profiles/errorを含まないため、当初は
+  // KVへ一切書き込んでいなかった（spotSearchJobsと同じ節約方針）。しかし
+  // こちらのダイアログは「○/○方位」という細かい進捗を見せる作りにして
+  // いたため、ポーリングする端末側には最初の1回のメッセージしか届かず、
+  // 実際には処理が進んでいても「固まって見える」問題を引き起こしていた。
+  // KVの無料枠（書き込み1000回/日）を守りつつ進捗を見せるため、状態遷移が
+  // 無い進捗更新も、前回の永続化から4秒以上経過していれば書き込む。
+  const PROGRESS_PERSIST_INTERVAL_MS = 4_000;
   return async (update) => {
     current = { ...current, ...update, updatedAt: new Date().toISOString() };
     const hasPersistentField =
       update.status !== undefined || update.profiles !== undefined || update.error !== undefined;
     const nextSignature = persistedJobSignature(current);
-    if (hasPersistentField && nextSignature !== lastPersistedSignature) {
+    const now = Date.now();
+    const progressChanged = update.progress !== undefined || update.progressPercent !== undefined;
+    const dueForThrottledProgressPersist =
+      progressChanged && now - lastPersistedAtMs >= PROGRESS_PERSIST_INTERVAL_MS;
+    if ((hasPersistentField && nextSignature !== lastPersistedSignature) || dueForThrottledProgressPersist) {
       await setBearingProfileDownloadJob(kv, current, diagnostic);
       lastPersistedSignature = nextSignature;
+      lastPersistedAtMs = now;
     }
     return current;
   };
