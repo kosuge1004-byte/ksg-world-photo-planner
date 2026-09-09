@@ -59,7 +59,7 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_TILE_CACHE_ENTRIES = 512;
 export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
-const MAX_CONCURRENT_GSI_TILE_REQUESTS = 12;
+const MAX_CONCURRENT_GSI_TILE_REQUESTS = 6;
 type MemoryTileCacheEntry = {
   promise: Promise<DecodedElevationTile | null>;
   settled: boolean;

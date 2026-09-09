@@ -3575,7 +3575,6 @@ ${diagnosticMessage}
     } catch {
       // StorageManager unavailable: continue and rely on write-failure detection.
     }
-    enableBearingProfile(record.id, record.label || "この地点");
     const controller = new AbortController();
     bearingProfileAbortRef.current = controller;
     setBearingProfileDialog({
@@ -3607,6 +3606,15 @@ ${diagnosticMessage}
           setSearchMessage(`${record.label || "この地点"}の保存中に端末ストレージへの書き込みが${backfillResult.storageWriteFailures}件失敗しました。保存完了にはしていません。空き容量を確認して再実行してください。`);
           return;
         }
+        if (backfillResult.aborted) {
+          setSearchMessage(`${record.label || "この地点"}のダウンロードは中止されました。保存完了にはしていません。`);
+          return;
+        }
+        if (backfillResult.requestedBearings > 0 && backfillResult.successfulBearings !== backfillResult.requestedBearings) {
+          setSearchMessage(`${record.label || "この地点"}の高精度データが一部取得できませんでした（成功 ${backfillResult.successfulBearings} / ${backfillResult.requestedBearings}方位、失敗 ${backfillResult.failedBearings}方位）。保存完了にはしていません。再実行してください。`);
+          return;
+        }
+        enableBearingProfile(record.id, record.label || "この地点");
         setDownloadedSpotData(upsertDownloadedSpotData({
           subjectId: record.id,
           label: record.label || "この地点",

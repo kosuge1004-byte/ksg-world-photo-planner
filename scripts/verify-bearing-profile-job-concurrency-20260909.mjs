@@ -4,7 +4,7 @@ import fs from "node:fs";
 // 受けて判明した不具合の修正を検証する。従来は360方位を1つずつ完全に
 // 直列処理していたため、1方位あたり数秒でも合計で数分〜十数分かかって
 // いた。各方位は互いに独立しているため、GSI側のグローバル同時実行数
-// 制限（src/cesium/gsiElevationClient.tsのsharedQueue、10並列）に守られた
+// 制限（src/cesium/gsiElevationClient.tsのsharedQueue、現在6並列）に守られた
 // 範囲で複数方位を並行処理するよう修正した。
 const job = fs.readFileSync("server/runBearingProfileDownloadJob.ts", "utf8");
 

@@ -61,8 +61,8 @@ test("large DEM requests split until Cloudflare can complete them", async () => 
   assert.ok(Math.max(...requestSizes) <= 1024);
   // グローバル共有キュー（sharedQueue/MAX_CONCURRENT_REQUESTS）が唯一の実行主体
   // であり、再帰的な分割がいくつ並行していても同時実行数はアプリ全体で
-  // MAX_CONCURRENT_REQUESTS(10)を超えない。
-  assert.ok(maximumActiveRequests <= 10);
+  // MAX_CONCURRENT_REQUESTS(6)を超えない。
+  assert.ok(maximumActiveRequests <= 6);
 });
 
 test("an unrecoverable DEM point does not discard its neighboring points", async () => {
@@ -124,21 +124,21 @@ test("tile cache diagnostics aggregate every server cache path across batches", 
 
   const result = await fetchGsiElevationSamples(points(1500), undefined, fetcher);
 
-  // 2026-09-01/09-02の並列分割変更（chunkSizeForRequest / MAX_CONCURRENT_REQUESTS=10）
+  // 2026-09-01/09-02の並列分割変更（chunkSizeForRequest / MAX_CONCURRENT_REQUESTS=6）
   // により、96点以上はMAX_CONCURRENT_REQUESTS本へほぼ均等分割されるようになった。
-  // 1500点はceil(1500/10)=150点ずつ、ちょうど10バッチになる。
-  assert.equal(calls, 10, "1500 points should split into 10 even 150-point batches");
-  assert.equal(result.tileCacheHitCount, 10);
-  assert.equal(result.tileCacheMissCount, 20);
-  assert.equal(result.tileMemoryHitCount, 30);
-  assert.equal(result.tileCacheSharedCount, 40);
-  assert.equal(result.tileCacheBypassCount, 50);
+  // 1500点はceil(1500/6)=250点ずつ、ちょうど6バッチになる。
+  assert.equal(calls, 6, "1500 points should split into 6 even 250-point batches");
+  assert.equal(result.tileCacheHitCount, 6);
+  assert.equal(result.tileCacheMissCount, 12);
+  assert.equal(result.tileMemoryHitCount, 18);
+  assert.equal(result.tileCacheSharedCount, 24);
+  assert.equal(result.tileCacheBypassCount, 30);
   assert.deepEqual(getGsiElevationCacheStats(), {
-    hit: 10,
-    miss: 20,
-    memoryHit: 30,
-    shared: 40,
-    bypass: 50,
+    hit: 6,
+    miss: 12,
+    memoryHit: 18,
+    shared: 24,
+    bypass: 30,
   });
 });
 

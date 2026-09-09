@@ -2,11 +2,12 @@ import { spawnSync } from "node:child_process";
 
 const cases = [
   { name: "downloaded data audit fixes", arguments: ["./scripts/verify-downloaded-data-audit-fixes-20260908.mjs"] },
-  "scripts/verify-river-point-geoid-final-20260908.mjs",
-  {
-    name: "bearing profile download stall guard",
-    script: "scripts/verify-bearing-profile-download-stall-fix-20260908.mjs",
-  },
+  { name: "river point geoid final", arguments: ["./scripts/verify-river-point-geoid-final-20260908.mjs"] },
+  { name: "bearing profile download stall guard", arguments: ["./scripts/verify-bearing-profile-download-stall-fix-20260908.mjs"] },
+  { name: "bearing profile direct-download root-cause fixes", arguments: ["./scripts/verify-bearing-profile-direct-download-20260909.mjs"] },
+  { name: "bearing profile server-job concurrency (retained unused path)", arguments: ["./scripts/verify-bearing-profile-job-concurrency-20260909.mjs"] },
+  { name: "bearing profile server-job timeout safety (retained unused path)", arguments: ["./scripts/verify-bearing-profile-job-timeout-safety-20260909.mjs"] },
+  { name: "bearing profile server-job progress persistence (retained unused path)", arguments: ["./scripts/verify-bearing-profile-progress-visibility-20260909.mjs"] },
   {
     name: "downloaded spot high precision cache",
     arguments: ["./scripts/verify-downloaded-spot-high-precision-20260908.mjs"],
@@ -228,8 +229,18 @@ const cases = [
 ];
 
 for (const testCase of cases) {
-  console.log(`\n[regression] ${testCase.name}`);
-  const result = spawnSync(process.execPath, testCase.arguments, {
+  const normalized = typeof testCase === "string"
+    ? { name: testCase, command: process.execPath, arguments: [testCase] }
+    : {
+        name: testCase.name ?? testCase.script ?? testCase.arguments?.[0] ?? "unnamed regression",
+        command: testCase.command ?? process.execPath,
+        arguments: testCase.arguments ?? (testCase.script ? [testCase.script] : []),
+      };
+  if (normalized.arguments.length === 0) {
+    throw new Error(`${normalized.name}: regression test has no executable arguments`);
+  }
+  console.log(`\n[regression] ${normalized.name}`);
+  const result = spawnSync(normalized.command, normalized.arguments, {
     cwd: process.cwd(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -237,11 +248,11 @@ for (const testCase of cases) {
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
   if (result.error) {
-    throw new Error(`${testCase.name}: ${result.error.message}`);
+    throw new Error(`${normalized.name}: ${result.error.message}`);
   }
   if (result.status !== 0) {
     throw new Error(
-      `${testCase.name} failed with exit code ${result.status ?? "unknown"}`,
+      `${normalized.name} failed with exit code ${result.status ?? "unknown"}`,
     );
   }
 }

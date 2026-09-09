@@ -9,7 +9,7 @@ import {
   logarithmicDistances,
   rayCartographicAtDistance,
 } from "../cesium/tripodCandidates";
-import { sampleWorldTerrain, sampleWorldTerrainNeutral } from "../cesium/worldTerrain";
+import { sampleWorldTerrain, sampleWorldTerrainNeutral, terrainDataSource } from "../cesium/worldTerrain";
 import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, recordGsiDeviceTileReferencesForPoints } from "../cesium/gsiDemTileCache";
 import { idFor } from "../subjectStorage";
 import type { CalculationMode, CameraSettings } from "../types/camera";
@@ -36,15 +36,12 @@ import {
  * 2026-09-08〜09追記（サーバー側ジョブ化を試み、直接方式へ差し戻した経緯）:
  * 一時、この処理をCloudflare Worker（Queue Consumer）側で実行する設計に
  * 変更した（「タブ/アプリを完全に終了しても続く」ことを狙ったもの）。
- * しかし実機検証の結果、Cloudflare Workers無料プランのsubrequest上限
- * （1回の呼び出しあたり外部通信50回まで）に、この処理の通信量（1方位
- * あたり最大64回）が抵触し、実用に耐えないことが判明した。有料プラン
- * （$5/月〜）で上限を10,000回まで引き上げれば解決する見込みだが、
- * 「他アプリに切り替えている間だけ続けば十分（アプリの完全終了までは
- * 不要）」という要件に立ち返った結果、その水準は端末（ブラウザ）が
- * 直接処理する方式でも満たせる（ブラウザにはCloudflareのsubrequest
- * 上限は適用されないため）。よって、よりシンプルで確実なこちらの
- * 方式へ差し戻した。サーバー側ジョブの実装一式
+ * しかし実機検証の結果、サーバー側ジョブ1回の中で全方位を処理すると
+ * Cloudflare Workers無料プランのsubrequest上限に抵触するため、方位ループ
+ * 自体は端末へ戻した。ただしDEM取得は /api/gsi-elevation（Pages Function）
+ * を経由するため、Cloudflare側の外向き接続/subrequest制限は引き続き考慮
+ * する必要がある。端末側とWorker側の並列数を別々に過大化しない。
+ * サーバー側ジョブの実装一式
  * （server/bearingProfileDownloadJobs.ts等）は将来「完全終了しても
  * 続けたい」場合に備えて残してあるが、現在は未使用。
  */
@@ -55,9 +52,16 @@ const TOTAL_BEARINGS = Math.round(360 / ALL_BEARINGS_STEP_DEGREES);
 
 const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 
-// 2026-09-08追記（ダウンロード停止不具合の修正）: 1段階（10m/1m取得それぞれ）に
-// 上限時間を設け、通信がハングしても永遠に固まらないようにする。
-const BEARING_TERRAIN_STAGE_TIMEOUT_MS = 45_000;
+// 2026-09-09修正: 通常は数秒で返るDEM取得を45秒まで待つと、障害時に
+// 10m+1mだけで約90秒/方位になっていた。API側の再試行時間も含めて20秒で
+// 打ち切り、異常を長時間「進行中」に見せない。精度やDEM点数は変更しない。
+const BEARING_TERRAIN_STAGE_TIMEOUT_MS = 20_000;
+// 方位同士は独立しているが、各方位内でもDEM APIが並列取得を行うため
+// 過剰並列にはしない。2方位だけ重ね、待ち時間を隠しつつGSI/Cloudflareを保護する。
+const BEARING_CONCURRENCY = 2;
+// 初期段階で全て失敗している場合は通信系の全体障害と判断し、360方位を
+// 最後まで無駄に試さない。
+const FAILURE_ABORT_THRESHOLD = 6;
 
 async function runBearingTerrainStage<T>(
   operation: (signal: AbortSignal | undefined) => Promise<T>,
@@ -138,6 +142,10 @@ export type BearingBackfillResult = {
   demTileCount: number;
   demTileBytes: number;
   storageWriteFailures: number;
+  requestedBearings: number;
+  successfulBearings: number;
+  failedBearings: number;
+  aborted: boolean;
 };
 
 /**
@@ -167,7 +175,7 @@ export async function backfillBearingProfiles(params: {
   for (const bearing of bearings) {
     if (signal?.aborted) {
       const captured = await finishGsiDeviceTileCapture(subjectId);
-      return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures };
+      return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures, requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: true };
     }
     const existing = await getBearingProfile(subjectId, cameraSettings.lensCenterHeightMeters, bearing);
     if (forceRefresh || !existing) pendingBearings.push(bearing);
@@ -177,7 +185,7 @@ export async function backfillBearingProfiles(params: {
   onProgress?.({ totalSteps, completedSteps: 0, currentBearingDegrees: null, phase: "terrain" });
   if (totalSteps === 0) {
     const captured = await finishGsiDeviceTileCapture(subjectId);
-    return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures };
+    return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures, requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: false };
   }
 
   const baseDistances = densifyDistanceIntervals(
@@ -190,14 +198,19 @@ export async function backfillBearingProfiles(params: {
 
   let totalProfilePoints = 0;
   let totalHighPrecisionPoints = 0;
+  let successfulBearings = 0;
+  let failedBearings = 0;
+  let completedAttempts = 0;
+  let nextIndex = 0;
+  let abortReason: string | null = null;
   const waterPrefetchPoints: SiteContextPoint[] = [];
 
-  for (let index = 0; index < pendingBearings.length; index += 1) {
-    if (signal?.aborted) break;
+  async function processBearing(index: number): Promise<void> {
+    if (signal?.aborted || abortReason) return;
     const bearing = pendingBearings[index];
     onProgress?.({
       totalSteps,
-      completedSteps: index,
+      completedSteps: completedAttempts,
       currentBearingDegrees: bearing,
       phase: "terrain",
       terrainStage: "profile",
@@ -207,43 +220,67 @@ export async function backfillBearingProfiles(params: {
       const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, distanceMeters);
       return { distanceMeters, destination };
     });
+    const terrainPoints = cartographicPoints.map(({ destination }) =>
+      Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
+    );
 
     let coarse;
     try {
       coarse = await runBearingTerrainStage(
-        (stageSignal) => sampleWorldTerrain(
-          cartographicPoints.map(({ destination }) => Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)),
-          stageSignal,
-          "10m"
-        ),
+        (stageSignal) => sampleWorldTerrain(terrainPoints, stageSignal, "10m"),
         signal
       );
     } catch (error) {
-      if (isAbortError(error)) break;
-      console.warn(`[bearing-profile] 方位${bearing}°の地形取得に失敗しました`, error);
-      continue;
+      if (isAbortError(error)) return;
+      failedBearings += 1;
+      completedAttempts += 1;
+      console.warn(`[bearing-profile] 方位${bearing}°の10m地形取得に失敗しました`, error);
+      if (successfulBearings === 0 && failedBearings >= FAILURE_ABORT_THRESHOLD) {
+        abortReason = `DEM取得が${failedBearings}方位連続で失敗したため中止しました`;
+      }
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "profile", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      return;
     }
 
     onProgress?.({
       totalSteps,
-      completedSteps: index,
+      completedSteps: completedAttempts,
       currentBearingDegrees: bearing,
       phase: "terrain",
       terrainStage: "high-precision",
     });
 
-    let precise = coarse;
+    let precise;
     try {
       precise = await runBearingTerrainStage(
-        (stageSignal) => sampleWorldTerrainNeutral(
-          cartographicPoints.map(({ destination }) => Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)),
-          stageSignal,
-          "1m"
-        ),
+        (stageSignal) => sampleWorldTerrainNeutral(terrainPoints, stageSignal, "1m"),
         signal
       );
-    } catch {
-      // 高精度取得に失敗しても10m値で継続する（ベストエフォート）。
+    } catch (error) {
+      if (isAbortError(error)) return;
+      failedBearings += 1;
+      completedAttempts += 1;
+      console.warn(`[bearing-profile] 方位${bearing}°の1m高精度地形取得に失敗しました`, error);
+      if (successfulBearings === 0 && failedBearings >= FAILURE_ABORT_THRESHOLD) {
+        abortReason = `高精度DEM取得が${failedBearings}方位連続で失敗したため中止しました`;
+      }
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      return;
+    }
+
+    // sampleWorldTerrainNeutralは通常検索では通信障害時にCesium World Terrainへ
+    // フォールバックできるが、「高精度周辺データのダウンロード」ではそれを
+    // GSI高精度DEM取得成功として保存してはいけない。GSI/水面0m以外が混じれば
+    // この方位は未完了として再実行対象に残す。
+    if (precise.some((sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN")) {
+      failedBearings += 1;
+      completedAttempts += 1;
+      console.warn(`[bearing-profile] 方位${bearing}°はGSI高精度DEMを取得できずWorld Terrainへフォールバックしたため未完了扱いにします`);
+      if (successfulBearings === 0 && failedBearings >= FAILURE_ABORT_THRESHOLD) {
+        abortReason = `高精度DEMが${failedBearings}方位連続で取得できないため中止しました`;
+      }
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      return;
     }
 
     const entry: BearingProfileEntry = {
@@ -260,6 +297,8 @@ export async function backfillBearingProfiles(params: {
     recordGsiDeviceTileReferencesForPoints(subjectId, entry.points);
     totalProfilePoints += entry.points.length;
     totalHighPrecisionPoints += entry.points.length;
+    successfulBearings += 1;
+    completedAttempts += 1;
 
     const stride = Math.max(1, Math.floor(entry.points.length / 8));
     for (let i = 0; i < entry.points.length; i += stride) {
@@ -268,12 +307,29 @@ export async function backfillBearingProfiles(params: {
 
     onProgress?.({
       totalSteps,
-      completedSteps: index + 1,
+      completedSteps: completedAttempts,
       currentBearingDegrees: bearing,
       phase: "terrain",
       profilePoints: totalProfilePoints,
       highPrecisionPoints: totalHighPrecisionPoints,
     });
+  }
+
+  async function worker(): Promise<void> {
+    while (!signal?.aborted && !abortReason) {
+      const index = nextIndex;
+      if (index >= pendingBearings.length) return;
+      nextIndex += 1;
+      await processBearing(index);
+    }
+  }
+
+  const workerCount = Math.min(BEARING_CONCURRENCY, pendingBearings.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  if (abortReason) {
+    const captured = await finishGsiDeviceTileCapture(subjectId);
+    throw new Error(`${abortReason}（成功${successfulBearings} / 失敗${failedBearings}）`);
   }
 
   if (!signal?.aborted && waterPrefetchPoints.length > 0) {
@@ -314,6 +370,10 @@ export async function backfillBearingProfiles(params: {
     demTileCount: captured.tileCount,
     demTileBytes: captured.bytes,
     storageWriteFailures: captured.writeFailures,
+    requestedBearings: totalSteps,
+    successfulBearings,
+    failedBearings,
+    aborted: Boolean(signal?.aborted),
   };
 }
 
