@@ -1,29 +1,29 @@
+import { Cartographic } from "cesium";
 import {
   ABSOLUTE_MAX_DISTANCE_METERS,
   ABSOLUTE_MIN_DISTANCE_METERS,
+  ADAPTIVE_COARSE_MAX_SPAN_METERS,
   buildCelestialBackwardRay,
   calculateTripodCandidates,
+  densifyDistanceIntervals,
+  logarithmicDistances,
   rayCartographicAtDistance,
 } from "../cesium/tripodCandidates";
+import { sampleWorldTerrain, sampleWorldTerrainNeutral } from "../cesium/worldTerrain";
 import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, recordGsiDeviceTileReferencesForPoints } from "../cesium/gsiDemTileCache";
 import { idFor } from "../subjectStorage";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type { CelestialScreenPoint, TripodCandidate } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
+import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
+import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
 import { writePersistentSiteContexts } from "./siteContextPersistentCache";
-import { diagnosticFetch } from "../network/networkDiagnostics";
-import { deviceClientId, newId } from "../search/backgroundSpotSearch";
-import type {
-  BearingProfileDownloadJob,
-  BearingProfileDownloadJobInput,
-} from "../types/backgroundBearingProfile";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
   getBearingProfile,
-  roundCameraHeightForCacheKey,
   setBearingProfile,
   type BearingProfileEntry,
 } from "./tripodBearingProfileCache";
@@ -33,18 +33,20 @@ import {
  * 高度（＝時刻）に関わらずどのパターンでも使い回す」方式。詳しい経緯は
  * tripodBearingProfileCache.tsの冒頭コメント参照。
  *
- * 2026-09-08追記（サーバー側バックグラウンドジョブ化）: 実際の360方位ぶんの
- * 地形取得・水面判定・OSM周辺情報取得は、ブラウザ/WebViewのJS実行に依存する
- * 限り「タブ/アプリを閉じたら止まる」という制約から逃れられない。これは
- * 全ブラウザベンダーが意図的にそう設計しており、回避策は存在しない。
- * そこでspotSearchJob（既存の「スポット検索」機能）と同じ設計で、実際の
- * 重い処理はCloudflare Worker（Queue Consumer）側で実行し、端末は
- * 「開始」「進捗確認（ポーリング）」「完了データの受信・端末保存」の
- * 3ステップだけを担う。これによりWebでもタブ/アプリを完全に閉じている間
- * サーバー側で処理が進み、次回アプリを開いた時に自動で完成データを取り込める。
- * サーバー側で完結するこの設計は、将来Capacitorでネイティブ化した際も
- * Android/iOSそれぞれのバックグラウンド実行制限（Foreground Service /
- * BGProcessingTask等）を一切必要としない。
+ * 2026-09-08〜09追記（サーバー側ジョブ化を試み、直接方式へ差し戻した経緯）:
+ * 一時、この処理をCloudflare Worker（Queue Consumer）側で実行する設計に
+ * 変更した（「タブ/アプリを完全に終了しても続く」ことを狙ったもの）。
+ * しかし実機検証の結果、Cloudflare Workers無料プランのsubrequest上限
+ * （1回の呼び出しあたり外部通信50回まで）に、この処理の通信量（1方位
+ * あたり最大64回）が抵触し、実用に耐えないことが判明した。有料プラン
+ * （$5/月〜）で上限を10,000回まで引き上げれば解決する見込みだが、
+ * 「他アプリに切り替えている間だけ続けば十分（アプリの完全終了までは
+ * 不要）」という要件に立ち返った結果、その水準は端末（ブラウザ）が
+ * 直接処理する方式でも満たせる（ブラウザにはCloudflareのsubrequest
+ * 上限は適用されないため）。よって、よりシンプルで確実なこちらの
+ * 方式へ差し戻した。サーバー側ジョブの実装一式
+ * （server/bearingProfileDownloadJobs.ts等）は将来「完全終了しても
+ * 続けたい」場合に備えて残してあるが、現在は未使用。
  */
 
 /** 全方位を覆う刻み幅。tripodBearingProfileCache.tsのBEARING_STEP_DEGREESと同じ値。 */
@@ -52,10 +54,33 @@ export const ALL_BEARINGS_STEP_DEGREES = BEARING_STEP_DEGREES;
 const TOTAL_BEARINGS = Math.round(360 / ALL_BEARINGS_STEP_DEGREES);
 
 const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
-const ACTIVE_DOWNLOAD_JOBS_KEY = "ksg-bearing-profile-download-active-jobs-v1";
-// Workers KVの結果整合性反映待ちの猶予（waitForBackgroundSpotSearchと同じ考え方）。
-const MISSING_JOB_GRACE_MS = 90_000;
-const POLL_INTERVAL_MS = 2_000;
+
+// 2026-09-08追記（ダウンロード停止不具合の修正）: 1段階（10m/1m取得それぞれ）に
+// 上限時間を設け、通信がハングしても永遠に固まらないようにする。
+const BEARING_TERRAIN_STAGE_TIMEOUT_MS = 45_000;
+
+async function runBearingTerrainStage<T>(
+  operation: (signal: AbortSignal | undefined) => Promise<T>,
+  parentSignal?: AbortSignal
+): Promise<T> {
+  if (parentSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  parentSignal?.addEventListener("abort", onAbort, { once: true });
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`方位地形取得が${Math.round(BEARING_TERRAIN_STAGE_TIMEOUT_MS / 1000)}秒でタイムアウトしました`));
+    }, BEARING_TERRAIN_STAGE_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    parentSignal?.removeEventListener("abort", onAbort);
+  }
+}
 
 export type BearingProfileOptIn = {
   subjectId: string;
@@ -105,12 +130,6 @@ export type BearingBackfillProgress = {
   highPrecisionPoints?: number;
   phase?: "terrain" | "water" | "osm" | "finalizing";
   terrainStage?: "profile" | "high-precision";
-  /**
-   * 2026-09-08追記: サーバー側ジョブが返す人間可読な進捗文言（例:
-   * 「地形プロファイルを取得しています（12/48方位）」）。設定されている
-   * 場合、BearingProfileDownloadDialogはこちらを優先して表示する。
-   */
-  serverMessage?: string;
 };
 
 export type BearingBackfillResult = {
@@ -121,69 +140,13 @@ export type BearingBackfillResult = {
   storageWriteFailures: number;
 };
 
-type ActiveDownloadJobMap = Record<string, { jobId: string; createdAtIso: string }>;
-
-function activeDownloadJobKey(subjectId: string, cameraHeightMeters: number): string {
-  return `${subjectId}:${roundCameraHeightForCacheKey(cameraHeightMeters)}`;
-}
-
-function readActiveDownloadJobs(): ActiveDownloadJobMap {
-  try {
-    const raw = localStorage.getItem(ACTIVE_DOWNLOAD_JOBS_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return typeof parsed === "object" && parsed !== null ? parsed as ActiveDownloadJobMap : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveActiveDownloadJob(key: string, jobId: string): void {
-  const jobs = readActiveDownloadJobs();
-  jobs[key] = { jobId, createdAtIso: new Date().toISOString() };
-  localStorage.setItem(ACTIVE_DOWNLOAD_JOBS_KEY, JSON.stringify(jobs));
-}
-
-function clearActiveDownloadJob(key: string): void {
-  const jobs = readActiveDownloadJobs();
-  if (jobs[key]) {
-    delete jobs[key];
-    localStorage.setItem(ACTIVE_DOWNLOAD_JOBS_KEY, JSON.stringify(jobs));
-  }
-}
-
-async function errorMessageFrom(response: Response): Promise<string> {
-  try {
-    const data = await response.json() as { error?: unknown };
-    if (typeof data.error === "string") return data.error;
-  } catch {
-    // JSON以外のエラー応答ではHTTPステータスを表示する。
-  }
-  return `ダウンロードAPIエラー：${response.status}`;
-}
-
-function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) {
-    return Promise.reject(new DOMException("ダウンロードの待機を中止しました", "AbortError"));
-  }
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", onAbort);
-      reject(new DOMException("ダウンロードの待機を中止しました", "AbortError"));
-    };
-    const timeout = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 /**
- * 今日から… ではなく、0°から359°（刻み幅ALL_BEARINGS_STEP_DEGREES）まで
- * 全方位を対象に、まだ保存されていない方位の地形プロファイルだけを
- * 順番に取得する。1方位＝通常探索の粗探索1回ぶんの通信（8m〜50km、
- * 密度は通常探索と同じADAPTIVE_COARSE_MAX_SPAN_METERS基準）。
+ * 全方位ぶんの実測地形プロファイルを端末（ブラウザ）が直接取得し、
+ * IndexedDBへ保存する。2026-09-08にサーバー側ジョブ化を試みたが、
+ * Cloudflare Workers無料プランのsubrequest上限（50回/呼び出し）に
+ * 抵触したため、この直接方式へ差し戻した（ファイル冒頭コメント参照）。
+ * 1段階（10m/1m取得）ごとにタイムアウトを設け、通信がハングしても
+ * 永遠に固まらないようにする（2026-09-08のダウンロード停止修正）。
  */
 export async function backfillBearingProfiles(params: {
   subjectId: string;
@@ -217,138 +180,137 @@ export async function backfillBearingProfiles(params: {
     return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures };
   }
 
-  // サーバー側バックグラウンドジョブを開始/再開する。同じ被写体・同じカメラ高
-  // であれば、アプリを閉じて再度開いた場合でも同じジョブIDに再接続し、
-  // 重複してジョブを起動しない（既存のstartBackgroundSpotSearchと同じ設計）。
-  const clientId = deviceClientId();
-  const activeKey = activeDownloadJobKey(subjectId, cameraSettings.lensCenterHeightMeters);
-  const existingActive = readActiveDownloadJobs()[activeKey];
-  const jobId = existingActive?.jobId ?? newId();
-  if (!existingActive) saveActiveDownloadJob(activeKey, jobId);
+  const baseDistances = densifyDistanceIntervals(
+    logarithmicDistances(
+      { minMeters: ABSOLUTE_MIN_DISTANCE_METERS, maxMeters: ABSOLUTE_MAX_DISTANCE_METERS },
+      32
+    ),
+    ADAPTIVE_COARSE_MAX_SPAN_METERS
+  );
 
-  const input: BearingProfileDownloadJobInput = {
-    subjectId,
-    subjectPoint,
-    cameraSettings,
-    pendingBearings,
-  };
+  let totalProfilePoints = 0;
+  let totalHighPrecisionPoints = 0;
+  const waterPrefetchPoints: SiteContextPoint[] = [];
 
-  try {
-    const startResponse = await diagnosticFetch(
-      "bearing-profile-download",
-      "/api/bearing-profile-download-start",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ clientId, jobId, input }),
-        signal,
-      },
-      15_000
-    );
-    if (!startResponse.ok) throw new Error(await errorMessageFrom(startResponse));
-  } catch (error) {
-    clearActiveDownloadJob(activeKey);
-    throw error;
-  }
-
-  const waitStartedAt = Date.now();
-  let job: BearingProfileDownloadJob;
-  while (true) {
-    if (signal?.aborted) {
-      // ユーザーが中断してもサーバー側のジョブ自体は止めない。次にこの被写体の
-      // ダウンロードを開くと、activeKeyから同じジョブへ再接続し進捗を引き継ぐ。
-      throw new DOMException("ダウンロードの確認を中止しました", "AbortError");
-    }
-    const query = new URLSearchParams({ clientId, jobId });
-    const statusResponse = await diagnosticFetch(
-      "bearing-profile-download",
-      `/api/bearing-profile-download-status?${query}`,
-      { headers: { Accept: "application/json" }, cache: "no-store", signal },
-      15_000
-    );
-    if (statusResponse.status === 404) {
-      const elapsed = Date.now() - waitStartedAt;
-      if (elapsed < MISSING_JOB_GRACE_MS) {
-        onProgress?.({
-          totalSteps,
-          completedSteps: 0,
-          currentBearingDegrees: null,
-          phase: "terrain",
-          serverMessage: `ダウンロードジョブの起動を確認中（${Math.floor(elapsed / 1000)}秒）`,
-        });
-        await abortableDelay(POLL_INTERVAL_MS, signal);
-        continue;
-      }
-      clearActiveDownloadJob(activeKey);
-      throw new Error("ダウンロードジョブが見つかりませんでした。もう一度お試しください");
-    }
-    if (!statusResponse.ok) throw new Error(await errorMessageFrom(statusResponse));
-    job = await statusResponse.json() as BearingProfileDownloadJob;
+  for (let index = 0; index < pendingBearings.length; index += 1) {
+    if (signal?.aborted) break;
+    const bearing = pendingBearings[index];
     onProgress?.({
       totalSteps,
-      completedSteps: Math.round((Math.max(0, Math.min(100, job.progressPercent)) / 100) * totalSteps),
-      currentBearingDegrees: null,
+      completedSteps: index,
+      currentBearingDegrees: bearing,
       phase: "terrain",
-      serverMessage: job.progress,
+      terrainStage: "profile",
     });
-    if (job.status === "complete" || job.status === "failed") break;
-    await abortableDelay(POLL_INTERVAL_MS, signal);
-  }
 
-  clearActiveDownloadJob(activeKey);
-  if (job.status === "failed") {
-    throw new Error(job.error ?? "ダウンロードに失敗しました");
-  }
+    const cartographicPoints = baseDistances.map((distanceMeters) => {
+      const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, distanceMeters);
+      return { distanceMeters, destination };
+    });
 
-  // サーバーが計算した結果を、既存のIndexedDBキャッシュへそのまま書き込む。
-  // 形状はtripodBearingProfileCache.BearingProfileEntryと完全に一致するため、
-  // 読み出し側（tryUseBearingProfileCache）は変更不要。
-  onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, phase: "finalizing", serverMessage: "端末への保存を確定しています…" });
-  for (const profile of job.profiles) {
+    let coarse;
+    try {
+      coarse = await runBearingTerrainStage(
+        (stageSignal) => sampleWorldTerrain(
+          cartographicPoints.map(({ destination }) => Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)),
+          stageSignal,
+          "10m"
+        ),
+        signal
+      );
+    } catch (error) {
+      if (isAbortError(error)) break;
+      console.warn(`[bearing-profile] 方位${bearing}°の地形取得に失敗しました`, error);
+      continue;
+    }
+
+    onProgress?.({
+      totalSteps,
+      completedSteps: index,
+      currentBearingDegrees: bearing,
+      phase: "terrain",
+      terrainStage: "high-precision",
+    });
+
+    let precise = coarse;
+    try {
+      precise = await runBearingTerrainStage(
+        (stageSignal) => sampleWorldTerrainNeutral(
+          cartographicPoints.map(({ destination }) => Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)),
+          stageSignal,
+          "1m"
+        ),
+        signal
+      );
+    } catch {
+      // 高精度取得に失敗しても10m値で継続する（ベストエフォート）。
+    }
+
     const entry: BearingProfileEntry = {
-      bearingDegrees: profile.bearingDegrees,
-      points: profile.points,
-      computedAtIso: profile.computedAtIso,
+      bearingDegrees: bearing,
+      points: cartographicPoints.map(({ distanceMeters, destination }, i) => ({
+        distanceMeters,
+        longitude: destination.longitude,
+        latitude: destination.latitude,
+        ellipsoidalHeightMeters: precise[i]?.height ?? coarse[i]?.height ?? 0,
+      })),
+      computedAtIso: new Date().toISOString(),
     };
-    await setBearingProfile(subjectId, cameraSettings.lensCenterHeightMeters, profile.bearingDegrees, entry);
-  }
-  // 2026-09-08追記: 実際のDEMタイル取得はまだサーバー側では行わないが、
-  // 「このダウンロード済みスポットがどのタイルに関係するか」の参照だけは
-  // ここで記録しておく。これにより、共有タイル安全削除
-  // （deleteGsiDeviceTilesForDownloadedSpot）の対象判定が正しく機能する。
-  // 実タイル本体は、この後の通常のライブ操作（プレビュー・三脚探索）で
-  // 触れた時点で通常どおりIndexedDBへ実体が保存される。
-  for (const profile of job.profiles) {
-    recordGsiDeviceTileReferencesForPoints(subjectId, profile.points);
-  }
-  try {
-    if (job.waterSiteContextPoints.length > 0) {
-      await writePersistentSiteContexts(
-        job.waterSiteContextPoints,
-        job.waterSiteContexts,
-        "water-only",
-        false,
-        subjectId
-      );
+    await setBearingProfile(subjectId, cameraSettings.lensCenterHeightMeters, bearing, entry);
+    recordGsiDeviceTileReferencesForPoints(subjectId, entry.points);
+    totalProfilePoints += entry.points.length;
+    totalHighPrecisionPoints += entry.points.length;
+
+    const stride = Math.max(1, Math.floor(entry.points.length / 8));
+    for (let i = 0; i < entry.points.length; i += stride) {
+      waterPrefetchPoints.push({ latitude: entry.points[i].latitude, longitude: entry.points[i].longitude });
     }
-    if (job.fullSiteContextPoints.length > 0) {
-      await writePersistentSiteContexts(
-        job.fullSiteContextPoints,
-        job.fullSiteContexts,
-        "full",
-        true,
-        subjectId
-      );
-    }
-  } catch (error) {
-    console.warn("[bearing-profile] サーバー取得済み周辺情報の端末保存に失敗しました", error);
+
+    onProgress?.({
+      totalSteps,
+      completedSteps: index + 1,
+      currentBearingDegrees: bearing,
+      phase: "terrain",
+      profilePoints: totalProfilePoints,
+      highPrecisionPoints: totalHighPrecisionPoints,
+    });
   }
+
+  if (!signal?.aborted && waterPrefetchPoints.length > 0) {
+    onProgress?.({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });
+    try {
+      const waterContexts = await fetchSiteContexts(waterPrefetchPoints, signal, false);
+      await writePersistentSiteContexts(waterPrefetchPoints, waterContexts, "water-only", false, subjectId);
+    } catch (error) {
+      if (!isAbortError(error)) console.warn("[bearing-profile] 水面・河川情報の取得に失敗しました", error);
+    }
+  }
+
+  if (!signal?.aborted) {
+    onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, phase: "osm" });
+    try {
+      const detailPoints: SiteContextPoint[] = [
+        { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude },
+      ];
+      for (const radius of [25, 100]) {
+        for (const bearing of [0, 45, 90, 135, 180, 225, 270, 315]) {
+          const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, radius);
+          detailPoints.push({ latitude: destination.latitude, longitude: destination.longitude });
+        }
+      }
+      const fullContexts = await fetchSiteContexts(detailPoints, signal, true);
+      await writePersistentSiteContexts(detailPoints, fullContexts, "full", true, subjectId);
+    } catch (error) {
+      if (!isAbortError(error)) console.warn("[bearing-profile] 被写体周辺情報の取得に失敗しました", error);
+    }
+  }
+
   onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, phase: "finalizing" });
   const captured = await finishGsiDeviceTileCapture(subjectId);
 
   return {
-    profilePoints: job.profiles.reduce((sum, profile) => sum + profile.points.length, 0),
-    highPrecisionPoints: job.profiles.reduce((sum, profile) => sum + profile.points.length, 0),
+    profilePoints: totalProfilePoints,
+    highPrecisionPoints: totalHighPrecisionPoints,
     demTileCount: captured.tileCount,
     demTileBytes: captured.bytes,
     storageWriteFailures: captured.writeFailures,

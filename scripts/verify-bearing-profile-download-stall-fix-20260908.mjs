@@ -1,46 +1,27 @@
 import fs from 'node:fs';
 
-// 2026-09-08追記（サーバー側バックグラウンドジョブ化に伴う全面更新）:
-// 元々このテストは「端末側の1方位ぶんの地形取得ステージに上限時間を設ける」
-// ことで0°停止を防ぐ実装を検証していた。今回、実際の360方位ぶんの地形・
-// 水面・OSM取得そのものをCloudflare Worker（Queue Consumer）側の
-// バックグラウンドジョブへ全面移動したため、端末側にはもう「長時間ハング
-// しうる個別の重い通信」自体が存在しない（開始→ポーリング→結果書き込み、
-// の3ステップだけになった）。したがって0°停止という不具合クラスは
-// アーキテクチャ上そもそも起こりえなくなった。このテストは新設計での
-// スタール安全性（無限待機しない・アプリを閉じてもジョブを止めない・
-// 再開時に同じジョブへ再接続する）を検証する。
+// 2026-09-09追記（サーバー側ジョブ化を試みた後、直接方式へ差し戻した経緯）:
+// 2026-09-08にこの不具合を直すため、まずクライアント側に1段階(10m/1m取得)
+// あたりのタイムアウトを追加した。その後、同じ処理をサーバー側で実行する
+// 設計に変更したが、Cloudflare Workers無料プランのsubrequest上限
+// （50回/呼び出し）に抵触したため、実用に耐えなかった。「他アプリに
+// 切り替えている間だけ続けば十分」という実際の要件に立ち返り、
+// クライアント直接方式へ差し戻した（ブラウザにはCloudflareの
+// subrequest上限が適用されないため、この方式なら上限を気にしなくてよい）。
+// このテストは、差し戻し後も0°停止バグの修正（1段階ごとのタイムアウト）が
+// きちんと残っていることを検証する。
 const manager = fs.readFileSync('src/cache/tripodBearingProfileManager.ts', 'utf8');
 const dialog = fs.readFileSync('src/components/BearingProfileDownloadDialog.tsx', 'utf8');
-const jobRunner = fs.readFileSync('server/runBearingProfileDownloadJob.ts', 'utf8');
-const consumer = fs.readFileSync('workers/bearing-profile-download-consumer.ts', 'utf8');
 
 const checks = [
-  // 端末側はもう360方位ぶんの地形取得を自前で行わない（サーバーへ委譲）。
-  ['client no longer performs per-bearing terrain fetch loop itself',
-    !manager.includes('sampleWorldTerrain(') && !manager.includes('sampleWorldTerrainNeutral(')],
-  // ポーリングに待機上限（Workers KV反映待ちの猶予）があり、無限に待たない。
-  ['missing-job polling has a bounded grace period',
-    /MISSING_JOB_GRACE_MS\s*=\s*90_000/.test(manager) && manager.includes('elapsed < MISSING_JOB_GRACE_MS')],
-  ['polling uses an abortable bounded delay, not a busy loop',
-    manager.includes('abortableDelay(POLL_INTERVAL_MS, signal)')],
-  // 端末側の中断（タブを閉じる等）はサーバー側ジョブを止めない
-  // ＝ジョブ開始APIとは別にキャンセルAPIを呼んでいないことを確認する。
-  ['client abort does not cancel the server-side job',
-    manager.includes('サーバー側のジョブ自体は止めない') && !manager.includes('bearing-profile-download-cancel')],
-  // アプリを閉じて再度開いても、同じ被写体・同じカメラ高であれば
-  // 新規ジョブを起動せず、既存のactiveKeyへ再接続して進捗を引き継ぐ。
-  ['reopening resumes the same job instead of restarting from zero',
-    manager.includes('readActiveDownloadJobs()[activeKey]') && manager.includes('existingActive?.jobId ?? newId()')],
-  // 実際の重い処理（地形・水面・OSM取得）がサーバー側で完結する。
-  ['heavy work actually runs server-side in the queue consumer',
-    consumer.includes('runBearingProfileDownloadJob') && jobRunner.includes('sampleServerWorldTerrain')],
-  // 1方位だけの孤立した失敗では止めないが、最初から全滅する場合は
-  // システム障害として早期中止する（2026-09-09追記の安全策）。両方を検証する。
-  ['single bearing failure does not halt the whole job, but early systemic failure does',
-    jobRunner.includes('successCount += 1') && jobRunner.includes('successCount === 0 && failureCount >= FAILURE_ABORT_THRESHOLD')],
-  ['dialog shows the live server progress message',
-    dialog.includes('progress.serverMessage')],
+  ['per-stage hard timeout exists', /BEARING_TERRAIN_STAGE_TIMEOUT_MS\s*=\s*45_000/.test(manager)],
+  ['whole terrain stage is Promise.race bounded', manager.includes('Promise.race([operation(controller.signal), timeoutPromise])')],
+  ['parent abort propagates', manager.includes('parentSignal?.addEventListener("abort", onAbort, { once: true })')],
+  ['10m profile uses bounded stage', /runBearingTerrainStage\(\s*\(stageSignal\) => sampleWorldTerrain\(/.test(manager)],
+  ['1m high precision uses bounded stage', /runBearingTerrainStage\(\s*\(stageSignal\) => sampleWorldTerrainNeutral\(/.test(manager)],
+  ['progress distinguishes profile stage', manager.includes('terrainStage: "profile"')],
+  ['progress distinguishes high precision stage', manager.includes('terrainStage: "high-precision"')],
+  ['dialog exposes current terrain substage', dialog.includes('terrainStage === "high-precision"')],
 ];
 
 let failures = 0;

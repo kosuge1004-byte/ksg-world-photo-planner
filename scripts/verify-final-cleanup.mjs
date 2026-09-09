@@ -91,6 +91,26 @@ function visit(filePath) {
 }
 visit(path.normalize(path.join(sourceRoot, "main.tsx")));
 
+// 2026-09-09追記: server/・functions/・workers/配下のファイルもsrc/内の
+// 型・isomorphicなロジックを共有して使う設計（例:
+// server/runBearingProfileDownloadJob.tsがsrc/types/...を使う）。
+// クライアントのエントリポイント（main.tsx）から辿れないというだけで
+// 「未使用」と誤判定しないよう、それら3ディレクトリからsrc/内へ向かう
+// importも到達可能性の起点に加える。
+for (const externalRoot of ["server", "functions", "workers"]) {
+  const externalDir = path.join(projectRoot, externalRoot);
+  if (!fs.existsSync(externalDir)) continue;
+  for (const filePath of walk(externalDir).filter((p) => /\.ts$/.test(p))) {
+    const importedFiles = ts.preProcessFile(fs.readFileSync(filePath, "utf8"), true, true)
+      .importedFiles
+      .map(({ fileName }) => fileName)
+      .filter((specifier) => specifier.startsWith("."))
+      .map((specifier) => resolveSourceImport(filePath, specifier))
+      .filter((resolvedPath) => resolvedPath !== undefined);
+    for (const imported of importedFiles) visit(imported);
+  }
+}
+
 const unreachable = sourceFiles
   .map((filePath) => path.normalize(filePath))
   .filter((filePath) => !filePath.endsWith(".d.ts") && !reachable.has(filePath))
