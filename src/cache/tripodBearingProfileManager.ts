@@ -329,7 +329,7 @@ export async function backfillBearingProfiles(params: {
 
   if (abortReason) {
     resumeDeviceTilePrefetch();
-    const captured = await finishGsiDeviceTileCapture(subjectId);
+    await finishGsiDeviceTileCapture(subjectId);
     throw new Error(`${abortReason}（成功${successfulBearings} / 失敗${failedBearings}）`);
   }
 
