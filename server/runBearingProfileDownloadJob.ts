@@ -122,30 +122,16 @@ export async function runBearingProfileDownloadJob(
   const { subjectPoint, pendingBearings } = job.input;
   const profiles: SerializedBearingProfileEntry[] = [];
   const waterPrefetchPoints: SerializedSiteContextPoint[] = [];
-  // 2026-09-09追記: 各方位の地形取得は互いに完全に独立しているにもかかわらず、
-  // 従来は1方位ずつ直列に処理していたため、実際に転送されるデータ量
-  // （方位あたり数十バイト）に対して不釣り合いに長い時間がかかっていた。
-  // GSI側の同時実行数はsrc/cesium/gsiElevationClient.tsのsharedQueueが
-  // モジュール単位でグローバルに10並列へ制限しているため、方位側をこれより
-  // 多めに並行起動しても、実際のGSIへの同時リクエスト数はそちらで
-  // 安全に頭打ちになる。よってBEARING_CONCURRENCY件を並行実行し、
-  // 常にGSI側のキューを満杯に保つことで待ち時間を最小化する。
-  const BEARING_CONCURRENCY = 16;
-  // 2026-09-09追記: システム的な障害（GSI API全断など）で全方位が延々と
-  // 失敗し続け、最終的に「空のデータで完了」という嘘の成功報告を出すことが
-  // ないよう、早期の失敗が続いた場合は明示的に失敗させる。並行実行のため
-  // 「連続」ではなく「最初のFAILURE_ABORT_THRESHOLD件の結果が出揃うまでに
-  // 1件も成功しない」ことをシステム障害の兆候として扱う。
-  const FAILURE_ABORT_THRESHOLD = 8;
+  // 2026-09-10修正: 旧16方位同時実行は現行のGSI/R2経路に対して過剰。
+  // 直接ダウンロードと同じ2方位に制限し、各方位内部のDEM並列取得と競合させない。
+  const BEARING_CONCURRENCY = 2;
   let successCount = 0;
   let failureCount = 0;
   let completedCount = 0;
-  let abortReason: string | null = null;
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
     while (true) {
-      if (abortReason) return;
       const index = nextIndex;
       if (index >= pendingBearings.length) return;
       nextIndex += 1;
@@ -166,9 +152,6 @@ export async function runBearingProfileDownloadJob(
         // 孤立した失敗では全体を止めない。端末版のconsole.warnと同じ位置づけ。
         failureCount += 1;
         console.warn(`[bearing-profile-download-job] 方位${bearing}°の地形取得に失敗しました`, error);
-        if (successCount === 0 && failureCount >= FAILURE_ABORT_THRESHOLD && !abortReason) {
-          abortReason = `最初の${failureCount}方位が1件も成功しなかったため中止しました（${error instanceof Error ? error.message : String(error)}）`;
-        }
       }
       completedCount += 1;
       await updateJob({
@@ -181,16 +164,6 @@ export async function runBearingProfileDownloadJob(
   await Promise.all(
     Array.from({ length: Math.min(BEARING_CONCURRENCY, pendingBearings.length) }, () => worker())
   );
-
-  if (abortReason) {
-    await updateJob({
-      status: "failed",
-      progress: "地形データの取得が繰り返し失敗したため中止しました",
-      progressPercent: 0,
-      error: abortReason,
-    });
-    return;
-  }
 
   await updateJob({ progress: "水面・河川情報を確認しています", progressPercent: 75 });
   let waterSiteContexts: SiteContext[] = [];

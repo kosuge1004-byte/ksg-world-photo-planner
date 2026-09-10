@@ -1,4 +1,14 @@
-import { getDeviceCache, setDeviceCache, clearDeviceCacheNamespace, getDeviceCacheNamespaceStats } from "./deviceCache";
+import { getDeviceCache, getDeviceCacheMany, setDeviceCache, clearDeviceCacheNamespace, getDeviceCacheNamespaceStats, getDeviceCacheWriteFailureCount } from "./deviceCache";
+
+/**
+ * 2026-09-10追記: 方位プロファイル本体（setBearingProfile）の保存失敗を
+ * 呼び出し元（tripodBearingProfileManager.ts）が検知できるようにする。
+ * DEMタイル側（gsiDemTileCache.ts）のwriteFailuresと同じ「開始前後の差分」
+ * パターンで使う。
+ */
+export function getBearingProfileWriteFailureCount(): number {
+  return getDeviceCacheWriteFailureCount();
+}
 
 /**
  * 2026-09-05追記（全面設計変更）: 「日時ごとに1候補だけ覚える」方式
@@ -79,6 +89,21 @@ export async function getBearingProfile(
   return getDeviceCache<BearingProfileEntry>(
     { namespace: namespaceFor(subjectId), ttlMs: ENTRY_TTL_MS, maxEntries: 800 },
     cacheKey(cameraHeightMeters, bearingDegrees)
+  );
+}
+
+/**
+ * 開始前の全方位存在確認用。一件ずつIndexedDB transactionを張らず、
+ * 一つのreadonly transactionでまとめて取得する。
+ */
+export async function getBearingProfilesMany(
+  subjectId: string,
+  cameraHeightMeters: number,
+  bearingDegreesList: readonly number[]
+): Promise<Array<BearingProfileEntry | null>> {
+  return getDeviceCacheMany<BearingProfileEntry>(
+    { namespace: namespaceFor(subjectId), ttlMs: ENTRY_TTL_MS, maxEntries: 800 },
+    bearingDegreesList.map((bearingDegrees) => cacheKey(cameraHeightMeters, bearingDegrees))
   );
 }
 

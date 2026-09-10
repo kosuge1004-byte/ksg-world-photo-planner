@@ -18,10 +18,12 @@ const checks = [
     job.includes("Math.min(BEARING_CONCURRENCY, pendingBearings.length)")],
   ["progress is reported per completed bearing regardless of concurrent completion order",
     job.includes("completedCount += 1") && /progress: `地形プロファイルを取得しています（\$\{completedCount\}/.test(job)],
-  ["systemic-failure early abort still works under concurrent execution (no false 'complete' with empty data)",
-    job.includes("FAILURE_ABORT_THRESHOLD") && job.includes("successCount === 0 && failureCount >= FAILURE_ABORT_THRESHOLD")],
-  ["a shared abortReason flag stops remaining workers promptly instead of grinding through everything",
-    job.includes("let abortReason: string | null = null") && job.includes("if (abortReason) return;")],
+  ["background concurrency is conservative and aligned with the direct path",
+    /BEARING_CONCURRENCY\s*=\s*2/.test(job)],
+  ["initial failures do not abort remaining bearings",
+    !job.includes("FAILURE_ABORT_THRESHOLD") && !job.includes("abortReason")],
+  ["all-failed jobs still cannot report false completion",
+    job.includes("if (profiles.length === 0)") && job.includes('status: "failed"')],
 ];
 
 let failed = 0;

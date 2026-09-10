@@ -11,7 +11,6 @@ const numberFrom = (text, pattern) => {
 };
 
 const bearingConcurrency = numberFrom(manager, /BEARING_CONCURRENCY\s*=\s*([\d_]+)/);
-const stageTimeout = numberFrom(manager, /BEARING_TERRAIN_STAGE_TIMEOUT_MS\s*=\s*([\d_]+)/);
 const clientConcurrency = numberFrom(client, /MAX_CONCURRENT_REQUESTS\s*=\s*([\d_]+)/);
 const requestTimeout = numberFrom(client, /REQUEST_TIMEOUT_MS\s*=\s*([\d_]+)/);
 const serverTileConcurrency = numberFrom(server, /MAX_CONCURRENT_GSI_TILE_REQUESTS\s*=\s*([\d_]+)/);
@@ -19,11 +18,11 @@ const serverTileConcurrency = numberFrom(server, /MAX_CONCURRENT_GSI_TILE_REQUES
 const checks = [
   ["real client path processes more than one bearing concurrently", bearingConcurrency >= 2 && manager.includes("await Promise.all(Array.from({ length: workerCount }, () => worker()))")],
   ["bearing concurrency remains conservative", bearingConcurrency <= 3],
-  ["45-second per-stage stall window removed", stageTimeout > 0 && stageTimeout <= 20_000],
+  ["outer per-bearing terrain watchdog removed", !manager.includes("BEARING_TERRAIN_STAGE_TIMEOUT_MS") && !manager.includes("Promise.race([operation(controller.signal), timeoutPromise])")],
   ["30-second client request stall window removed", requestTimeout > 0 && requestTimeout <= 12_000],
   ["client request fan-out is capped to six", clientConcurrency > 0 && clientConcurrency <= 6],
   ["Worker tile fan-out does not exceed six waiting outgoing connections", serverTileConcurrency > 0 && serverTileConcurrency <= 6],
-  ["direct path has systemic-failure early abort", /FAILURE_ABORT_THRESHOLD\s*=\s*6/.test(manager) && manager.includes("successfulBearings === 0 && failedBearings >= FAILURE_ABORT_THRESHOLD")],
+  ["direct path does not abort the whole download after initial bearing failures", !manager.includes("FAILURE_ABORT_THRESHOLD") && !manager.includes("successfulBearings === 0 && failedBearings")],
   ["direct path reports requested/successful/failed bearing counts", manager.includes("requestedBearings") && manager.includes("successfulBearings") && manager.includes("failedBearings")],
   ["World Terrain fallback is not mislabeled as downloaded high precision", manager.includes('terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN"')],
   ["download path does not perform discarded 10m duplicate sampling", !manager.includes('sampleWorldTerrain(terrainPoints, stageSignal, "10m")') && !manager.includes("let coarse;")],

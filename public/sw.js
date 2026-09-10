@@ -93,24 +93,20 @@ self.addEventListener("fetch", (event) => {
       const cache = await caches.open(TILE_CACHE);
       const cached = await cache.match(request);
       if (cached) return cached;
-      try {
-        const response = await fetch(request);
-        // opaqueレスポンス（CORSヘッダーが無い応答）はstatusが常に0で
-        // okがfalseになるが、Cache APIへはそのまま保存・再生してよい。
-        // 明確な失敗（ネットワークエラー等）と区別するため、レスポンスが
-        // 得られたこと自体を保存条件とする。
-        if (response && (response.ok || response.type === "opaque")) {
-          event.waitUntil(
-            cache.put(request, response.clone()).then(() => trimTileCache())
-          );
-        }
-        return response;
-      } catch (error) {
-        // オフライン等でネットワークが失敗した場合、キャッシュに無ければ
-        // 素直に失敗させる（地図表示側が既存のタイムアウト・フォールバック
-        // 処理を持っているため、ここで代替表示を作る必要はない）。
-        throw error;
+      // オフライン等でネットワークが失敗した場合、キャッシュに無ければ
+      // 素直に失敗させる（地図表示側が既存のタイムアウト・フォールバック
+      // 処理を持っているため、ここで代替表示を作る必要はない）。
+      const response = await fetch(request);
+      // opaqueレスポンス（CORSヘッダーが無い応答）はstatusが常に0で
+      // okがfalseになるが、Cache APIへはそのまま保存・再生してよい。
+      // 明確な失敗（ネットワークエラー等）と区別するため、レスポンスが
+      // 得られたこと自体を保存条件とする。
+      if (response && (response.ok || response.type === "opaque")) {
+        event.waitUntil(
+          cache.put(request, response.clone()).then(() => trimTileCache())
+        );
       }
+      return response;
     })());
     return;
   }

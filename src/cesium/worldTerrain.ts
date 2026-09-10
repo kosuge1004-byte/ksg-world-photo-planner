@@ -471,15 +471,21 @@ async function fetchGsiElevations(
     }));
     const result = await fetchGsiElevationSamples(clientPoints, signal);
     // 通信失敗と「APIは成功したがDEM値が無い」を混同しない。
-    // 全点の通信が成功した場合だけ、source/heightともnullの地点を
-    // authoritative no-dataとして記録する。通信障害時は絶対に0m化しない。
-    if (result.failedPointCount === 0) {
-      result.samples.forEach((sample, index) => {
-        if (sample.source === null && sample.heightMeters === null) {
-          authoritativeGsiNoDataBySample.add(points[index]);
-        }
-      });
-    }
+    // 2026-09-10修正: 以前は「バッチ全体でfailedPointCountが0」の場合だけ
+    // authoritative no-data判定を行っていたため、1024点規模の大きなバッチの
+    // 中で無関係な1点だけが通信失敗しただけでも、他の数百点（正常応答で
+    // 確定していた海面0m等のNoData点を含む）までauthoritative判定を諦め、
+    // World Terrainへ道連れにしていた。failedIndexesで点単位に失敗を
+    // 特定できるようになったため、通信が実際に成功した点だけを対象に、
+    // その中でsource/heightともnullの地点をauthoritative no-dataとして
+    // 記録する（通信が失敗した点は引き続き絶対に0m化しない）。
+    const failedIndexSet = new Set(result.failedIndexes);
+    result.samples.forEach((sample, index) => {
+      if (failedIndexSet.has(index)) return;
+      if (sample.source === null && sample.heightMeters === null) {
+        authoritativeGsiNoDataBySample.add(points[index]);
+      }
+    });
     // Warm decoded tiles only after the authoritative API result is available.
     // This never delays the current search and makes later nearby searches local-first.
     prefetchGsiDeviceTilesForSamples(clientPoints, result.samples);

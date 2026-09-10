@@ -998,7 +998,18 @@ button { cursor: pointer; }
 .maplibre-2d-map .maplibregl-ctrl-bottom-right { z-index: 2; }
 .maplibre-2d-map .maplibregl-ctrl-attrib { max-width: min(70%, 430px); font-size: 7px; line-height: 1.15; }
 .map-2d-overlay { position: absolute; z-index: 25; inset: 0; overflow: hidden; pointer-events: none; }
-.map-celestial-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.map-celestial-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
+  /* 2026-09-10追記: Android WebViewで、下にあるMapLibreのWebGLキャンバスが
+     ズーム中に高頻度で更新されると、素のSVG要素（GPU合成レイヤーに昇格
+     されていない）の再描画が抜け落ち、破線(.map-tripod-candidate-line)が
+     消える不具合が実機で確認された。HTML要素のピン等は独立した合成レイヤー
+     になりやすく影響を受けないため、SVG側だけに一貫した症状が出ていた。
+     translateZ(0)でこのSVGを強制的に独立した合成レイヤーへ昇格させ、
+     WebGLキャンバス側の更新から再描画を切り離す。 */
+  transform: translateZ(0);
+  will-change: transform;
+}
 .map-tripod-subject-line { stroke: rgba(54, 202, 255, .95); stroke-width: 3; }
 .map-horizon-outline { fill: rgba(0,0,0,.04); stroke: rgba(0,0,0,.84); stroke-width: 7; }
 .map-horizon-circle { fill: none; stroke: rgba(218,222,228,.92); stroke-width: 3.5; filter: drop-shadow(0 1px 1px rgba(0,0,0,.85)); }
@@ -1014,8 +1025,6 @@ button { cursor: pointer; }
 .map-track-moon { stroke: #62c9f5; }
 .map-track-milkyWay { stroke: rgba(220,211,198,.72); stroke-dasharray: 5 4; }
 .map-track-polaris { stroke: rgba(184,149,255,.92); stroke-dasharray: 3 3; }
-.map-rise-set-ray { stroke-width: 3; opacity: .68; filter: drop-shadow(0 1px 1px #000); }
-.map-current-body-ray { stroke-width: 3.6; opacity: .82; filter: drop-shadow(0 1px 1px #000); }
 .map-ray-sun { stroke: #e8a700; }
 .map-ray-moon { stroke: #54bce9; }
 .map-ray-milkyWay { stroke: #d8d0c5; }

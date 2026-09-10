@@ -10,7 +10,12 @@ const checks=[
  ["river/canal polygons queried",osm.includes('["water"="river"]')&&osm.includes('["water"="canal"]')],
  ["linear mountain river not globally zeroed",!osm.includes('["waterway"="river"]')],
  ["client validates water kind",site.includes('"waterSurfaceKind" in value')],
- ["GSI no-data marked only on successful batch",world.includes("result.failedPointCount === 0")&&world.includes("authoritativeGsiNoDataBySample.add")],
+ // 2026-09-10更新: 「バッチ全体で1件でも通信失敗があれば全滅」という粗い
+ // 判定(result.failedPointCount === 0)は、無関係な1点の失敗が同じバッチ内の
+ // 正常な海面0m判定まで道連れにする不具合だったため、点単位の失敗特定
+ // (failedIndexes)へ置き換えた。ここではその置き換えが実際に行われている
+ // ことと、通信失敗点を無条件でauthoritative扱いしていないことの両方を確認する。
+ ["GSI no-data marked per-point, not per-batch",world.includes("result.failedIndexes")&&world.includes("failedIndexSet.has(index)")&&world.includes("authoritativeGsiNoDataBySample.add")&&!world.includes("result.failedPointCount === 0")],
  ["sea/no-data H=0 path retained",world.includes('"GSI_WATER_ZERO"')&&tripod.includes('"water-surface:zero"')],
  ["river nearest-land radial search",tripod.includes("RIVER_NEAREST_LAND_RADII_METERS")&&tripod.includes("RIVER_NEAREST_LAND_BEARINGS_DEGREES")],
  ["nearest sample must be outside mapped water",tripod.includes("contexts[index]?.onWaterSurface")],

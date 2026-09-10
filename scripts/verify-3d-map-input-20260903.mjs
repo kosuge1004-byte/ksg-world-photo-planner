@@ -21,7 +21,7 @@ const checks = [
   ],
   [
     "Cesium host accepts pointer input in 3D",
-    app.includes('mapRef.current.style.pointerEvents = "auto"'),
+    /(mapRef\.current|mapElement)\.style\.pointerEvents = "auto"/.test(app),
   ],
   [
     "3D renderer CSS accepts pointer events",

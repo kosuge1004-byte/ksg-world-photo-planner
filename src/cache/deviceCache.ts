@@ -28,6 +28,21 @@ const INDEXED_DB_OPERATION_TIMEOUT_MS = 1_500;
 const lastNamespacePruneAt = new Map<string, number>();
 const namespacePruneInFlight = new Map<string, Promise<void>>();
 
+// 2026-09-10追記: 従来はsetDeviceCache/setDeviceCacheManyの書き込み失敗
+// （IndexedDBエラー・操作タイムアウトのどちらも）を呼び出し元へ一切伝えず、
+// 常に「成功」として振る舞っていた。方位プロファイル本体（tripodBearing
+// ProfileCache.ts経由）はこの関数群だけを使って保存しており、DEMタイル側
+// （gsiDemTileCache.ts）のようなwriteFailuresカウンタが存在しなかったため、
+// ストレージ容量不足等で保存が実際には失敗していても「ダウンロード完了」と
+// 表示されてしまう不具合があった。gsiDemTileCache.tsと同じ設計で、失敗回数を
+// モジュールレベルのカウンタとして記録し、呼び出し元が差分を取れるようにする。
+let persistentWriteFailures = 0;
+
+/** 現在までの累計書き込み失敗回数。差分を取るための基準値として使う。 */
+export function getDeviceCacheWriteFailureCount(): number {
+  return persistentWriteFailures;
+}
+
 function compoundKey(namespace: string, key: string): string {
   return `${namespace}:${key}`;
 }
@@ -357,17 +372,24 @@ export async function setDeviceCache<T>(
   };
   touchMemory(record, policy.memoryEntries ?? Math.min(policy.maxEntries, 256));
   const database = await openDatabase();
-  if (!database) return;
-  await boundedCacheOperation(
-    new Promise<void>((resolve) => {
+  if (!database) {
+    // IndexedDB自体が開けない環境（プライベートブラウジング等）は、通信障害と
+    // 区別できないため書き込み失敗として計上する。値はメモリキャッシュには
+    // 残るが、タブを閉じれば失われる。
+    persistentWriteFailures += 1;
+    return;
+  }
+  const succeeded = await boundedCacheOperation(
+    new Promise<boolean>((resolve) => {
       const transaction = database.transaction(STORE_NAME, "readwrite");
       transaction.objectStore(STORE_NAME).put(record);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => resolve();
-      transaction.onabort = () => resolve();
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => resolve(false);
+      transaction.onabort = () => resolve(false);
     }),
-    undefined
+    false
   );
+  if (!succeeded) persistentWriteFailures += 1;
   await scheduleNamespacePrune(policy);
 }
 
@@ -390,18 +412,22 @@ export async function setDeviceCacheMany<T>(
   } satisfies CacheRecord<T>));
   for (const record of records) touchMemory(record, maximum);
   const database = await openDatabase();
-  if (!database) return;
-  await boundedCacheOperation(
-    new Promise<void>((resolve) => {
+  if (!database) {
+    persistentWriteFailures += records.length;
+    return;
+  }
+  const succeeded = await boundedCacheOperation(
+    new Promise<boolean>((resolve) => {
       const transaction = database.transaction(STORE_NAME, "readwrite");
       const store = transaction.objectStore(STORE_NAME);
       for (const record of records) store.put(record);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => resolve();
-      transaction.onabort = () => resolve();
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => resolve(false);
+      transaction.onabort = () => resolve(false);
     }),
-    undefined
+    false
   );
+  if (!succeeded) persistentWriteFailures += records.length;
   await scheduleNamespacePrune(policy);
 }
 

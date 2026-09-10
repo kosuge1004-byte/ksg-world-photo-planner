@@ -138,15 +138,36 @@ export function Map2DOverlayComponent({
             size
           );
           const extendedTarget = extendRayPastTarget(start, directionPixel, size);
+          // 2026-09-10追記（診断用・一時的）: ズーム操作で点線が消える不具合の
+          // 原因特定のため、実際に計算されている座標値を画面に表示する。
+          // 原因判明後はこのdebugText/<text>ごと削除すること。
+          const debugText =
+            `start(${start.x.toFixed(0)},${start.y.toFixed(0)}) ` +
+            `end(${extendedTarget.x.toFixed(0)},${extendedTarget.y.toFixed(0)}) ` +
+            `zoom=${zoom.toFixed(2)} size=${size.width.toFixed(0)}x${size.height.toFixed(0)} ` +
+            `cand=${matchingCandidate ? "yes" : "no"}`;
           return (
-            <line
-              key={`${line.id}-tripod-search-base-line`}
-              className={`map-tripod-candidate-line map-candidate-${line.id}`}
-              x1={start.x}
-              y1={start.y}
-              x2={extendedTarget.x}
-              y2={extendedTarget.y}
-            />
+            <g key={`${line.id}-tripod-search-base-line`}>
+              <line
+                className={`map-tripod-candidate-line map-candidate-${line.id}`}
+                x1={start.x}
+                y1={start.y}
+                x2={extendedTarget.x}
+                y2={extendedTarget.y}
+              />
+              <text
+                x={Math.min(Math.max(start.x, 4), size.width - 4)}
+                y={Math.min(Math.max(start.y - 10, 12), size.height - 4)}
+                fill="#ff2d55"
+                stroke="#000"
+                strokeWidth={2}
+                paintOrder="stroke"
+                fontSize={11}
+                fontFamily="monospace"
+              >
+                {debugText}
+              </text>
+            </g>
           );
         })}
       </svg>

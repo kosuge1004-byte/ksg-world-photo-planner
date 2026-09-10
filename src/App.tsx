@@ -137,6 +137,7 @@ import {
 } from "./cesium/tripodCandidateExactCache";
 import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
+import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup, setPreviewWireframeMode } from "./cesium/createMapViewer";
 import {
   calculateKarneyDestinationPoint,
@@ -474,6 +475,15 @@ function App() {
   const previewSecondaryViewerRef = useRef<Viewer | null>(null);
   // Reactの再描画前に連続タップされても、配置対象を一意に判定する同期状態。
   const placementModeRef = useRef<PlacementMode>("none");
+  // 2026-09-10追記: 3Dタップハンドラ用useEffectはmapDisplayMode等が変わった
+  // 時だけ再実行され、毎レンダー作り直される関数(通常のfunction宣言、
+  // useCallback化していない)を直接参照すると、エフェクト最終実行時点の
+  // 古いクロージャ(古いtripodPoint/subjectPoint等を捕捉したもの)を使い
+  // 続けてしまう。エフェクトを毎レンダー再実行する(タップハンドラ・
+  // レンダーループを毎回作り直す)のはコストが高いため、refで常に最新の
+  // 関数を指すようにして解決する。
+  const placeForegroundAtCoordinatesRef = useRef<typeof placeForegroundAtCoordinates | undefined>(undefined);
+  const placeTripodFromMapTapRef = useRef<typeof placeTripodFromMapTap | undefined>(undefined);
   const previewJobRef = useRef(0);
   const previewRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const userNoticeSequenceRef = useRef(0);
@@ -726,7 +736,8 @@ function App() {
     if (!viewer || viewer.isDestroyed()) return;
 
     viewer.scene.screenSpaceCameraController.enableInputs = true;
-    if (mapRef.current) mapRef.current.style.pointerEvents = "auto";
+    const mapElement = mapRef.current;
+    if (mapElement) mapElement.style.pointerEvents = "auto";
 
     const tapHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     tapHandler.setInputAction((movement: { position: Cartesian2 }) => {
@@ -741,7 +752,7 @@ function App() {
       if (placementMode === "foreground") {
         openPlacementConfirm("person", async (offsetMeters) => {
           const ground = await resolveGroundPointFrom3dSurface(surfacePosition, "人物配置地点");
-          const placed = placeForegroundAtCoordinates(
+          const placed = placeForegroundAtCoordinatesRef.current?.(
             ground.latitude,
             ground.longitude,
             ground.ellipsoidalHeightMeters + offsetMeters,
@@ -809,7 +820,7 @@ function App() {
 
       const cartographic = Cartographic.fromCartesian(surfacePosition);
       if (!cartographic) return;
-      void placeTripodFromMapTap({
+      void placeTripodFromMapTapRef.current?.({
         latitude: CesiumMath.toDegrees(cartographic.latitude),
         longitude: CesiumMath.toDegrees(cartographic.longitude),
       });
@@ -842,7 +853,7 @@ function App() {
       if (!viewer.isDestroyed()) {
         viewer.scene.screenSpaceCameraController.enableInputs = false;
       }
-      if (mapRef.current) mapRef.current.style.pointerEvents = "";
+      if (mapElement) mapElement.style.pointerEvents = "";
     };
   }, [
     mapDisplayMode,
@@ -851,6 +862,7 @@ function App() {
     tripodPlacementActive,
     foregroundPlacementActive,
     mapMeasuring,
+    setSearchMessage,
   ]);
 
   const [precisionSettings, setPrecisionSettings] =
@@ -1240,11 +1252,17 @@ function App() {
   // 静止時は3D静止画側に建物への隠れ方まで焼き込むため、この値は使わない。
   const [celestialDragOpacity, setCelestialDragOpacity] = useState(0.55);
   const mapCenterRef = useRef(mapCenter);
+  const mapDisplayModeRef = useRef(mapDisplayMode);
   const dateTimeLocalRef = useRef(dateTimeLocal);
   const timeZoneRef = useRef(timeZone);
   mapCenterRef.current = mapCenter;
+  mapDisplayModeRef.current = mapDisplayMode;
   dateTimeLocalRef.current = dateTimeLocal;
   timeZoneRef.current = timeZone;
+  // 関数宣言はfunction文としてホイストされるため、テキスト上の定義位置に
+  // 関わらずこの時点で当該レンダーの最新版を参照できる。
+  placeForegroundAtCoordinatesRef.current = placeForegroundAtCoordinates;
+  placeTripodFromMapTapRef.current = placeTripodFromMapTap;
 
   useEffect(
     () => subscribeUserNotices((notice) => showUserNotice(notice)),
@@ -1788,6 +1806,23 @@ function App() {
     [subjectPoint, tripodCandidateSourcePoints, celestialVisibility]
   );
 
+  // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
+  // にしか実装が無く、3D表示中は最初から描画されなかった(仕様漏れ)。
+  // 2Dと同じ元データ(tripodSearchLines)を、3D表示中だけ地表クランプの
+  // Cesiumエンティティとしても描画する。
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    if (mapDisplayMode !== "3d" || !mapReady) {
+      clearTripodSearchLineEntities(viewer);
+      return;
+    }
+    updateTripodSearchLineEntities(viewer, tripodSearchLines);
+    return () => {
+      if (!viewer.isDestroyed()) clearTripodSearchLineEntities(viewer);
+    };
+  }, [tripodSearchLines, mapDisplayMode, mapReady]);
+
   const displayedTripodCandidates = useMemo(() => {
     if (!timelineInteracting || !subjectPoint) {
       // 2026-09-02変更（明示指示により）: 計算中の暫定候補（地球を完全な
@@ -2067,7 +2102,7 @@ function App() {
           // また現れる（元に戻る）、という「読み込み直し」に見える動きに
           // なっていた。3D地図表示中はこの最適化自体を行わない
           // （プレビューが隠れている2D表示中だけ有効にする）。
-          if (mapDisplayMode !== "3d") {
+          if (mapDisplayModeRef.current !== "3d") {
             const previewViewer = mapViewerRef.current;
             if (previewViewer) setPreviewWireframeMode(previewViewer, true);
           }
@@ -2241,6 +2276,7 @@ function App() {
     precisionSettings.accuracyMode,
     precisionSettings.refractionCorrectionMode,
     precisionSettings.tripodCandidateDoubleCheckEnabled,
+    precisionSettings.tripodSearchMaxDistanceMeters,
     tripodCandidateRetrySequence,
     showUserNotice,
   ]);
@@ -3587,6 +3623,7 @@ ${diagnosticMessage}
         subjectId: record.id,
         subjectPoint: downloadPoint,
         cameraSettings,
+        maxDistanceMeters: precisionSettings.tripodSearchMaxDistanceMeters,
         signal: controller.signal,
         forceRefresh,
         onProgress: (progress) => {
@@ -3634,7 +3671,13 @@ ${diagnosticMessage}
     } catch (error) {
       if (!isAbortError(error)) {
         console.warn("方位プロファイルの事前計算に失敗しました", error);
-        setSearchMessage("三脚候補データの保存中にエラーが発生しました");
+        // 2026-09-10追記: システム障害による早期中止（backfillBearingProfiles
+        // 内のabortReason）は、通常のエラーとは原因が異なり再試行しても
+        // 回復しない可能性が高いため、汎用メッセージで上書きせずそのまま出す。
+        const message = error instanceof Error && error.message
+          ? error.message
+          : "三脚候補データの保存中にエラーが発生しました";
+        setSearchMessage(`${record.label || "この地点"}: ${message}`);
       }
     } finally {
       if (bearingProfileAbortRef.current === controller) {

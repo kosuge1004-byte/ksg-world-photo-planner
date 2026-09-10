@@ -63,7 +63,21 @@ type RoofCacheRecord = {
   key: string;
   point: ResolvedGroundPoint;
   updatedAt: number;
+  // 2026-09-10追記: 「最も近い候補」→「最も高い候補」への選定ロジック変更
+  // (2026-08-29修正、コメント中の「138タワー」の例）のように、キャッシュに
+  // 保存された座標・高さの数値自体は変えず、候補の「選び方」だけを直した
+  // 場合、TTL（90日）が切れるまで古いアルゴリズムで計算された誤った結果が
+  // 有効期限内としてそのまま使われ続けてしまっていた。バグ修正のたびに
+  // DB名を変えるのは既存キャッシュを全て無駄にするため、アルゴリズム側の
+  // 版数をキャッシュへ書き込み、読み込み時に現在の版数と一致する場合のみ
+  // 有効とみなす。
+  algorithmVersion: number;
 };
+
+// 候補選定ロジック（highestOf・ringCandidatesの候補構成等）を変更した
+// 場合は、この値を必ずインクリメントする。既存キャッシュはTTL内でも
+// 無効化され、次回検索時に新しいロジックで再計算される。
+const ROOF_CACHE_ALGORITHM_VERSION = 2;
 
 let roofCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
 
@@ -109,6 +123,7 @@ async function readRoofPersistentCache(key: string): Promise<ResolvedGroundPoint
       if (
         record &&
         Date.now() - record.updatedAt <= ROOF_CACHE_MAX_AGE_MS &&
+        record.algorithmVersion === ROOF_CACHE_ALGORITHM_VERSION &&
         isResolvedGroundPoint(record.point)
       ) {
         resolve(record.point);
@@ -125,7 +140,12 @@ async function writeRoofPersistentCache(key: string, point: ResolvedGroundPoint)
   if (!database) return;
   await new Promise<void>((resolve) => {
     const transaction = database.transaction(ROOF_CACHE_STORE, "readwrite");
-    transaction.objectStore(ROOF_CACHE_STORE).put({ key, point, updatedAt: Date.now() } satisfies RoofCacheRecord);
+    transaction.objectStore(ROOF_CACHE_STORE).put({
+      key,
+      point,
+      updatedAt: Date.now(),
+      algorithmVersion: ROOF_CACHE_ALGORITHM_VERSION,
+    } satisfies RoofCacheRecord);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
     transaction.onabort = () => resolve();

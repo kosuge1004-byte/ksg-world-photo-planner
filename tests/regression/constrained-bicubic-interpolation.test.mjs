@@ -16,7 +16,7 @@ const overshootRisk = [
   [0, 0, 0, 0],
 ];
 const value = constrainedBicubicInterpolate(overshootRisk, 0.5, 0.5);
-assert.ok(value >= 10 && value <= 10, `central plateau must remain 10, got ${value}`);
+assert.ok(Math.abs(value - 10) < 1e-9, `central plateau must remain 10, got ${value}`);
 
 const steep = [
   [0, 0, 100, 100],

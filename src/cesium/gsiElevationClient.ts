@@ -11,6 +11,17 @@ export type GsiElevationClientPoint = {
 export type GsiElevationClientResult = {
   samples: GsiElevationApiSample[];
   failedPointCount: number;
+  /**
+   * 2026-09-10追記: 通信が失敗した点の「index（このリクエストに渡した
+   * points配列内での位置)」。以前はfailedPointCountという件数しか
+   * 持っておらず、呼び出し元（worldTerrain.ts）は「バッチ全体で1件でも
+   * 通信失敗があれば、そのバッチの全点についてauthoritative no-data判定を
+   * 諦める」という粗い扱いしかできなかった。1024点規模の大きなバッチの中の
+   * 無関係な1点がタイムアウトしただけで、実際には正常応答だった残り数百点
+   * （海面等の確定NoDataを含む）まで道連れでWorld Terrain行きになっていた
+   * ため、点単位で失敗を特定できるようにする。
+   */
+  failedIndexes: number[];
   lastError: unknown;
   /**
    * 2026-08-28追記: R2キャッシュ（DEMタイル単位）が実際に活用されて
@@ -310,6 +321,7 @@ async function requestBatchWithRecovery(
     return {
       samples: result.samples,
       failedPointCount: 0,
+      failedIndexes: [],
       lastError: null,
       tileCacheHitCount: result.tileCacheHit,
       tileCacheMissCount: result.tileCacheMiss,
@@ -328,6 +340,7 @@ async function requestBatchWithRecovery(
         return {
           samples: result.samples,
           failedPointCount: 0,
+          failedIndexes: [],
           lastError: null,
           tileCacheHitCount: result.tileCacheHit,
           tileCacheMissCount: result.tileCacheMiss,
@@ -342,6 +355,7 @@ async function requestBatchWithRecovery(
         return {
           samples: emptySamples(points.length),
           failedPointCount: points.length,
+          failedIndexes: points.map((_, index) => index),
           lastError: retryError,
           ...emptyCacheCounts,
         };
@@ -359,6 +373,7 @@ async function requestBatchWithRecovery(
     return {
       samples: [...left.samples, ...right.samples],
       failedPointCount: left.failedPointCount + right.failedPointCount,
+      failedIndexes: [...left.failedIndexes, ...right.failedIndexes.map((index) => index + middle)],
       lastError: right.lastError ?? left.lastError ?? error,
       tileCacheHitCount: left.tileCacheHitCount + right.tileCacheHitCount,
       tileCacheMissCount: left.tileCacheMissCount + right.tileCacheMissCount,
@@ -388,11 +403,13 @@ const MAX_PER_CALL_WORKERS = Math.max(1, MAX_CONCURRENT_REQUESTS - PER_CALL_WORK
 
 function chunkSizeForRequest(totalPoints: number): number {
   if (totalPoints < PARALLEL_SPLIT_MIN_POINTS) return REQUEST_BATCH_SIZE;
-  // 2026-09-09: 分割数はグローバル上限ではなく、この呼び出しが実際に
-  // 同時実行できるワーカー数に合わせる。従来は640点を約6分割していたが、
-  // per-call上限は4本なので2バッチが必ず第2波へ回り、HTTP往復だけ増えていた。
-  // 640点なら約160点×4本となり、同じ640点・同じ精度を1波で処理できる。
-  const evenSplitSize = Math.ceil(totalPoints / MAX_PER_CALL_WORKERS);
+  // 2026-09-09実機修正: 640点を4分割（約160点/Worker）へ拡大した版は、
+  // 1回のCloudflare Worker呼び出しで処理するDEMタイル数が増え、最初の
+  // 方位が長時間完了せず「0 / n」のままに見える回帰を起こした。
+  // 点数・順序・DEM精度は維持したまま、1要求の負荷を安全側へ戻す。
+  // 640点なら約107点×6バッチ。実行自体は共有キューの大規模上限4本で
+  // 制御されるため、Cloudflare/GSIへ同時に過剰送信することはない。
+  const evenSplitSize = Math.ceil(totalPoints / MAX_CONCURRENT_REQUESTS);
   return Math.min(REQUEST_BATCH_SIZE, Math.max(MIN_PARALLEL_CHUNK_SIZE, evenSplitSize));
 }
 
@@ -405,6 +422,7 @@ export async function fetchGsiElevationSamples(
     return {
       samples: [],
       failedPointCount: 0,
+      failedIndexes: [],
       lastError: null,
       tileCacheHitCount: 0,
       tileCacheMissCount: 0,
@@ -453,6 +471,13 @@ export async function fetchGsiElevationSamples(
   const finalResult = {
     samples: results.flatMap((result) => result.samples),
     failedPointCount: results.reduce((sum, result) => sum + result.failedPointCount, 0),
+    // 各バッチのfailedIndexesはバッチ内ローカルindexなので、そのバッチが
+    // 元のpoints配列内で始まる位置（batches[index]の開始オフセット）を足して
+    // グローバルindexへ変換する。
+    failedIndexes: results.flatMap((result, batchIndex) => {
+      const offset = batchIndex * requestChunkSize;
+      return result.failedIndexes.map((localIndex) => offset + localIndex);
+    }),
     lastError: results.findLast((result) => result.lastError)?.lastError ?? null,
     tileCacheHitCount: results.reduce((sum, result) => sum + result.tileCacheHitCount, 0),
     tileCacheMissCount: results.reduce((sum, result) => sum + result.tileCacheMissCount, 0),
