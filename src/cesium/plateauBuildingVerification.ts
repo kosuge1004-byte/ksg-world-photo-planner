@@ -77,7 +77,7 @@ type RoofCacheRecord = {
 // 候補選定ロジック（highestOf・ringCandidatesの候補構成等）を変更した
 // 場合は、この値を必ずインクリメントする。既存キャッシュはTTL内でも
 // 無効化され、次回検索時に新しいロジックで再計算される。
-const ROOF_CACHE_ALGORITHM_VERSION = 2;
+const ROOF_CACHE_ALGORITHM_VERSION = 3;
 
 let roofCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
 
@@ -514,28 +514,22 @@ async function resolvePlateauRoofGroundPointUnbounded(
 
   // Stage 2: 局所探索（半径20m以内）。
   const localCandidates = ringCandidates(origin, LOCAL_SEARCH_OFFSETS_METERS, SAMPLING_BEARINGS_DEGREES, label);
-  const localResults = await clampAndValidate(viewer, localCandidates, label, signal);
-  let peak = highestOf(localResults);
-
-  if (!peak) {
-    // Stage 2で何も見つからない場合だけ、鉄塔・展望タワー・双輪アーチ状の
-    // モニュメント等向けに範囲を広げる。
-    //
-    // 2026-08-29修正: 以前はここで「最も高い候補」ではなく「検索座標に最も
-    // 近い（＝候補リストの先頭から見て最初に見つかった）有効な候補」を
-    // 採用していた。しかし候補リストはoffset→bearingの順で機械的に並んで
-    // いるだけで、「最初に見つかった」ことは「検索座標に最も近い」ことを
-    // 意味しない。この結果、脚部が広がる鉄塔や、双輪アーチのように構造の
-    // 途中（低い脚部や梁）でも表面と交差してしまう形状の場合、頂上ではなく
-    // 構造物のごく低い部分（＝見た目には「タワーの下」）を被写体ピンの
-    // 高さとして採用してしまっていた（例:「138タワー」検索）。
-    // 探索半径はここでも最大50mまでに限定されており、無関係な高層構造物を
-    // 拾うリスクはStage 2と同程度のため、Stage 2と同じく「最も高い候補」を
-    // 採用するよう統一する。
-    const wideCandidates = ringCandidates(origin, WIDE_FALLBACK_OFFSETS_METERS, SAMPLING_BEARINGS_DEGREES, label);
-    const wideResults = await clampAndValidate(viewer, wideCandidates, label, signal);
-    peak = highestOf(wideResults);
-  }
+  // 2026-09-10修正（実機報告：「138タワー」再発）: 以前は局所探索(0-20m)で
+  // 何か1つでも候補が見つかった時点で、鉄塔・双輪アーチ向けの広域探索
+  // (30-50m)を一切実行していなかった。「ツインアーチ138」のような、脚が
+  // 大きく開いて中心から離れた位置に頂点がある構造では、検索座標の直上
+  // 20m以内でも脚部や横梁に交差してしまい候補が「見つかってしまう」ため、
+  // 本来の頂上を含みうる30-50mの広域探索が一度も行われないまま、低い
+  // 交点がそのまま採用されていた（2026-08-29修正は「見つかった候補群の
+  // 中でどれを選ぶか」は直したが、「そもそも広域探索が実行されるか」の
+  // 判定は直っていなかった）。局所探索の成否に関わらず広域探索も必ず行い、
+  // 両方の候補群を通じて最も高いものを採用する。
+  const wideCandidates = ringCandidates(origin, WIDE_FALLBACK_OFFSETS_METERS, SAMPLING_BEARINGS_DEGREES, label);
+  const [localResults, wideResults] = await Promise.all([
+    clampAndValidate(viewer, localCandidates, label, signal),
+    clampAndValidate(viewer, wideCandidates, label, signal),
+  ]);
+  let peak = highestOf([...localResults, ...wideResults]);
 
   if (peak) {
     // Stage 3: 見つかった頂上候補（Stage 2 or 広域フォールバックいずれの
