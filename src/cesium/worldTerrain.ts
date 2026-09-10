@@ -38,8 +38,20 @@ const GEOID_MEMORY_CACHE_MAX_ENTRIES = 4_096;
 const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
 const GEOID_CACHE_STORE = "geoid";
 const GEOID_CACHE_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
-// 約1kmグリッド。地点ごとの精度を保ちつつ、近接点のAPI要求をまとめる。
-const GEOID_REGION_DECIMALS = 2;
+// 2026-09-10修正（実機報告：容量は小さいのになぜ遅いのか）: ジオイド高は
+// 数km規模でしかほぼ変化しない滑らかな量で、国土地理院自身の公式ジオイド
+// モデル（GSIGEO2011）もこれと同程度（約1〜2km）の格子間隔で提供されて
+// いる。つまり、これより細かく区切って個別に問い合わせても、元データ自体
+// がその解像度を持っていないため精度上の利益はほぼ無く、単に不安定な
+// レガシーCGIへの往復回数を無駄に増やしていただけだった。以前の約1.1km
+// 格子（GEOID_REGION_DECIMALS=2）から、公式モデルの解像度に見合った
+// 約2.8km格子へ広げ、必要な往復回数を約1/6に減らす（格子面積は一辺の
+// 2乗で効くため、1.1km→2.8kmで約(2.8/1.1)^2≈6.5倍粗くなる）。
+const GEOID_REGION_GRID_DEGREES = 0.025;
+
+function roundToGeoidGrid(degrees: number): number {
+  return Math.round(degrees / GEOID_REGION_GRID_DEGREES) * GEOID_REGION_GRID_DEGREES;
+}
 type GeoidCacheRecord = { key: string; height: number; updatedAt: number };
 type GsiMaximumDetail = "1m" | "5m" | "10m";
 type PendingGsiRequest = {
@@ -624,9 +636,9 @@ function fetchGsiElevationsBatched(
 }
 
 function geoidRegionKey(point: Cartographic): string {
-  const latitude = CesiumMath.toDegrees(point.latitude);
-  const longitude = CesiumMath.toDegrees(point.longitude);
-  return `${latitude.toFixed(GEOID_REGION_DECIMALS)},${longitude.toFixed(GEOID_REGION_DECIMALS)}`;
+  const latitude = roundToGeoidGrid(CesiumMath.toDegrees(point.latitude));
+  const longitude = roundToGeoidGrid(CesiumMath.toDegrees(point.longitude));
+  return `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
 }
 
 let geoidCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;

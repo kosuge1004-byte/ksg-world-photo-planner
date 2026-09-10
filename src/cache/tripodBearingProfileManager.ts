@@ -183,6 +183,13 @@ export type BearingBackfillProgress = {
   highPrecisionPoints?: number;
   phase?: "terrain" | "water" | "osm" | "finalizing";
   terrainStage?: "profile" | "high-precision";
+  // 2026-09-10追記（実機報告：「N/Total」が本当にデータを取得できている
+  // 数なのか分からない）: completedStepsは成功・失敗を問わず「試行した
+  // 方位の数」を数えており、実際に高精度DEMを取得・保存できた方位数
+  // ではなかった。全て失敗し続けていても見た目には進んでいるように
+  // 見えてしまうため、成功数・失敗数を別々に公開する。
+  successfulSteps?: number;
+  failedSteps?: number;
 };
 
 export type BearingBackfillResult = {
@@ -308,6 +315,8 @@ export async function backfillBearingProfiles(params: {
     onProgress?.({
       totalSteps,
       completedSteps: completedAttempts,
+      successfulSteps: successfulBearings,
+      failedSteps: failedBearings,
       currentBearingDegrees: bearing,
       phase: "terrain",
       terrainStage: "profile",
@@ -324,6 +333,8 @@ export async function backfillBearingProfiles(params: {
     onProgress?.({
       totalSteps,
       completedSteps: completedAttempts,
+      successfulSteps: successfulBearings,
+      failedSteps: failedBearings,
       currentBearingDegrees: bearing,
       phase: "terrain",
       terrainStage: "high-precision",
@@ -396,7 +407,7 @@ export async function backfillBearingProfiles(params: {
       if (attempt.aborted) return;
       failedBearings += 1;
       completedAttempts += 1;
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
       maybeAbortForSystemicFailure();
       return;
     }
@@ -410,7 +421,7 @@ export async function backfillBearingProfiles(params: {
       failedBearings += 1;
       completedAttempts += 1;
       console.warn(`[bearing-profile] 方位${bearing}°はGSI高精度DEMを取得できずWorld Terrainへフォールバックしたため未完了扱いにします`);
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
       maybeAbortForSystemicFailure();
       return;
     }
@@ -440,6 +451,8 @@ export async function backfillBearingProfiles(params: {
     onProgress?.({
       totalSteps,
       completedSteps: completedAttempts,
+      successfulSteps: successfulBearings,
+      failedSteps: failedBearings,
       currentBearingDegrees: bearing,
       phase: "terrain",
       profilePoints: totalProfilePoints,

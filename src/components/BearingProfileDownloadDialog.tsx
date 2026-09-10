@@ -85,8 +85,14 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
                     : progress.totalSteps === 0
                       ? "既に最新の状態です。"
                       : progress.phase === "terrain" && progress.currentBearingDegrees !== null
-                        ? `${progress.completedSteps} / ${progress.totalSteps} 方位（${progress.currentBearingDegrees}°）・${progress.terrainStage === "high-precision" ? "高精度DEM保存中" : "地形プロファイル取得中"}`
-                        : `${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}`}
+                        ? `試行 ${progress.completedSteps} / ${progress.totalSteps} 方位（${progress.currentBearingDegrees}°）・${progress.terrainStage === "high-precision" ? "高精度DEM保存中" : "地形プロファイル取得中"}` +
+                          (progress.successfulSteps !== undefined && progress.failedSteps !== undefined
+                            ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
+                            : "")
+                        : `試行 ${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}` +
+                          (progress.successfulSteps !== undefined && progress.failedSteps !== undefined
+                            ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
+                            : "")}
             </p>
             <div>
               <button type="button" onClick={onCancelDownload}>

@@ -978,7 +978,7 @@ function App() {
   // 保持し、被写体が変わっていたら距離ヒントを使わないようにする。
   const tripodHintSubjectRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const [tripodCandidateCalculationStatus, setTripodCandidateCalculationStatus] =
-    useState<"idle" | "calculating" | "complete" | "no-solution" | "error">("idle");
+    useState<"idle" | "calculating" | "complete" | "no-solution" | "error" | "paused">("idle");
 
   // 2026-08-26追記: インストール型アプリ環境（PWA/専用アプリ）では
   // ブラウザの開発者ツールが使えないため、「計算中のまま何分も動かない」
@@ -1893,16 +1893,15 @@ function App() {
       return;
     }
     if (isBearingProfileDownloadActive) {
-      // 2026-09-10追記（実機報告：ダウンロード中に他の処理が同時に通信して
-      // いないか）: この三脚候補探索（生のDEM/ジオイド通信を伴う）と、
-      // 方位プロファイルの一括ダウンロード（backfillBearingProfiles）は、
-      // 互いを認識せず独立に動いており、同じ共有キュー（DEM標高の
-      // MAX_CONCURRENT_LARGE_REQUESTS、ジオイド高の同時実行数上限）を
-      // 奪い合っていた。ダウンロード完了後はその結果がこの探索の結果を
-      // 上書きする（より高精度なため）ので、ダウンロード中はこの探索を
-      // 一時停止しても失うものは無く、ダウンロード側の実効スループットを
-      // 増やせる。ダウンロード完了（bearingProfileDialog.progressがnullに
-      // 戻る）で自動的に再開する。
+      // 2026-09-10追記（実機報告：修正を適用してもなお「計算中…経過106秒」
+      // の表示が伸び続けた）: このガードはcleanup(controller.abort())で
+      // 実際の通信・計算は正しく止めていたが、tripodCandidateCalculationStatus
+      // を更新していなかったため、直前の"calculating"表示が古いまま残り、
+      // 進捗interval（この値だけを見て動く）が実際には止まった計算の
+      // 経過時間を延々と数え続けているように見えていた（実害は無いが
+      // 「直っていないように見える」実質的な不具合）。一時停止中であることを
+      // 専用のstatusとして明示する。
+      setTripodCandidateCalculationStatus("paused");
       return;
     }
 
@@ -5623,7 +5622,9 @@ ${diagnosticMessage}
           >
             {tripodCandidateCalculationStatus === "calculating"
               ? "三脚候補を精密計算中…"
-              : tripodCandidateCalculationStatus === "complete"
+              : tripodCandidateCalculationStatus === "paused"
+                ? "方位データのダウンロード中は一時停止（完了後に自動再開）"
+                : tripodCandidateCalculationStatus === "complete"
                 ? "確定した三脚候補"
                 : tripodCandidateCalculationStatus === "no-solution"
                   ? (displayedTripodCandidates.length > 0
