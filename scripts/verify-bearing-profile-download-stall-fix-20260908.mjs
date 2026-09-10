@@ -15,9 +15,9 @@ const manager = fs.readFileSync('src/cache/tripodBearingProfileManager.ts', 'utf
 const dialog = fs.readFileSync('src/components/BearingProfileDownloadDialog.tsx', 'utf8');
 
 const checks = [
-  ['per-stage hard timeout exists and is no longer the 45s stall window', /BEARING_TERRAIN_STAGE_TIMEOUT_MS\s*=\s*20_000/.test(manager)],
-  ['whole terrain stage is Promise.race bounded', manager.includes('Promise.race([operation(controller.signal), timeoutPromise])')],
-  ['parent abort propagates', manager.includes('parentSignal?.addEventListener("abort", onAbort, { once: true })')],
+  ['per-attempt hard timeout exists (45s, replacing the removed 20s per-stage watchdog)', /PER_ATTEMPT_TIMEOUT_MS\s*=\s*45_000/.test(manager)],
+  ['high-precision fetch is bounded by withOverallTimeout', /await withOverallTimeout\(\s*runBearingTerrainStage\(/.test(manager)],
+  ['parent abort still propagates into the terrain stage', manager.includes('(stageSignal) => sampleWorldTerrainNeutral(terrainPoints, stageSignal, "1m")')],
   ['redundant 10m preflight is removed from download path', !manager.includes('sampleWorldTerrain(terrainPoints, stageSignal, "10m")')],
   ['authoritative 1m high precision uses bounded stage', /runBearingTerrainStage\(\s*\(stageSignal\) => sampleWorldTerrainNeutral\(/.test(manager)],
   ['progress exposes high precision stage', manager.includes('terrainStage: "high-precision"')],

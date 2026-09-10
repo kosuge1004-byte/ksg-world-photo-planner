@@ -614,6 +614,10 @@ function App() {
   // 2026-09-05追記: お気に入り登録時の「三脚候補データを端末に保存しますか」
   // ダイアログの状態と、ダウンロード中断用のAbortController。
   const [bearingProfileDialog, setBearingProfileDialog] = useState<BearingProfileDialogState | null>(null);
+  // progress自体はダウンロード中1秒未満の間隔で更新される可能性がある
+  // オブジェクトなので、参照ではなく真偽値だけをuseEffectの依存に使う
+  // （そうしないと進捗が動くたびに他のエフェクトが再実行されてしまう）。
+  const isBearingProfileDownloadActive = bearingProfileDialog?.progress != null;
   const bearingProfilePendingRef = useRef<{ record: SubjectRecord; subjectPoint: GroundPoint; forceRefresh?: boolean } | null>(null);
   const bearingProfileAbortRef = useRef<AbortController | null>(null);
   // 2026-09-09追記: 「保存済みか」はdownloadedSpotDataだけを唯一の情報源とする
@@ -1888,6 +1892,19 @@ function App() {
       // 操作停止後に下のDEM精密計算を一度だけ実行する。
       return;
     }
+    if (isBearingProfileDownloadActive) {
+      // 2026-09-10追記（実機報告：ダウンロード中に他の処理が同時に通信して
+      // いないか）: この三脚候補探索（生のDEM/ジオイド通信を伴う）と、
+      // 方位プロファイルの一括ダウンロード（backfillBearingProfiles）は、
+      // 互いを認識せず独立に動いており、同じ共有キュー（DEM標高の
+      // MAX_CONCURRENT_LARGE_REQUESTS、ジオイド高の同時実行数上限）を
+      // 奪い合っていた。ダウンロード完了後はその結果がこの探索の結果を
+      // 上書きする（より高精度なため）ので、ダウンロード中はこの探索を
+      // 一時停止しても失うものは無く、ダウンロード側の実効スループットを
+      // 増やせる。ダウンロード完了（bearingProfileDialog.progressがnullに
+      // 戻る）で自動的に再開する。
+      return;
+    }
 
     // 直前の確定候補を天体IDごとの距離ヒントとして保持する。時刻操作後の
     // 再計算や被写体ピンの微調整では、実際の解が前回とほぼ同じ距離帯に
@@ -2277,6 +2294,7 @@ function App() {
     precisionSettings.refractionCorrectionMode,
     precisionSettings.tripodCandidateDoubleCheckEnabled,
     precisionSettings.tripodSearchMaxDistanceMeters,
+    isBearingProfileDownloadActive,
     tripodCandidateRetrySequence,
     showUserNotice,
   ]);

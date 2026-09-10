@@ -18,6 +18,7 @@ import type { GroundPoint } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
+import { withOverallTimeout } from "../utils/withOverallTimeout";
 import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
 import { writePersistentSiteContexts } from "./siteContextPersistentCache";
 import {
@@ -328,6 +329,18 @@ export async function backfillBearingProfiles(params: {
       terrainStage: "high-precision",
     });
 
+    // 2026-09-10追記（実機報告：259方位中1方位に約5分かかり全体が事実上
+    // 進まない）: 同日に撤去した「方位全体を20秒で打ち切る外側Watchdog」の
+    // 代わりが無いまま、ジオイドAPIのサーキットブレーカー（最大8秒）×
+    // リカバリー分割の再試行×このすぐ下の「1回だけ取り直す」が直列に
+    // 積み重なると、1方位の合計待ち時間に上限が無くなっていた
+    // （259方位が2並列のため、1方位が詰まるとダウンロード全体が事実上
+    // 停止して見える）。20秒は短すぎて正常な多段階回復まで打ち切って
+    // いたため撤去された経緯があるので、その2倍以上に余裕を持たせた45秒を
+    // 1回の試行ごとの上限として再導入する。タイムアウトはAbortErrorとは
+    // 区別し、通常の失敗として扱う（早期中止判定の対象に正しく含める）。
+    const PER_ATTEMPT_TIMEOUT_MS = 45_000;
+
     // 2026-09-10追記: ジオイド高API等、DEM本体とは別の依存先が単発で不調
     // だっただけでも、この方位1本（数十点）が丸ごと未完了になっていた。
     // 座標・精度・DEMソース優先順位は変えず、World Terrain混入を検知した
@@ -338,9 +351,13 @@ export async function backfillBearingProfiles(params: {
 
     async function fetchHighPrecisionOnce(): Promise<HighPrecisionAttempt> {
       try {
-        const samples = await runBearingTerrainStage(
-          (stageSignal) => sampleWorldTerrainNeutral(terrainPoints, stageSignal, "1m"),
-          signal
+        const samples = await withOverallTimeout(
+          runBearingTerrainStage(
+            (stageSignal) => sampleWorldTerrainNeutral(terrainPoints, stageSignal, "1m"),
+            signal
+          ),
+          PER_ATTEMPT_TIMEOUT_MS,
+          `方位${bearing}°の1m高精度地形取得がタイムアウトしました`
         );
         return { ok: true, samples };
       } catch (error) {
@@ -350,8 +367,23 @@ export async function backfillBearingProfiles(params: {
       }
     }
 
+    // 2026-09-10追記（実機報告：138タワーパークで放置しても1方位あたり
+    // 数分かかり続ける）: 「1回だけ取り直す」は数秒程度で終わる一過性の
+    // 不調からの回復を意図していたが、ジオイド高APIがセッション全体を通じて
+    // 恒常的に遅い場合（この方位のように水面をまたぐ点が多いと、ジオイド
+    // API呼び出しが多くなり影響を受けやすい）、初回の試行が既に長時間
+    // かかった上で、さらに同じだけの時間をもう一度待つだけになり、成功する
+    // 見込みを高めないまま所要時間だけを倍にしてしまっていた。初回が
+    // 十分speedy（一過性の不調が疑える）だった場合だけ取り直す。
+    const RETRY_ELIGIBLE_MAX_ELAPSED_MS = 8_000;
+    const firstAttemptStartedAt = Date.now();
     let attempt = await fetchHighPrecisionOnce();
-    if (attempt.ok && attempt.samples.some((sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN")) {
+    const firstAttemptElapsedMs = Date.now() - firstAttemptStartedAt;
+    if (
+      attempt.ok &&
+      firstAttemptElapsedMs <= RETRY_ELIGIBLE_MAX_ELAPSED_MS &&
+      attempt.samples.some((sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN")
+    ) {
       if (!signal?.aborted) {
         // 通信・ジオイド高の一時的な不調を切り分けるための、内容を変えない
         // 1回だけの再取得。座標・精度・DEMソース優先順位は変えない。

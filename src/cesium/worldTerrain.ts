@@ -696,6 +696,39 @@ async function writeGeoidPersistentCache(key: string, height: number): Promise<v
   });
 }
 
+// 2026-09-10追記（実機報告：138タワーパーク周辺で1方位あたり数分かかり
+// 続ける）: ジオイド高取得（fetchGsiGeoidHeightOnce）には、DEM標高取得
+// （gsiElevationClient.tsのMAX_CONCURRENT_REQUESTS/共有キュー）のような
+// 同時実行数の上限が一切無かった。方位プロファイルダウンロードは
+// BEARING_CONCURRENCY=2方位を並行処理し、各方位が水面をまたぐ点を含め
+// 20〜30点規模のジオイド高を`Promise.all`で一斉に投げるため、最大40〜60本
+// のジオイド要求が同時に発生しうる。ブラウザの同時接続数上限（通常6/ホスト）
+// で渋滞し、15秒のタイムアウトに何波も直列に積み重なることが、水辺の
+// 被写体で1方位あたり数分かかる主因の1つだった。DEM側と同じ考え方で、
+// ジオイド要求専用の緩やかな同時実行数上限を設ける。
+const MAX_CONCURRENT_GEOID_REQUESTS = 4;
+let activeGeoidRequestCount = 0;
+const pendingGeoidRequestQueue: Array<() => void> = [];
+
+function acquireGeoidRequestSlot(): Promise<void> {
+  if (activeGeoidRequestCount < MAX_CONCURRENT_GEOID_REQUESTS) {
+    activeGeoidRequestCount += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    pendingGeoidRequestQueue.push(() => {
+      activeGeoidRequestCount += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseGeoidRequestSlot(): void {
+  activeGeoidRequestCount = Math.max(0, activeGeoidRequestCount - 1);
+  const next = pendingGeoidRequestQueue.shift();
+  if (next) next();
+}
+
 async function fetchGsiGeoidHeightOnce(
   latitude: number,
   longitude: number,
@@ -706,28 +739,33 @@ async function fetchGsiGeoidHeightOnce(
   // 国土地理院ジオイドCGIは応答が不安定なことがあり、タイムアウトが
   // 無いとハングして無期限に待ち続けてしまう（実際に発生していた
   // 「数分待っても描画されない」不具合の主因の1つ）。
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const response = await fetch(
-    `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}${pointSpecific ? "&precision=point" : ""}`,
-    {
-      headers: { Accept: "application/json" },
-      signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-    }
-  );
-  const data = await response.json() as {
-    geoidHeightMeters?: unknown;
-    error?: unknown;
-  };
-  if (
-    !response.ok ||
-    typeof data.geoidHeightMeters !== "number" ||
-    !Number.isFinite(data.geoidHeightMeters)
-  ) {
-    throw new Error(
-      typeof data.error === "string" ? data.error : "ジオイド高を取得できません"
+  await acquireGeoidRequestSlot();
+  try {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const response = await fetch(
+      `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}${pointSpecific ? "&precision=point" : ""}`,
+      {
+        headers: { Accept: "application/json" },
+        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+      }
     );
+    const data = await response.json() as {
+      geoidHeightMeters?: unknown;
+      error?: unknown;
+    };
+    if (
+      !response.ok ||
+      typeof data.geoidHeightMeters !== "number" ||
+      !Number.isFinite(data.geoidHeightMeters)
+    ) {
+      throw new Error(
+        typeof data.error === "string" ? data.error : "ジオイド高を取得できません"
+      );
+    }
+    return data.geoidHeightMeters;
+  } finally {
+    releaseGeoidRequestSlot();
   }
-  return data.geoidHeightMeters;
 }
 
 // 2026-09-01追記: 従来はgeoidUnavailableUntil中のジオイド取得を即座に
