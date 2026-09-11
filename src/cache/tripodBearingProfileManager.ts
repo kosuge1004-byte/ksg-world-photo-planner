@@ -19,8 +19,6 @@ import type { RefractionWeatherContext } from "../search/refractionWeatherModel"
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
 import { withOverallTimeout } from "../utils/withOverallTimeout";
-import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
-import { writePersistentSiteContexts } from "./siteContextPersistentCache";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -181,7 +179,7 @@ export type BearingBackfillProgress = {
   currentBearingDegrees: number | null;
   profilePoints?: number;
   highPrecisionPoints?: number;
-  phase?: "terrain" | "water" | "osm" | "finalizing";
+  phase?: "terrain" | "finalizing";
   terrainStage?: "profile" | "high-precision";
   // 2026-09-10追記（実機報告：「N/Total」が本当にデータを取得できている
   // 数なのか分からない）: completedStepsは成功・失敗を問わず「試行した
@@ -190,6 +188,8 @@ export type BearingBackfillProgress = {
   // 見えてしまうため、成功数・失敗数を別々に公開する。
   successfulSteps?: number;
   failedSteps?: number;
+  /** 直近の失敗理由（communication error等）。憶測ではなく実際の原因を画面に出すため。 */
+  lastFailureReason?: string | null;
 };
 
 export type BearingBackfillResult = {
@@ -291,9 +291,12 @@ export async function backfillBearingProfiles(params: {
   let successfulBearings = 0;
   let failedBearings = 0;
   let completedAttempts = 0;
+  // 2026-09-10追記（実機報告：「成功0・失敗2」は分かったが、なぜ失敗して
+  // いるのかが画面から分からない）: 憶測で議論せずに済むよう、直近の
+  // 失敗理由をそのまま画面へ表示できるようにする。
+  let lastFailureReason: string | null = null;
   let nextIndex = 0;
   let abortReason: string | null = null;
-  const waterPrefetchPoints: SiteContextPoint[] = [];
 
   // 2026-09-10追記: 「初期数方位が全失敗ならシステム障害として早期中止する」
   // 判定を実際に配線する。以前はabortReasonという変数だけが用意されていて、
@@ -358,7 +361,7 @@ export async function backfillBearingProfiles(params: {
     // 場合だけ、同じ内容で1回だけ取り直す（一時的な不調からの回復を優先）。
     type HighPrecisionAttempt =
       | { ok: true; samples: Cartographic[] }
-      | { ok: false; aborted: boolean };
+      | { ok: false; aborted: boolean; reason: string };
 
     async function fetchHighPrecisionOnce(): Promise<HighPrecisionAttempt> {
       try {
@@ -372,9 +375,10 @@ export async function backfillBearingProfiles(params: {
         );
         return { ok: true, samples };
       } catch (error) {
-        if (isAbortError(error)) return { ok: false, aborted: true };
+        if (isAbortError(error)) return { ok: false, aborted: true, reason: "中断" };
         console.warn(`[bearing-profile] 方位${bearing}°の1m高精度地形取得に失敗しました`, error);
-        return { ok: false, aborted: false };
+        const reason = error instanceof Error ? error.message : String(error);
+        return { ok: false, aborted: false, reason };
       }
     }
 
@@ -407,7 +411,8 @@ export async function backfillBearingProfiles(params: {
       if (attempt.aborted) return;
       failedBearings += 1;
       completedAttempts += 1;
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      lastFailureReason = attempt.reason;
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
       maybeAbortForSystemicFailure();
       return;
     }
@@ -420,8 +425,14 @@ export async function backfillBearingProfiles(params: {
     if (precise.some((sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN")) {
       failedBearings += 1;
       completedAttempts += 1;
+      const contaminatedCount = precise.filter(
+        (sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN"
+      ).length;
+      lastFailureReason =
+        `GSI高精度DEM未取得(${contaminatedCount}/${precise.length}点がWorld Terrainへフォールバック。` +
+        `通信失敗またはジオイド高未確定の可能性)`;
       console.warn(`[bearing-profile] 方位${bearing}°はGSI高精度DEMを取得できずWorld Terrainへフォールバックしたため未完了扱いにします`);
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
       maybeAbortForSystemicFailure();
       return;
     }
@@ -442,11 +453,6 @@ export async function backfillBearingProfiles(params: {
     totalHighPrecisionPoints += entry.points.length;
     successfulBearings += 1;
     completedAttempts += 1;
-
-    const stride = Math.max(1, Math.floor(entry.points.length / 8));
-    for (let i = 0; i < entry.points.length; i += stride) {
-      waterPrefetchPoints.push({ latitude: entry.points[i].latitude, longitude: entry.points[i].longitude });
-    }
 
     onProgress?.({
       totalSteps,
@@ -483,34 +489,14 @@ export async function backfillBearingProfiles(params: {
   resumeDeviceTilePrefetch();
   if (!signal?.aborted) await flushGsiDeviceTilePrefetchQueue();
 
-  if (!signal?.aborted && waterPrefetchPoints.length > 0) {
-    onProgress?.({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });
-    try {
-      const waterContexts = await fetchSiteContexts(waterPrefetchPoints, signal, false);
-      await writePersistentSiteContexts(waterPrefetchPoints, waterContexts, "water-only", false, subjectId);
-    } catch (error) {
-      if (!isAbortError(error)) console.warn("[bearing-profile] 水面・河川情報の取得に失敗しました", error);
-    }
-  }
-
-  if (!signal?.aborted) {
-    onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, phase: "osm" });
-    try {
-      const detailPoints: SiteContextPoint[] = [
-        { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude },
-      ];
-      for (const radius of [25, 100]) {
-        for (const bearing of [0, 45, 90, 135, 180, 225, 270, 315]) {
-          const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, radius);
-          detailPoints.push({ latitude: destination.latitude, longitude: destination.longitude });
-        }
-      }
-      const fullContexts = await fetchSiteContexts(detailPoints, signal, true);
-      await writePersistentSiteContexts(detailPoints, fullContexts, "full", true, subjectId);
-    } catch (error) {
-      if (!isAbortError(error)) console.warn("[bearing-profile] 被写体周辺情報の取得に失敗しました", error);
-    }
-  }
+  // 2026-09-11削除: 水面・河川情報／被写体周辺OSM情報の永続キャッシュ書き込みは、
+  // 保存座標(5桁小数)・purpose・includeDetailsの完全一致でしかヒットせず、
+  // ライブ検索側（tripodCandidates.ts / highestPrecision.ts / osmSubjectHeightFallback.ts）
+  // が要求する座標・purpose・includeDetailsの組み合わせと一致する読み手が
+  // 存在しなかった。実質的に書き込むだけで再利用されないネットワーク要求・
+  // ダウンロード時間・端末保存容量だったため削除した。水面標高自体の判定
+  // （calculateOneCandidates内のwaterSurfaceKind取得等）は引き続きライブ検索
+  // 時にその場で行われ、この削除の影響を受けない。
 
   onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, phase: "finalizing" });
   const captured = await finishGsiDeviceTileCapture(subjectId);

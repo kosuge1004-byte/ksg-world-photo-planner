@@ -3549,6 +3549,7 @@ body.pseudo-fullscreen-active {
 .project-dialog dt { color: #a8b4c5; }
 .project-dialog dd { margin: 0; }
 .project-dialog-note { margin: 0; font-size: 13px; color: #a8b4c5; }
+.project-dialog-note-warning { color: #ffb74d; word-break: break-word; }
 .project-dialog-error { margin: 0; font-size: 13px; color: #ff8080; }
 
 .placement-offset-input { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }

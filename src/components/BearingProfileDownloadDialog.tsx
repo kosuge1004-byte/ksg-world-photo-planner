@@ -76,24 +76,25 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
               <div className="rolling-window-progress-fill" style={{ width: `${percent}%` }} />
             </div>
             <p className="project-dialog-note">
-              {progress.phase === "water"
-                ? `水面・河川情報 ${progress.completedSteps} / ${progress.totalSteps}`
-                : progress.phase === "osm"
-                  ? "道路・立入・建物情報を保存しています…"
-                  : progress.phase === "finalizing"
-                    ? "端末への保存を確定しています…"
-                    : progress.totalSteps === 0
-                      ? "既に最新の状態です。"
-                      : progress.phase === "terrain" && progress.currentBearingDegrees !== null
-                        ? `試行 ${progress.completedSteps} / ${progress.totalSteps} 方位（${progress.currentBearingDegrees}°）・${progress.terrainStage === "high-precision" ? "高精度DEM保存中" : "地形プロファイル取得中"}` +
-                          (progress.successfulSteps !== undefined && progress.failedSteps !== undefined
-                            ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
-                            : "")
-                        : `試行 ${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}` +
-                          (progress.successfulSteps !== undefined && progress.failedSteps !== undefined
-                            ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
-                            : "")}
+              {progress.phase === "finalizing"
+                ? "端末への保存を確定しています…"
+                : progress.totalSteps === 0
+                  ? "既に最新の状態です。"
+                  : progress.phase === "terrain" && progress.currentBearingDegrees !== null
+                    ? `試行 ${progress.completedSteps} / ${progress.totalSteps} 方位（${progress.currentBearingDegrees}°）・${progress.terrainStage === "high-precision" ? "高精度DEM保存中" : "地形プロファイル取得中"}` +
+                      (progress.successfulSteps !== undefined && progress.failedSteps !== undefined
+                        ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
+                        : "")
+                    : `試行 ${progress.completedSteps} / ${progress.totalSteps} 方位${progress.currentBearingDegrees !== null ? `（${progress.currentBearingDegrees}°）` : ""}` +
+                      (progress.successfulSteps !== undefined && progress.failedSteps !== undefined
+                        ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
+                        : "")}
             </p>
+            {progress.lastFailureReason && (
+              <p className="project-dialog-note project-dialog-note-warning">
+                直近の失敗理由: {progress.lastFailureReason}
+              </p>
+            )}
             <div>
               <button type="button" onClick={onCancelDownload}>
                 中断する

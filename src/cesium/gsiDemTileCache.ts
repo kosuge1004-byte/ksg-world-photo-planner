@@ -82,6 +82,15 @@ const PERSISTED_MAX_ENTRIES = Number.POSITIVE_INFINITY; // 2026-09-08: user-mana
 // create many extra /api/gsi-dem-tile requests while the next bearing was still
 // resolving. Keep one global low-priority worker instead.
 const PREFETCH_CONCURRENCY = 1;
+// 2026-09-11追記: 上のPREFETCH_CONCURRENCY=1は「ライブ探索中の/api/gsi-elevation
+// と帯域を取り合わない」ための値で、backfillBearingProfiles()が
+// pauseGsiDeviceTilePrefetch()〜resumeGsiDeviceTilePrefetch()で囲む
+// 前景の方位ループが完全に終わった後にflushGsiDeviceTilePrefetchQueue()
+// が呼ばれる場面には本来当てはまらない。/api/gsi-dem-tile自体もジオイド
+// APIやOverpassのような不安定・低レート上限の外部依存ではなく、単純な
+// タイル取得（Cloudflare Pages Function経由）なので、この排出（drain）
+// 局面に限り並列数を上げても地形取得の精度・信頼性には影響しない。
+const DRAIN_PREFETCH_CONCURRENCY = 4;
 const PREFETCH_MAX_TILES_PER_CALL = 24;
 
 type StoredTile = {
@@ -139,6 +148,7 @@ const inFlightPrefetch = new Map<string, Promise<void>>();
 const queuedPrefetch = new Map<string, { source: SourceDefinition; x: number; y: number }>();
 let activePrefetchWorkers = 0;
 let prefetchPauseDepth = 0;
+let prefetchConcurrencyLimit = PREFETCH_CONCURRENCY;
 const prefetchDrainWaiters: Array<() => void> = [];
 const inFlightReads = new Map<string, Promise<TileLookup | null>>();
 let databasePromise: Promise<IdbDatabase | null> | null = null;
@@ -919,7 +929,7 @@ function resolvePrefetchDrainWaitersIfIdle(): void {
 
 function pumpPrefetchQueue(): void {
   if (prefetchPauseDepth > 0) return;
-  while (activePrefetchWorkers < PREFETCH_CONCURRENCY && queuedPrefetch.size > 0) {
+  while (activePrefetchWorkers < prefetchConcurrencyLimit && queuedPrefetch.size > 0) {
     const first = queuedPrefetch.entries().next().value as
       | [string, { source: SourceDefinition; x: number; y: number }]
       | undefined;
@@ -950,11 +960,21 @@ export function resumeGsiDeviceTilePrefetch(): void {
 
 /** Wait until every currently queued/in-flight low-priority tile persistence task
  * has settled. This is used only at the finalization boundary of an explicit
- * downloaded-spot operation, never in the foreground terrain solver. */
+ * downloaded-spot operation, never in the foreground terrain solver.
+ * 2026-09-11追記: この時点では前景の/api/gsi-elevation要求は既に完了して
+ * いるため、一時的に並列数をDRAIN_PREFETCH_CONCURRENCYへ引き上げて排出する。
+ * ライブ探索中の日和見プリフェッチ（pumpPrefetchQueueの他の呼び出し元）は
+ * 引き続きPREFETCH_CONCURRENCY=1のまま。 */
 export async function flushGsiDeviceTilePrefetchQueue(): Promise<void> {
-  pumpPrefetchQueue();
-  if (queuedPrefetch.size === 0 && activePrefetchWorkers === 0 && inFlightPrefetch.size === 0) return;
-  await new Promise<void>((resolve) => prefetchDrainWaiters.push(resolve));
+  const previousLimit = prefetchConcurrencyLimit;
+  prefetchConcurrencyLimit = Math.max(previousLimit, DRAIN_PREFETCH_CONCURRENCY);
+  try {
+    pumpPrefetchQueue();
+    if (queuedPrefetch.size === 0 && activePrefetchWorkers === 0 && inFlightPrefetch.size === 0) return;
+    await new Promise<void>((resolve) => prefetchDrainWaiters.push(resolve));
+  } finally {
+    prefetchConcurrencyLimit = previousLimit;
+  }
 }
 
 async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number): Promise<void> {
