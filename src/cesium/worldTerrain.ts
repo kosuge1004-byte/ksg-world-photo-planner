@@ -864,7 +864,7 @@ export async function fetchGsiGeoidHeight(
     if (!(isAbortError(error))) {
       // 1回の失敗で長時間ブロックすると、それだけで「頻繁にエラーが出る」体感を
       // 生んでしまうため、短い間隔にとどめる（連続失敗時の最低限の配慮のみ）。
-      geoidUnavailableUntil = Date.now() + 8_000;
+      geoidUnavailableUntil = Date.now() + GEOID_BREAKER_COOLDOWN_MS;
     }
     throw error;
   });
@@ -916,7 +916,7 @@ export async function fetchGsiGeoidHeightPointSpecific(
     "地点別ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）"
   ).catch((error: unknown) => {
     geoidHeightCache.delete(key);
-    if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + 8_000;
+    if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + GEOID_BREAKER_COOLDOWN_MS;
     throw error;
   });
   writeMemoryCache(geoidHeightCache, key, request, GEOID_MEMORY_CACHE_MAX_ENTRIES);
