@@ -620,6 +620,28 @@ function App() {
   const isBearingProfileDownloadActive = bearingProfileDialog?.progress != null;
   const bearingProfilePendingRef = useRef<{ record: SubjectRecord; subjectPoint: GroundPoint; forceRefresh?: boolean } | null>(null);
   const bearingProfileAbortRef = useRef<AbortController | null>(null);
+  // 2026-09-11追記（別アプリに切り替えた時にダウンロードが止まって見える
+  // 問題への対策）: アプリを完全終了するまでは不要だが、他アプリへ切り替えて
+  // 戻ってきた際に「進捗が止まったまま」にしないため、バックグラウンド中に
+  // 通信が一時的に途切れて未完了のまま終わった場合、前面復帰を検知して
+  // 自動的に続きから再試行する。ユーザーが明示的にキャンセルした場合や、
+  // 通信自体が正常に機能していて単に失敗した場合（電波が無い等）は対象外。
+  const bearingProfileBackgroundedDuringDownloadRef = useRef(false);
+  const bearingProfileAutoRetryCountRef = useRef(0);
+  const bearingProfileCancelledRef = useRef(false);
+  const BEARING_PROFILE_AUTO_RETRY_LIMIT = 3;
+  useEffect(() => {
+    function handleVisibilityChange(): void {
+      // ダウンロード中（AbortControllerが生きている間）にバックグラウンドへ
+      // 回ったことだけを記録する。フォアグラウンド復帰時にこのフラグを見て、
+      // 「バックグラウンドが原因で未完了のまま終わった」場合だけ自動再試行する。
+      if (document.visibilityState === "hidden" && bearingProfileAbortRef.current) {
+        bearingProfileBackgroundedDuringDownloadRef.current = true;
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
   // 2026-09-09追記: 「保存済みか」はdownloadedSpotDataだけを唯一の情報源とする
   // ようにしたため、UI専用に保持していたbearingProfileEnabledIdsは廃止した。
   const [downloadedSpotData, setDownloadedSpotData] = useState<DownloadedSpotDataRecord[]>(
@@ -3599,13 +3621,40 @@ ${diagnosticMessage}
     }
   }
 
-  async function confirmBearingProfileDownload() {
+  async function confirmBearingProfileDownload(isAutoRetry = false) {
     const pending = bearingProfilePendingRef.current;
     if (!pending) {
       setBearingProfileDialog(null);
       return;
     }
+    if (!isAutoRetry) {
+      // ユーザーが自分でボタンを押した新規開始。過去の自動再試行の履歴を
+      // 引き継がない。
+      bearingProfileBackgroundedDuringDownloadRef.current = false;
+      bearingProfileAutoRetryCountRef.current = 0;
+      bearingProfileCancelledRef.current = false;
+    }
     const { record, subjectPoint: downloadPoint, forceRefresh = false } = pending;
+    // バックグラウンド由来の未完了だけ自動再試行する。ユーザーの明示的な
+    // キャンセルや、バックグラウンドに回っていない状態での失敗（電波が
+    // そもそも無い等）まで無限に再試行して粘り続けることは避ける。
+    async function retryIfBackgroundedElseFinish(finish: () => void): Promise<boolean> {
+      if (
+        bearingProfileBackgroundedDuringDownloadRef.current &&
+        bearingProfileAutoRetryCountRef.current < BEARING_PROFILE_AUTO_RETRY_LIMIT
+      ) {
+        bearingProfileAutoRetryCountRef.current += 1;
+        bearingProfileBackgroundedDuringDownloadRef.current = false;
+        // 復帰直後は通信・GSI側が安定するまで一呼吸置く。
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        // 待機中にユーザーが明示的にキャンセルしていたら再試行しない。
+        if (bearingProfileCancelledRef.current) return false;
+        void confirmBearingProfileDownload(true);
+        return true;
+      }
+      finish();
+      return false;
+    }
     // Preflight storage guard. Estimate from already-managed spots when available;
     // otherwise use a conservative 32 MiB planning estimate. This is only a guard;
     // actual IndexedDB write failures are also detected below.
@@ -3635,6 +3684,7 @@ ${diagnosticMessage}
       progress: { totalSteps: 0, completedSteps: 0, currentBearingDegrees: null },
     });
     let latestDownloadProgress = { profilePoints: 0, highPrecisionPoints: 0 };
+    let willAutoRetry = false;
     try {
       const backfillResult = await backfillBearingProfiles({
         subjectId: record.id,
@@ -3657,15 +3707,23 @@ ${diagnosticMessage}
       });
       if (bearingProfileAbortRef.current === controller) {
         if (backfillResult.storageWriteFailures > 0) {
-          setSearchMessage(`${record.label || "この地点"}の保存中に端末ストレージへの書き込みが${backfillResult.storageWriteFailures}件失敗しました。保存完了にはしていません。空き容量を確認して再実行してください。`);
+          const retried = await retryIfBackgroundedElseFinish(() => {
+            setSearchMessage(`${record.label || "この地点"}の保存中に端末ストレージへの書き込みが${backfillResult.storageWriteFailures}件失敗しました。保存完了にはしていません。空き容量を確認して再実行してください。`);
+          });
+          willAutoRetry = retried;
           return;
         }
         if (backfillResult.aborted) {
+          // ユーザーが明示的にキャンセルした場合のみここに来る（controller.abort()の
+          // 呼び出し元はcancelBearingProfileDownloadのみ）ため、自動再試行の対象外。
           setSearchMessage(`${record.label || "この地点"}のダウンロードは中止されました。保存完了にはしていません。`);
           return;
         }
         if (backfillResult.requestedBearings > 0 && backfillResult.successfulBearings !== backfillResult.requestedBearings) {
-          setSearchMessage(`${record.label || "この地点"}の高精度データが一部取得できませんでした（成功 ${backfillResult.successfulBearings} / ${backfillResult.requestedBearings}方位、失敗 ${backfillResult.failedBearings}方位）。保存完了にはしていません。再実行してください。`);
+          const retried = await retryIfBackgroundedElseFinish(() => {
+            setSearchMessage(`${record.label || "この地点"}の高精度データが一部取得できませんでした（成功 ${backfillResult.successfulBearings} / ${backfillResult.requestedBearings}方位、失敗 ${backfillResult.failedBearings}方位）。保存完了にはしていません。再実行してください。`);
+          });
+          willAutoRetry = retried;
           return;
         }
         enableBearingProfile(record.id, record.label || "この地点");
@@ -3694,18 +3752,23 @@ ${diagnosticMessage}
         const message = error instanceof Error && error.message
           ? error.message
           : "三脚候補データの保存中にエラーが発生しました";
-        setSearchMessage(`${record.label || "この地点"}: ${message}`);
+        willAutoRetry = await retryIfBackgroundedElseFinish(() => {
+          setSearchMessage(`${record.label || "この地点"}: ${message}`);
+        });
       }
     } finally {
       if (bearingProfileAbortRef.current === controller) {
         bearingProfileAbortRef.current = null;
-        bearingProfilePendingRef.current = null;
-        setBearingProfileDialog(null);
+        if (!willAutoRetry) {
+          bearingProfilePendingRef.current = null;
+          setBearingProfileDialog(null);
+        }
       }
     }
   }
 
   function cancelBearingProfileDownload() {
+    bearingProfileCancelledRef.current = true;
     bearingProfileAbortRef.current?.abort();
     bearingProfileAbortRef.current = null;
     setBearingProfileDialog(null);
