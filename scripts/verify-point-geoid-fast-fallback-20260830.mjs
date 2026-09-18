@@ -9,7 +9,7 @@ const checks=[
  ['point開始trace', t.includes('geoid:point:start')],
  ['point成功trace', t.includes('geoid:point:end')],
  ['fallback trace', t.includes('geoid:point:fallback')],
- ['timeout引数伝播', w.includes('fetchGsiGeoidHeightOnce(latitude, longitude, signal, true, timeoutMs)')],
+ ['timeout引数伝播・実処理も中断', /return withAbortableTimeout\([\s\S]*?timeoutMs,[\s\S]*?signal/.test(w.slice(w.indexOf('export async function fetchGsiGeoidHeightPointSpecific'))) && w.includes('geoidRequests.request(key, operationSignal,')],
  ['親Abortは維持', t.includes('isAbortError(error) && signal?.aborted')],
 ];
 let fail=0; for(const [n,ok] of checks){console.log(`${ok?'PASS':'FAIL'} ${n}`); if(!ok) fail++;} process.exitCode=fail?1:0;

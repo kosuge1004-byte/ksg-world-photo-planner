@@ -209,6 +209,7 @@ import {
   tryUseBearingProfileCache,
 } from "./cache/tripodBearingProfileManager";
 import { BearingProfileDownloadDialog, type BearingProfileDialogState } from "./components/BearingProfileDownloadDialog";
+import { withAbortableTimeout } from "./utils/abortableSemaphore";
 import type { SubjectRecord } from "./subjectStorage";
 import { listDownloadedSpotData, removeDownloadedSpotData, renameDownloadedSpotData, upsertDownloadedSpotData, type DownloadedSpotDataRecord } from "./cache/downloadedSpotData";
 import { inspectDownloadedSpotStorage, type DownloadedSpotStorageSummary } from "./cache/downloadedSpotDataStats";
@@ -3526,6 +3527,10 @@ ${diagnosticMessage}
   }
 
   function offerBearingProfileDownload(record: SubjectRecord) {
+    if (bearingProfileAbortRef.current) {
+      setSearchMessage("実行中の保存処理が終了するまでお待ちください。");
+      return;
+    }
     bearingProfilePendingRef.current = { record, subjectPoint: record };
     setBearingProfileDialog({
       subjectLabel: record.label || "この地点",
@@ -3572,6 +3577,10 @@ ${diagnosticMessage}
   }
 
   async function refreshDownloadedSpotData(record: DownloadedSpotDataRecord): Promise<void> {
+    if (bearingProfileAbortRef.current) {
+      setSearchMessage("実行中の保存処理が終了するまでお待ちください。");
+      return;
+    }
     setSearchMessage(`${record.label || "この地点"}の標高を確認しています…`);
     try {
       // 更新時も0mの仮高度を作らず、地点別DEM・ジオイド処理を通した地表点を使う。
@@ -3588,6 +3597,7 @@ ${diagnosticMessage}
         createdAt: record.downloadedAtIso,
         lastUsedAt: new Date().toISOString(),
       };
+      if (bearingProfileAbortRef.current) return;
       bearingProfilePendingRef.current = { record: subjectRecord, subjectPoint: point, forceRefresh: true };
       setBearingProfileDialog({
         subjectLabel: record.label || "この地点",
@@ -3600,17 +3610,26 @@ ${diagnosticMessage}
   }
 
   async function confirmBearingProfileDownload() {
+    if (bearingProfileAbortRef.current) return;
     const pending = bearingProfilePendingRef.current;
     if (!pending) {
       setBearingProfileDialog(null);
       return;
     }
     const { record, subjectPoint: downloadPoint, forceRefresh = false } = pending;
+    const controller = new AbortController();
+    bearingProfileAbortRef.current = controller;
+    setBearingProfileDialog({
+      subjectLabel: record.label || "この地点",
+      progress: { totalSteps: 0, completedSteps: 0, currentBearingDegrees: null, phase: "preparing" },
+    });
     // Preflight storage guard. Estimate from already-managed spots when available;
     // otherwise use a conservative 32 MiB planning estimate. This is only a guard;
     // actual IndexedDB write failures are also detected below.
     try {
-      const estimate = await navigator.storage?.estimate?.();
+      const estimate = await withAbortableTimeout(async () => navigator.storage?.estimate?.(),
+        3_000, "保存容量の確認がタイムアウトしました", controller.signal);
+      if (bearingProfileAbortRef.current !== controller) return;
       if (typeof estimate?.quota === "number" && typeof estimate?.usage === "number") {
         const remaining = Math.max(0, estimate.quota - estimate.usage);
         const managedCount = Math.max(1, downloadedSpotData.length);
@@ -3622,20 +3641,28 @@ ${diagnosticMessage}
           setSearchMessage(`端末の保存空き容量が不足しています（推定必要容量 約${Math.ceil(estimatedRequired / 1048576)}MB / 利用可能 約${Math.floor(remaining / 1048576)}MB）。ダウンロードを開始しませんでした。`);
           setBearingProfileDialog(null);
           bearingProfilePendingRef.current = null;
+          bearingProfileAbortRef.current = null;
           return;
         }
       }
     } catch {
       // StorageManager unavailable: continue and rely on write-failure detection.
     }
-    const controller = new AbortController();
-    bearingProfileAbortRef.current = controller;
-    setBearingProfileDialog({
-      subjectLabel: record.label || "この地点",
-      progress: { totalSteps: 0, completedSteps: 0, currentBearingDegrees: null },
-    });
-    let latestDownloadProgress = { profilePoints: 0, highPrecisionPoints: 0 };
+    if (bearingProfileAbortRef.current !== controller || controller.signal.aborted) {
+      if (bearingProfileAbortRef.current === controller) {
+        bearingProfileAbortRef.current = null;
+        bearingProfilePendingRef.current = null;
+        setBearingProfileDialog(null);
+      }
+      return;
+    }
     try {
+      // Refresh can replace part of the saved profiles before it fails or is
+      // cancelled. Keep an older completion flag from masking that partial run.
+      if (forceRefresh) {
+        const previous = listDownloadedSpotData().find((item) => item.subjectId === record.id);
+        if (previous) setDownloadedSpotData(upsertDownloadedSpotData({ ...previous, status: "partial" }));
+      }
       const backfillResult = await backfillBearingProfiles({
         subjectId: record.id,
         subjectPoint: downloadPoint,
@@ -3644,18 +3671,14 @@ ${diagnosticMessage}
         signal: controller.signal,
         forceRefresh,
         onProgress: (progress) => {
-          latestDownloadProgress = {
-            profilePoints: progress.profilePoints ?? latestDownloadProgress.profilePoints,
-            highPrecisionPoints: progress.highPrecisionPoints ?? latestDownloadProgress.highPrecisionPoints,
-          };
-          if (bearingProfileAbortRef.current !== controller) return;
+          if (bearingProfileAbortRef.current !== controller || controller.signal.aborted) return;
           setBearingProfileDialog({
             subjectLabel: record.label || "この地点",
             progress,
           });
         },
       });
-      if (bearingProfileAbortRef.current === controller) {
+      if (bearingProfileAbortRef.current === controller && !controller.signal.aborted) {
         if (backfillResult.storageWriteFailures > 0) {
           setSearchMessage(`${record.label || "この地点"}の保存中に端末ストレージへの書き込みが${backfillResult.storageWriteFailures}件失敗しました。保存完了にはしていません。空き容量を確認して再実行してください。`);
           return;
@@ -3668,6 +3691,17 @@ ${diagnosticMessage}
           setSearchMessage(`${record.label || "この地点"}の高精度データが一部取得できませんでした（成功 ${backfillResult.successfulBearings} / ${backfillResult.requestedBearings}方位、失敗 ${backfillResult.failedBearings}方位）。保存完了にはしていません。再実行してください。`);
           return;
         }
+        if (backfillResult.ancillaryFailures > 0 || backfillResult.demTileFailures > 0) {
+          setDownloadedSpotData(upsertDownloadedSpotData({
+            subjectId: record.id, label: record.label || "この地点",
+            latitude: downloadPoint.latitude, longitude: downloadPoint.longitude,
+            downloadedAtIso: new Date().toISOString(), status: "partial",
+            profilePoints: backfillResult.profilePoints, highPrecisionPoints: backfillResult.highPrecisionPoints,
+            demTileCount: backfillResult.demTileCount, demTileBytes: backfillResult.demTileBytes,
+          }));
+          setSearchMessage(`${record.label || "この地点"}の地形プロファイルは保存しましたが、保存用DEMタイルまたは水面・周辺情報を一部取得できませんでした。保存完了にはしていません。再実行してください。`);
+          return;
+        }
         enableBearingProfile(record.id, record.label || "この地点");
         setDownloadedSpotData(upsertDownloadedSpotData({
           subjectId: record.id,
@@ -3676,17 +3710,19 @@ ${diagnosticMessage}
           longitude: downloadPoint.longitude,
           downloadedAtIso: new Date().toISOString(),
           status: "complete",
-          profilePoints: latestDownloadProgress.profilePoints,
-          highPrecisionPoints: latestDownloadProgress.highPrecisionPoints,
+          profilePoints: backfillResult.profilePoints,
+          highPrecisionPoints: backfillResult.highPrecisionPoints,
           demTileCount: backfillResult.demTileCount,
           demTileBytes: backfillResult.demTileBytes,
         }));
-        justSavedDownloadTokenRef.current += 1;
-        setJustSavedDownload({ token: justSavedDownloadTokenRef.current, id: record.id });
+        if (!forceRefresh) {
+          justSavedDownloadTokenRef.current += 1;
+          setJustSavedDownload({ token: justSavedDownloadTokenRef.current, id: record.id });
+        }
         setSearchMessage(`${record.label || "この地点"}の高精度周辺データを保存しました`);
       }
     } catch (error) {
-      if (!isAbortError(error)) {
+      if (bearingProfileAbortRef.current === controller && !controller.signal.aborted && !isAbortError(error)) {
         console.warn("方位プロファイルの事前計算に失敗しました", error);
         // 2026-09-10追記: システム障害による早期中止（backfillBearingProfiles
         // 内のabortReason）は、通常のエラーとは原因が異なり再試行しても
@@ -3707,7 +3743,8 @@ ${diagnosticMessage}
 
   function cancelBearingProfileDownload() {
     bearingProfileAbortRef.current?.abort();
-    bearingProfileAbortRef.current = null;
+    // Keep the job guard until its cleanup has finished. A replacement job must
+    // not share the same spot's capture with the cancelled job's finalization.
     setBearingProfileDialog(null);
   }
 

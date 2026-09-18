@@ -11,7 +11,7 @@ const checks = [
   ["water-only purpose exists server", server.includes('"water-only"')],
   ["water-only purpose accepted by API", api.includes('requestedPurpose === "height-only" || requestedPurpose === "water-only"')],
   ["water-only bypasses shared in-flight request", client.includes('purpose === "water-only"') && client.includes('? await request()')],
-  ["water-only request propagates AbortSignal to fetch", client.includes('body: JSON.stringify(requestBody),\n      signal,')],
+  ["water-only request propagates AbortSignal to fetch", client.includes('signal: requestSignal,') && client.includes('}, 60_000,') && client.includes('withAbortableTimeout')],
   ["river probes keep all 10 radii", tripod.includes('RIVER_NEAREST_LAND_RADII_METERS.flatMap')],
   ["river probes keep all 8 bearings", tripod.includes('RIVER_NEAREST_LAND_BEARINGS_DEGREES.map')],
   ["river terrain is batched", tripod.includes('probes.map((probe) => probe.cartographic)')],

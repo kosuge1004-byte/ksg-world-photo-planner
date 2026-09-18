@@ -69,9 +69,19 @@ export function TopSettingsBar({
       if (!menuContainerRef.current) return;
       if (event.target instanceof Node && menuContainerRef.current.contains(event.target)) return;
       setModeMenuOpen(false);
+      closeDetailPanels();
     }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeDetailPanels();
+      setModeMenuOpen(false);
+    };
+    document.addEventListener("keydown", handleEscape);
     document.addEventListener("pointerdown", handleOutsidePointer);
-    return () => document.removeEventListener("pointerdown", handleOutsidePointer);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, [modeMenuOpen]);
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
@@ -275,7 +285,7 @@ export function TopSettingsBar({
                 onClick={() => void installWebApp()}
                 disabled={pwaInstall.installing}
               >
-                <b>アプリ</b>
+                <b>アプリ追加</b>
                 <small>
                   {pwaInstall.installing
                     ? "インストール画面を準備中"
@@ -333,7 +343,11 @@ export function TopSettingsBar({
               <div className="menu-panel-header"><strong>地図データ出典元</strong><button type="button" onClick={() => setMapSourcesOpen(false)}>閉じる</button></div>
               <dl>
                 <div>
-                  <dt>2D地図・地点共有</dt>
+                  <dt>2D地図・航空写真</dt>
+                  <dd>OpenFreeMap / OpenStreetMap・国土地理院</dd>
+                </div>
+                <div>
+                  <dt>地点共有・地図リンク</dt>
                   <dd>Google Maps</dd>
                 </div>
                 <div>
@@ -368,7 +382,26 @@ export function TopSettingsBar({
                 {tileCacheClearState === "cleared" && <small role="status">削除しました。</small>}
                 {tileCacheClearState === "failed" && <small role="status">削除できませんでした。時間をおいて再試行してください。</small>}
               </div>
+              <details className="freeze-diagnostics-section">
+                <summary>フリーズ診断</summary>
+                <small>
+                  画面が固まった(フリーズした)場合、その情報がここに記録されます。固まった直後に押してもらえると、原因調査に役立ちます。
+                </small>
+                <button type="button" onClick={handleCopyFreezeDiagnostics}>
+                  {freezeDiagnosticsCopyState === "copied"
+                    ? "コピーしました"
+                    : freezeDiagnosticsCopyState === "empty"
+                      ? "記録されたフリーズはありません"
+                      : freezeDiagnosticsCopyState === "failed"
+                        ? "コピーできませんでした"
+                        : "フリーズ診断情報をコピー"}
+                </button>
+                <button type="button" onClick={() => { clearRecordedFreezes(); setFreezeDiagnosticsCopyState("idle"); }}>
+                  記録をクリア
+                </button>
+              </details>
               <nav aria-label="出典元の詳細">
+                <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">OpenFreeMap</a>
                 <a href="https://www.google.com/maps" target="_blank" rel="noreferrer">Google Maps</a>
                 <a href="https://developers.google.com/maps/documentation/tile/3d-tiles" target="_blank" rel="noreferrer">Google 3D Tiles</a>
                 <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noreferrer">国土地理院</a>
@@ -439,6 +472,23 @@ export function TopSettingsBar({
                   </small>
                 </span>
               </label>
+              <div className="precision-subsection">
+                <strong>地形の陰影表現</strong>
+                <label className="precision-choice">
+                  <input
+                    type="checkbox"
+                    checked={precisionSettings.terrainShadingEnabled}
+                    onChange={(event) => onPrecisionSettingsChange({
+                      ...precisionSettings,
+                      terrainShadingEnabled: event.target.checked,
+                    })}
+                  />
+                  <span className="precision-choice-copy">
+                    <span className="precision-choice-title"><b>地形に陰影を付ける</b>{!precisionSettings.terrainShadingEnabled && <small>初期値OFF</small>}</span>
+                    <small>標準3D表示（Googleタイルモードを除く）の地形に、陰影計算用のデータを追加で読み込みます。OFFの方がタイルの転送量が少なく速くなりますが、地形の立体感が少し平坦になります。標高・位置の精度には影響しません。</small>
+                  </span>
+                </label>
+              </div>
               <div className="cesium-ion-connection-status">
                 {cesiumIonConnected ? (
                   <>
@@ -456,23 +506,6 @@ export function TopSettingsBar({
                     <button type="button" onClick={openCesiumIonUsage}>Cesium ion公式Usageを確認</button>
                   </>
                 )}
-              </div>
-              <div className="freeze-diagnostics-section">
-                <small>
-                  画面が固まった(フリーズした)場合、その情報がここに記録されます。固まった直後に押してもらえると、原因調査に役立ちます。
-                </small>
-                <button type="button" onClick={handleCopyFreezeDiagnostics}>
-                  {freezeDiagnosticsCopyState === "copied"
-                    ? "コピーしました"
-                    : freezeDiagnosticsCopyState === "empty"
-                      ? "記録されたフリーズはありません"
-                      : freezeDiagnosticsCopyState === "failed"
-                        ? "コピーできませんでした"
-                        : "フリーズ診断情報をコピー"}
-                </button>
-                <button type="button" onClick={() => { clearRecordedFreezes(); setFreezeDiagnosticsCopyState("idle"); }}>
-                  記録をクリア
-                </button>
               </div>
               <div className="precision-data-guide">
                 <strong>使用する地形・3Dデータ</strong>
@@ -516,23 +549,6 @@ export function TopSettingsBar({
                   />
                   <small>距離ヒントが無い初回探索（新しい被写体・天体）で対象とする最大距離。狭くすると探索が触れる地形タイルの範囲が減り速くなりますが、これより遠い候補は見つかりません。1kmから最大{(TRIPOD_SEARCH_MAX_DISTANCE_ABSOLUTE_METERS / 1000).toFixed(0)}kmまで選べます。</small>
                 </div>
-              </div>
-              <div className="precision-subsection">
-                <strong>地形の陰影表現</strong>
-                <label className="precision-choice">
-                  <input
-                    type="checkbox"
-                    checked={precisionSettings.terrainShadingEnabled}
-                    onChange={(event) => onPrecisionSettingsChange({
-                      ...precisionSettings,
-                      terrainShadingEnabled: event.target.checked,
-                    })}
-                  />
-                  <span className="precision-choice-copy">
-                    <span className="precision-choice-title"><b>地形に陰影を付ける</b>{!precisionSettings.terrainShadingEnabled && <small>初期値OFF</small>}</span>
-                    <small>標準3D表示（Googleタイルモードを除く）の地形に、陰影計算用のデータを追加で読み込みます。OFFの方がタイルの転送量が少なく速くなりますが、地形の立体感が少し平坦になります。標高・位置の精度には影響しません。</small>
-                  </span>
-                </label>
               </div>
               <div className="precision-subsection">
                 <strong>三脚候補ダブルチェック</strong>

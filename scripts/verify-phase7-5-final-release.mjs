@@ -41,13 +41,13 @@ const suites = [
 ];
 const suiteResults = [];
 for (const suite of suites) {
-  const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', suite], {cwd: root, encoding:'utf8'});
+  const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', suite], {cwd: root, encoding:'utf8', shell: process.platform === 'win32', windowsHide: true});
   const output=(r.stdout+r.stderr).trim();
   const status=r.status===0?'PASS':(/Dependency installation is incomplete|missing: node_modules/.test(output)?'BLOCKED_DEPENDENCY':'FAIL');
   suiteResults.push({suite,status,output:output.slice(-2000)});
 }
 
-const build = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run','build'], {cwd:root,encoding:'utf8'});
+const build = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run','build'], {cwd:root,encoding:'utf8', shell: process.platform === 'win32', windowsHide: true});
 let buildStatus = build.status===0?'PASS':'FAIL';
 let buildReason = (build.stdout+build.stderr).trim();
 if (build.status!==0 && /Cannot find package .*node_modules\/geo-tz|ERR_MODULE_NOT_FOUND/.test(buildReason)) buildStatus='BLOCKED_DEPENDENCY';

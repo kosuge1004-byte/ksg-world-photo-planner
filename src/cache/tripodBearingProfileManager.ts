@@ -18,9 +18,8 @@ import type { GroundPoint } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
-import { withOverallTimeout } from "../utils/withOverallTimeout";
 import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
-import { writePersistentSiteContexts } from "./siteContextPersistentCache";
+import { writePersistentSiteContexts, getPersistentSiteContextWriteFailureCount } from "./siteContextPersistentCache";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -127,14 +126,6 @@ const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 // 過剰並列にはしない。2方位だけ重ね、待ち時間を隠しつつGSI/Cloudflareを保護する。
 const BEARING_CONCURRENCY = 2;
 
-async function runBearingTerrainStage<T>(
-  operation: (signal: AbortSignal | undefined) => Promise<T>,
-  parentSignal?: AbortSignal
-): Promise<T> {
-  if (parentSignal?.aborted) throw new DOMException("Aborted", "AbortError");
-  return operation(parentSignal);
-}
-
 export type BearingProfileOptIn = {
   subjectId: string;
   label: string;
@@ -181,8 +172,10 @@ export type BearingBackfillProgress = {
   currentBearingDegrees: number | null;
   profilePoints?: number;
   highPrecisionPoints?: number;
-  phase?: "terrain" | "water" | "osm" | "finalizing";
+  phase?: "preparing" | "terrain" | "water" | "osm" | "finalizing";
   terrainStage?: "profile" | "high-precision";
+  geoidCompleted?: number;
+  geoidTotal?: number;
   // 2026-09-10追記（実機報告：「N/Total」が本当にデータを取得できている
   // 数なのか分からない）: completedStepsは成功・失敗を問わず「試行した
   // 方位の数」を数えており、実際に高精度DEMを取得・保存できた方位数
@@ -204,6 +197,8 @@ export type BearingBackfillResult = {
   successfulBearings: number;
   failedBearings: number;
   aborted: boolean;
+  ancillaryFailures: number;
+  demTileFailures: number;
 };
 
 /**
@@ -230,6 +225,8 @@ export async function backfillBearingProfiles(params: {
   // 操作タイムアウト）を検知するため、開始時点の累計失敗回数を基準として
   // 記録しておく。DEMタイル側のwriteFailures計測と同じ「差分」方式。
   const bearingProfileWriteFailuresAtStart = getBearingProfileWriteFailureCount();
+  const siteContextWriteFailuresAtStart = getPersistentSiteContextWriteFailureCount();
+  let ancillaryFailures = 0;
   const requestedMaxDistanceMeters = Math.min(
     ABSOLUTE_MAX_DISTANCE_METERS,
     Math.max(ABSOLUTE_MIN_DISTANCE_METERS, params.maxDistanceMeters ?? 10_000)
@@ -245,14 +242,20 @@ export async function backfillBearingProfiles(params: {
     deviceTilePrefetchPaused = false;
     resumeGsiDeviceTilePrefetch();
   };
+  let captureFinished = false;
+  const finishCapture = async () => {
+    captureFinished = true;
+    return finishGsiDeviceTileCapture(subjectId);
+  };
+  try {
   // 360°を無条件取得せず、この被写体緯度で太陽・月・天の川中心が
   // 物理的に必要とし得る三脚方位だけを対象にする。低緯度は安全側で360°維持。
   const bearings = requiredCelestialTripodBearings(subjectPoint.latitude);
 
   if (signal?.aborted) {
     resumeDeviceTilePrefetch();
-    const captured = await finishGsiDeviceTileCapture(subjectId);
-    return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures + (getBearingProfileWriteFailureCount() - bearingProfileWriteFailuresAtStart), requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: true };
+    const captured = await finishCapture();
+    return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures + (getBearingProfileWriteFailureCount() - bearingProfileWriteFailuresAtStart), requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: true, ancillaryFailures, demTileFailures: captured.downloadFailures };
   }
 
   // 2026-09-09: 開始前に全方位を1件ずつIndexedDBから直列取得すると、
@@ -274,11 +277,6 @@ export async function backfillBearingProfiles(params: {
 
   const totalSteps = pendingBearings.length;
   onProgress?.({ totalSteps, completedSteps: 0, currentBearingDegrees: null, phase: "terrain" });
-  if (totalSteps === 0) {
-    resumeDeviceTilePrefetch();
-    const captured = await finishGsiDeviceTileCapture(subjectId);
-    return { profilePoints: 0, highPrecisionPoints: 0, demTileCount: captured.tileCount, demTileBytes: captured.bytes, storageWriteFailures: captured.writeFailures + (getBearingProfileWriteFailureCount() - bearingProfileWriteFailuresAtStart), requestedBearings: 0, successfulBearings: 0, failedBearings: 0, aborted: false };
-  }
 
   const baseDistances = densifyDistanceIntervals(
     logarithmicDistances(
@@ -300,6 +298,18 @@ export async function backfillBearingProfiles(params: {
   let nextIndex = 0;
   let abortReason: string | null = null;
   const waterPrefetchPoints: SiteContextPoint[] = [];
+  // A resumed download must also finish water/OSM data and preserve its tile
+  // references. No pending terrain bearings does not imply a complete download.
+  existingProfiles.forEach((profile, index) => {
+    if (!profile || pendingBearings.includes(bearings[index])) return;
+    recordGsiDeviceTileReferencesForPoints(subjectId, profile.points);
+    totalProfilePoints += profile.points.length;
+    totalHighPrecisionPoints += profile.points.length;
+    const stride = Math.max(1, Math.floor(profile.points.length / 8));
+    for (let i = 0; i < profile.points.length; i += stride) {
+      waterPrefetchPoints.push({ latitude: profile.points[i].latitude, longitude: profile.points[i].longitude });
+    }
+  });
 
   // 2026-09-10追記: 「初期数方位が全失敗ならシステム障害として早期中止する」
   // 判定を実際に配線する。以前はabortReasonという変数だけが用意されていて、
@@ -346,39 +356,28 @@ export async function backfillBearingProfiles(params: {
       terrainStage: "high-precision",
     });
 
-    // 2026-09-10追記（実機報告：259方位中1方位に約5分かかり全体が事実上
-    // 進まない）: 同日に撤去した「方位全体を20秒で打ち切る外側Watchdog」の
-    // 代わりが無いまま、ジオイドAPIのサーキットブレーカー（最大8秒）×
-    // リカバリー分割の再試行×このすぐ下の「1回だけ取り直す」が直列に
-    // 積み重なると、1方位の合計待ち時間に上限が無くなっていた
-    // （259方位が2並列のため、1方位が詰まるとダウンロード全体が事実上
-    // 停止して見える）。20秒は短すぎて正常な多段階回復まで打ち切って
-    // いたため撤去された経緯があるので、その2倍以上に余裕を持たせた45秒を
-    // 1回の試行ごとの上限として再導入する。タイムアウトはAbortErrorとは
-    // 区別し、通常の失敗として扱う（早期中止判定の対象に正しく含める）。
-    const PER_ATTEMPT_TIMEOUT_MS = 45_000;
-
-    // 2026-09-10追記: ジオイド高API等、DEM本体とは別の依存先が単発で不調
-    // だっただけでも、この方位1本（数十点）が丸ごと未完了になっていた。
-    // 座標・精度・DEMソース優先順位は変えず、World Terrain混入を検知した
-    // 場合だけ、同じ内容で1回だけ取り直す（一時的な不調からの回復を優先）。
+    // Download only authoritative GSI heights. Each HTTP/cache operation has
+    // its own cancellable deadline; healthy geoid queue waits are not failures.
     type HighPrecisionAttempt =
       | { ok: true; samples: Cartographic[] }
       | { ok: false; aborted: boolean; reason: string };
 
     async function fetchHighPrecisionOnce(): Promise<HighPrecisionAttempt> {
       try {
-        const samples = await withOverallTimeout(
-          runBearingTerrainStage(
-            (stageSignal) => sampleWorldTerrainNeutral(terrainPoints, stageSignal, "1m"),
-            signal
-          ),
-          PER_ATTEMPT_TIMEOUT_MS,
-          `方位${bearing}°の1m高精度地形取得がタイムアウトしました`
-        );
+        // Each network/cache operation is bounded. A whole-bearing watchdog
+        // incorrectly cancelled healthy rate-limited geoid work, then left its
+        // Promise running behind the next attempt.
+        const samples = await sampleWorldTerrainNeutral(terrainPoints, signal, "1m", {
+          allowWorldTerrainFallback: false,
+          onGeoidProgress: (geoidCompleted, geoidTotal) => onProgress?.({
+            totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings,
+            failedSteps: failedBearings, currentBearingDegrees: bearing, phase: "terrain",
+            terrainStage: "high-precision", geoidCompleted, geoidTotal,
+          }),
+        });
         return { ok: true, samples };
       } catch (error) {
-        if (isAbortError(error)) return { ok: false, aborted: true, reason: "中断" };
+        if (signal?.aborted || isAbortError(error)) return { ok: false, aborted: true, reason: "中断" };
         console.warn(`[bearing-profile] 方位${bearing}°の1m高精度地形取得に失敗しました`, error);
         const reason = error instanceof Error ? error.message : String(error);
         return { ok: false, aborted: false, reason };
@@ -398,9 +397,9 @@ export async function backfillBearingProfiles(params: {
     let attempt = await fetchHighPrecisionOnce();
     const firstAttemptElapsedMs = Date.now() - firstAttemptStartedAt;
     if (
-      attempt.ok &&
       firstAttemptElapsedMs <= RETRY_ELIGIBLE_MAX_ELAPSED_MS &&
-      attempt.samples.some((sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN")
+      ((!attempt.ok && !attempt.aborted) ||
+        (attempt.ok && attempt.samples.some((sample) => terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN")))
     ) {
       if (!signal?.aborted) {
         // 通信・ジオイド高の一時的な不調を切り分けるための、内容を変えない
@@ -420,6 +419,15 @@ export async function backfillBearingProfiles(params: {
       return;
     }
     const precise = attempt.samples;
+    if (precise.length !== terrainPoints.length || precise.some((point) => !Number.isFinite(point.height))) {
+      failedBearings += 1;
+      completedAttempts += 1;
+      lastFailureReason = "高精度地形の応答点数または高さが不正です";
+      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings,
+        failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain" });
+      maybeAbortForSystemicFailure();
+      return;
+    }
 
     // sampleWorldTerrainNeutralは通常検索では通信障害時にCesium World Terrainへ
     // フォールバックできるが、「高精度周辺データのダウンロード」ではそれを
@@ -446,7 +454,7 @@ export async function backfillBearingProfiles(params: {
         distanceMeters,
         longitude: destination.longitude,
         latitude: destination.latitude,
-        ellipsoidalHeightMeters: precise[i]?.height ?? 0,
+        ellipsoidalHeightMeters: precise[i].height,
       })),
       computedAtIso: new Date().toISOString(),
     };
@@ -488,21 +496,22 @@ export async function backfillBearingProfiles(params: {
 
   if (abortReason) {
     resumeDeviceTilePrefetch();
-    await finishGsiDeviceTileCapture(subjectId);
+    await finishCapture();
     throw new Error(`${abortReason}（成功${successfulBearings} / 失敗${failedBearings}）`);
   }
 
   // Foreground DEM work is complete. Persist the queued decoded tiles now, with
   // one global low-priority worker, then continue to the ancillary downloads.
   resumeDeviceTilePrefetch();
-  if (!signal?.aborted) await flushGsiDeviceTilePrefetchQueue();
+  if (!signal?.aborted) await flushGsiDeviceTilePrefetchQueue(signal);
 
   if (!signal?.aborted && waterPrefetchPoints.length > 0) {
     onProgress?.({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });
     try {
-      const waterContexts = await fetchSiteContexts(waterPrefetchPoints, signal, false);
+      const waterContexts = await fetchSiteContexts(waterPrefetchPoints, signal, false, "water-only");
       await writePersistentSiteContexts(waterPrefetchPoints, waterContexts, "water-only", false, subjectId);
     } catch (error) {
+      ancillaryFailures += 1;
       if (!isAbortError(error)) console.warn("[bearing-profile] 水面・河川情報の取得に失敗しました", error);
     }
   }
@@ -522,24 +531,32 @@ export async function backfillBearingProfiles(params: {
       const fullContexts = await fetchSiteContexts(detailPoints, signal, true);
       await writePersistentSiteContexts(detailPoints, fullContexts, "full", true, subjectId);
     } catch (error) {
+      ancillaryFailures += 1;
       if (!isAbortError(error)) console.warn("[bearing-profile] 被写体周辺情報の取得に失敗しました", error);
     }
   }
 
   onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, phase: "finalizing" });
-  const captured = await finishGsiDeviceTileCapture(subjectId);
+  const captured = await finishCapture();
 
   return {
     profilePoints: totalProfilePoints,
     highPrecisionPoints: totalHighPrecisionPoints,
     demTileCount: captured.tileCount,
     demTileBytes: captured.bytes,
-    storageWriteFailures: captured.writeFailures + (getBearingProfileWriteFailureCount() - bearingProfileWriteFailuresAtStart),
+    storageWriteFailures: captured.writeFailures + (getBearingProfileWriteFailureCount() - bearingProfileWriteFailuresAtStart)
+      + (getPersistentSiteContextWriteFailureCount() - siteContextWriteFailuresAtStart),
     requestedBearings: totalSteps,
     successfulBearings,
     failedBearings,
     aborted: Boolean(signal?.aborted),
+    ancillaryFailures,
+    demTileFailures: captured.downloadFailures,
   };
+  } finally {
+    resumeDeviceTilePrefetch();
+    if (!captureFinished) await finishCapture();
+  }
 }
 
 /**

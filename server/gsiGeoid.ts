@@ -1,6 +1,7 @@
 import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.ts";
 import { LruPromiseCache } from "./lruPromiseCache.ts";
 import { createTimeoutError, isAbortError } from "./runtimeErrors.ts";
+import { AbortableSemaphore } from "../src/utils/abortableSemaphore.ts";
 
 type GsiGeoidResponse = {
   OutputData?: {
@@ -26,8 +27,20 @@ function validatedCoordinate(latitude: number, longitude: number): void {
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // 国土地理院の測量計算サイト公式ページに明記されている制限：
@@ -43,19 +56,18 @@ const MIN_REQUEST_INTERVAL_MS = 3_500;
 // なることがあるため、他の外部API呼び出しと同様に明示的な上限を設ける。
 const GEOID_REQUEST_TIMEOUT_MS = 8_000;
 let lastRequestAt = 0;
-let requestQueue: Promise<void> = Promise.resolve();
+const rateLimitSlots = new AbortableSemaphore(1);
 
-function waitForRateLimitSlot(): Promise<void> {
-  const next = requestQueue.then(async () => {
+async function waitForRateLimitSlot(signal?: AbortSignal): Promise<void> {
+  const release = await rateLimitSlots.acquire(signal);
+  try {
     const now = Date.now();
     const elapsed = now - lastRequestAt;
     if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-      await delay(MIN_REQUEST_INTERVAL_MS - elapsed);
+      await delay(MIN_REQUEST_INTERVAL_MS - elapsed, signal);
     }
     lastRequestAt = Date.now();
-  });
-  requestQueue = next.catch(() => {});
-  return next;
+  } finally { release(); }
 }
 
 async function fetchGeoidHeightOnce(
@@ -63,7 +75,8 @@ async function fetchGeoidHeightOnce(
   queryLongitude: number,
   signal?: AbortSignal
 ): Promise<number> {
-  await waitForRateLimitSlot();
+  await waitForRateLimitSlot(signal);
+  if (signal?.aborted) throw signal.reason;
   // 他の外部API呼び出し（Overpass・国土地理院標高タイル）と同様、
   // 応答が返ってこない場合に無期限で待ち続けないよう、リクエストごとの
   // タイムアウトを設ける（このAPIだけタイムアウトが抜けていた）。
@@ -88,8 +101,9 @@ async function fetchGeoidHeightOnce(
       throw new Error(`国土地理院ジオイドAPIエラー：${response.status}`);
     }
     const data = await response.json() as GsiGeoidResponse;
-    const height = Number(data.OutputData?.geoidHeight);
-    if (!Number.isFinite(height)) {
+    const rawHeight = data.OutputData?.geoidHeight;
+    const height = Number(rawHeight);
+    if (rawHeight === null || rawHeight === undefined || rawHeight === "" || !Number.isFinite(height)) {
       throw new Error("国土地理院ジオイドAPIの応答が不正です");
     }
     return height;
@@ -114,13 +128,14 @@ async function fetchGeoidHeightWithRetry(
 ): Promise<number> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= GEOID_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) throw signal.reason;
     try {
       return await fetchGeoidHeightOnce(queryLatitude, queryLongitude, signal);
     } catch (error) {
       lastError = error;
       if (signal?.aborted) throw error;
       if (attempt < GEOID_FETCH_MAX_ATTEMPTS) {
-        await delay(GEOID_FETCH_RETRY_DELAY_MS * attempt);
+        await delay(GEOID_FETCH_RETRY_DELAY_MS * attempt, signal);
       }
     }
   }

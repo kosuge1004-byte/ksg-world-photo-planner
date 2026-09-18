@@ -6,6 +6,7 @@ import type { GroundPoint } from "../types/points";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
 import { readPersistentSiteContexts, writePersistentSiteContexts } from "../cache/siteContextPersistentCache";
+import { withAbortableTimeout } from "../utils/abortableSemaphore";
 
 export type SiteContextPoint = Pick<GroundPoint, "latitude" | "longitude">;
 
@@ -80,7 +81,7 @@ async function fetchSiteContextBatch(
     longitude: Number(point.longitude.toFixed(5)),
   }));
   const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${purpose}:${JSON.stringify(cacheKeyPoints)}`;
-  const request = async () => {
+  const request = () => withAbortableTimeout(async (requestSignal) => {
     const response = await diagnosticFetch("osm-site-context", "/api/osm-site-context", {
       method: "POST",
       headers: {
@@ -88,14 +89,14 @@ async function fetchSiteContextBatch(
         Accept: "application/json",
       },
       body: JSON.stringify(requestBody),
-      signal,
+      signal: requestSignal,
     });
     return {
       ok: response.ok,
       status: response.status,
       data: (await response.json()) as SiteContextResponse,
     };
-  };
+  }, 60_000, "周辺情報の取得がタイムアウトしました", signal);
   // water-only は三脚探索の時間制限付き補助判定で使う。共有要求にすると、
   // 呼出側のAbortSignalは「待機」だけを中止し基礎fetchが裏で残るため、
   // タイムアウト後も通信が競合する。water-onlyだけは共有せず、abortを
@@ -141,7 +142,10 @@ export async function fetchSiteContexts(
   // 集約できる。河川の最近傍陸地探索（10半径×8方向）を10回直列通信に
   // しないため、ここでは1リクエストで送る。
   if (purpose === "water-only") {
-    fetched = await fetchSiteContextBatch(missingPoints, signal, false, purpose);
+    fetched = [];
+    for (let offset = 0; offset < missingPoints.length; offset += 80) {
+      fetched.push(...await fetchSiteContextBatch(missingPoints.slice(offset, offset + 80), signal, false, purpose));
+    }
   } else {
     fetched = [];
     // 従来用途はOverpass側の1要求上限を守りながら最大8地点ずつ照合する。

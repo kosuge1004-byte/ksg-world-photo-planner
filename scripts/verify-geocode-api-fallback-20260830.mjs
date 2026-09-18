@@ -3,7 +3,7 @@ import { resolveSpotLocation } from '../src/search/spotPresetSearch.ts';
 const originalFetch = globalThis.fetch;
 const calls = [];
 
-globalThis.fetch = async (input, init) => {
+globalThis.fetch = async (input) => {
   const url = String(input);
   calls.push(url);
   if (url === '/api/geocode') {
@@ -24,7 +24,8 @@ globalThis.fetch = async (input, init) => {
 };
 
 try {
-  const result = await resolveSpotLocation('犬山城');
+  // A static landmark no longer enters the API path. Use an uncatalogued query.
+  const result = await resolveSpotLocation('検証用撮影スポット');
   if (Math.abs(result.latitude - 35.3884) > 1e-9 || Math.abs(result.longitude - 136.9392) > 1e-9) {
     throw new Error(`unexpected coordinates: ${JSON.stringify(result)}`);
   }

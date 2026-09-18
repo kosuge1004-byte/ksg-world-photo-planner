@@ -26,7 +26,7 @@ const checks = [
   ["direct path reports requested/successful/failed bearing counts", manager.includes("requestedBearings") && manager.includes("successfulBearings") && manager.includes("failedBearings")],
   ["World Terrain fallback is not mislabeled as downloaded high precision", manager.includes('terrainDataSource(sample) === "CESIUM_WORLD_TERRAIN"')],
   ["download path does not perform discarded 10m duplicate sampling", !manager.includes('sampleWorldTerrain(terrainPoints, stageSignal, "10m")') && !manager.includes("let coarse;")],
-  ["saved profile uses only authoritative precise heights", manager.includes("ellipsoidalHeightMeters: precise[i]?.height ?? 0")],
+  ["saved profile uses only authoritative precise heights", manager.includes("ellipsoidalHeightMeters: precise[i].height") && manager.includes("!Number.isFinite(point.height)")],
   ["app rejects partial bearing download instead of marking complete", app.includes("backfillResult.successfulBearings !== backfillResult.requestedBearings") && app.includes("保存完了にはしていません")],
   ["opt-in is enabled only after completion checks", app.indexOf("enableBearingProfile(record.id") > app.indexOf("backfillResult.successfulBearings !== backfillResult.requestedBearings")],
 ];

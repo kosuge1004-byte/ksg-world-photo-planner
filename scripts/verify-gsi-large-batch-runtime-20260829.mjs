@@ -6,7 +6,8 @@ const fetcher=async (_url, init)=>{
 };
 const points=Array.from({length:640},(_,i)=>({latitude:30+i/100000,longitude:135,maximumDetail:'10m',interpolationMode:'neutral'}));
 const r=await fetchGsiElevationSamples(points,undefined,fetcher);
-if(calls.length!==1) throw new Error(`640 points made ${calls.length} HTTP calls`);
+if(calls.length!==6) throw new Error(`640 points made ${calls.length} HTTP calls instead of 6 bounded batches`);
+if(calls.some(points=>points.length>107)) throw new Error('large request was not safely split');
 if(r.samples.length!==640) throw new Error('sample length changed');
 for(let i=0;i<640;i++) if(r.samples[i].heightMeters!==points[i].latitude) throw new Error(`order changed at ${i}`);
-console.log('PASS 640 points => 1 HTTP request; sample order/value preserved');
+console.log('PASS 640 points => 6 bounded HTTP batches; sample order/value preserved');

@@ -1,0 +1,2983 @@
+{
+  "generatedAtUtc": "2026-09-18T19:24:47.1605907Z",
+  "originalArchive": "AstroSight-latest-20260910.zip",
+  "originalArchiveSha256": "5D0424DFF11FB9FA3077B22024CD42D76D426473D8EB936D209BB1039AC0E243",
+  "individualChecks": [
+    {
+      "name": "verify-3d-map-input-20260903.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.382,
+      "detail": ""
+    },
+    {
+      "name": "verify-3d-map-smoothness-20260823.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.449,
+      "detail": ""
+    },
+    {
+      "name": "verify-android-native.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.359,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-dem5a-gating-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.383,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-direct-download-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.382,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-download-distance-setting-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.372,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-download-stall-fix-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.365,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-http-wave-reduction-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.37,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-job-concurrency-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.372,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-job-timeout-safety-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.378,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-progress-visibility-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.366,
+      "detail": ""
+    },
+    {
+      "name": "verify-bearing-profile-startup-bulk-read-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.363,
+      "detail": ""
+    },
+    {
+      "name": "verify-cache-keys.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.361,
+      "detail": ""
+    },
+    {
+      "name": "verify-celestial-bearing-pruning-20260910.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.354,
+      "detail": ""
+    },
+    {
+      "name": "verify-celestial-occlusion-stability.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.355,
+      "detail": ""
+    },
+    {
+      "name": "verify-cesium-root-usage-counter-20260907.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.38,
+      "detail": ""
+    },
+    {
+      "name": "verify-cloudflare-migration.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.371,
+      "detail": ""
+    },
+    {
+      "name": "verify-coordinate-serialization.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.361,
+      "detail": ""
+    },
+    {
+      "name": "verify-device-dem-tile-cache-20260829.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.612,
+      "detail": ""
+    },
+    {
+      "name": "verify-direct-download-prefetch-isolation-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-downloaded-data-audit-fixes-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.364,
+      "detail": ""
+    },
+    {
+      "name": "verify-downloaded-data-management-detail-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.362,
+      "detail": ""
+    },
+    {
+      "name": "verify-downloaded-site-context-cache-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.362,
+      "detail": ""
+    },
+    {
+      "name": "verify-downloaded-spot-high-precision-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.362,
+      "detail": ""
+    },
+    {
+      "name": "verify-downloaded-spot-shared-dem-refs-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.367,
+      "detail": ""
+    },
+    {
+      "name": "verify-final-cleanup.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.735,
+      "detail": ""
+    },
+    {
+      "name": "verify-focal-length-input.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.41,
+      "detail": ""
+    },
+    {
+      "name": "verify-frame-boundaries.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.355,
+      "detail": ""
+    },
+    {
+      "name": "verify-geocode-api-fallback-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 2.856,
+      "detail": ""
+    },
+    {
+      "name": "verify-geodesic-comparison.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.347,
+      "detail": ""
+    },
+    {
+      "name": "verify-geodesic-direct.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.344,
+      "detail": ""
+    },
+    {
+      "name": "verify-geodesic-reference.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.348,
+      "detail": ""
+    },
+    {
+      "name": "verify-gifu-geocode-priority-20260824.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.484,
+      "detail": ""
+    },
+    {
+      "name": "verify-google-maps-url-live.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 5.193,
+      "detail": ""
+    },
+    {
+      "name": "verify-google-maps-url.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.513,
+      "detail": ""
+    },
+    {
+      "name": "verify-gsi-large-batch-runtime-20260829.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.479,
+      "detail": ""
+    },
+    {
+      "name": "verify-gsi-large-batch-safe-20260829.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.36,
+      "detail": ""
+    },
+    {
+      "name": "verify-gsi-tier-request-reduction-20260909.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.366,
+      "detail": ""
+    },
+    {
+      "name": "verify-historical-weather-refraction.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-karney-edge-cases.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.356,
+      "detail": ""
+    },
+    {
+      "name": "verify-karney-postconditions.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.378,
+      "detail": ""
+    },
+    {
+      "name": "verify-manual-tripod-during-calculation-20260831.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.361,
+      "detail": ""
+    },
+    {
+      "name": "verify-map-line-candidate-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.363,
+      "detail": ""
+    },
+    {
+      "name": "verify-maplibre-2d-migration-20260831.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.361,
+      "detail": ""
+    },
+    {
+      "name": "verify-occlusion-state.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.354,
+      "detail": ""
+    },
+    {
+      "name": "verify-performance-lifecycle.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.36,
+      "detail": ""
+    },
+    {
+      "name": "verify-person-display.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.365,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase4-1-precision-mode.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.368,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase4-2-dsm-buildings.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.352,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase4-3-vegetation.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.35,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase4-4-weather.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.378,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase4-5-k-factor.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.374,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase4-6-local-network.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.36,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase5-1-network-audit.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase5-2-device-cache.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.359,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase5-3-shared-requests.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase5-4-r2-cache.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.359,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase5-5-api-reduction.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.359,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase6-1-los-performance.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.37,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase6-2-memory.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.365,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase6-3-cache-optimization.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.348,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase6-4-search-speed.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.342,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase6-5-final.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.693,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase7-2-search.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.611,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase7-3-celestial-3d.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.345,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase7-4-cloudflare-deployment.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.353,
+      "detail": ""
+    },
+    {
+      "name": "verify-platform-compatibility.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-point-geoid-fast-fallback-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.347,
+      "detail": ""
+    },
+    {
+      "name": "verify-precision-descriptions.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.34,
+      "detail": ""
+    },
+    {
+      "name": "verify-preview-initial-load-20260831.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.345,
+      "detail": ""
+    },
+    {
+      "name": "verify-preview-tap-subject-pin-20260831.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.341,
+      "detail": ""
+    },
+    {
+      "name": "verify-pwa-installability.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.348,
+      "detail": ""
+    },
+    {
+      "name": "verify-r2-safety-all-paths-20260824.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.374,
+      "detail": ""
+    },
+    {
+      "name": "verify-river-point-geoid-final-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.354,
+      "detail": ""
+    },
+    {
+      "name": "verify-search-engine-exclusion.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.34,
+      "detail": ""
+    },
+    {
+      "name": "verify-search-generation.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.339,
+      "detail": ""
+    },
+    {
+      "name": "verify-search-progress.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.344,
+      "detail": ""
+    },
+    {
+      "name": "verify-spot-search-surrounding-download-choice-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.345,
+      "detail": ""
+    },
+    {
+      "name": "verify-static-landmark-search-20260831.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.345,
+      "detail": ""
+    },
+    {
+      "name": "verify-tall-structure-roof-resolution.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.348,
+      "detail": ""
+    },
+    {
+      "name": "verify-terrain-persistent-cache-20260824.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.345,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-adaptive-intersections.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.352,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-adaptive-synthetic.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.351,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-air-offset.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.35,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-camera-height-20260823.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.369,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-candidate-performance-resilience.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.381,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-candidate-rendering.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.382,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-candidate-weather-cell-20260908.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.367,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-candidate-weather-reconvergence.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.364,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-centerline-rebuild-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.365,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-ecef-direction-frame.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.378,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-ecef-preview-truth-restore-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.36,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-final-geoid-fallback-propagation-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.36,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-geoid-datum-20260823.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.365,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-neutral-dem-20260823.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.366,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-performance-instrumentation-20260829.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.364,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-physics-audit-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.359,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-preview-forward-model-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-preview-inverse-root-fix-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.371,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-speed-cache-20260829.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.429,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-terrain-cache-datum-v3-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-terrain-cache-failopen-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.358,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-timeline-cache-stall-fix-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.367,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-timeline-smooth-20260830.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.364,
+      "detail": ""
+    },
+    {
+      "name": "verify-tripod-timeout-elimination-20260907.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.357,
+      "detail": ""
+    },
+    {
+      "name": "verify-user-error-handling.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.362,
+      "detail": ""
+    },
+    {
+      "name": "verify-view-correction.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.365,
+      "detail": ""
+    },
+    {
+      "name": "verify-water-surface-zero-20260903.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.358,
+      "detail": ""
+    },
+    {
+      "name": "verify-workers-kv-writes.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 0.41,
+      "detail": ""
+    }
+  ],
+  "aggregateChecks": [
+    {
+      "name": "verify-phase7-1-foundation.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 68.126,
+      "detail": ""
+    },
+    {
+      "name": "verify-phase7-5-final-release.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "seconds": 88.153,
+      "detail": ""
+    }
+  ],
+  "regressionGroups": 54,
+  "addedDownloadRuntimeTests": 13,
+  "addedConnectionRecoveryTests": 5,
+  "candidateRoundTripTests": 8,
+  "lint": {
+    "warnings": 16,
+    "errors": 0
+  },
+  "androidWebAssetSync": {
+    "comparedFiles": 425,
+    "status": "PASS",
+    "mismatches": []
+  },
+  "browserMenu": {
+    "checks": [
+      "display settings",
+      "precision settings",
+      "Escape",
+      "map attribution"
+    ],
+    "status": "PASS",
+    "pageErrors": []
+  },
+  "browserDownload": {
+    "status": "PASS",
+    "mockApis": true,
+    "checks": [
+      {
+        "run": 1,
+        "seconds": 5.552,
+        "terrainRequests": 260,
+        "profilePoints": 14245,
+        "status": "complete"
+      },
+      {
+        "run": 2,
+        "seconds": 1.442,
+        "terrainRequests": 0,
+        "profilePoints": 14245,
+        "status": "complete"
+      }
+    ],
+    "errors": []
+  },
+  "browserFailureAndCancellation": {
+    "status": "PASS",
+    "mockApis": true,
+    "checks": [
+      {
+        "scenario": "water-only-503",
+        "status": "PASS",
+        "initialRegistryStatus": "complete",
+        "registryStatus": "partial",
+        "profilePoints": 14245,
+        "waterFailures": 3,
+        "completeLabelVisible": false,
+        "pageErrors": []
+      },
+      {
+        "scenario": "cancel-inflight-terrain-cleanup-retry",
+        "status": "PASS",
+        "initialRegistryStatus": "complete",
+        "interruptedRegistryStatus": "partial",
+        "finalRegistryStatus": "complete",
+        "terrainRequestsBeforeCancel": 3,
+        "terrainRequestsTotal": 262,
+        "profilePoints": 14245,
+        "failedRequests": [
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-elevation",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-elevation",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115347&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115347&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115347&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115347&y=51753",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115347&y=51752",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115348&y=51753",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115348&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115348&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51753",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115348&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115350&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115350&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115350&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115351&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115348&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115350&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115351&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115347&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115350&y=51758",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51758",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115348&y=51758",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115350&y=51759",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115349&y=51759",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115346&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115346&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115345&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115345&y=51758",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51758",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51759",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115343&y=51759",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115343&y=51758",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115343&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115342&y=51757",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115345&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115343&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115342&y=51756",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115343&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115345&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115343&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115345&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115346&y=51755",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115344&y=51753",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115345&y=51753",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115346&y=51754",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115346&y=51753",
+            "failure": "net::ERR_ABORTED"
+          },
+          {
+            "url": "http://127.0.0.1:4173/api/gsi-dem-tile?source=DEM1A&x=115346&y=51752",
+            "failure": "net::ERR_ABORTED"
+          }
+        ],
+        "pageErrors": []
+      }
+    ]
+  },
+  "liveTerrain": {
+    "status": "PASS",
+    "liveApis": true,
+    "latitude": 35.36,
+    "longitude": 136.81,
+    "bearingDegrees": 0,
+    "maxDistanceMeters": 10000,
+    "points": 352,
+    "sources": {
+      "GSI_DEM1A_LIDAR": 255,
+      "GSI_DEM10B_CONTOUR": 4,
+      "GSI_DEM5A_LIDAR": 93
+    },
+    "firstSeconds": 21.765,
+    "warmSeconds": 0.004,
+    "warmNetworkRequests": 0,
+    "calls": [
+      {
+        "url": "/api/gsi-elevation",
+        "status": 200,
+        "milliseconds": 818
+      },
+      {
+        "url": "/api/gsi-elevation",
+        "status": 200,
+        "milliseconds": 823
+      },
+      {
+        "url": "/api/gsi-elevation",
+        "status": 200,
+        "milliseconds": 351
+      },
+      {
+        "url": "/api/gsi-elevation",
+        "status": 200,
+        "milliseconds": 595
+      },
+      {
+        "url": "/api/gsi-elevation",
+        "status": 200,
+        "milliseconds": 1448
+      },
+      {
+        "url": "/api/gsi-elevation",
+        "status": 200,
+        "milliseconds": 1428
+      },
+      {
+        "url": "/api/gsi-geoid",
+        "status": 200,
+        "milliseconds": 1850
+      },
+      {
+        "url": "/api/gsi-geoid",
+        "status": 200,
+        "milliseconds": 16
+      },
+      {
+        "url": "/api/gsi-geoid",
+        "status": 200,
+        "milliseconds": 2160
+      },
+      {
+        "url": "/api/gsi-geoid",
+        "status": 200,
+        "milliseconds": 2670
+      },
+      {
+        "url": "/api/gsi-geoid",
+        "status": 200,
+        "milliseconds": 6226
+      }
+    ]
+  },
+  "sourceComparison": [
+    {
+      "path": "server/runSpotSearchJob.ts",
+      "unchanged": true,
+      "originalSha256": "1836d5b906073c9b00613f52cd76591df75a08ea88d540e8eae7eec70616e910",
+      "modifiedSha256": "1836d5b906073c9b00613f52cd76591df75a08ea88d540e8eae7eec70616e910"
+    },
+    {
+      "path": "server/lruPromiseCache.ts",
+      "unchanged": true,
+      "originalSha256": "6cc689e78e9e815a8e5ddf6a4df20e5625ee4e8afc55d9dddd6f8f22f59e832c",
+      "modifiedSha256": "6cc689e78e9e815a8e5ddf6a4df20e5625ee4e8afc55d9dddd6f8f22f59e832c"
+    },
+    {
+      "path": "server/prewarmLandmarkCore.ts",
+      "unchanged": true,
+      "originalSha256": "fb5efca043f4a8ba6d07298a0209c53baec360c973295fb1e2103b7763184f82",
+      "modifiedSha256": "fb5efca043f4a8ba6d07298a0209c53baec360c973295fb1e2103b7763184f82"
+    },
+    {
+      "path": "server/r2PersistentCache.ts",
+      "unchanged": true,
+      "originalSha256": "ec76b7b4af4d0d2b93dc05f5b94f35205339c92bf6e63acc043696ab106ddda1",
+      "modifiedSha256": "ec76b7b4af4d0d2b93dc05f5b94f35205339c92bf6e63acc043696ab106ddda1"
+    },
+    {
+      "path": "server/extractTallBuildings.ts",
+      "unchanged": true,
+      "originalSha256": "62de436bfc67d25bbfcaa72eb0ad7ab91093597bcd899c6e093cfbcb2773f27b",
+      "modifiedSha256": "62de436bfc67d25bbfcaa72eb0ad7ab91093597bcd899c6e093cfbcb2773f27b"
+    },
+    {
+      "path": "server/celestialTerrainVisibility.ts",
+      "unchanged": true,
+      "originalSha256": "83905ea41f9be261575546e49031bd3a477822eae81ca46c7a05300b1cb6eef0",
+      "modifiedSha256": "83905ea41f9be261575546e49031bd3a477822eae81ca46c7a05300b1cb6eef0"
+    },
+    {
+      "path": "server/osmSiteContext.ts",
+      "unchanged": true,
+      "originalSha256": "2efcd019a269b1ff445bd7f5a40b86a2d2f085b019d2cc88af8162eb1b075f3b",
+      "modifiedSha256": "2efcd019a269b1ff445bd7f5a40b86a2d2f085b019d2cc88af8162eb1b075f3b"
+    },
+    {
+      "path": "server/landmarkPrewarmSeed.ts",
+      "unchanged": true,
+      "originalSha256": "70f59dd2f183a88143d4f8cba216b06e9ce740625297f5f5ff3b6c025d4a3c04",
+      "modifiedSha256": "70f59dd2f183a88143d4f8cba216b06e9ce740625297f5f5ff3b6c025d4a3c04"
+    },
+    {
+      "path": "server/bilinearInterpolation.ts",
+      "unchanged": true,
+      "originalSha256": "a7f4d4f444945f659c46005c0119babc41e9668c463b95100a33ebd6bef0a885",
+      "modifiedSha256": "a7f4d4f444945f659c46005c0119babc41e9668c463b95100a33ebd6bef0a885"
+    },
+    {
+      "path": "server/precisionStructures.ts",
+      "unchanged": true,
+      "originalSha256": "6dd7149435a32758643aafb83a831fbe559b779aa5952906b5d946592079fb95",
+      "modifiedSha256": "6dd7149435a32758643aafb83a831fbe559b779aa5952906b5d946592079fb95"
+    },
+    {
+      "path": "server/spotSearchJobs.ts",
+      "unchanged": true,
+      "originalSha256": "9e416ce6c00452017ba86eaa8df3d47cb633c6d5ae8e7672eb4fb178d39dda9b",
+      "modifiedSha256": "9e416ce6c00452017ba86eaa8df3d47cb633c6d5ae8e7672eb4fb178d39dda9b"
+    },
+    {
+      "path": "server/googleMaps.ts",
+      "unchanged": true,
+      "originalSha256": "8804a5c9290f5a4aac8fef9a641ede1fe7b7b3fd76dacd8613afbc83c7a86a33",
+      "modifiedSha256": "8804a5c9290f5a4aac8fef9a641ede1fe7b7b3fd76dacd8613afbc83c7a86a33"
+    },
+    {
+      "path": "server/surfaceObstructionLineOfSight.ts",
+      "unchanged": true,
+      "originalSha256": "8174a2a684975d9a9a5781d817f763046d141dafb2c48092e80b63312ffa0b7b",
+      "modifiedSha256": "8174a2a684975d9a9a5781d817f763046d141dafb2c48092e80b63312ffa0b7b"
+    },
+    {
+      "path": "server/cloudflareGeoTz.ts",
+      "unchanged": true,
+      "originalSha256": "6262e453159e7bc5dfb7551979bee390546cc5d8576aa7a324edefade08784b7",
+      "modifiedSha256": "6262e453159e7bc5dfb7551979bee390546cc5d8576aa7a324edefade08784b7"
+    },
+    {
+      "path": "server/r2SafetyBudget.ts",
+      "unchanged": true,
+      "originalSha256": "3731d4d22b05d0c8285e6e432902791d18c1d67c01c25d4eae628efeaf1bed26",
+      "modifiedSha256": "3731d4d22b05d0c8285e6e432902791d18c1d67c01c25d4eae628efeaf1bed26"
+    },
+    {
+      "path": "server/worldTerrain.ts",
+      "unchanged": true,
+      "originalSha256": "4631413882b045700d7cca9c1f9111d06af60ad185453f540c9be6d47752a12f",
+      "modifiedSha256": "4631413882b045700d7cca9c1f9111d06af60ad185453f540c9be6d47752a12f"
+    },
+    {
+      "path": "server/constrainedBicubicInterpolation.ts",
+      "unchanged": true,
+      "originalSha256": "cd069dfce2a7093d5e24c5ee6a116c2fbac3deff9310403b5cc92bc1c436ebf4",
+      "modifiedSha256": "cd069dfce2a7093d5e24c5ee6a116c2fbac3deff9310403b5cc92bc1c436ebf4"
+    },
+    {
+      "path": "server/placeGeocode.ts",
+      "unchanged": true,
+      "originalSha256": "497e9e990e829e1fc1dd210d5e7d4465c8ea4569900cdf8fd64beb1c043081da",
+      "modifiedSha256": "497e9e990e829e1fc1dd210d5e7d4465c8ea4569900cdf8fd64beb1c043081da"
+    },
+    {
+      "path": "server/cloudflareRuntime.ts",
+      "unchanged": true,
+      "originalSha256": "cab138436eef4dc906f420071bac51a780d387c841434cf65aacf4b3b4416d03",
+      "modifiedSha256": "cab138436eef4dc906f420071bac51a780d387c841434cf65aacf4b3b4416d03"
+    },
+    {
+      "path": "server/runBearingProfileDownloadJob.ts",
+      "unchanged": false,
+      "originalSha256": "453e1e9c524dd8a15ad571ce0086d20f5fae3da6d6e9ead5d1f4a0c536d926d6",
+      "modifiedSha256": "726c999f0158c1704146d9edfee8f44a04528eeab2bb80c950a5f8e6a959f395"
+    },
+    {
+      "path": "server/plateauBuildingExtraction.ts",
+      "unchanged": true,
+      "originalSha256": "a123429d112cc6b94f0ca6ebd7ee2a26514d965cbb3e98ff662152eee92cd857",
+      "modifiedSha256": "a123429d112cc6b94f0ca6ebd7ee2a26514d965cbb3e98ff662152eee92cd857"
+    },
+    {
+      "path": "server/prewarmLandmarkCache.ts",
+      "unchanged": true,
+      "originalSha256": "69fe99c3ad953a95a9c3faea9bb11738ddfe9f60bd1e4d001189fbd2fb4c5b78",
+      "modifiedSha256": "69fe99c3ad953a95a9c3faea9bb11738ddfe9f60bd1e4d001189fbd2fb4c5b78"
+    },
+    {
+      "path": "server/runtimeErrors.ts",
+      "unchanged": true,
+      "originalSha256": "ba101890d000c1fddea11b90bf61a97de7fdb771a81831a437e2e38bb5484a6b",
+      "modifiedSha256": "ba101890d000c1fddea11b90bf61a97de7fdb771a81831a437e2e38bb5484a6b"
+    },
+    {
+      "path": "server/gsiGeoid.ts",
+      "unchanged": false,
+      "originalSha256": "3e08f6fbb8eab29c2b1f1817819fdf637e9fd74a384e9650e7606504805bdde5",
+      "modifiedSha256": "58243a33dabdf36bcb1ddbb05a7a4962e78765f48d7a74e8e29d91a62956d43b"
+    },
+    {
+      "path": "server/gsiElevation.ts",
+      "unchanged": true,
+      "originalSha256": "f8c07a4a6223493ce48ceba30d1460c6ad7dbf0f64d667553f2619ccd6fb4fe5",
+      "modifiedSha256": "f8c07a4a6223493ce48ceba30d1460c6ad7dbf0f64d667553f2619ccd6fb4fe5"
+    },
+    {
+      "path": "server/bearingProfileDownloadJobs.ts",
+      "unchanged": true,
+      "originalSha256": "6a3213d157c64c8adee1893a2757f7a56946e59562e0a3eac82d527dc86b5b97",
+      "modifiedSha256": "6a3213d157c64c8adee1893a2757f7a56946e59562e0a3eac82d527dc86b5b97"
+    },
+    {
+      "path": "server/siteContext.ts",
+      "unchanged": true,
+      "originalSha256": "24642c7b11c3219a12d388d1eba49c9935b3738403ae5c14e9a43878ba65e46e",
+      "modifiedSha256": "24642c7b11c3219a12d388d1eba49c9935b3738403ae5c14e9a43878ba65e46e"
+    },
+    {
+      "path": "src/types/celestial.ts",
+      "unchanged": true,
+      "originalSha256": "6bf3aefa267e0a7bc69388c37e441897c434947cffd3e8bd2a3d6800e49d3e78",
+      "modifiedSha256": "6bf3aefa267e0a7bc69388c37e441897c434947cffd3e8bd2a3d6800e49d3e78"
+    },
+    {
+      "path": "src/types/backgroundSearch.ts",
+      "unchanged": true,
+      "originalSha256": "f4f6fc3c01e381a90afd4f160444747569136d09a34c4ecc5611719f913ccd19",
+      "modifiedSha256": "f4f6fc3c01e381a90afd4f160444747569136d09a34c4ecc5611719f913ccd19"
+    },
+    {
+      "path": "src/types/project.ts",
+      "unchanged": true,
+      "originalSha256": "d18b5db890491adbf033bd5b398cb68e6023ebd7cd2eebd093afbd852ef2db43",
+      "modifiedSha256": "d18b5db890491adbf033bd5b398cb68e6023ebd7cd2eebd093afbd852ef2db43"
+    },
+    {
+      "path": "src/types/geospatial.ts",
+      "unchanged": true,
+      "originalSha256": "1e32952a8f469f03a71fcaa7cae9979e56cf5f48062f8c0f3bb0788f25ed8334",
+      "modifiedSha256": "1e32952a8f469f03a71fcaa7cae9979e56cf5f48062f8c0f3bb0788f25ed8334"
+    },
+    {
+      "path": "src/types/search.ts",
+      "unchanged": true,
+      "originalSha256": "5a383eb9b195b0d17ac208623a6dccbe2d18ff8e4d32d08b31878734af496ddb",
+      "modifiedSha256": "5a383eb9b195b0d17ac208623a6dccbe2d18ff8e4d32d08b31878734af496ddb"
+    },
+    {
+      "path": "src/types/camera.ts",
+      "unchanged": true,
+      "originalSha256": "8be4c7c7a9df8981a47cb1adba16cc535dccc9cc909b85d55766d0ad86cb0239",
+      "modifiedSha256": "8be4c7c7a9df8981a47cb1adba16cc535dccc9cc909b85d55766d0ad86cb0239"
+    },
+    {
+      "path": "src/types/points.ts",
+      "unchanged": true,
+      "originalSha256": "a98657c0e74c5dff0592a142aae95fef99bf0eaf819529ae038b8d12985343c1",
+      "modifiedSha256": "a98657c0e74c5dff0592a142aae95fef99bf0eaf819529ae038b8d12985343c1"
+    },
+    {
+      "path": "src/types/precision.ts",
+      "unchanged": true,
+      "originalSha256": "1e90276a10ba9205eb6ef04b9e5f118c0f14fb0427d8547821e1fa61ed00ba75",
+      "modifiedSha256": "1e90276a10ba9205eb6ef04b9e5f118c0f14fb0427d8547821e1fa61ed00ba75"
+    },
+    {
+      "path": "src/types/backgroundBearingProfile.ts",
+      "unchanged": true,
+      "originalSha256": "772476e399a4f7fe8cbd49f03a01c409c2b826d7d1655c7f1d36dacc1e7468f7",
+      "modifiedSha256": "772476e399a4f7fe8cbd49f03a01c409c2b826d7d1655c7f1d36dacc1e7468f7"
+    },
+    {
+      "path": "src/types/geographiclib-geodesic.d.ts",
+      "unchanged": true,
+      "originalSha256": "59d91575df1031fd6350458b3bec84735c4f833ff617784b42872256fa32b991",
+      "modifiedSha256": "59d91575df1031fd6350458b3bec84735c4f833ff617784b42872256fa32b991"
+    },
+    {
+      "path": "src/types/foreground.ts",
+      "unchanged": true,
+      "originalSha256": "b4092b51e5739bf64e067adc3a4fcb3fdb65cba6bd285b1b9ed86118b41ab3cf",
+      "modifiedSha256": "b4092b51e5739bf64e067adc3a4fcb3fdb65cba6bd285b1b9ed86118b41ab3cf"
+    },
+    {
+      "path": "src/components/CelestialOverlay.tsx",
+      "unchanged": true,
+      "originalSha256": "152b9e0661c68c5fb80465eac8309b72c836edf6bdcabc2ab99ef0336006c4ab",
+      "modifiedSha256": "152b9e0661c68c5fb80465eac8309b72c836edf6bdcabc2ab99ef0336006c4ab"
+    },
+    {
+      "path": "src/components/ArCameraScreen.tsx",
+      "unchanged": true,
+      "originalSha256": "7612406d79343d7d1f6e23be96dae373e19e924fd120ce4031817bb15b5f984c",
+      "modifiedSha256": "7612406d79343d7d1f6e23be96dae373e19e924fd120ce4031817bb15b5f984c"
+    },
+    {
+      "path": "src/components/ProjectsScreen.tsx",
+      "unchanged": true,
+      "originalSha256": "22c86c49af926891fd79ad238ecbed7fe475984544b3c7d485b8de117c9e3e7e",
+      "modifiedSha256": "22c86c49af926891fd79ad238ecbed7fe475984544b3c7d485b8de117c9e3e7e"
+    },
+    {
+      "path": "src/components/ProjectShareQrDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "5ea05e68eb159ebb6dda9c9f893037faccf3be4c82732d876ae8b48f30ded379",
+      "modifiedSha256": "5ea05e68eb159ebb6dda9c9f893037faccf3be4c82732d876ae8b48f30ded379"
+    },
+    {
+      "path": "src/components/ProjectSaveDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "e4773060130d6d4a33e5acab4a984330f4785b1c33d0e0a3756cb6d2d4c50b2b",
+      "modifiedSha256": "e4773060130d6d4a33e5acab4a984330f4785b1c33d0e0a3756cb6d2d4c50b2b"
+    },
+    {
+      "path": "src/components/CelestialTransitSearchDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "68913fd17abd9880b858b1be78ed9d9176b0c7338761e5d05085821f99c59d04",
+      "modifiedSha256": "68913fd17abd9880b858b1be78ed9d9176b0c7338761e5d05085821f99c59d04"
+    },
+    {
+      "path": "src/components/TopSettingsBar.tsx",
+      "unchanged": false,
+      "originalSha256": "875fc811bca7572c5b4e6851d6043d63040c165332014e4ce307fb73e58e9e8e",
+      "modifiedSha256": "08aa662d1aa8a31bc76bf0ebad392abebc7817c93ae49b0a738f854c207f2d3a"
+    },
+    {
+      "path": "src/components/ProjectQrScanDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "54ddfa7c8cb8940efc577a49c07efd4cb135a082937b252bbd5fd0a12a76b426",
+      "modifiedSha256": "54ddfa7c8cb8940efc577a49c07efd4cb135a082937b252bbd5fd0a12a76b426"
+    },
+    {
+      "path": "src/components/CelestialMenu.tsx",
+      "unchanged": true,
+      "originalSha256": "f401b83e21fdba83ad87feb8fe20a8557aca223fce08384d7fd77f54e6e28d5c",
+      "modifiedSha256": "f401b83e21fdba83ad87feb8fe20a8557aca223fce08384d7fd77f54e6e28d5c"
+    },
+    {
+      "path": "src/components/SpotSearchScreen.tsx",
+      "unchanged": true,
+      "originalSha256": "d0dd98dc99d1bad002ae63ef204884d7f730d08eef9fa5d67386530d5666234c",
+      "modifiedSha256": "d0dd98dc99d1bad002ae63ef204884d7f730d08eef9fa5d67386530d5666234c"
+    },
+    {
+      "path": "src/components/LightPollutionTileOverlay.tsx",
+      "unchanged": true,
+      "originalSha256": "c5bcf9f4f080c3da5776298d8cffa7b63c877fd4fd552cd7a6db647615ab0fb0",
+      "modifiedSha256": "c5bcf9f4f080c3da5776298d8cffa7b63c877fd4fd552cd7a6db647615ab0fb0"
+    },
+    {
+      "path": "src/components/MoonAgeCalendarScreen.tsx",
+      "unchanged": true,
+      "originalSha256": "40b6f9ac0ae07aa16a71847b1075ab5a64a1cdc16b433fa039f13839d62061d6",
+      "modifiedSha256": "40b6f9ac0ae07aa16a71847b1075ab5a64a1cdc16b433fa039f13839d62061d6"
+    },
+    {
+      "path": "src/components/PlacementConfirmDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "7cddee8ee4cdfc67e97418ab36020fcdffd2f523c69e85507d730b0a16f87947",
+      "modifiedSha256": "7cddee8ee4cdfc67e97418ab36020fcdffd2f523c69e85507d730b0a16f87947"
+    },
+    {
+      "path": "src/components/MetricsPanel.tsx",
+      "unchanged": true,
+      "originalSha256": "29302669641b77e9763920e39a5b4e21707aa8cc30ec1bf625b49d96a8a7ba9d",
+      "modifiedSha256": "29302669641b77e9763920e39a5b4e21707aa8cc30ec1bf625b49d96a8a7ba9d"
+    },
+    {
+      "path": "src/components/BearingProfileDownloadDialog.tsx",
+      "unchanged": false,
+      "originalSha256": "3971e8af0c31b1b7308009cb832b301dd7b0e9edba05e5cb2815fcf53844b997",
+      "modifiedSha256": "3b8138406f8dcd75a62196348e8926db3de60354f9fd3bfdefc6fbd6e1678f27"
+    },
+    {
+      "path": "src/components/PreviewStatus.tsx",
+      "unchanged": true,
+      "originalSha256": "5ecb7603e19f57c6d08ab3c57f9da638bf09e838eef608bc332e6b67e9d5ef83",
+      "modifiedSha256": "5ecb7603e19f57c6d08ab3c57f9da638bf09e838eef608bc332e6b67e9d5ef83"
+    },
+    {
+      "path": "src/components/CesiumIonConsentDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "9e9e0dc4e7b4f46052b6a688d2acf4241c030f9a63f57672c4cffdd58444ac74",
+      "modifiedSha256": "9e9e0dc4e7b4f46052b6a688d2acf4241c030f9a63f57672c4cffdd58444ac74"
+    },
+    {
+      "path": "src/components/ForegroundObjectControls.tsx",
+      "unchanged": true,
+      "originalSha256": "db58f3d94520ca560f9101f98a53a573d7fe0678e59953d591f61b8b60d8dea1",
+      "modifiedSha256": "db58f3d94520ca560f9101f98a53a573d7fe0678e59953d591f61b8b60d8dea1"
+    },
+    {
+      "path": "src/components/ArCesiumOverlay.tsx",
+      "unchanged": true,
+      "originalSha256": "e8b2bf7ba1e75d3577afa53344ca90333f1ec0c9d61764270d11bbe83d1a2406",
+      "modifiedSha256": "e8b2bf7ba1e75d3577afa53344ca90333f1ec0c9d61764270d11bbe83d1a2406"
+    },
+    {
+      "path": "src/components/SharedProjectImportDialog.tsx",
+      "unchanged": true,
+      "originalSha256": "f006c5340d2dfce21bf5069d335d5b99d8540d6e7c26dddb844dbf2671ec7c74",
+      "modifiedSha256": "f006c5340d2dfce21bf5069d335d5b99d8540d6e7c26dddb844dbf2671ec7c74"
+    },
+    {
+      "path": "src/components/PreviewChrome.tsx",
+      "unchanged": true,
+      "originalSha256": "5c80225e60fd5fd69de997b5f8fa7c14e296c40ff7d6a4f03920146104541378",
+      "modifiedSha256": "5c80225e60fd5fd69de997b5f8fa7c14e296c40ff7d6a4f03920146104541378"
+    },
+    {
+      "path": "src/components/PinControls.tsx",
+      "unchanged": true,
+      "originalSha256": "8cf9d92b0046f5cf161ef624034dfce9ad6d47a31c32ab0615c05c53e9e9f7f3",
+      "modifiedSha256": "8cf9d92b0046f5cf161ef624034dfce9ad6d47a31c32ab0615c05c53e9e9f7f3"
+    },
+    {
+      "path": "src/components/MapLibre2DMap.tsx",
+      "unchanged": true,
+      "originalSha256": "b745b503470e1df7479a9f77d1bf8e101cd52258f32edcc59e0e5985ea02b44a",
+      "modifiedSha256": "b745b503470e1df7479a9f77d1bf8e101cd52258f32edcc59e0e5985ea02b44a"
+    },
+    {
+      "path": "src/components/Map2DOverlay.tsx",
+      "unchanged": true,
+      "originalSha256": "03d6d586631eca7b4c5e62a05cd8e1ec63af07f8150cca0ff0f3c616e2e911e3",
+      "modifiedSha256": "03d6d586631eca7b4c5e62a05cd8e1ec63af07f8150cca0ff0f3c616e2e911e3"
+    },
+    {
+      "path": "src/components/SearchOptionControls.tsx",
+      "unchanged": true,
+      "originalSha256": "207b206fbf196da2561d09ddb751224080a7f6c6b158870e8227bd05f9ee1abf",
+      "modifiedSha256": "207b206fbf196da2561d09ddb751224080a7f6c6b158870e8227bd05f9ee1abf"
+    },
+    {
+      "path": "src/components/CalendarScreen.tsx",
+      "unchanged": true,
+      "originalSha256": "ac10d21c009bbdc37c5c9068ed3571f85463c503933b3e5d2b1878a2bc80eea9",
+      "modifiedSha256": "ac10d21c009bbdc37c5c9068ed3571f85463c503933b3e5d2b1878a2bc80eea9"
+    },
+    {
+      "path": "src/components/PreviewGestureLayer.tsx",
+      "unchanged": true,
+      "originalSha256": "9458e2d2067ae497565ff5ea9099e760c363800ce0c3b758a6c46ee2ae7550b1",
+      "modifiedSha256": "9458e2d2067ae497565ff5ea9099e760c363800ce0c3b758a6c46ee2ae7550b1"
+    },
+    {
+      "path": "src/components/UserNotice.tsx",
+      "unchanged": true,
+      "originalSha256": "36691bedc403396542d63d198fdd348fea5734c1178643b409ffd04ddbea78e4",
+      "modifiedSha256": "36691bedc403396542d63d198fdd348fea5734c1178643b409ffd04ddbea78e4"
+    },
+    {
+      "path": "src/components/ForegroundPreviewOverlay.tsx",
+      "unchanged": true,
+      "originalSha256": "1405eebb5ff01356347beb4e4fb2c9264a3326617d28b6ade4ba5e30b35c5141",
+      "modifiedSha256": "1405eebb5ff01356347beb4e4fb2c9264a3326617d28b6ade4ba5e30b35c5141"
+    },
+    {
+      "path": "src/components/ProjectScreens.css",
+      "unchanged": true,
+      "originalSha256": "1298dc6f3dd34eef84744249c17f8d078f5a3a094c676d3afeac6d5228db50b5",
+      "modifiedSha256": "1298dc6f3dd34eef84744249c17f8d078f5a3a094c676d3afeac6d5228db50b5"
+    },
+    {
+      "path": "src/components/PreviewMeasurementOverlay.tsx",
+      "unchanged": true,
+      "originalSha256": "ed646adbbfd1e4294ea51713071d9a1fa4ff9791407b4b604f4b9f703a45bda9",
+      "modifiedSha256": "ed646adbbfd1e4294ea51713071d9a1fa4ff9791407b4b604f4b9f703a45bda9"
+    },
+    {
+      "path": "src/components/TimelinePanel.tsx",
+      "unchanged": true,
+      "originalSha256": "02de1e93b4fc1621026485e97f51ec8b5b0c68983962b2ad42b8eb857e1afd5f",
+      "modifiedSha256": "02de1e93b4fc1621026485e97f51ec8b5b0c68983962b2ad42b8eb857e1afd5f"
+    },
+    {
+      "path": "src/ui/fullscreen.ts",
+      "unchanged": true,
+      "originalSha256": "2f8d00c55d7497d1bf8534e6bd16b5d0972a995aaeac198c501e056ee4fd683b",
+      "modifiedSha256": "2f8d00c55d7497d1bf8534e6bd16b5d0972a995aaeac198c501e056ee4fd683b"
+    },
+    {
+      "path": "src/App.tsx",
+      "unchanged": false,
+      "originalSha256": "fd61ee8e129d9bae071e7dbd596468ceba28c006ff4498af20cb4124201479e3",
+      "modifiedSha256": "bad8bfb244a1029842f73fd3e50f54062da8ab42b12d1e9155bd1bfa27d99a10"
+    },
+    {
+      "path": "src/index.css",
+      "unchanged": true,
+      "originalSha256": "9616a696ebb9ea29df63a41da6563c1e93b49a073c09b39efa20fddcc18ab144",
+      "modifiedSha256": "9616a696ebb9ea29df63a41da6563c1e93b49a073c09b39efa20fddcc18ab144"
+    },
+    {
+      "path": "src/cache/downloadedSpotData.ts",
+      "unchanged": true,
+      "originalSha256": "c912e7adc9fac5afc08ecdd8868c4c4c841cac58e58838ca28c7990a8c2e1841",
+      "modifiedSha256": "c912e7adc9fac5afc08ecdd8868c4c4c841cac58e58838ca28c7990a8c2e1841"
+    },
+    {
+      "path": "src/cache/deviceCache.ts",
+      "unchanged": false,
+      "originalSha256": "1cf593b730823c457b0bffe84b718a5e4736ba937773002086017faa9b236139",
+      "modifiedSha256": "b4f0d58400af5c2d9673b08caad100af77ff19807660ec312d6e80fda330a352"
+    },
+    {
+      "path": "src/cache/cachePolicies.ts",
+      "unchanged": true,
+      "originalSha256": "87cf03ddc816b68b73789a72e0ffefa2ec10769d3d4b7866bb1724e93648707e",
+      "modifiedSha256": "87cf03ddc816b68b73789a72e0ffefa2ec10769d3d4b7866bb1724e93648707e"
+    },
+    {
+      "path": "src/cache/tripodBearingProfileCache.ts",
+      "unchanged": false,
+      "originalSha256": "5985c7bf65e5f1f0f0266e0e0d3ff569b220a78193a401b6592a12e9c2f179f9",
+      "modifiedSha256": "a60b50c70c635ec814d8ffec79868031d2cb61df7c0410c21d2e6ed90556b795"
+    },
+    {
+      "path": "src/cache/downloadedSpotDataStats.ts",
+      "unchanged": false,
+      "originalSha256": "5fa5b424648c1de09b116a761b61f11a75f7249e40321ade4e9fd2116eac4ad7",
+      "modifiedSha256": "73958442992c307708317b7d38e8493740c5ee178d687162eab027bd9242b15a"
+    },
+    {
+      "path": "src/cache/siteContextPersistentCache.ts",
+      "unchanged": false,
+      "originalSha256": "72b2a9ba8b0cb40520998aecc49546e5eca0d60b227b0beb2badff5a89c61318",
+      "modifiedSha256": "83a2804b62e9a7ac3303aede65e728d2eb3144d9254e360ac210d09e7c13bcf4"
+    },
+    {
+      "path": "src/cache/tripodBearingProfileManager.ts",
+      "unchanged": false,
+      "originalSha256": "3f79365f7e42482462952a106f51c0c35fee97920645d824214dc209fc435a85",
+      "modifiedSha256": "7fd49584c1d0ba1e2a5fda82469224b5cce6fb2276da4278fa9c2b5cb0381e44"
+    },
+    {
+      "path": "src/precision/precisionSettingsStorage.ts",
+      "unchanged": true,
+      "originalSha256": "a9b0fc65664f6b5021401a9ff10ab9ba17bcb5392d53dba79259f15ef886291a",
+      "modifiedSha256": "a9b0fc65664f6b5021401a9ff10ab9ba17bcb5392d53dba79259f15ef886291a"
+    },
+    {
+      "path": "src/precision/cesiumIonConnection.ts",
+      "unchanged": true,
+      "originalSha256": "8c267293aaa35e287952ca11955d0be984cfa439bf91edbe028731440b90df3a",
+      "modifiedSha256": "8c267293aaa35e287952ca11955d0be984cfa439bf91edbe028731440b90df3a"
+    },
+    {
+      "path": "src/precision/highestPrecision.ts",
+      "unchanged": true,
+      "originalSha256": "6bd3c973a6f31923c1b2bf5318a53b2526e98b024dab555e12bfb1fdbdaf0479",
+      "modifiedSha256": "6bd3c973a6f31923c1b2bf5318a53b2526e98b024dab555e12bfb1fdbdaf0479"
+    },
+    {
+      "path": "src/apparent/apparentElevation.ts",
+      "unchanged": true,
+      "originalSha256": "6b35391c7e8a33a6d05ba75b9da4390e233ab03ace6a07cb807928321195c20f",
+      "modifiedSha256": "6b35391c7e8a33a6d05ba75b9da4390e233ab03ace6a07cb807928321195c20f"
+    },
+    {
+      "path": "src/projection/projectionService.ts",
+      "unchanged": true,
+      "originalSha256": "c2c9db66a49a5bf75dee95e4d33bee3ea548595f3bc9f5f5ec1af88b026993a6",
+      "modifiedSha256": "c2c9db66a49a5bf75dee95e4d33bee3ea548595f3bc9f5f5ec1af88b026993a6"
+    },
+    {
+      "path": "src/cesium/celestial.ts",
+      "unchanged": true,
+      "originalSha256": "53e03aa1174038dd488a6d999d1c94875dd320790bf1ad4db9f70197c1c047ed",
+      "modifiedSha256": "53e03aa1174038dd488a6d999d1c94875dd320790bf1ad4db9f70197c1c047ed"
+    },
+    {
+      "path": "src/cesium/gsiElevationClient.ts",
+      "unchanged": true,
+      "originalSha256": "782095f89bfb820f9df4c5fe7bd6b2384d0a354b7aa0c204e2565592585d5707",
+      "modifiedSha256": "782095f89bfb820f9df4c5fe7bd6b2384d0a354b7aa0c204e2565592585d5707"
+    },
+    {
+      "path": "src/cesium/tripodCandidates.ts",
+      "unchanged": true,
+      "originalSha256": "27be911c691f1e4cf3730a69c76570a01eaaa2a9d2e639912caaa9091589eb50",
+      "modifiedSha256": "27be911c691f1e4cf3730a69c76570a01eaaa2a9d2e639912caaa9091589eb50"
+    },
+    {
+      "path": "src/cesium/surfacePicking.ts",
+      "unchanged": true,
+      "originalSha256": "4c6a5cbf0026866f9886fb4dc0ffefa231bacebe1e3db558846aa70c1cb06110",
+      "modifiedSha256": "4c6a5cbf0026866f9886fb4dc0ffefa231bacebe1e3db558846aa70c1cb06110"
+    },
+    {
+      "path": "src/cesium/tripodPin.ts",
+      "unchanged": true,
+      "originalSha256": "fac08d3f99e92516550d9f124a876e914409d93eebff71d7b402572f93c1946f",
+      "modifiedSha256": "fac08d3f99e92516550d9f124a876e914409d93eebff71d7b402572f93c1946f"
+    },
+    {
+      "path": "src/cesium/clampToHeightWithTimeout.ts",
+      "unchanged": true,
+      "originalSha256": "6920268ee717eee062e79feb7bbce0964f694ca8545bd956b036216e3e4d6fae",
+      "modifiedSha256": "6920268ee717eee062e79feb7bbce0964f694ca8545bd956b036216e3e4d6fae"
+    },
+    {
+      "path": "src/cesium/createMapViewer.ts",
+      "unchanged": true,
+      "originalSha256": "e4efc47c645db026587d40606fd3b9123c4016619cf254fc8a1de77716fd9cca",
+      "modifiedSha256": "e4efc47c645db026587d40606fd3b9123c4016619cf254fc8a1de77716fd9cca"
+    },
+    {
+      "path": "src/cesium/celestialOcclusion.ts",
+      "unchanged": true,
+      "originalSha256": "60e14404bf3c3cf9ad09cfb004d7b4c2113eee1c649a6e28ed1fa89313e91e23",
+      "modifiedSha256": "60e14404bf3c3cf9ad09cfb004d7b4c2113eee1c649a6e28ed1fa89313e91e23"
+    },
+    {
+      "path": "src/cesium/googleTilesetMarker.ts",
+      "unchanged": true,
+      "originalSha256": "83527c4e5be1c80902e5fd6d765870aeb4f6c751c9e5e8ace990708a6902b55c",
+      "modifiedSha256": "83527c4e5be1c80902e5fd6d765870aeb4f6c751c9e5e8ace990708a6902b55c"
+    },
+    {
+      "path": "src/cesium/gsiDemTileCache.ts",
+      "unchanged": false,
+      "originalSha256": "81e57b9d6ee8e0920ffaccfa11aa0a00064bb2c6884912d64206c56b715d01d0",
+      "modifiedSha256": "ccfd16da64c1624849894671a59f53304990c42024ce829093041e6e636158dc"
+    },
+    {
+      "path": "src/cesium/previewSnapshot.ts",
+      "unchanged": true,
+      "originalSha256": "103dae131695b81d7f10f26e37d87dfde5f55093e5f4e04c8685be2285fc9dbe",
+      "modifiedSha256": "103dae131695b81d7f10f26e37d87dfde5f55093e5f4e04c8685be2285fc9dbe"
+    },
+    {
+      "path": "src/cesium/geometry.ts",
+      "unchanged": true,
+      "originalSha256": "3aad9e7cc27d79aff640f68fe9be84670307772fa694568baa23358e1c3daba8",
+      "modifiedSha256": "3aad9e7cc27d79aff640f68fe9be84670307772fa694568baa23358e1c3daba8"
+    },
+    {
+      "path": "src/cesium/camera.ts",
+      "unchanged": true,
+      "originalSha256": "9890f8c935991342d577848b74f7e9fc77fab3fc1d1803fd5a52c03bd400afe5",
+      "modifiedSha256": "9890f8c935991342d577848b74f7e9fc77fab3fc1d1803fd5a52c03bd400afe5"
+    },
+    {
+      "path": "src/cesium/cameraModelFactory.ts",
+      "unchanged": true,
+      "originalSha256": "d325713e5761e21d097cbe9a5211f1c811ce27c9a19bf2efb1b4a09679cd9e71",
+      "modifiedSha256": "d325713e5761e21d097cbe9a5211f1c811ce27c9a19bf2efb1b4a09679cd9e71"
+    },
+    {
+      "path": "src/cesium/optics.ts",
+      "unchanged": true,
+      "originalSha256": "95262e53fe9071141d7479f9faf161ae9f12564f81f72299f4442b44dbfc40c4",
+      "modifiedSha256": "95262e53fe9071141d7479f9faf161ae9f12564f81f72299f4442b44dbfc40c4"
+    },
+    {
+      "path": "src/cesium/tripodSearchLine.ts",
+      "unchanged": true,
+      "originalSha256": "41322a880f159f5bc68bad30dfeb3766be94b2beac45b6ab885c90f3ef875276",
+      "modifiedSha256": "41322a880f159f5bc68bad30dfeb3766be94b2beac45b6ab885c90f3ef875276"
+    },
+    {
+      "path": "src/cesium/tripodSearchLineEntities.ts",
+      "unchanged": true,
+      "originalSha256": "d9ef67ca432a86d5a4b3f2c8cb63a907f16db5c7a581f31421de93dd12aa58dc",
+      "modifiedSha256": "d9ef67ca432a86d5a4b3f2c8cb63a907f16db5c7a581f31421de93dd12aa58dc"
+    },
+    {
+      "path": "src/cesium/worldTerrain.ts",
+      "unchanged": false,
+      "originalSha256": "611420bdc7714a0253b5b86f15a801b27f62e08afff48e3898b39a9eafbfea19",
+      "modifiedSha256": "9194acb7c3829fa220d7abb9534047726bfffba2fd0cbfdb67da226a8a6c80e8"
+    },
+    {
+      "path": "src/cesium/tripodCandidateExactCache.ts",
+      "unchanged": true,
+      "originalSha256": "6ede34d68b63bac1bfc6f20bf58db45bd5083f9d7a57f21d100ca707ca0375e9",
+      "modifiedSha256": "6ede34d68b63bac1bfc6f20bf58db45bd5083f9d7a57f21d100ca707ca0375e9"
+    },
+    {
+      "path": "src/cesium/plateauBuildingVerification.ts",
+      "unchanged": true,
+      "originalSha256": "c7f460d6cc5f5346e227a76425abe6c1e694eca4668268a5f252a53f7f1912a0",
+      "modifiedSha256": "c7f460d6cc5f5346e227a76425abe6c1e694eca4668268a5f252a53f7f1912a0"
+    },
+    {
+      "path": "src/cesium/tripodCandidateSeedCache.ts",
+      "unchanged": true,
+      "originalSha256": "468e9c60a6d6c3bf2873dbd48b89a2ef5941176e7ca8edcc6a8639db18d35107",
+      "modifiedSha256": "468e9c60a6d6c3bf2873dbd48b89a2ef5941176e7ca8edcc6a8639db18d35107"
+    },
+    {
+      "path": "src/cesium/subjectPin.ts",
+      "unchanged": true,
+      "originalSha256": "7d00517f83ba13b593fc5e72db910e48d166544a05ff93974ea6100f5e460685",
+      "modifiedSha256": "7d00517f83ba13b593fc5e72db910e48d166544a05ff93974ea6100f5e460685"
+    },
+    {
+      "path": "src/cesium/lightPollutionLayer.ts",
+      "unchanged": true,
+      "originalSha256": "b4d89dbb384c6904089216208e3ca1e0f134f99c494d7416695d92d9761b29cb",
+      "modifiedSha256": "b4d89dbb384c6904089216208e3ca1e0f134f99c494d7416695d92d9761b29cb"
+    },
+    {
+      "path": "src/projectStorage.ts",
+      "unchanged": true,
+      "originalSha256": "7aaa928923761ceedd29e65f25c257ff64b37a99ae4861730c8dc84a70d22302",
+      "modifiedSha256": "7aaa928923761ceedd29e65f25c257ff64b37a99ae4861730c8dc84a70d22302"
+    },
+    {
+      "path": "src/pwa/install.ts",
+      "unchanged": true,
+      "originalSha256": "4369eed6cdedb6458b74c99b72340080daef2662789d1af48f31622ed5dbabcc",
+      "modifiedSha256": "4369eed6cdedb6458b74c99b72340080daef2662789d1af48f31622ed5dbabcc"
+    },
+    {
+      "path": "src/search/searchPerformance.ts",
+      "unchanged": true,
+      "originalSha256": "ddfe64adc318a9d2f5102525d8965be559c767da5e89920dfd087c8867e30361",
+      "modifiedSha256": "ddfe64adc318a9d2f5102525d8965be559c767da5e89920dfd087c8867e30361"
+    },
+    {
+      "path": "src/search/adaptiveConcurrency.ts",
+      "unchanged": true,
+      "originalSha256": "2145149b11447e468df3518a4632a09d6fd1725de5674c98bad46f3d08c8041c",
+      "modifiedSha256": "2145149b11447e468df3518a4632a09d6fd1725de5674c98bad46f3d08c8041c"
+    },
+    {
+      "path": "src/search/spotSearchPhases.ts",
+      "unchanged": true,
+      "originalSha256": "eb49ead8191efab4737baefef0804c9b582beb53de88c0ef4bb7f370aa71461f",
+      "modifiedSha256": "eb49ead8191efab4737baefef0804c9b582beb53de88c0ef4bb7f370aa71461f"
+    },
+    {
+      "path": "src/search/refractionWeather.ts",
+      "unchanged": true,
+      "originalSha256": "567e7ce1a3b791b535bd3a8064076ae708f548dcb05a16a53c0d3d8d88d834b2",
+      "modifiedSha256": "567e7ce1a3b791b535bd3a8064076ae708f548dcb05a16a53c0d3d8d88d834b2"
+    },
+    {
+      "path": "src/search/preparedSearchCache.ts",
+      "unchanged": true,
+      "originalSha256": "24e22fec442984e1d9623c342a498cf160b385b54501ac68d68ec982c96fdb7d",
+      "modifiedSha256": "24e22fec442984e1d9623c342a498cf160b385b54501ac68d68ec982c96fdb7d"
+    },
+    {
+      "path": "src/search/celestialTransitSearch.ts",
+      "unchanged": true,
+      "originalSha256": "23fa9022b80c97dfb798b268ba8a6af772eb73ec197a5e21ae3144693b2f4a0a",
+      "modifiedSha256": "23fa9022b80c97dfb798b268ba8a6af772eb73ec197a5e21ae3144693b2f4a0a"
+    },
+    {
+      "path": "src/search/googleMapsUrl.ts",
+      "unchanged": true,
+      "originalSha256": "617ce7952a1883216c174ded25f8ec542319b387e8116de77d9518af2c26c290",
+      "modifiedSha256": "617ce7952a1883216c174ded25f8ec542319b387e8116de77d9518af2c26c290"
+    },
+    {
+      "path": "src/search/searchUiPreferences.ts",
+      "unchanged": true,
+      "originalSha256": "f5296f5526749001dc88988489f201cedbb2291189da3ec395ca256c894a88b3",
+      "modifiedSha256": "f5296f5526749001dc88988489f201cedbb2291189da3ec395ca256c894a88b3"
+    },
+    {
+      "path": "src/search/backgroundSpotSearch.ts",
+      "unchanged": true,
+      "originalSha256": "689e7786296fd509ea29c8bc75daff1619a1d228048b02c2cdb55ce983e14007",
+      "modifiedSha256": "689e7786296fd509ea29c8bc75daff1619a1d228048b02c2cdb55ce983e14007"
+    },
+    {
+      "path": "src/search/spotPresetSearch.ts",
+      "unchanged": true,
+      "originalSha256": "35076aa6c89f0769c5af036dcf8aae607b291240d40c5b45b1099e0a7fac15d1",
+      "modifiedSha256": "35076aa6c89f0769c5af036dcf8aae607b291240d40c5b45b1099e0a7fac15d1"
+    },
+    {
+      "path": "src/search/refractionWeatherModel.ts",
+      "unchanged": true,
+      "originalSha256": "a291e1f4a528ee62baf60d81fc127afd9819f1cd72d71f344645a75a0ef5708e",
+      "modifiedSha256": "a291e1f4a528ee62baf60d81fc127afd9819f1cd72d71f344645a75a0ef5708e"
+    },
+    {
+      "path": "src/search/searchTimeRange.ts",
+      "unchanged": true,
+      "originalSha256": "3da027c5c4e0e3963a1279977345991aa56da0db7cbe26fc93dc13d1bb2df603",
+      "modifiedSha256": "3da027c5c4e0e3963a1279977345991aa56da0db7cbe26fc93dc13d1bb2df603"
+    },
+    {
+      "path": "src/search/searchProgress.ts",
+      "unchanged": true,
+      "originalSha256": "46ecdc9c597720fc43112e1ccb7bed954d477a4f3ad6add59a5601f9971f3925",
+      "modifiedSha256": "46ecdc9c597720fc43112e1ccb7bed954d477a4f3ad6add59a5601f9971f3925"
+    },
+    {
+      "path": "src/search/nativeGoogleMapsResolver.ts",
+      "unchanged": true,
+      "originalSha256": "4c0292e0fcfc163742b81e88b3f02f3ff981a2957f9aa6ca91f1616537662696",
+      "modifiedSha256": "4c0292e0fcfc163742b81e88b3f02f3ff981a2957f9aa6ca91f1616537662696"
+    },
+    {
+      "path": "src/search/siteContext.ts",
+      "unchanged": false,
+      "originalSha256": "eea1de2919060b5493978c31ecff4f26567bcebbfd9b9f0c50098313d8134a2f",
+      "modifiedSha256": "2cb2ea796499136cd20ca817eacd1ae9b7fc4262535e0948dfcb3fe149320a7d"
+    },
+    {
+      "path": "src/network/timeZoneRequest.ts",
+      "unchanged": true,
+      "originalSha256": "233c61d6e834cfa038d9fa76403b5084c735b22f3085d032a16bca258986373c",
+      "modifiedSha256": "233c61d6e834cfa038d9fa76403b5084c735b22f3085d032a16bca258986373c"
+    },
+    {
+      "path": "src/network/networkDiagnostics.ts",
+      "unchanged": true,
+      "originalSha256": "ae9cf20be7d09276396390c273b856a51b58a7b4cd6712507b71f7c20748fbbf",
+      "modifiedSha256": "ae9cf20be7d09276396390c273b856a51b58a7b4cd6712507b71f7c20748fbbf"
+    },
+    {
+      "path": "src/network/sharedRequests.ts",
+      "unchanged": true,
+      "originalSha256": "da2caceb48bfe45712da94d2d17489e4b950385d44a125d99da43521c66c2796",
+      "modifiedSha256": "da2caceb48bfe45712da94d2d17489e4b950385d44a125d99da43521c66c2796"
+    },
+    {
+      "path": "src/main.tsx",
+      "unchanged": true,
+      "originalSha256": "8b6d802a45fc65719fc280393464c80bf35602447704d096ef4c2892d6e3b29e",
+      "modifiedSha256": "8b6d802a45fc65719fc280393464c80bf35602447704d096ef4c2892d6e3b29e"
+    },
+    {
+      "path": "src/geodesy/adaptiveTerrainProfile.ts",
+      "unchanged": true,
+      "originalSha256": "cb8a33859018d47b4a483059ada209a5e47ee0d53fffa8800bc29a214c68fc93",
+      "modifiedSha256": "cb8a33859018d47b4a483059ada209a5e47ee0d53fffa8800bc29a214c68fc93"
+    },
+    {
+      "path": "src/geodesy/terrestrialRefraction.ts",
+      "unchanged": true,
+      "originalSha256": "72ab800ba21313a6662637a61e9a1b5e29e2fced23436e8bd56ff24d256ac152",
+      "modifiedSha256": "72ab800ba21313a6662637a61e9a1b5e29e2fced23436e8bd56ff24d256ac152"
+    },
+    {
+      "path": "src/geodesy/karneyGeodesic.ts",
+      "unchanged": true,
+      "originalSha256": "51efdaa784e60c918639ab6636e008dfde268ca8d7ca84095d2833ab4d1429d9",
+      "modifiedSha256": "51efdaa784e60c918639ab6636e008dfde268ca8d7ca84095d2833ab4d1429d9"
+    },
+    {
+      "path": "src/celestial/terrainOcclusionPolicy.ts",
+      "unchanged": true,
+      "originalSha256": "d8b616e6574ba2dd8ea015b1555529ed3074a851e919e0676359017e0cdf798c",
+      "modifiedSha256": "d8b616e6574ba2dd8ea015b1555529ed3074a851e919e0676359017e0cdf798c"
+    },
+    {
+      "path": "src/App.css",
+      "unchanged": false,
+      "originalSha256": "f556c4f6e42fa3f1b8203ddb946cf8ddbec7d37a43a05653675fb539fa1a2cda",
+      "modifiedSha256": "62d6e4835a2dddc6e093979759ed55a394da1ffe9a5fb894e256fcb8d7eaa513"
+    },
+    {
+      "path": "src/subjectStorage.ts",
+      "unchanged": true,
+      "originalSha256": "68d4aa3cbce9b32a0b5c8f7420d3d5dbca3f3bc1d126119f5ca08f6d4c8cf06c",
+      "modifiedSha256": "68d4aa3cbce9b32a0b5c8f7420d3d5dbca3f3bc1d126119f5ca08f6d4c8cf06c"
+    },
+    {
+      "path": "src/validation/validationService.ts",
+      "unchanged": true,
+      "originalSha256": "97785c1a4bb9f1758107ddc44e1c8f27b19b4834172f239e9623a7a34359f435",
+      "modifiedSha256": "97785c1a4bb9f1758107ddc44e1c8f27b19b4834172f239e9623a7a34359f435"
+    },
+    {
+      "path": "src/errors/userFeedback.ts",
+      "unchanged": true,
+      "originalSha256": "cb5e41a6dceea3d185cbb2927434f096d3f2b9b607b7e9137a5abb8e02c1f628",
+      "modifiedSha256": "cb5e41a6dceea3d185cbb2927434f096d3f2b9b607b7e9137a5abb8e02c1f628"
+    },
+    {
+      "path": "src/data/japanLandmarks.ts",
+      "unchanged": true,
+      "originalSha256": "3888738aa49f56cf87a3c4acd95b7c9f92338c65809bef5aa92391683d524775",
+      "modifiedSha256": "3888738aa49f56cf87a3c4acd95b7c9f92338c65809bef5aa92391683d524775"
+    },
+    {
+      "path": "src/height/osmSubjectHeightFallback.ts",
+      "unchanged": true,
+      "originalSha256": "c3d498413685e998ac8820fa355401483077d252b4ea45f02da802f095a2ce19",
+      "modifiedSha256": "c3d498413685e998ac8820fa355401483077d252b4ea45f02da802f095a2ce19"
+    },
+    {
+      "path": "src/height/heightResolver.ts",
+      "unchanged": true,
+      "originalSha256": "09114e6184c7eb97cd5b67d10fd9ddf5246fe05008b140c8b182e0be47e26c53",
+      "modifiedSha256": "09114e6184c7eb97cd5b67d10fd9ddf5246fe05008b140c8b182e0be47e26c53"
+    },
+    {
+      "path": "src/map/webMercator.ts",
+      "unchanged": true,
+      "originalSha256": "df339482dadeec3abf180aa4179bfef25b5b8d04b556d04563c389bfb939b1f6",
+      "modifiedSha256": "df339482dadeec3abf180aa4179bfef25b5b8d04b556d04563c389bfb939b1f6"
+    },
+    {
+      "path": "src/observer/observerFactory.ts",
+      "unchanged": true,
+      "originalSha256": "ad1a278fd6629f116e6bced5340f9e35a9d1b1599206a2409f3e4fd96f93d858",
+      "modifiedSha256": "ad1a278fd6629f116e6bced5340f9e35a9d1b1599206a2409f3e4fd96f93d858"
+    },
+    {
+      "path": "src/time/zonedTime.ts",
+      "unchanged": true,
+      "originalSha256": "c0668acb73c320e4b56759faaf189226c582d38a2fa98fd3ba1f796886307dc8",
+      "modifiedSha256": "c0668acb73c320e4b56759faaf189226c582d38a2fa98fd3ba1f796886307dc8"
+    },
+    {
+      "path": "src/device/locationSettings.ts",
+      "unchanged": true,
+      "originalSha256": "befaa46633905ae039e0de271b60005ae4e5c70a602c75c00fb044327dfd5aa1",
+      "modifiedSha256": "befaa46633905ae039e0de271b60005ae4e5c70a602c75c00fb044327dfd5aa1"
+    },
+    {
+      "path": "src/diagnostics/freezeDetector.ts",
+      "unchanged": true,
+      "originalSha256": "45d51c78b720bbd142f79eda115d5417f5cb2c0d074d202079ea12b41d830dbd",
+      "modifiedSha256": "45d51c78b720bbd142f79eda115d5417f5cb2c0d074d202079ea12b41d830dbd"
+    },
+    {
+      "path": "src/preview/foregroundProjection.ts",
+      "unchanged": true,
+      "originalSha256": "572f999a2b91c5dd30945537348b7c35bc03f1a8013ee86fdeafbcbb5779aaa4",
+      "modifiedSha256": "572f999a2b91c5dd30945537348b7c35bc03f1a8013ee86fdeafbcbb5779aaa4"
+    },
+    {
+      "path": "src/utils/withOverallTimeout.ts",
+      "unchanged": true,
+      "originalSha256": "0bf234fcd3fc194e21d23e2d94f55a9580926d70253365f03f277ae48ffc69d7",
+      "modifiedSha256": "0bf234fcd3fc194e21d23e2d94f55a9580926d70253365f03f277ae48ffc69d7"
+    },
+    {
+      "path": "src/utils/runtimeErrors.ts",
+      "unchanged": true,
+      "originalSha256": "ed907bb76024896f17848a5426598951fa91f22d938d8567e0dc2720bef66d60",
+      "modifiedSha256": "ed907bb76024896f17848a5426598951fa91f22d938d8567e0dc2720bef66d60"
+    },
+    {
+      "path": "src/utils/focalLengthInput.ts",
+      "unchanged": true,
+      "originalSha256": "ea871f3d6cacbd678ea8f05271172808f0c5b4db920843a22cdc350b3f8f426d",
+      "modifiedSha256": "ea871f3d6cacbd678ea8f05271172808f0c5b4db920843a22cdc350b3f8f426d"
+    },
+    {
+      "path": "src/ar/nativeCameraInfo.ts",
+      "unchanged": true,
+      "originalSha256": "0d1d0788b191330ff03b304929c8271c7246a273207fc18695d704ea67faacdd",
+      "modifiedSha256": "0d1d0788b191330ff03b304929c8271c7246a273207fc18695d704ea67faacdd"
+    },
+    {
+      "path": "src/ar/orientationOffset.ts",
+      "unchanged": true,
+      "originalSha256": "22f6c718973f9f1efe697aff5de1dfd3ecf141169dcc9227e02a084101ba6a4a",
+      "modifiedSha256": "22f6c718973f9f1efe697aff5de1dfd3ecf141169dcc9227e02a084101ba6a4a"
+    },
+    {
+      "path": "src/ar/cameraSession.ts",
+      "unchanged": true,
+      "originalSha256": "6fd9c1ff2339c1b69505500d13e9cb51a65c468ad58c478684bf2c458405dc4a",
+      "modifiedSha256": "6fd9c1ff2339c1b69505500d13e9cb51a65c468ad58c478684bf2c458405dc4a"
+    },
+    {
+      "path": "src/ar/orientationSmoothing.ts",
+      "unchanged": true,
+      "originalSha256": "ff6e95f957e160eeeda31746f065f9c4e5a99d4bbdeabd5f93a12bac3930e68a",
+      "modifiedSha256": "ff6e95f957e160eeeda31746f065f9c4e5a99d4bbdeabd5f93a12bac3930e68a"
+    },
+    {
+      "path": "src/ar/deviceTracking.ts",
+      "unchanged": true,
+      "originalSha256": "ec0806baebc2a14becb7d1eb1852c59399c36e2029020e7890773dddd96ae5be",
+      "modifiedSha256": "ec0806baebc2a14becb7d1eb1852c59399c36e2029020e7890773dddd96ae5be"
+    },
+    {
+      "path": "src/sharing/projectShareQr.ts",
+      "unchanged": true,
+      "originalSha256": "602353a7fb54606936b8f03584289f9a375b3abcb7949b4ac70c26747ae6545a",
+      "modifiedSha256": "602353a7fb54606936b8f03584289f9a375b3abcb7949b4ac70c26747ae6545a"
+    },
+    {
+      "path": "src/sharing/projectShareCode.ts",
+      "unchanged": true,
+      "originalSha256": "082e72c6d0792e35515ab579dfc74963ce97d321dc3229fc00396e164f64c8d6",
+      "modifiedSha256": "082e72c6d0792e35515ab579dfc74963ce97d321dc3229fc00396e164f64c8d6"
+    },
+    {
+      "path": "src/measurement/previewMeasurement.ts",
+      "unchanged": true,
+      "originalSha256": "cbabf7fb1c9a12282cb1a3696861d1dd4e84edd5654963dabfb8be8b965d154c",
+      "modifiedSha256": "cbabf7fb1c9a12282cb1a3696861d1dd4e84edd5654963dabfb8be8b965d154c"
+    },
+    {
+      "path": "scripts/verify-r2-safety-all-paths-20260824.mjs",
+      "unchanged": true,
+      "originalSha256": "e2b0b1c849dfa901b0994a11fdeb18f31b720cae95bd1b3f0929521aa5915893",
+      "modifiedSha256": "e2b0b1c849dfa901b0994a11fdeb18f31b720cae95bd1b3f0929521aa5915893"
+    },
+    {
+      "path": "scripts/verify-precision-descriptions.mjs",
+      "unchanged": true,
+      "originalSha256": "31f4237243919155ed811aaeef456b36def42f8877663ec39bffa4b6a46b30d3",
+      "modifiedSha256": "31f4237243919155ed811aaeef456b36def42f8877663ec39bffa4b6a46b30d3"
+    },
+    {
+      "path": "scripts/verify-phase6-2-memory.mjs",
+      "unchanged": true,
+      "originalSha256": "099ec8e8530d9c9507e40b59f30a2ef73d4261bdae1b1136cd8b4a3af0eb473a",
+      "modifiedSha256": "099ec8e8530d9c9507e40b59f30a2ef73d4261bdae1b1136cd8b4a3af0eb473a"
+    },
+    {
+      "path": "scripts/verify-geocode-api-fallback-20260830.mjs",
+      "unchanged": false,
+      "originalSha256": "26f0b2c2cd386b2d05e465b391ebf064d640644d05d2ceec2383ae0a0e1dacea",
+      "modifiedSha256": "d44e6cb8be6cf600bbc49c1a2232b2ecd24f44508acb637847792df8075bb49e"
+    },
+    {
+      "path": "scripts/verify-downloaded-spot-shared-dem-refs-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "c20b5c8d1812fe4f41ee4691b8551d9d606d4fa53a60817fd15e854b4ffd10ac",
+      "modifiedSha256": "c20b5c8d1812fe4f41ee4691b8551d9d606d4fa53a60817fd15e854b4ffd10ac"
+    },
+    {
+      "path": "scripts/run-regression-tests.mjs",
+      "unchanged": false,
+      "originalSha256": "79a789af17e17c0e45e90dc16ffc5bd014b3c12ecd0f1662be23bed8aee9c8e5",
+      "modifiedSha256": "4f9467b0dc3340c3494aaecc81249be62c3fbd7343a51c383914546ab67a6e4c"
+    },
+    {
+      "path": "scripts/verify-tripod-ecef-preview-truth-restore-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "2fe796dbe6b13d75d74fb3451f08e467239c061f14e6fef53b91c4f8ed4dd89a",
+      "modifiedSha256": "2fe796dbe6b13d75d74fb3451f08e467239c061f14e6fef53b91c4f8ed4dd89a"
+    },
+    {
+      "path": "scripts/verify-phase5-4-r2-cache.mjs",
+      "unchanged": true,
+      "originalSha256": "fc7b5fe6d0007dc2ae4b6f8403d62743acceb06a6892e53dc1ac540285223205",
+      "modifiedSha256": "fc7b5fe6d0007dc2ae4b6f8403d62743acceb06a6892e53dc1ac540285223205"
+    },
+    {
+      "path": "scripts/verify-google-maps-url.mjs",
+      "unchanged": true,
+      "originalSha256": "bb7caad231b7914de4876d0e827a70bebf240936e3951d5c20a6bd2a56368198",
+      "modifiedSha256": "bb7caad231b7914de4876d0e827a70bebf240936e3951d5c20a6bd2a56368198"
+    },
+    {
+      "path": "scripts/verify-3d-map-smoothness-20260823.mjs",
+      "unchanged": true,
+      "originalSha256": "3b7f76368530c4add43b3e2de11e4331b573f9a998fc9a7334be284c86d0b7a9",
+      "modifiedSha256": "3b7f76368530c4add43b3e2de11e4331b573f9a998fc9a7334be284c86d0b7a9"
+    },
+    {
+      "path": "scripts/verify-downloaded-data-management-detail-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "ddc6c4b928c6a5d5dfccb09c87a4dba9d6944dd5b5270fbc7f3b6da504c89eaa",
+      "modifiedSha256": "ddc6c4b928c6a5d5dfccb09c87a4dba9d6944dd5b5270fbc7f3b6da504c89eaa"
+    },
+    {
+      "path": "scripts/verify-downloaded-site-context-cache-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "7b152edc8c36992fdd2e35c1a9011a527d3ccc1893a0cde2ee03f6f5b6b45bd7",
+      "modifiedSha256": "7b152edc8c36992fdd2e35c1a9011a527d3ccc1893a0cde2ee03f6f5b6b45bd7"
+    },
+    {
+      "path": "scripts/verify-water-surface-zero-20260903.mjs",
+      "unchanged": true,
+      "originalSha256": "4ab584d1522db3db6df748d5712f148b85e6277b8a0e0625957c019a80394c56",
+      "modifiedSha256": "4ab584d1522db3db6df748d5712f148b85e6277b8a0e0625957c019a80394c56"
+    },
+    {
+      "path": "scripts/verify-tripod-geoid-datum-20260823.mjs",
+      "unchanged": true,
+      "originalSha256": "7e4017722a018cccb714ea180f7fccfbfa2a12c0dad601672b77cb6d350cc35b",
+      "modifiedSha256": "7e4017722a018cccb714ea180f7fccfbfa2a12c0dad601672b77cb6d350cc35b"
+    },
+    {
+      "path": "scripts/verify-tripod-preview-forward-model-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "2c362eab71a3aa9dd30a73e5f5c52dffeaca4a8f3cb5cfff498265ad362ead30",
+      "modifiedSha256": "2c362eab71a3aa9dd30a73e5f5c52dffeaca4a8f3cb5cfff498265ad362ead30"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-job-timeout-safety-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "6cec7bcae3f629d96c870b6eea7ee6eb4dcce0c097b4d30ba62add9e2b966717",
+      "modifiedSha256": "6cec7bcae3f629d96c870b6eea7ee6eb4dcce0c097b4d30ba62add9e2b966717"
+    },
+    {
+      "path": "scripts/verify-android-native.mjs",
+      "unchanged": true,
+      "originalSha256": "cbe90f586334022e7dcad32bc7a9fb04391002809e515c0c159affc0d41eeaf2",
+      "modifiedSha256": "cbe90f586334022e7dcad32bc7a9fb04391002809e515c0c159affc0d41eeaf2"
+    },
+    {
+      "path": "scripts/verify-cesium-root-usage-counter-20260907.mjs",
+      "unchanged": true,
+      "originalSha256": "d8ba8cffbe2713d0ba51ece3ab9d89cb264059f834d92eaf35dd41d1781a092a",
+      "modifiedSha256": "d8ba8cffbe2713d0ba51ece3ab9d89cb264059f834d92eaf35dd41d1781a092a"
+    },
+    {
+      "path": "scripts/verify-phase4-4-weather.mjs",
+      "unchanged": true,
+      "originalSha256": "8620e39ca99e70bf3fad5d27179e4baec5153f9f2e6a781d53dd34db127c6e96",
+      "modifiedSha256": "8620e39ca99e70bf3fad5d27179e4baec5153f9f2e6a781d53dd34db127c6e96"
+    },
+    {
+      "path": "scripts/verify-manual-tripod-during-calculation-20260831.mjs",
+      "unchanged": true,
+      "originalSha256": "210f22fb03f3e7cc7075aea3e8ccca20f71b7bf287a098afe08e55d077434f92",
+      "modifiedSha256": "210f22fb03f3e7cc7075aea3e8ccca20f71b7bf287a098afe08e55d077434f92"
+    },
+    {
+      "path": "scripts/verify-gsi-large-batch-runtime-20260829.mjs",
+      "unchanged": false,
+      "originalSha256": "0d1be387bdc5438b156ea0fcf6bd96fbf5606a2731dd084ba143bfaf58458147",
+      "modifiedSha256": "7672e3f60c9112f33c08df6b6f5efb732e222bfcdf4695593e510fcf315d4676"
+    },
+    {
+      "path": "scripts/verify-map-line-candidate-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "db6d73c3cb0a4a8cd5fb1605253d348d31f4e9be78e960eeb339ea26af221435",
+      "modifiedSha256": "db6d73c3cb0a4a8cd5fb1605253d348d31f4e9be78e960eeb339ea26af221435"
+    },
+    {
+      "path": "scripts/verify-search-generation.mjs",
+      "unchanged": true,
+      "originalSha256": "c98447c0de0bc4b34c12605b0b03a080e125ce4bdf1674c2e6c79817e86d40d9",
+      "modifiedSha256": "c98447c0de0bc4b34c12605b0b03a080e125ce4bdf1674c2e6c79817e86d40d9"
+    },
+    {
+      "path": "scripts/register-typescript-source-loader.mjs",
+      "unchanged": true,
+      "originalSha256": "b559397ccd47bbf22a4c8bb79b0d571087691e55e62cfb57e0b4c2e1fa907e40",
+      "modifiedSha256": "b559397ccd47bbf22a4c8bb79b0d571087691e55e62cfb57e0b4c2e1fa907e40"
+    },
+    {
+      "path": "scripts/verify-tripod-adaptive-intersections.mjs",
+      "unchanged": true,
+      "originalSha256": "0f043b509b735d59b7de616328e599ab6e8ec5a26b67230ec11dabf04f83de79",
+      "modifiedSha256": "0f043b509b735d59b7de616328e599ab6e8ec5a26b67230ec11dabf04f83de79"
+    },
+    {
+      "path": "scripts/verify-tripod-camera-height-20260823.mjs",
+      "unchanged": true,
+      "originalSha256": "e6720f06a186153190fc72f6bc8ee87d2f8a9c61519b99c481389608a0dc48bc",
+      "modifiedSha256": "e6720f06a186153190fc72f6bc8ee87d2f8a9c61519b99c481389608a0dc48bc"
+    },
+    {
+      "path": "scripts/verify-downloaded-data-audit-fixes-20260908.mjs",
+      "unchanged": false,
+      "originalSha256": "e4d77b8e9bd1e7b7b4b78e0ac4d97cb641cf0960e6ee9a03dd55177aa14acd8a",
+      "modifiedSha256": "8bbf9b81ea46b7eacaa773de86a682801471e92efca7c78111a54911767f23ab"
+    },
+    {
+      "path": "scripts/verify-cache-keys.mjs",
+      "unchanged": true,
+      "originalSha256": "b75aa2fe30113c678574021711c61e8d282e577b44856a469feae106ae7b331f",
+      "modifiedSha256": "b75aa2fe30113c678574021711c61e8d282e577b44856a469feae106ae7b331f"
+    },
+    {
+      "path": "scripts/verify-tall-structure-roof-resolution.mjs",
+      "unchanged": true,
+      "originalSha256": "2b4d13ca55153201b5d5a1896461506d5c66ff177c0e56a1301a5846aea44363",
+      "modifiedSha256": "2b4d13ca55153201b5d5a1896461506d5c66ff177c0e56a1301a5846aea44363"
+    },
+    {
+      "path": "scripts/verify-search-progress.mjs",
+      "unchanged": true,
+      "originalSha256": "7af024eed75fe21fc23a1aec843c7a3def5ef5f8e917680c9c05e02392cc9972",
+      "modifiedSha256": "7af024eed75fe21fc23a1aec843c7a3def5ef5f8e917680c9c05e02392cc9972"
+    },
+    {
+      "path": "scripts/verify-user-error-handling.mjs",
+      "unchanged": true,
+      "originalSha256": "f380ad32de82e4feaf852b11933f35818ceb5aa027806d83238e5266611a9ec5",
+      "modifiedSha256": "f380ad32de82e4feaf852b11933f35818ceb5aa027806d83238e5266611a9ec5"
+    },
+    {
+      "path": "scripts/verify-tripod-candidate-performance-resilience.mjs",
+      "unchanged": true,
+      "originalSha256": "5660fde599ef13ee725a56d65ac4312ffbec04e981fa4f85714f9b35bbdf0b02",
+      "modifiedSha256": "5660fde599ef13ee725a56d65ac4312ffbec04e981fa4f85714f9b35bbdf0b02"
+    },
+    {
+      "path": "scripts/verify-tripod-physics-audit-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "b71892e40841d49e9e5b174db729e9b8d720cdef99ccf596f1f214268295922a",
+      "modifiedSha256": "b71892e40841d49e9e5b174db729e9b8d720cdef99ccf596f1f214268295922a"
+    },
+    {
+      "path": "scripts/verify-phase7-1-foundation.mjs",
+      "unchanged": true,
+      "originalSha256": "596ed183c55de5281609f1427703206e495b3c8f88c9896dce0bf2c68b1f34f4",
+      "modifiedSha256": "596ed183c55de5281609f1427703206e495b3c8f88c9896dce0bf2c68b1f34f4"
+    },
+    {
+      "path": "scripts/verify-karney-edge-cases.mjs",
+      "unchanged": true,
+      "originalSha256": "48af59ad96fc1bfd1d57a4f572f3930c7dbec43541d786a44e2407869f5db5ef",
+      "modifiedSha256": "48af59ad96fc1bfd1d57a4f572f3930c7dbec43541d786a44e2407869f5db5ef"
+    },
+    {
+      "path": "scripts/verify-final-cleanup.mjs",
+      "unchanged": true,
+      "originalSha256": "64de71fa950381016b9f4d1dbb7c6516822d4750ba7f9a82f4bc4f3d26fc322c",
+      "modifiedSha256": "64de71fa950381016b9f4d1dbb7c6516822d4750ba7f9a82f4bc4f3d26fc322c"
+    },
+    {
+      "path": "scripts/verify-phase7-3-celestial-3d.mjs",
+      "unchanged": true,
+      "originalSha256": "b1545694f5e3c77aec5662150b4ae3599ffc2394def89e1da7b9731b71b6ff4d",
+      "modifiedSha256": "b1545694f5e3c77aec5662150b4ae3599ffc2394def89e1da7b9731b71b6ff4d"
+    },
+    {
+      "path": "scripts/verify-tripod-performance-instrumentation-20260829.mjs",
+      "unchanged": true,
+      "originalSha256": "e073e03353a544b942efd94d238117fc26f86970efcf0b21089e782083ad13de",
+      "modifiedSha256": "e073e03353a544b942efd94d238117fc26f86970efcf0b21089e782083ad13de"
+    },
+    {
+      "path": "scripts/verify-phase4-3-vegetation.mjs",
+      "unchanged": true,
+      "originalSha256": "39810cb8348f333edb7c1ccbb6d77d57ad14236a2c3242ee8fb0ba1876dcbf02",
+      "modifiedSha256": "39810cb8348f333edb7c1ccbb6d77d57ad14236a2c3242ee8fb0ba1876dcbf02"
+    },
+    {
+      "path": "scripts/verify-google-maps-url-live.mjs",
+      "unchanged": true,
+      "originalSha256": "af4ec86ded488f20b7c1103a2d8cfe35e397b37fde5922d2c9c16e688d0dd325",
+      "modifiedSha256": "af4ec86ded488f20b7c1103a2d8cfe35e397b37fde5922d2c9c16e688d0dd325"
+    },
+    {
+      "path": "scripts/typescript-source-loader.mjs",
+      "unchanged": true,
+      "originalSha256": "84d70ae3b891268c4c9d6b8eae74f70cb8b4f9b414fdc25bfb77ab10ad9eb860",
+      "modifiedSha256": "84d70ae3b891268c4c9d6b8eae74f70cb8b4f9b414fdc25bfb77ab10ad9eb860"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-download-stall-fix-20260908.mjs",
+      "unchanged": false,
+      "originalSha256": "43f4a624b308ced34ab27b4b18f33acce4e00a8fcfa573c0912ea7da72c04a39",
+      "modifiedSha256": "c0f12c43b5425e0d3f1930ba8f933929825815194507daa87a54b099a509bf91"
+    },
+    {
+      "path": "scripts/verify-river-point-geoid-final-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "6574117521f1131dfacd1a68c4f1f1c48b1e5cab0d75b1b7ba06344c9602016d",
+      "modifiedSha256": "6574117521f1131dfacd1a68c4f1f1c48b1e5cab0d75b1b7ba06344c9602016d"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-http-wave-reduction-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "da3e0ab133fff62fa57f53dedf3962eb42e50611e332e318348d2b81b5744fde",
+      "modifiedSha256": "da3e0ab133fff62fa57f53dedf3962eb42e50611e332e318348d2b81b5744fde"
+    },
+    {
+      "path": "scripts/verify-tripod-candidate-rendering.mjs",
+      "unchanged": true,
+      "originalSha256": "12a1fd297058f975635cd2336dd8cd075813f571bdec70ec6b7157336494aefd",
+      "modifiedSha256": "12a1fd297058f975635cd2336dd8cd075813f571bdec70ec6b7157336494aefd"
+    },
+    {
+      "path": "scripts/verify-occlusion-state.mjs",
+      "unchanged": true,
+      "originalSha256": "ff02b05f67d1bb7e8040483f87fd75732131c8787e7bd02acd6d87aa47c9af4b",
+      "modifiedSha256": "ff02b05f67d1bb7e8040483f87fd75732131c8787e7bd02acd6d87aa47c9af4b"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-download-distance-setting-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "5a4db80cb3520eb58739fef427f797b99050769042683371566432a5f3754aab",
+      "modifiedSha256": "5a4db80cb3520eb58739fef427f797b99050769042683371566432a5f3754aab"
+    },
+    {
+      "path": "scripts/prepare-cloudflare-geo-tz-assets.mjs",
+      "unchanged": true,
+      "originalSha256": "f9b53ccdca29823c31406e29b00baa4e3abf8c341c4b65aa2cb02175eca52fc3",
+      "modifiedSha256": "f9b53ccdca29823c31406e29b00baa4e3abf8c341c4b65aa2cb02175eca52fc3"
+    },
+    {
+      "path": "scripts/verify-geodesic-reference.mjs",
+      "unchanged": true,
+      "originalSha256": "f3a8af955e4a16598b8fc772cef8a63168ed9237f78eb42fcb0fa8883ba8125d",
+      "modifiedSha256": "f3a8af955e4a16598b8fc772cef8a63168ed9237f78eb42fcb0fa8883ba8125d"
+    },
+    {
+      "path": "scripts/verify-tripod-candidate-weather-reconvergence.mjs",
+      "unchanged": true,
+      "originalSha256": "514134e2cf2746f7a81aef412d6543474dee65af55f7ff812b594c216c2b48ad",
+      "modifiedSha256": "514134e2cf2746f7a81aef412d6543474dee65af55f7ff812b594c216c2b48ad"
+    },
+    {
+      "path": "scripts/verify-phase7-4-cloudflare-deployment.mjs",
+      "unchanged": true,
+      "originalSha256": "b04332507dae5903efe02ec3c325882761a001a445b5075dbf29379bc8ed8085",
+      "modifiedSha256": "b04332507dae5903efe02ec3c325882761a001a445b5075dbf29379bc8ed8085"
+    },
+    {
+      "path": "scripts/verify-tripod-neutral-dem-20260823.mjs",
+      "unchanged": true,
+      "originalSha256": "cbe41635942663c45ffacf9be0e06443778e1aa3b29b0aeed91d4e4a990d0962",
+      "modifiedSha256": "cbe41635942663c45ffacf9be0e06443778e1aa3b29b0aeed91d4e4a990d0962"
+    },
+    {
+      "path": "scripts/verify-tripod-air-offset.mjs",
+      "unchanged": true,
+      "originalSha256": "e8937b5965646f3f9b27085d53821c56b610e34fb3745dbeae9b474ae8e4cee0",
+      "modifiedSha256": "e8937b5965646f3f9b27085d53821c56b610e34fb3745dbeae9b474ae8e4cee0"
+    },
+    {
+      "path": "scripts/verify-phase7-5-final-release.mjs",
+      "unchanged": false,
+      "originalSha256": "927fe8e3e824affb6aa3572f357b2de1abe5bcf74734acdc6a1a72669f78e47e",
+      "modifiedSha256": "95e205c14fcf6aa180709c35cba3c4cfacbad18db13dfb9a2589903d3d93c607"
+    },
+    {
+      "path": "scripts/verify-tripod-preview-inverse-root-fix-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "43ad2a112269545cda2e2f5055bc455f8acbcdf97fd273decb10ebec63746d14",
+      "modifiedSha256": "43ad2a112269545cda2e2f5055bc455f8acbcdf97fd273decb10ebec63746d14"
+    },
+    {
+      "path": "scripts/verify-geodesic-reference-python.py",
+      "unchanged": true,
+      "originalSha256": "e86b8a1514ec1413bc2dccd3f0ec77b5a09c420595860ef8b5b8dfc7d7638593",
+      "modifiedSha256": "e86b8a1514ec1413bc2dccd3f0ec77b5a09c420595860ef8b5b8dfc7d7638593"
+    },
+    {
+      "path": "scripts/verify-celestial-occlusion-stability.mjs",
+      "unchanged": true,
+      "originalSha256": "16e1667210db73474c65efc648ab60760081224e6e962f7df39a6d3f54d554c3",
+      "modifiedSha256": "16e1667210db73474c65efc648ab60760081224e6e962f7df39a6d3f54d554c3"
+    },
+    {
+      "path": "scripts/verify-person-display.mjs",
+      "unchanged": true,
+      "originalSha256": "ffb266e3928d8110456ff3a53ccd612787eccc9bc40925399a68a5bc4dbb7a41",
+      "modifiedSha256": "ffb266e3928d8110456ff3a53ccd612787eccc9bc40925399a68a5bc4dbb7a41"
+    },
+    {
+      "path": "scripts/verify-tripod-final-geoid-fallback-propagation-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "cd0830a8e1d048098e5d7d01747eb7c235b01ee61ff9e74adeb580a7f1e8c708",
+      "modifiedSha256": "cd0830a8e1d048098e5d7d01747eb7c235b01ee61ff9e74adeb580a7f1e8c708"
+    },
+    {
+      "path": "scripts/verify-gsi-tier-request-reduction-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "fb53c7bb899f9892c36a7b98b9246f4d42fbed42aa4250872a71b34d41278db1",
+      "modifiedSha256": "fb53c7bb899f9892c36a7b98b9246f4d42fbed42aa4250872a71b34d41278db1"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-progress-visibility-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "ccfef80e638895f59f5490abb240c0a7566260b60841837bd80390071d65109b",
+      "modifiedSha256": "ccfef80e638895f59f5490abb240c0a7566260b60841837bd80390071d65109b"
+    },
+    {
+      "path": "scripts/verify-tripod-timeline-cache-stall-fix-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "ad44e02ff9c841485936c8abddc2c04ac0cf0c320f3cb52fc42fc9d990587f97",
+      "modifiedSha256": "ad44e02ff9c841485936c8abddc2c04ac0cf0c320f3cb52fc42fc9d990587f97"
+    },
+    {
+      "path": "scripts/verify-phase5-2-device-cache.mjs",
+      "unchanged": true,
+      "originalSha256": "e45406d11bd5e7871a6f731a94ff897087e03bc49ca42ea289b331a066556292",
+      "modifiedSha256": "e45406d11bd5e7871a6f731a94ff897087e03bc49ca42ea289b331a066556292"
+    },
+    {
+      "path": "scripts/verify-gifu-geocode-priority-20260824.mjs",
+      "unchanged": true,
+      "originalSha256": "65ef28656c8783887097118acd84a088c65a18a3613530f2cf318c3e820c5210",
+      "modifiedSha256": "65ef28656c8783887097118acd84a088c65a18a3613530f2cf318c3e820c5210"
+    },
+    {
+      "path": "scripts/verify-tripod-speed-cache-20260829.mjs",
+      "unchanged": true,
+      "originalSha256": "71ac991c49e2f93d3454e4eb6d8e4c312cd419a26a740442cc177351d1bd5268",
+      "modifiedSha256": "71ac991c49e2f93d3454e4eb6d8e4c312cd419a26a740442cc177351d1bd5268"
+    },
+    {
+      "path": "scripts/verify-pwa-installability.mjs",
+      "unchanged": true,
+      "originalSha256": "d9743679caf0c68b9010e08fc90450e45094c8e9421796a8a4824a115f6b42f1",
+      "modifiedSha256": "d9743679caf0c68b9010e08fc90450e45094c8e9421796a8a4824a115f6b42f1"
+    },
+    {
+      "path": "scripts/verify-preview-initial-load-20260831.mjs",
+      "unchanged": true,
+      "originalSha256": "f138f2e0d12d18581bb61b2d9b5bae81aaf26194ec6b3becf4d25146e65e61fa",
+      "modifiedSha256": "f138f2e0d12d18581bb61b2d9b5bae81aaf26194ec6b3becf4d25146e65e61fa"
+    },
+    {
+      "path": "scripts/verify-tripod-timeout-elimination-20260907.mjs",
+      "unchanged": false,
+      "originalSha256": "182d638df237a9421b97b1aa67faccb39272927e8f43f5937ec863775f1e95bb",
+      "modifiedSha256": "1f0380616f944e0f43d97b9afa29a72fbebf4d977ac035c8fd9ac14adf791072"
+    },
+    {
+      "path": "scripts/verify-phase6-5-final.mjs",
+      "unchanged": false,
+      "originalSha256": "8b48f8243a552d52a2b41e745c857fdef4521b0b0e85a08338efa9c9746c2e6e",
+      "modifiedSha256": "e001a22fe31e8d773210c8d3581532945865c2e17a9db2eeb75f42ac57de6d94"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-startup-bulk-read-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "b3962848fb3c4cbbdc1551f0158c40df6a9991dd16538f62f0bd4853f70bbd6a",
+      "modifiedSha256": "b3962848fb3c4cbbdc1551f0158c40df6a9991dd16538f62f0bd4853f70bbd6a"
+    },
+    {
+      "path": "scripts/verify-tripod-centerline-rebuild-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "79c0ef66d2372de21d9a4c2fb53ab3850cd1263128f58e974d35ceb49aeeda2e",
+      "modifiedSha256": "79c0ef66d2372de21d9a4c2fb53ab3850cd1263128f58e974d35ceb49aeeda2e"
+    },
+    {
+      "path": "scripts/verify-phase4-2-dsm-buildings.mjs",
+      "unchanged": true,
+      "originalSha256": "b87366c0e53d7d3a3e9c6dfbb976a748cd1c2175bec6b6aee019f591700cce96",
+      "modifiedSha256": "b87366c0e53d7d3a3e9c6dfbb976a748cd1c2175bec6b6aee019f591700cce96"
+    },
+    {
+      "path": "scripts/verify-phase6-3-cache-optimization.mjs",
+      "unchanged": true,
+      "originalSha256": "5fbc388cacfee4eac35ad65757c1e33235d4d31c9e69d6d2df39b5191923cd39",
+      "modifiedSha256": "5fbc388cacfee4eac35ad65757c1e33235d4d31c9e69d6d2df39b5191923cd39"
+    },
+    {
+      "path": "scripts/verify-tripod-timeline-smooth-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "4497e24a12d60330f199b2bddfe53243f202e2e74d1890a973a4539e29cec141",
+      "modifiedSha256": "4497e24a12d60330f199b2bddfe53243f202e2e74d1890a973a4539e29cec141"
+    },
+    {
+      "path": "scripts/verify-phase6-1-los-performance.mjs",
+      "unchanged": true,
+      "originalSha256": "0d7ac89777d3300721d978868e63e652d15c2b6ccd3765003c43ed3b7c2eaf87",
+      "modifiedSha256": "0d7ac89777d3300721d978868e63e652d15c2b6ccd3765003c43ed3b7c2eaf87"
+    },
+    {
+      "path": "scripts/verify-phase5-3-shared-requests.mjs",
+      "unchanged": true,
+      "originalSha256": "64b6a3df3f8f87216e3a95b80c0dfaf869525a25f18efafdec70df7cb74c2d77",
+      "modifiedSha256": "64b6a3df3f8f87216e3a95b80c0dfaf869525a25f18efafdec70df7cb74c2d77"
+    },
+    {
+      "path": "scripts/verify-celestial-bearing-pruning-20260910.mjs",
+      "unchanged": true,
+      "originalSha256": "e35e1d2b4c84fc0440ccb50699f635f3c11ed9e6c56494ded099aeda43ff370b",
+      "modifiedSha256": "e35e1d2b4c84fc0440ccb50699f635f3c11ed9e6c56494ded099aeda43ff370b"
+    },
+    {
+      "path": "scripts/verify-maplibre-2d-migration-20260831.mjs",
+      "unchanged": true,
+      "originalSha256": "0f7d12a8525bcb11c40205bc7e22c815ef5e50e365bf164a230da43ccec09f97",
+      "modifiedSha256": "0f7d12a8525bcb11c40205bc7e22c815ef5e50e365bf164a230da43ccec09f97"
+    },
+    {
+      "path": "scripts/verify-frame-boundaries.mjs",
+      "unchanged": true,
+      "originalSha256": "73bb77a3e9fc935bdfabbfb5ecf82da250664179dcc30e5e12dcae1a555b0e54",
+      "modifiedSha256": "73bb77a3e9fc935bdfabbfb5ecf82da250664179dcc30e5e12dcae1a555b0e54"
+    },
+    {
+      "path": "scripts/verify-tripod-ecef-direction-frame.mjs",
+      "unchanged": true,
+      "originalSha256": "af27bb649a4520bfdea88c0489e902352788aa938754c9b050b22241b1ab0844",
+      "modifiedSha256": "af27bb649a4520bfdea88c0489e902352788aa938754c9b050b22241b1ab0844"
+    },
+    {
+      "path": "scripts/verify-device-dem-tile-cache-20260829.mjs",
+      "unchanged": true,
+      "originalSha256": "bbff3775a1b0a40f00857616eeb1e3605a33a083c494bb308fe20ff134a861df",
+      "modifiedSha256": "bbff3775a1b0a40f00857616eeb1e3605a33a083c494bb308fe20ff134a861df"
+    },
+    {
+      "path": "scripts/verify-coordinate-serialization.mjs",
+      "unchanged": true,
+      "originalSha256": "f6c246e4cab6d945a10e968501d8d92fa3dec4c723d97ef569506361a7afb66b",
+      "modifiedSha256": "f6c246e4cab6d945a10e968501d8d92fa3dec4c723d97ef569506361a7afb66b"
+    },
+    {
+      "path": "scripts/verify-tripod-terrain-cache-failopen-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "0297e7229ebf393b54519b32c3be6cbe2be69515403bb4366f77926f048a0435",
+      "modifiedSha256": "0297e7229ebf393b54519b32c3be6cbe2be69515403bb4366f77926f048a0435"
+    },
+    {
+      "path": "scripts/verify-view-correction.mjs",
+      "unchanged": true,
+      "originalSha256": "0f76192bd72db7b86b5b296b3e6e838bf4bd3274a3123c416fb1e8b0588159cd",
+      "modifiedSha256": "0f76192bd72db7b86b5b296b3e6e838bf4bd3274a3123c416fb1e8b0588159cd"
+    },
+    {
+      "path": "scripts/verify-phase4-6-local-network.mjs",
+      "unchanged": true,
+      "originalSha256": "309cfe9737405aa4e41a1f9b7c8da05a04429077685d8eb5d24a969510dad6d2",
+      "modifiedSha256": "309cfe9737405aa4e41a1f9b7c8da05a04429077685d8eb5d24a969510dad6d2"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-direct-download-20260909.mjs",
+      "unchanged": false,
+      "originalSha256": "ab0e340218212ec33187b88d866c1384fefc6238c024ae18bdb7fb837d9efa37",
+      "modifiedSha256": "790db61479249a2f424935527584d95aa512ef58970bce8066529d1ebc29ff9b"
+    },
+    {
+      "path": "scripts/verify-3d-map-input-20260903.mjs",
+      "unchanged": true,
+      "originalSha256": "d6726986f063d1e470b966c0f39a93dc8757cbd8e223aa95d51d58d2851bc8be",
+      "modifiedSha256": "d6726986f063d1e470b966c0f39a93dc8757cbd8e223aa95d51d58d2851bc8be"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-job-concurrency-20260909.mjs",
+      "unchanged": false,
+      "originalSha256": "30dc6f796b395bc1e36d644cc6396c10bb74b0673501462e7baf6ac87db93468",
+      "modifiedSha256": "eac45b93cf7d795b413964c50f2c35158d8b858ad0d849bba50962eccc4ffb03"
+    },
+    {
+      "path": "scripts/verify-phase4-5-k-factor.mjs",
+      "unchanged": true,
+      "originalSha256": "186d36528b30a4b81a4cf84c202163d2d42c43d91090eef885a1881e85aa858a",
+      "modifiedSha256": "186d36528b30a4b81a4cf84c202163d2d42c43d91090eef885a1881e85aa858a"
+    },
+    {
+      "path": "scripts/verify-tripod-terrain-cache-datum-v3-20260830.mjs",
+      "unchanged": true,
+      "originalSha256": "36da2b0bcf7cf42f127d17352598d22dd96389e2d0544f0a80e52be95aef1bdf",
+      "modifiedSha256": "36da2b0bcf7cf42f127d17352598d22dd96389e2d0544f0a80e52be95aef1bdf"
+    },
+    {
+      "path": "scripts/verify-bearing-profile-dem5a-gating-20260909.mjs",
+      "unchanged": true,
+      "originalSha256": "3b2aacc69a5cb9c3fb6386b692a383fa31ac5486645ed81bced83ef4d53819ec",
+      "modifiedSha256": "3b2aacc69a5cb9c3fb6386b692a383fa31ac5486645ed81bced83ef4d53819ec"
+    },
+    {
+      "path": "scripts/verify-preview-tap-subject-pin-20260831.mjs",
+      "unchanged": true,
+      "originalSha256": "e0475d9561221945e2657a9a782c1f02fc63aa52c1f84ff591fd0aadbb7952f4",
+      "modifiedSha256": "e0475d9561221945e2657a9a782c1f02fc63aa52c1f84ff591fd0aadbb7952f4"
+    },
+    {
+      "path": "scripts/verify-point-geoid-fast-fallback-20260830.mjs",
+      "unchanged": false,
+      "originalSha256": "9119b6003dfb43b2a91427cfd0d334f6a105fc5d3da08cd8ca89faf70e975e93",
+      "modifiedSha256": "efabbe371418912776cf642b27585cf650cae1b135f1d10faa976bf5b1c26d99"
+    },
+    {
+      "path": "scripts/verify-search-engine-exclusion.mjs",
+      "unchanged": true,
+      "originalSha256": "0155f1eb58a118c3cb6785995a130bdf9346d4d04839d30c19357be87583c433",
+      "modifiedSha256": "0155f1eb58a118c3cb6785995a130bdf9346d4d04839d30c19357be87583c433"
+    },
+    {
+      "path": "scripts/verify-historical-weather-refraction.mjs",
+      "unchanged": true,
+      "originalSha256": "886590370cba768126c70924b5682be35dd64dac692cf55990c7345bc1d3ed52",
+      "modifiedSha256": "886590370cba768126c70924b5682be35dd64dac692cf55990c7345bc1d3ed52"
+    },
+    {
+      "path": "scripts/verify-focal-length-input.mjs",
+      "unchanged": true,
+      "originalSha256": "a228947a63598e490380f5dab7a0c0f6f52ef18ff14e958f180cc62c65d7209d",
+      "modifiedSha256": "a228947a63598e490380f5dab7a0c0f6f52ef18ff14e958f180cc62c65d7209d"
+    },
+    {
+      "path": "scripts/verify-downloaded-spot-high-precision-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "90e53a6cbbeaeb4f48213d4e47f4e4ed97ef1e5a4b56dd4d291dd3204ba38917",
+      "modifiedSha256": "90e53a6cbbeaeb4f48213d4e47f4e4ed97ef1e5a4b56dd4d291dd3204ba38917"
+    },
+    {
+      "path": "scripts/verify-phase6-4-search-speed.mjs",
+      "unchanged": true,
+      "originalSha256": "0e8b5d82017a157df570440402f0f327e9856321713516b887aa76acff894d07",
+      "modifiedSha256": "0e8b5d82017a157df570440402f0f327e9856321713516b887aa76acff894d07"
+    },
+    {
+      "path": "scripts/verify-phase5-1-network-audit.mjs",
+      "unchanged": true,
+      "originalSha256": "8172db7f694945635db46cd089513411f2bf222252e198659250bbc396d50502",
+      "modifiedSha256": "8172db7f694945635db46cd089513411f2bf222252e198659250bbc396d50502"
+    },
+    {
+      "path": "scripts/verify-phase5-5-api-reduction.mjs",
+      "unchanged": true,
+      "originalSha256": "9b16b5597accec9f2148e4f7a04764b635eb280f7176b42ef14e412e2b5d49c2",
+      "modifiedSha256": "9b16b5597accec9f2148e4f7a04764b635eb280f7176b42ef14e412e2b5d49c2"
+    },
+    {
+      "path": "scripts/verify-spot-search-surrounding-download-choice-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "3b8b9c0d451e2f32f3b3688d06cdb58a685b946ff5bb434edc123a07638c46c9",
+      "modifiedSha256": "3b8b9c0d451e2f32f3b3688d06cdb58a685b946ff5bb434edc123a07638c46c9"
+    },
+    {
+      "path": "scripts/verify-performance-lifecycle.mjs",
+      "unchanged": true,
+      "originalSha256": "7d8405548a3106710417ef2ccbff5a3bedf1febdc06f67fc99fc43be2c189daf",
+      "modifiedSha256": "7d8405548a3106710417ef2ccbff5a3bedf1febdc06f67fc99fc43be2c189daf"
+    },
+    {
+      "path": "scripts/verify-terrain-persistent-cache-20260824.mjs",
+      "unchanged": true,
+      "originalSha256": "2eb3d6643e23978f04402514e7fe7b7a1b8d3198bd768521d41faa6c7ec565c2",
+      "modifiedSha256": "2eb3d6643e23978f04402514e7fe7b7a1b8d3198bd768521d41faa6c7ec565c2"
+    },
+    {
+      "path": "scripts/verify-tripod-candidate-weather-cell-20260908.mjs",
+      "unchanged": true,
+      "originalSha256": "c95f0fd34f3822b94019d1dc5b9c323ae909b62334101e345059ffc658296ece",
+      "modifiedSha256": "c95f0fd34f3822b94019d1dc5b9c323ae909b62334101e345059ffc658296ece"
+    },
+    {
+      "path": "scripts/verify-direct-download-prefetch-isolation-20260909.mjs",
+      "unchanged": false,
+      "originalSha256": "9b57e495466c8d403cc53b180f28536c86735de5d02e0a7d6e863895eb2868aa",
+      "modifiedSha256": "72b92f5d047a5b4553926e16a7273e3cf73f22897efe16867eb37fec8b4b0253"
+    },
+    {
+      "path": "scripts/verify-platform-compatibility.mjs",
+      "unchanged": true,
+      "originalSha256": "e062cca5b2f1987693b409c29cbddbb162dd1e1143dc4c9cf4710fb5aca64c8e",
+      "modifiedSha256": "e062cca5b2f1987693b409c29cbddbb162dd1e1143dc4c9cf4710fb5aca64c8e"
+    },
+    {
+      "path": "scripts/verify-tripod-adaptive-synthetic.mjs",
+      "unchanged": true,
+      "originalSha256": "d330984fb2afac4c03865e9a943de09ebd65159bf0ea4f66a5cd00b4036e3990",
+      "modifiedSha256": "d330984fb2afac4c03865e9a943de09ebd65159bf0ea4f66a5cd00b4036e3990"
+    },
+    {
+      "path": "scripts/verify-phase4-1-precision-mode.mjs",
+      "unchanged": true,
+      "originalSha256": "c4c68762d8b9ade660447e3c9f89dcb79ffa15d658eef538e1e46ef3d5cb8ba3",
+      "modifiedSha256": "c4c68762d8b9ade660447e3c9f89dcb79ffa15d658eef538e1e46ef3d5cb8ba3"
+    },
+    {
+      "path": "scripts/verify-static-landmark-search-20260831.mjs",
+      "unchanged": true,
+      "originalSha256": "de38275cc96c17fe04182ed35d9fd8fc2009149900801633992b74cd0b982183",
+      "modifiedSha256": "de38275cc96c17fe04182ed35d9fd8fc2009149900801633992b74cd0b982183"
+    },
+    {
+      "path": "scripts/verify-cloudflare-migration.mjs",
+      "unchanged": true,
+      "originalSha256": "2368b45de26b5cf8c06a7ec9950a785a45529814dba02216fb35ea54e47891a8",
+      "modifiedSha256": "2368b45de26b5cf8c06a7ec9950a785a45529814dba02216fb35ea54e47891a8"
+    },
+    {
+      "path": "scripts/verify-workers-kv-writes.mjs",
+      "unchanged": true,
+      "originalSha256": "a5f52c5fae56538b4a02513697b9f6539fe0013e606948acc8137a0d8b052719",
+      "modifiedSha256": "a5f52c5fae56538b4a02513697b9f6539fe0013e606948acc8137a0d8b052719"
+    },
+    {
+      "path": "scripts/verify-gsi-large-batch-safe-20260829.mjs",
+      "unchanged": true,
+      "originalSha256": "2d6751e02f0509b90ece08cf4895318a4a5fa3d78b08d8b9b03c392dc7e2c53e",
+      "modifiedSha256": "2d6751e02f0509b90ece08cf4895318a4a5fa3d78b08d8b9b03c392dc7e2c53e"
+    },
+    {
+      "path": "scripts/verify-geodesic-comparison.mjs",
+      "unchanged": true,
+      "originalSha256": "0e95199b2cec991c12f18913c806c2c1555c72c8b0605f03adf4369272a4f77f",
+      "modifiedSha256": "0e95199b2cec991c12f18913c806c2c1555c72c8b0605f03adf4369272a4f77f"
+    },
+    {
+      "path": "scripts/verify-phase7-2-search.mjs",
+      "unchanged": true,
+      "originalSha256": "817797a5cbdb9c7c066f2be0cd2154af198e8e043cb2b63ad85bd02dd12af676",
+      "modifiedSha256": "817797a5cbdb9c7c066f2be0cd2154af198e8e043cb2b63ad85bd02dd12af676"
+    },
+    {
+      "path": "scripts/verify-geodesic-direct.mjs",
+      "unchanged": true,
+      "originalSha256": "fb84641f24d00bee1d95848287a41f51b460435f5a10183000aeefc0fc6112d2",
+      "modifiedSha256": "fb84641f24d00bee1d95848287a41f51b460435f5a10183000aeefc0fc6112d2"
+    },
+    {
+      "path": "scripts/verify-karney-postconditions.mjs",
+      "unchanged": true,
+      "originalSha256": "43e7a165c9a02fb720baba3e3475b7b1a860f7cec4e609faf8985ea2209d3698",
+      "modifiedSha256": "43e7a165c9a02fb720baba3e3475b7b1a860f7cec4e609faf8985ea2209d3698"
+    },
+    {
+      "path": "package-lock.json",
+      "unchanged": false,
+      "originalSha256": "9a9f1faf1fbb49c07492530090836edaa2ff210e65925248ee5a03721d92e85a",
+      "modifiedSha256": "1ae6f703dea435653cf49c14ad8785821d75128e84504802227608e83c41e068"
+    },
+    {
+      "path": "tests/regression/gsi-elevation-cache-path.test.mjs",
+      "unchanged": true,
+      "originalSha256": "e804fc15d387b2df27229a7e71242f6fa757b391ebd745ab1715f506a02b71ce",
+      "modifiedSha256": "e804fc15d387b2df27229a7e71242f6fa757b391ebd745ab1715f506a02b71ce"
+    },
+    {
+      "path": "tests/regression/surface-obstruction-line-of-sight.test.mjs",
+      "unchanged": true,
+      "originalSha256": "69c74ce8d451c38e57bbac4e47154eb29a6929dd4a9e7bbb6ef266f1497b61fb",
+      "modifiedSha256": "69c74ce8d451c38e57bbac4e47154eb29a6929dd4a9e7bbb6ef266f1497b61fb"
+    },
+    {
+      "path": "tests/regression/gsi-elevation-client.test.mjs",
+      "unchanged": true,
+      "originalSha256": "38f0d858ad227bf6a4d0ddd04d439967e120a555de7febc38b0b8d611f977abc",
+      "modifiedSha256": "38f0d858ad227bf6a4d0ddd04d439967e120a555de7febc38b0b8d611f977abc"
+    },
+    {
+      "path": "tests/regression/constrained-bicubic-interpolation.test.mjs",
+      "unchanged": true,
+      "originalSha256": "9dbef0bd991b3ebe415693fcb792eddd315f28f515a9127294419b22b7526719",
+      "modifiedSha256": "9dbef0bd991b3ebe415693fcb792eddd315f28f515a9127294419b22b7526719"
+    },
+    {
+      "path": "tests/regression/gsi-elevation-neighborhood.test.mjs",
+      "unchanged": true,
+      "originalSha256": "a3446a0477233b67a6cfcadcd59a4acb5c082942e2284859bcfcb3553cd2f8c9",
+      "modifiedSha256": "a3446a0477233b67a6cfcadcd59a4acb5c082942e2284859bcfcb3553cd2f8c9"
+    },
+    {
+      "path": "tests/regression/cloudflare-functions.test.mjs",
+      "unchanged": true,
+      "originalSha256": "645d6296e3ecd33cd40b18796c65bea9c5a4c52cecf239b27a858cb7f5c8242a",
+      "modifiedSha256": "645d6296e3ecd33cd40b18796c65bea9c5a4c52cecf239b27a858cb7f5c8242a"
+    },
+    {
+      "path": "tests/regression/core-calculations.test.mjs",
+      "unchanged": true,
+      "originalSha256": "606f602ac578d9c06e7981e0968e9deab75caf5eb1f502b29d6606195c842776",
+      "modifiedSha256": "606f602ac578d9c06e7981e0968e9deab75caf5eb1f502b29d6606195c842776"
+    },
+    {
+      "path": "tests/regression/tripod-candidate-round-trip.test.mjs",
+      "unchanged": false,
+      "originalSha256": "919a6ea48301d7d0b2e494818d033d8ccb199a682e200773b0fa4088e7dd9c74",
+      "modifiedSha256": "8933d55814f89100f42f2c1a35f2d841653425a393853c85aceda9b9def28b23"
+    },
+    {
+      "path": "package.json",
+      "unchanged": false,
+      "originalSha256": "697ed55db6b76d9cc345d37d197babbb7f1cb10e12713a2f77f26f1532d5810e",
+      "modifiedSha256": "ad92a37b0ecdc5861c0b7c1e136289558a877a6b9e0432f5b38fcd5840b27ba9"
+    },
+    {
+      "path": "workers/spot-search-consumer.ts",
+      "unchanged": true,
+      "originalSha256": "54dbe4fec75440db35b334d7d5fe9b922467208fc201e7ac6ddf2236f9c83737",
+      "modifiedSha256": "54dbe4fec75440db35b334d7d5fe9b922467208fc201e7ac6ddf2236f9c83737"
+    },
+    {
+      "path": "workers/prewarm-landmark-cron.ts",
+      "unchanged": true,
+      "originalSha256": "55ce47dd072d7ec04516b92b87f1140e4e5ec7eb33be3499874645ed570b2b73",
+      "modifiedSha256": "55ce47dd072d7ec04516b92b87f1140e4e5ec7eb33be3499874645ed570b2b73"
+    },
+    {
+      "path": "workers/bearing-profile-download-consumer.ts",
+      "unchanged": true,
+      "originalSha256": "8e4da99df3d8ababb95b438d740221a6ee60f0bb0f03afc4ba2ad86d7b056f0f",
+      "modifiedSha256": "8e4da99df3d8ababb95b438d740221a6ee60f0bb0f03afc4ba2ad86d7b056f0f"
+    },
+    {
+      "path": "functions/api/osm-site-context.ts",
+      "unchanged": true,
+      "originalSha256": "42be7022503148142e40ae9ac8f379079e01ceb83937e3e595cac9d73e03ce54",
+      "modifiedSha256": "42be7022503148142e40ae9ac8f379079e01ceb83937e3e595cac9d73e03ce54"
+    },
+    {
+      "path": "functions/api/spot-search-status.ts",
+      "unchanged": true,
+      "originalSha256": "fb7f759f1391cb01c48233786c9359fd122922b80f42c923246b8a9cbf058ca3",
+      "modifiedSha256": "fb7f759f1391cb01c48233786c9359fd122922b80f42c923246b8a9cbf058ca3"
+    },
+    {
+      "path": "functions/api/bearing-profile-download-status.ts",
+      "unchanged": true,
+      "originalSha256": "43418324106134400b2cf73eede40c4ffe849801b0c6d09226eb0fa812eadfec",
+      "modifiedSha256": "43418324106134400b2cf73eede40c4ffe849801b0c6d09226eb0fa812eadfec"
+    },
+    {
+      "path": "functions/api/bearing-profile-download-start.ts",
+      "unchanged": true,
+      "originalSha256": "cf9a488c274b6cec752568c7da55d957e9d8145e32a70afa64d6d09f522aba55",
+      "modifiedSha256": "cf9a488c274b6cec752568c7da55d957e9d8145e32a70afa64d6d09f522aba55"
+    },
+    {
+      "path": "functions/api/timezone.ts",
+      "unchanged": true,
+      "originalSha256": "7a6e96a1c9208134f19857779fcdf2fb3fa09cf68af9747f4fa87c2d1c0a5ea9",
+      "modifiedSha256": "7a6e96a1c9208134f19857779fcdf2fb3fa09cf68af9747f4fa87c2d1c0a5ea9"
+    },
+    {
+      "path": "functions/api/resolve-google-maps.ts",
+      "unchanged": true,
+      "originalSha256": "8db04fdc9edd9fea083d6fb8f6edad594c7b2b6fd1eddea7d463d0f7a117707d",
+      "modifiedSha256": "8db04fdc9edd9fea083d6fb8f6edad594c7b2b6fd1eddea7d463d0f7a117707d"
+    },
+    {
+      "path": "functions/api/cesium-oauth-callback.ts",
+      "unchanged": true,
+      "originalSha256": "ca191ac8a0f8321c5c68fce1bcf265d83290f57b0ef73d6ab971899d878f95a3",
+      "modifiedSha256": "ca191ac8a0f8321c5c68fce1bcf265d83290f57b0ef73d6ab971899d878f95a3"
+    },
+    {
+      "path": "functions/api/spot-search-start.ts",
+      "unchanged": true,
+      "originalSha256": "d4b704bfac61d84ba97fb6bab8e7d9f819e665cfa65316cd558991be052bcce0",
+      "modifiedSha256": "d4b704bfac61d84ba97fb6bab8e7d9f819e665cfa65316cd558991be052bcce0"
+    },
+    {
+      "path": "functions/api/geocode.ts",
+      "unchanged": true,
+      "originalSha256": "0b14f702bdfeb20c261e5a06f67966a2b07773a01dc6d343de5578879cb07a8b",
+      "modifiedSha256": "0b14f702bdfeb20c261e5a06f67966a2b07773a01dc6d343de5578879cb07a8b"
+    },
+    {
+      "path": "functions/api/spot-search-finalize.ts",
+      "unchanged": true,
+      "originalSha256": "6ba0d81c91dc92d9e7e964316619101c1ce1e8ec00a9c0391a2120c1be16ca01",
+      "modifiedSha256": "6ba0d81c91dc92d9e7e964316619101c1ce1e8ec00a9c0391a2120c1be16ca01"
+    },
+    {
+      "path": "functions/api/gsi-geoid.ts",
+      "unchanged": true,
+      "originalSha256": "28cc90ede7479b8105159f1d3610b44f94129507bbdb73b1d4b0c87c67dc4aa7",
+      "modifiedSha256": "28cc90ede7479b8105159f1d3610b44f94129507bbdb73b1d4b0c87c67dc4aa7"
+    },
+    {
+      "path": "functions/api/gsi-dem-tile.ts",
+      "unchanged": true,
+      "originalSha256": "a994e7b15d13d54041530710549242901df67dfba44f477aaa4ac425247c3de3",
+      "modifiedSha256": "a994e7b15d13d54041530710549242901df67dfba44f477aaa4ac425247c3de3"
+    },
+    {
+      "path": "functions/api/gsi-elevation.ts",
+      "unchanged": true,
+      "originalSha256": "81934b15e61703536238ac2e4c82a54c73e08ecb58c9ecbd8492eadeb0024f5f",
+      "modifiedSha256": "81934b15e61703536238ac2e4c82a54c73e08ecb58c9ecbd8492eadeb0024f5f"
+    },
+    {
+      "path": "functions/api/prewarm-landmarks.ts",
+      "unchanged": true,
+      "originalSha256": "e60e389e6a53f2c1f3a6dd8e5b2468754d4f975e4427e8fb43569f2989f78ea6",
+      "modifiedSha256": "e60e389e6a53f2c1f3a6dd8e5b2468754d4f975e4427e8fb43569f2989f78ea6"
+    },
+    {
+      "path": "functions/_shared/http.ts",
+      "unchanged": true,
+      "originalSha256": "59488ba016860a8aaf6e04a14bced2bf158d1acbcd49c0f9d51f19050ca4da5c",
+      "modifiedSha256": "59488ba016860a8aaf6e04a14bced2bf158d1acbcd49c0f9d51f19050ca4da5c"
+    },
+    {
+      "path": "functions/_shared/env.ts",
+      "unchanged": true,
+      "originalSha256": "9bb8b84038927e2b83743c758476019b65c0440fd24f4af6880956a69fae3a24",
+      "modifiedSha256": "9bb8b84038927e2b83743c758476019b65c0440fd24f4af6880956a69fae3a24"
+    },
+    {
+      "path": "functions/_shared/r2Cache.ts",
+      "unchanged": true,
+      "originalSha256": "9b0fe9a34ad07ef607bc8a6977c37ecbfeb969d75575585bad67de33e90cee67",
+      "modifiedSha256": "9b0fe9a34ad07ef607bc8a6977c37ecbfeb969d75575585bad67de33e90cee67"
+    }
+  ],
+  "limitations": [
+    "Cloudflare production deployment not tested",
+    "Live full-bearing download not tested",
+    "Android APK build and physical device not tested",
+    "Existing lint and large-chunk warnings remain"
+  ]
+}

@@ -172,7 +172,8 @@ export async function getDeviceCache<T>(
  */
 export async function getDeviceCacheMany<T>(
   policy: DeviceCachePolicy,
-  keys: readonly string[]
+  keys: readonly string[],
+  persistentOnly = false
 ): Promise<Array<T | null>> {
   if (keys.length === 0) return [];
   const now = Date.now();
@@ -181,7 +182,7 @@ export async function getDeviceCacheMany<T>(
 
   keys.forEach((key, index) => {
     const id = compoundKey(policy.namespace, key);
-    const cached = memory.get(id) as CacheRecord<T> | undefined;
+    const cached = persistentOnly ? undefined : memory.get(id) as CacheRecord<T> | undefined;
     if (!cached) {
       missing.push({ index, id });
       return;

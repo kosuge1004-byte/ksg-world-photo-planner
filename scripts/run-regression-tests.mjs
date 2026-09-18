@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "download source preservation, geoid queue, cancellation and full bearing runtime",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/download-runtime.test.mjs"] },
+  { name: "persistent site-context connection recovery and network fallback",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/site-context-connection-recovery.test.mjs"] },
   { name: "downloaded data audit fixes", arguments: ["./scripts/verify-downloaded-data-audit-fixes-20260908.mjs"] },
   { name: "river point geoid final", arguments: ["./scripts/verify-river-point-geoid-final-20260908.mjs"] },
   { name: "bearing profile download stall guard", arguments: ["./scripts/verify-bearing-profile-download-stall-fix-20260908.mjs"] },
@@ -240,7 +244,13 @@ for (const testCase of cases) {
     throw new Error(`${normalized.name}: regression test has no executable arguments`);
   }
   console.log(`\n[regression] ${normalized.name}`);
-  const result = spawnSync(normalized.command, normalized.arguments, {
+  // Use the same production-source loader for every Node case, including the
+  // older strip-types scripts whose transitive imports are extensionless.
+  const argumentsWithLoader = normalized.command === process.execPath &&
+    !normalized.arguments.includes("./scripts/register-typescript-source-loader.mjs")
+    ? ["--import", "./scripts/register-typescript-source-loader.mjs", ...normalized.arguments]
+    : normalized.arguments;
+  const result = spawnSync(normalized.command, argumentsWithLoader, {
     cwd: process.cwd(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

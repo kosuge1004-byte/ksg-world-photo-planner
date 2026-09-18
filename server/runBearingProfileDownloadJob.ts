@@ -129,9 +129,11 @@ export async function runBearingProfileDownloadJob(
   let failureCount = 0;
   let completedCount = 0;
   let nextIndex = 0;
+  const FAILURE_ABORT_THRESHOLD = 8;
+  let abortReason: string | null = null;
 
   async function worker(): Promise<void> {
-    while (true) {
+    while (!abortReason) {
       const index = nextIndex;
       if (index >= pendingBearings.length) return;
       nextIndex += 1;
@@ -151,6 +153,9 @@ export async function runBearingProfileDownloadJob(
       } catch (error) {
         // 孤立した失敗では全体を止めない。端末版のconsole.warnと同じ位置づけ。
         failureCount += 1;
+        if (successCount === 0 && failureCount >= FAILURE_ABORT_THRESHOLD) {
+          abortReason = "詳細地形の取得が連続して失敗したため中止しました";
+        }
         console.warn(`[bearing-profile-download-job] 方位${bearing}°の地形取得に失敗しました`, error);
       }
       completedCount += 1;
@@ -164,6 +169,11 @@ export async function runBearingProfileDownloadJob(
   await Promise.all(
     Array.from({ length: Math.min(BEARING_CONCURRENCY, pendingBearings.length) }, () => worker())
   );
+
+  if (abortReason) {
+    await updateJob({ status: "failed", progress: abortReason, error: abortReason });
+    return;
+  }
 
   await updateJob({ progress: "水面・河川情報を確認しています", progressPercent: 75 });
   let waterSiteContexts: SiteContext[] = [];
@@ -209,6 +219,11 @@ export async function runBearingProfileDownloadJob(
     return;
   }
 
+  if (failureCount > 0) {
+    await updateJob({ status: "failed", progress: "一部の地形データを取得できませんでした",
+      error: `${failureCount}方位の取得に失敗しました`, profiles });
+    return;
+  }
   await updateJob({
     status: "complete",
     progress: "完了しました",

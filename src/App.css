@@ -2097,6 +2097,8 @@ button { cursor: pointer; }
   font-size: 8px;
   line-height: 1.45;
 }
+.freeze-diagnostics-section summary { cursor: pointer; font-size: 11px; font-weight: 700; }
+.freeze-diagnostics-section:not([open]) { display: block; }
 .freeze-diagnostics-section button,
 .offline-tile-cache button {
   /* 2026-09-05再修正: 前回の指定漏れ。.calculation-mode-menu buttonが

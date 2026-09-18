@@ -1,4 +1,5 @@
 import type { GsiElevationApiSample } from "../types/geospatial";
+import { withAbortableTimeout } from "../utils/abortableSemaphore";
 import type { GsiElevationClientPoint } from "./gsiElevationClient";
 
 /**
@@ -107,6 +108,7 @@ type IdbRequest<T> = {
   onsuccess: (() => void) | null;
   onerror: (() => void) | null;
   onupgradeneeded?: (() => void) | null;
+  onblocked?: (() => void) | null;
 };
 
 type IdbStore = {
@@ -149,10 +151,18 @@ function getIndexedDbFactory(): IdbFactory | null {
   return runtimeGlobal.indexedDB ?? null;
 }
 
+function boundedTileOperation<T>(operation: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), 1_500);
+    void operation.then((value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(fallback); });
+  });
+}
+
 function openDatabase(): Promise<IdbDatabase | null> {
   const indexedDb = getIndexedDbFactory();
   if (!indexedDb) return Promise.resolve(null);
-  databasePromise ??= new Promise((resolve) => {
+  databasePromise ??= boundedTileOperation(new Promise<IdbDatabase | null>((resolve) => {
     const request = indexedDb.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -175,6 +185,10 @@ function openDatabase(): Promise<IdbDatabase | null> {
       databasePromise = null;
       resolve(null);
     };
+    request.onblocked = () => resolve(null);
+  }), null).then((database) => {
+    if (!database) databasePromise = null;
+    return database;
   });
   return databasePromise;
 }
@@ -187,13 +201,15 @@ type SpotTileReferenceRecord = {
   updatedAt: number;
 };
 
-type ActiveSpotTileCapture = { keys: Set<string>; writeFailureStart: number };
+type ActiveSpotTileCapture = { keys: Set<string>; writeFailureStart: number; downloadFailureStart: number };
 const activeSpotTileCaptures = new Map<string, ActiveSpotTileCapture>();
 let persistentTileWriteFailures = 0;
+let tileDownloadFailures = 0;
 
 /** Begin collecting DEM tile keys requested while one downloaded spot is being prepared. */
 export function beginGsiDeviceTileCapture(subjectId: string): void {
-  activeSpotTileCaptures.set(subjectId, { keys: new Set<string>(), writeFailureStart: persistentTileWriteFailures });
+  activeSpotTileCaptures.set(subjectId, { keys: new Set<string>(), writeFailureStart: persistentTileWriteFailures,
+    downloadFailureStart: tileDownloadFailures });
 }
 
 export function recordGsiDeviceTileReferencesForPoints(
@@ -216,14 +232,21 @@ export function recordGsiDeviceTileReferencesForPoints(
 
 async function writeSpotTileReferences(subjectId: string, tileKeys: string[]): Promise<void> {
   const database = await openDatabase();
-  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return;
-  await new Promise<void>((resolve) => {
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) {
+    persistentTileWriteFailures += 1;
+    return;
+  }
+  const written = await boundedTileOperation(new Promise<boolean>((resolve) => {
     const transaction = database.transaction(SPOT_REF_STORE_NAME, "readwrite");
     const store = transaction.objectStore(SPOT_REF_STORE_NAME);
     const getRequest = store.get(subjectId);
     getRequest.onsuccess = () => {
       const previous = getRequest.result as SpotTileReferenceRecord | undefined;
       const merged = new Set(previous?.tileKeys ?? []);
+      const persistedKeys = new Set(tileKeys);
+      // Old captures listed every possible DEM source, including tiles that were
+      // never requested. Missing theoretical references are not expired data.
+      merged.forEach((key) => { if (!persistedKeys.has(key)) merged.delete(key); });
       tileKeys.forEach((key) => merged.add(key));
       store.put({ subjectId, tileKeys: [...merged], updatedAt: Date.now() } satisfies SpotTileReferenceRecord);
     };
@@ -231,35 +254,59 @@ async function writeSpotTileReferences(subjectId: string, tileKeys: string[]): P
       // Do not replace a possibly-existing reference set when it cannot be read safely.
       transaction.abort();
     };
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
-  });
+    transaction.oncomplete = () => resolve(true);
+    transaction.onerror = () => resolve(false);
+    transaction.onabort = () => resolve(false);
+  }), false);
+  if (!written) persistentTileWriteFailures += 1;
 }
 
 async function readAllSpotTileReferences(): Promise<SpotTileReferenceRecord[]> {
   const database = await openDatabase();
   if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return [];
-  return await new Promise<SpotTileReferenceRecord[]>((resolve) => {
+  return await boundedTileOperation(new Promise<SpotTileReferenceRecord[]>((resolve) => {
     const transaction = database.transaction(SPOT_REF_STORE_NAME, "readonly");
     const request = transaction.objectStore(SPOT_REF_STORE_NAME).getAll();
     request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result as SpotTileReferenceRecord[] : []);
     request.onerror = () => resolve([]);
-  });
+  }), []);
 }
 
-export async function finishGsiDeviceTileCapture(subjectId: string): Promise<{ tileCount: number; bytes: number; writeFailures: number }> {
+// A missing record and a failed read must remain distinguishable: a failed read
+// must never allow a refresh to prune previously saved references.
+async function readSpotTileReference(subjectId: string): Promise<SpotTileReferenceRecord | undefined | null> {
+  const database = await openDatabase();
+  if (!database || !database.objectStoreNames.contains(SPOT_REF_STORE_NAME)) return null;
+  return await boundedTileOperation(new Promise<SpotTileReferenceRecord | undefined | null>((resolve) => {
+    const transaction = database.transaction(SPOT_REF_STORE_NAME, "readonly");
+    const request = transaction.objectStore(SPOT_REF_STORE_NAME).get(subjectId);
+    request.onsuccess = () => resolve(request.result as SpotTileReferenceRecord | undefined);
+    request.onerror = () => resolve(null);
+    transaction.onabort = () => resolve(null);
+    transaction.onerror = () => resolve(null);
+  }), null);
+}
+
+export async function finishGsiDeviceTileCapture(subjectId: string): Promise<{ tileCount: number; bytes: number; writeFailures: number; downloadFailures: number }> {
   const capture = activeSpotTileCaptures.get(subjectId);
-  const keys = [...(capture?.keys ?? new Set<string>())];
-  const writeFailures = Math.max(0, persistentTileWriteFailures - (capture?.writeFailureStart ?? persistentTileWriteFailures));
+  const previous = await readSpotTileReference(subjectId);
+  const keys = [...new Set([...(previous?.tileKeys ?? []), ...(capture?.keys ?? new Set<string>())])];
   activeSpotTileCaptures.delete(subjectId);
   const waits = keys.map((key) => inFlightPrefetch.get(key)).filter((value): value is Promise<void> => Boolean(value));
   if (waits.length > 0) await Promise.allSettled(waits);
-  await writeSpotTileReferences(subjectId, keys);
   const database = await openDatabase();
-  if (!database || keys.length === 0) return { tileCount: keys.length, bytes: 0, writeFailures };
+  const failures = () => Math.max(0, persistentTileWriteFailures - (capture?.writeFailureStart ?? persistentTileWriteFailures));
+  const downloadFailures = Math.max(0, tileDownloadFailures - (capture?.downloadFailureStart ?? tileDownloadFailures));
+  if (!database || previous === null) {
+    persistentTileWriteFailures += 1;
+    return { tileCount: 0, bytes: 0, writeFailures: failures(), downloadFailures };
+  }
+  if (keys.length === 0) return { tileCount: 0, bytes: 0, writeFailures: failures(), downloadFailures };
   let bytes = 0;
-  await new Promise<void>((resolve) => {
+  let tileCount = 0;
+  const storedKeys: string[] = [];
+  let readError = false;
+  const readSucceeded = await boundedTileOperation(new Promise<boolean>((resolve) => {
     const transaction = database.transaction(STORE_NAME, "readonly");
     const store = transaction.objectStore(STORE_NAME);
     let remaining = keys.length;
@@ -267,14 +314,16 @@ export async function finishGsiDeviceTileCapture(subjectId: string): Promise<{ t
       const request = store.get(key);
       request.onsuccess = () => {
         const record = request.result as StoredTile | undefined;
-        if (record) bytes += record.heightsBuffer?.byteLength ?? 0;
+        if (record) { storedKeys.push(key); bytes += record.heightsBuffer?.byteLength ?? 0; tileCount += 1; }
         remaining -= 1;
-        if (remaining === 0) resolve();
+        if (remaining === 0) resolve(!readError);
       };
-      request.onerror = () => { remaining -= 1; if (remaining === 0) resolve(); };
+      request.onerror = () => { readError = true; remaining -= 1; if (remaining === 0) resolve(false); };
     }
-  });
-  return { tileCount: keys.length, bytes, writeFailures };
+  }), false);
+  if (readSucceeded) await writeSpotTileReferences(subjectId, storedKeys);
+  else persistentTileWriteFailures += 1;
+  return { tileCount, bytes, writeFailures: failures(), downloadFailures };
 }
 
 
@@ -287,7 +336,7 @@ export async function getGsiDeviceTileStorageStatsForDownloadedSpot(subjectId: s
   if (keys.length === 0) return { referencedTiles: 0, liveTiles: 0, bytes: 0, expiredTiles: 0 };
   const now = Date.now();
   let liveTiles = 0; let expiredTiles = 0; let bytes = 0;
-  await new Promise<void>((resolve) => {
+  const readSucceeded = await boundedTileOperation(new Promise<boolean>((resolve) => {
     const transaction = database.transaction(STORE_NAME, "readonly");
     const store = transaction.objectStore(STORE_NAME);
     let remaining = keys.length;
@@ -297,11 +346,14 @@ export async function getGsiDeviceTileStorageStatsForDownloadedSpot(subjectId: s
         const record = request.result as StoredTile | undefined;
         if (!record || now - record.updatedAt > MAX_AGE_MS) expiredTiles += 1;
         else { liveTiles += 1; bytes += record.heightsBuffer?.byteLength ?? 0; }
-        remaining -= 1; if (remaining === 0) resolve();
+        remaining -= 1; if (remaining === 0) resolve(true);
       };
-      request.onerror = () => { expiredTiles += 1; remaining -= 1; if (remaining === 0) resolve(); };
+      request.onerror = () => { expiredTiles += 1; remaining -= 1; if (remaining === 0) resolve(true); };
     }
-  });
+    transaction.onabort = () => resolve(false);
+    transaction.onerror = () => resolve(false);
+  }), false);
+  if (!readSucceeded) expiredTiles = keys.length - liveTiles;
   return { referencedTiles: keys.length, liveTiles, bytes, expiredTiles };
 }
 
@@ -312,7 +364,7 @@ export async function getGsiDownloadedSpotsTotalStorageStats(): Promise<{ unique
   const keys = [...new Set(references.flatMap((record) => record.tileKeys))];
   if (keys.length === 0) return { uniqueLiveTiles: 0, bytes: 0 };
   const now = Date.now(); let uniqueLiveTiles = 0; let bytes = 0;
-  await new Promise<void>((resolve) => {
+  await boundedTileOperation(new Promise<void>((resolve) => {
     const transaction = database.transaction(STORE_NAME, "readonly");
     const store = transaction.objectStore(STORE_NAME);
     let remaining = keys.length;
@@ -325,7 +377,9 @@ export async function getGsiDownloadedSpotsTotalStorageStats(): Promise<{ unique
       };
       request.onerror = () => { remaining -= 1; if (remaining === 0) resolve(); };
     }
-  });
+    transaction.onabort = () => resolve();
+    transaction.onerror = () => resolve();
+  }), undefined);
   return { uniqueLiveTiles, bytes };
 }
 
@@ -422,7 +476,7 @@ async function readTile(source: SourceDefinition, x: number, y: number): Promise
   const requestPromise = (async (): Promise<TileLookup | null> => {
     const database = await openDatabase();
     if (!database) return null;
-    return await new Promise<TileLookup | null>((resolve) => {
+    return await boundedTileOperation(new Promise<TileLookup | null>((resolve) => {
       const transaction = database.transaction(STORE_NAME, "readonly");
       const request = transaction.objectStore(STORE_NAME).get(key);
       request.onsuccess = () => {
@@ -436,7 +490,7 @@ async function readTile(source: SourceDefinition, x: number, y: number): Promise
         resolve(lookup);
       };
       request.onerror = () => resolve(null);
-    });
+    }), null);
   })().finally(() => {
     if (inFlightReads.get(key) === requestPromise) inFlightReads.delete(key);
   });
@@ -515,7 +569,7 @@ async function readTilesBatch(
     })));
   })();
 
-  await Promise.all([inFlightTask, missingTask]);
+  await boundedTileOperation(Promise.all([inFlightTask, missingTask]).then(() => undefined), undefined);
   return results;
 }
 
@@ -568,7 +622,7 @@ async function writeTile(
   const key = tileKey(source, x, y);
   writeMemory(key, lookup);
   const database = await openDatabase();
-  if (!database) return;
+  if (!database) { memoryCache.delete(key); persistentTileWriteFailures += 1; return; }
   const now = Date.now();
   const record: StoredTile = lookup.kind === "empty"
     ? { key, width: 0, height: 0, empty: true, heightsBuffer: null, updatedAt: now, accessedAt: now }
@@ -581,14 +635,15 @@ async function writeTile(
         updatedAt: now,
         accessedAt: now,
       };
-  const persisted = await new Promise<boolean>((resolve) => {
+  const persisted = await boundedTileOperation(new Promise<boolean>((resolve) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(record);
     transaction.oncomplete = () => resolve(true);
     transaction.onerror = () => resolve(false);
     transaction.onabort = () => resolve(false);
-  });
+  }), false);
   if (!persisted) {
+    memoryCache.delete(key);
     persistentTileWriteFailures += 1;
     return;
   }
@@ -951,10 +1006,21 @@ export function resumeGsiDeviceTilePrefetch(): void {
 /** Wait until every currently queued/in-flight low-priority tile persistence task
  * has settled. This is used only at the finalization boundary of an explicit
  * downloaded-spot operation, never in the foreground terrain solver. */
-export async function flushGsiDeviceTilePrefetchQueue(): Promise<void> {
+export async function flushGsiDeviceTilePrefetchQueue(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw signal.reason;
   pumpPrefetchQueue();
   if (queuedPrefetch.size === 0 && activePrefetchWorkers === 0 && inFlightPrefetch.size === 0) return;
-  await new Promise<void>((resolve) => prefetchDrainWaiters.push(resolve));
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener("abort", onAbort); resolve(); };
+    const onAbort = () => {
+      const index = prefetchDrainWaiters.indexOf(finish);
+      if (index >= 0) prefetchDrainWaiters.splice(index, 1);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason);
+    };
+    prefetchDrainWaiters.push(finish);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number): Promise<void> {
@@ -964,14 +1030,16 @@ async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number)
   if (existing) return existing;
   const promise = (async () => {
     const params = new URLSearchParams({ source: source.label, x: String(x), y: String(y) });
+    await withAbortableTimeout(async (signal) => {
     const response = await fetch(`/api/gsi-dem-tile?${params.toString()}`, {
       headers: { Accept: "application/octet-stream" },
+      signal,
     });
     if (response.status === 404) {
       await writeTile(source, x, y, { kind: "empty" });
       return;
     }
-    if (!response.ok) return;
+    if (!response.ok) throw new Error(`DEMタイル取得エラー ${response.status}`);
     const width = Number(response.headers.get("x-astrosight-dem-width"));
     const height = Number(response.headers.get("x-astrosight-dem-height"));
     const bytes = await response.arrayBuffer();
@@ -979,7 +1047,7 @@ async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number)
       !Number.isInteger(width) || !Number.isInteger(height) ||
       width <= 0 || height <= 0 || width * height > 1_048_576 ||
       bytes.byteLength !== width * height * Int32Array.BYTES_PER_ELEMENT
-    ) return;
+    ) throw new Error("DEMタイル応答の寸法またはデータ長が不正です");
     // Endpoint writes little-endian int32. Rebuild explicitly; do not assume host endian.
     const view = new DataView(bytes);
     const heights = new Int32Array(width * height);
@@ -987,7 +1055,9 @@ async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number)
       heights[index] = view.getInt32(index * 4, true);
     }
     await writeTile(source, x, y, { kind: "data", tile: { width, height, heightsCentimeters: heights } });
+    }, 20_000, "DEMタイル保存用の取得がタイムアウトしました");
   })().catch(() => {
+    tileDownloadFailures += 1;
     // Best-effort warm-up only. Never alter current search result on failure.
   }).finally(() => {
     inFlightPrefetch.delete(key);
@@ -1009,7 +1079,9 @@ export function prefetchGsiDeviceTilesForSamples(
       requests.set(tileKey(request.source, request.x, request.y), request);
     }
   });
-  const queue = [...requests.values()].slice(0, PREFETCH_MAX_TILES_PER_CALL);
+  // Explicit downloads must retain every requested tile. The best-effort cap is
+  // appropriate only for ordinary map/search warm-up.
+  const queue = [...requests.values()].slice(0, activeSpotTileCaptures.size > 0 ? undefined : PREFETCH_MAX_TILES_PER_CALL);
   if (queue.length === 0) return;
   for (const request of queue) {
     const key = tileKey(request.source, request.x, request.y);

@@ -1,11 +1,10 @@
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const required = [
-  "PHASE6_1_LOS_PERFORMANCE.md",
-  "PHASE6_2_MEMORY_REDUCTION.md",
-  "PHASE6_3_CACHE_OPTIMIZATION.md",
-  "PHASE6_4_SEARCH_SPEED.md",
-  "PHASE6_5_REGRESSION_AND_FINAL_REPORT.md",
+  "src/cache/cachePolicies.ts",
+  "src/cache/deviceCache.ts",
+  "src/cesium/tripodCandidates.ts",
   "scripts/verify-phase6-1-los-performance.mjs",
   "scripts/verify-phase6-2-memory.mjs",
   "scripts/verify-phase6-3-cache-optimization.mjs",
@@ -21,5 +20,11 @@ for (const expected of [
   'const cachePolicies = read("src/cache/cachePolicies.ts")',
 ]) {
   if (!lifecycle.includes(expected)) throw new Error(`Missing lifecycle check: ${expected}`);
+}
+// Historical report Markdown files are not included in source releases. Verify
+// the production contracts directly instead of treating those documents as code.
+for (const script of required.filter((path) => path.startsWith("scripts/"))) {
+  const result = spawnSync(process.execPath, [script], { stdio: "inherit", windowsHide: true });
+  if (result.status !== 0) throw new Error(`Performance integration check failed: ${script}`);
 }
 console.log("Phase6-5 final integration verification: PASS");

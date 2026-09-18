@@ -1,5 +1,7 @@
 import type { DownloadedSpotDataRecord } from "./downloadedSpotData";
+import { withAbortableTimeout } from "../utils/abortableSemaphore";
 import { getBearingProfileStorageStats } from "./tripodBearingProfileCache";
+import { requiredCelestialTripodBearings } from "./tripodBearingProfileManager";
 import { getPersistentSiteContextStatsForSpot, getPersistentSiteContextTotalStorageStats } from "./siteContextPersistentCache";
 import { getGsiDeviceTileStorageStatsForDownloadedSpot, getGsiDownloadedSpotsTotalStorageStats } from "../cesium/gsiDemTileCache";
 
@@ -40,7 +42,7 @@ export async function inspectDownloadedSpotStorage(records: readonly DownloadedS
     ]);
     let state: DownloadedSpotStorageState = "complete";
     if (dem.expiredTiles > 0 || site.expiredCount > 0) state = "needs-update";
-    else if (profile.entryCount < 360 || dem.referencedTiles === 0 || dem.liveTiles === 0 || site.referencedCount === 0 || site.liveCount === 0) state = "partial";
+    else if (record.status !== "complete" || profile.entryCount < requiredCelestialTripodBearings(record.latitude).length || dem.referencedTiles === 0 || dem.liveTiles === 0 || site.referencedCount === 0 || site.liveCount === 0) state = "partial";
     const stats: DownloadedSpotStorageStats = {
       subjectId: record.subjectId,
       state,
@@ -67,7 +69,8 @@ export async function inspectDownloadedSpotStorage(records: readonly DownloadedS
   let originUsageBytes: number | null = null;
   let originQuotaBytes: number | null = null;
   try {
-    const estimate = await navigator.storage?.estimate?.();
+    const estimate = await withAbortableTimeout(async () => navigator.storage?.estimate?.(),
+      3_000, "保存容量の確認がタイムアウトしました");
     originUsageBytes = typeof estimate?.usage === "number" ? estimate.usage : null;
     originQuotaBytes = typeof estimate?.quota === "number" ? estimate.quota : null;
   } catch {

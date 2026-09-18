@@ -16,7 +16,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input?.url ?? "";
   if (url.includes("/api/gsi-geoid")) {
-    return new Response(JSON.stringify({ geoidHeightMeters: 39.5, cache: "test-mock" }), {
+    return new Response(JSON.stringify({ geoidHeightMeters: 39.5, cache: "hit" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

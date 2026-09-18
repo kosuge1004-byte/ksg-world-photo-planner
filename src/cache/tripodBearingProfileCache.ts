@@ -103,7 +103,10 @@ export async function getBearingProfilesMany(
 ): Promise<Array<BearingProfileEntry | null>> {
   return getDeviceCacheMany<BearingProfileEntry>(
     { namespace: namespaceFor(subjectId), ttlMs: ENTRY_TTL_MS, maxEntries: 800 },
-    bearingDegreesList.map((bearingDegrees) => cacheKey(cameraHeightMeters, bearingDegrees))
+    bearingDegreesList.map((bearingDegrees) => cacheKey(cameraHeightMeters, bearingDegrees)),
+    // A failed IndexedDB write can leave a useful in-memory search seed. Only
+    // committed profiles may count as already downloaded after a retry.
+    true
   );
 }
 

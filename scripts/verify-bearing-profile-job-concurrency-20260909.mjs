@@ -20,8 +20,8 @@ const checks = [
     job.includes("completedCount += 1") && /progress: `地形プロファイルを取得しています（\$\{completedCount\}/.test(job)],
   ["background concurrency is conservative and aligned with the direct path",
     /BEARING_CONCURRENCY\s*=\s*2/.test(job)],
-  ["initial failures do not abort remaining bearings",
-    !job.includes("FAILURE_ABORT_THRESHOLD") && !job.includes("abortReason")],
+  ["isolated failures continue while an all-failing system stops honestly",
+    job.includes("successCount === 0 && failureCount >= FAILURE_ABORT_THRESHOLD") && job.includes("while (!abortReason)")],
   ["all-failed jobs still cannot report false completion",
     job.includes("if (profiles.length === 0)") && job.includes('status: "failed"')],
 ];

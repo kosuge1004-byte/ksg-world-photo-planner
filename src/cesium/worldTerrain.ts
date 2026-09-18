@@ -16,6 +16,7 @@ import { fetchGsiElevationSamples } from "./gsiElevationClient";
 import { prefetchGsiDeviceTilesForSamples, resolveGsiSamplesFromDeviceTiles } from "./gsiDemTileCache";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
+import { AbortableSemaphore, CancellableRequestPool, withAbortableTimeout } from "../utils/abortableSemaphore";
 
 let terrainPromise: ReturnType<typeof createWorldTerrainAsync> | null = null;
 const terrainSourceBySample = new WeakMap<Cartographic, TerrainDataSource>();
@@ -26,14 +27,17 @@ const authoritativeGsiNoDataBySample = new WeakSet<Cartographic>();
 let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
-const GEOID_FETCH_TIMEOUT_MS = 15_000;
+// The server can make three 8-second attempts separated by rate-limit waits.
+// Start this deadline after obtaining a client slot, never while queued.
+const GEOID_FETCH_TIMEOUT_MS = 40_000;
 const WORLD_TERRAIN_MAX_ATTEMPTS = 3;
 const WORLD_TERRAIN_RETRY_DELAYS_MS = [250, 700] as const;
 // Cesiumのprovider生成/sampleTerrainMostDetailedにはAbortSignalも標準の
 // タイムアウトもない。GSIフォールバック時に1要求が永久待ちにならないよう、
 // 各試行の「待機」だけを制限し、同じ最詳細データ・同じ座標で再試行する。
 const WORLD_TERRAIN_OPERATION_TIMEOUT_MS = 30_000;
-const geoidHeightCache = new Map<string, Promise<number>>();
+const geoidHeightCache = new Map<string, number>();
+const geoidRequests = new CancellableRequestPool<number>();
 const GEOID_MEMORY_CACHE_MAX_ENTRIES = 4_096;
 const GEOID_CACHE_DB = "ksg-world-photo-planner-geoid-v1";
 const GEOID_CACHE_STORE = "geoid";
@@ -76,7 +80,11 @@ const pendingGsiRequests = new Map<
 const TERRAIN_CACHE_DB = "ksg-world-photo-planner-terrain-v3";
 const TERRAIN_CACHE_STORE = "terrain";
 const TERRAIN_CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
-type TerrainCachedHeight = { height: number; geoidHeightMeters?: number };
+type TerrainCachedHeight = { height: number; geoidHeightMeters?: number; source?: TerrainDataSource };
+type TerrainSamplingOptions = {
+  allowWorldTerrainFallback?: boolean;
+  onGeoidProgress?: (completed: number, total: number) => void;
+};
 const terrainHeightMemoryCache = new Map<string, TerrainCachedHeight>();
 const TERRAIN_MEMORY_CACHE_MAX_ENTRIES = 32_768;
 
@@ -84,6 +92,7 @@ type TerrainCacheRecord = {
   key: string;
   height: number;
   geoidHeightMeters?: number;
+  source?: TerrainDataSource;
   datum: "ellipsoidal-v1";
   updatedAt: number;
 };
@@ -280,6 +289,7 @@ async function readTerrainCache(
           ) {
             const cached: TerrainCachedHeight = {
               height: record.height,
+              source: record.source,
               geoidHeightMeters: Number.isFinite(record.geoidHeightMeters)
                 ? record.geoidHeightMeters
                 : undefined,
@@ -315,6 +325,7 @@ async function writeTerrainCache(
     ? [{
         key: terrainCacheKey(point, maximumDetails?.[index], interpolationMode),
         height: point.height,
+        source: terrainDataSource(point),
         geoidHeightMeters: geoidHeightBySample.get(point),
         datum: "ellipsoidal-v1" as const,
         updatedAt: Date.now(),
@@ -325,6 +336,7 @@ async function writeTerrainCache(
     record.key,
     {
       height: record.height,
+      source: record.source,
       geoidHeightMeters: record.geoidHeightMeters,
     },
     TERRAIN_MEMORY_CACHE_MAX_ENTRIES
@@ -352,7 +364,8 @@ async function sampleTerrainCached(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
   signal?: AbortSignal,
-  interpolationMode: "los-safe" | "neutral" = "los-safe"
+  interpolationMode: "los-safe" | "neutral" = "los-safe",
+  options: TerrainSamplingOptions = {}
 ): Promise<Cartographic[]> {
   if (points.length === 0) return [];
   const cachedHeights = await readTerrainCache(points, maximumDetails, interpolationMode);
@@ -360,15 +373,34 @@ async function sampleTerrainCached(
   const result = points.map((point) => Cartographic.clone(point));
   const missingIndexes: number[] = [];
   cachedHeights.forEach((cached, index) => {
-    if (cached === null) {
+    // Legacy records have no provenance. They remain usable for normal searches,
+    // but cannot establish that an explicit high-precision download succeeded.
+    if (cached === null || (options.allowWorldTerrainFallback === false &&
+      (!cached.source || cached.source === "CESIUM_WORLD_TERRAIN" || !Number.isFinite(cached.geoidHeightMeters)))) {
       missingIndexes.push(index);
       return;
     }
     result[index].height = cached.height;
+    if (cached.source) terrainSourceBySample.set(result[index], cached.source);
     if (Number.isFinite(cached.geoidHeightMeters)) {
       geoidHeightBySample.set(result[index], cached.geoidHeightMeters as number);
     }
   });
+  if (options.allowWorldTerrainFallback === false) {
+    const warmPoints = points.flatMap((point, index) => missingIndexes.includes(index) ? [] : [{
+      latitude: CesiumMath.toDegrees(point.latitude), longitude: CesiumMath.toDegrees(point.longitude),
+      maximumDetail: maximumDetails?.[index], interpolationMode,
+    }]);
+    const warmSamples: GsiElevationApiSample[] = cachedHeights.flatMap((cached, index) => {
+      if (!cached || missingIndexes.includes(index)) return [];
+      const source = Object.entries(GSI_SOURCE_NAMES).find(([, name]) => name === cached.source)?.[0] as
+        Exclude<GsiElevationApiSample["source"], null> | undefined;
+      return [{ source: source ?? null, heightMeters: source ? cached.height - cached.geoidHeightMeters! : null }];
+    });
+    // A prior failed tile download must be retryable even when the authoritative
+    // point-height cache is warm. Heights, coordinates and source order are kept.
+    prefetchGsiDeviceTilesForSamples(warmPoints, warmSamples);
+  }
   if (missingIndexes.length > 0) {
     const missingPoints = missingIndexes.map((index) => points[index]);
     const missingMaximumDetails = maximumDetails
@@ -402,7 +434,8 @@ async function sampleTerrainCached(
     const localGeoidByRegion = await fetchRegionalGeoidHeights(
       missingPoints,
       localResolvedIndexes,
-      signal
+      signal,
+      options
     );
     abortIfRequested(signal);
 
@@ -438,7 +471,8 @@ async function sampleTerrainCached(
         networkPoints,
         networkMaximumDetails,
         signal,
-        interpolationMode
+        interpolationMode,
+        options
       );
       sampled.forEach((point, networkIndex) => {
         const localIndex = networkLocalIndexes[networkIndex];
@@ -649,7 +683,7 @@ function openGeoidCache(): Promise<KsgIdbDatabase | null> {
   // 同じ計算中に地域ごとにDBをopen/closeすると、IndexedDBの接続確立イベントが
   // メインスレッドへ大量に戻る。DB接続だけを共有し、保存値・キー・有効期限は
   // 従来のまま維持するため、地形/ジオイド精度には影響しない。
-  geoidCacheDatabasePromise ??= new Promise((resolve) => {
+  geoidCacheDatabasePromise ??= boundedTerrainCacheOperation(new Promise<KsgIdbDatabase | null>((resolve) => {
     const request = indexedDb.open(GEOID_CACHE_DB, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -669,6 +703,9 @@ function openGeoidCache(): Promise<KsgIdbDatabase | null> {
       geoidCacheDatabasePromise = null;
       resolve(null);
     };
+  }), null).then((database) => {
+    if (!database) geoidCacheDatabasePromise = null;
+    return database;
   });
   return geoidCacheDatabasePromise;
 }
@@ -676,7 +713,7 @@ function openGeoidCache(): Promise<KsgIdbDatabase | null> {
 async function readGeoidPersistentCache(key: string): Promise<number | null> {
   const database = await openGeoidCache();
   if (!database) return null;
-  const value = await new Promise<number | null>((resolve) => {
+  const value = await boundedTerrainCacheOperation(new Promise<number | null>((resolve) => {
     const request = database.transaction(GEOID_CACHE_STORE, "readonly")
       .objectStore(GEOID_CACHE_STORE).get(key);
     request.onsuccess = () => {
@@ -692,54 +729,31 @@ async function readGeoidPersistentCache(key: string): Promise<number | null> {
       }
     };
     request.onerror = () => resolve(null);
-  });
+  }), null);
   return value;
 }
 
 async function writeGeoidPersistentCache(key: string, height: number): Promise<void> {
   const database = await openGeoidCache();
   if (!database) return;
-  await new Promise<void>((resolve) => {
+  await boundedTerrainCacheOperation(new Promise<void>((resolve) => {
     const transaction = database.transaction(GEOID_CACHE_STORE, "readwrite");
     transaction.objectStore(GEOID_CACHE_STORE).put({ key, height, updatedAt: Date.now() });
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
     transaction.onabort = () => resolve();
-  });
+  }), undefined);
 }
 
-// 2026-09-10追記（実機報告：138タワーパーク周辺で1方位あたり数分かかり
-// 続ける）: ジオイド高取得（fetchGsiGeoidHeightOnce）には、DEM標高取得
-// （gsiElevationClient.tsのMAX_CONCURRENT_REQUESTS/共有キュー）のような
-// 同時実行数の上限が一切無かった。方位プロファイルダウンロードは
-// BEARING_CONCURRENCY=2方位を並行処理し、各方位が水面をまたぐ点を含め
-// 20〜30点規模のジオイド高を`Promise.all`で一斉に投げるため、最大40〜60本
-// のジオイド要求が同時に発生しうる。ブラウザの同時接続数上限（通常6/ホスト）
-// で渋滞し、15秒のタイムアウトに何波も直列に積み重なることが、水辺の
-// 被写体で1方位あたり数分かかる主因の1つだった。DEM側と同じ考え方で、
-// ジオイド要求専用の緩やかな同時実行数上限を設ける。
-const MAX_CONCURRENT_GEOID_REQUESTS = 4;
-let activeGeoidRequestCount = 0;
-const pendingGeoidRequestQueue: Array<() => void> = [];
-
-function acquireGeoidRequestSlot(): Promise<void> {
-  if (activeGeoidRequestCount < MAX_CONCURRENT_GEOID_REQUESTS) {
-    activeGeoidRequestCount += 1;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    pendingGeoidRequestQueue.push(() => {
-      activeGeoidRequestCount += 1;
-      resolve();
-    });
-  });
-}
-
-function releaseGeoidRequestSlot(): void {
-  activeGeoidRequestCount = Math.max(0, activeGeoidRequestCount - 1);
-  const next = pendingGeoidRequestQueue.shift();
-  if (next) next();
-}
+// GSI rate-limits the upstream CGI. Serialize cache misses so its queue
+// cannot outgrow a request deadline. Cancellation removes queued requests.
+const MAX_CONCURRENT_GEOID_REQUESTS = 1;
+const geoidRequestSlots = new AbortableSemaphore(MAX_CONCURRENT_GEOID_REQUESTS);
+// Candidate refinement must still reach the server's point cache within its
+// existing deadline, even while regional download requests are waiting.
+const pointGeoidRequestSlots = new AbortableSemaphore(4);
+const GEOID_UPSTREAM_INTERVAL_MS = 3_500;
+let lastUncachedGeoidRequestAt = 0;
 
 async function fetchGsiGeoidHeightOnce(
   latitude: number,
@@ -751,20 +765,29 @@ async function fetchGsiGeoidHeightOnce(
   // 国土地理院ジオイドCGIは応答が不安定なことがあり、タイムアウトが
   // 無いとハングして無期限に待ち続けてしまう（実際に発生していた
   // 「数分待っても描画されない」不具合の主因の1つ）。
-  await acquireGeoidRequestSlot();
+  const release = await (pointSpecific ? pointGeoidRequestSlots : geoidRequestSlots).acquire(signal);
   try {
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const response = await fetch(
+    return await withAbortableTimeout(async (requestSignal) => {
+    // Separate Cloudflare isolates cannot share the server's in-memory limiter.
+    // Pace regional downloads as well, including after a server error. Point
+    // refinement retains its previous server-side limiter and cache-first path.
+    if (!pointSpecific) {
+      await waitForGeoidTime(lastUncachedGeoidRequestAt + GEOID_UPSTREAM_INTERVAL_MS, requestSignal);
+      lastUncachedGeoidRequestAt = Date.now();
+    }
+    const response = await diagnosticFetch("gsi-geoid",
       `/api/gsi-geoid?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}${pointSpecific ? "&precision=point" : ""}`,
       {
         headers: { Accept: "application/json" },
-        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+        signal: requestSignal,
       }
     );
     const data = await response.json() as {
       geoidHeightMeters?: unknown;
       error?: unknown;
+      cache?: unknown;
     };
+    if (!pointSpecific && data.cache === "hit") lastUncachedGeoidRequestAt = 0;
     if (
       !response.ok ||
       typeof data.geoidHeightMeters !== "number" ||
@@ -775,8 +798,9 @@ async function fetchGsiGeoidHeightOnce(
       );
     }
     return data.geoidHeightMeters;
+    }, timeoutMs, "国土地理院ジオイドAPIがタイムアウトしました", signal);
   } finally {
-    releaseGeoidRequestSlot();
+    release();
   }
 }
 
@@ -788,14 +812,18 @@ async function fetchGsiGeoidHeightOnce(
 // 確認された。ブレーカーは「即失敗」ではなく「解除まで待ってから通常どおり
 // 試す」方式にし、瞬間的な不調からの回復を優先する。ブレーカーの残り時間は
 // 設計上常に8秒以内のため、待ち時間の上限も自明に抑えられる。
-async function waitForGeoidBreakerToClear(signal?: AbortSignal): Promise<void> {
-  const remainingMs = geoidUnavailableUntil - Date.now();
+async function waitForGeoidTime(deadline: number, signal?: AbortSignal): Promise<void> {
+  const remainingMs = deadline - Date.now();
   if (remainingMs <= 0) return;
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, remainingMs);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, remainingMs);
     if (!signal) return;
     const onAbort = () => {
       clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
       reject(signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"));
     };
     if (signal.aborted) onAbort();
@@ -803,68 +831,47 @@ async function waitForGeoidBreakerToClear(signal?: AbortSignal): Promise<void> {
   });
 }
 
-// 2026-09-01追記（実機診断より）: 「timeout=15000ms」と宣言していても、
-// 実際にエラーになるまで22755msかかった実測が確認された。原因は、宣言した
-// timeoutMsが実際にはfetchGsiGeoidHeightOnce（実ネットワーク通信）にしか
-// 適用されておらず、その前段のreadGeoidPersistentCache（端末IndexedDB
-// 読み取り、openGeoidCache()のDB接続待ちを含む）には時間制限が一切無かった
-// ため。他の巨大な地形取得と同時にIndexedDBへアクセスが集中する状況下では、
-// このIndexedDB読み取りだけで数秒〜十数秒かかりうる。呼び出し元へ約束する
-// timeoutMsを、内部の一部分ではなく関数全体（IndexedDB読み取り含む）の
-// 上限として扱うよう、全体を1つのタイムアウトで包む。
-import { withOverallTimeout } from "../utils/withOverallTimeout";
+function waitForGeoidBreakerToClear(signal?: AbortSignal): Promise<void> {
+  return waitForGeoidTime(geoidUnavailableUntil, signal);
+}
 
+// IndexedDB operations are independently bounded. The regional HTTP
+// deadline starts after a queue slot is available, allowing healthy long queues.
 export async function fetchGsiGeoidHeight(
   point: Cartographic,
   signal?: AbortSignal
 ): Promise<number> {
-  await waitForGeoidBreakerToClear(signal);
+  abortIfRequested(signal);
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
   const key = geoidRegionKey(point);
   const cached = readMemoryCache(geoidHeightCache, key);
-  if (cached) return cached;
+  if (cached !== undefined) return cached;
 
-  const request = withOverallTimeout(
-    (async () => {
+  return geoidRequests.request(key, signal, async (requestSignal) => {
+    try {
+      await waitForGeoidBreakerToClear(requestSignal);
       const persistent = await readGeoidPersistentCache(key);
-      abortIfRequested(signal);
-      if (persistent !== null) return persistent;
-
-      // サーバー側で既にGSI CGIへの再試行は行っているが、端末〜Cloudflare間の
-      // 一時的な通信の乱れはサーバー再試行では救えないため、ここでも1回だけ
-      // 短い間隔を空けて再試行する。
-      try {
-        const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
-        void writeGeoidPersistentCache(key, height);
-        return height;
-      } catch {
-        abortIfRequested(signal);
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        abortIfRequested(signal);
-        const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal);
-        void writeGeoidPersistentCache(key, height);
-        return height;
+      abortIfRequested(requestSignal);
+      if (persistent !== null) {
+        writeMemoryCache(geoidHeightCache, key, persistent, GEOID_MEMORY_CACHE_MAX_ENTRIES);
+        return persistent;
       }
-    })(),
-    GEOID_FETCH_TIMEOUT_MS,
-    "国土地理院ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）"
-  ).catch((error: unknown) => {
-    geoidHeightCache.delete(key);
-    if (!(isAbortError(error))) {
+
+      // The server already retries. Duplicating that retry here amplified its queue.
+      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, requestSignal);
+      void writeGeoidPersistentCache(key, height).catch(() => undefined);
+      writeMemoryCache(geoidHeightCache, key, height, GEOID_MEMORY_CACHE_MAX_ENTRIES);
+      return height;
+    } catch (error) {
+    if (!requestSignal.aborted && !isAbortError(error)) {
       // 1回の失敗で長時間ブロックすると、それだけで「頻繁にエラーが出る」体感を
       // 生んでしまうため、短い間隔にとどめる（連続失敗時の最低限の配慮のみ）。
       geoidUnavailableUntil = Date.now() + 8_000;
     }
     throw error;
+    }
   });
-  writeMemoryCache(
-    geoidHeightCache,
-    key,
-    request,
-    GEOID_MEMORY_CACHE_MAX_ENTRIES
-  );
-  return request;
 }
 
 /**
@@ -886,31 +893,34 @@ export async function fetchGsiGeoidHeightPointSpecific(
   signal?: AbortSignal,
   timeoutMs = GEOID_FETCH_TIMEOUT_MS
 ): Promise<number> {
-  await waitForGeoidBreakerToClear(signal);
+  abortIfRequested(signal);
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
   const key = `point:${latitude.toFixed(4)},${longitude.toFixed(4)}`;
   const cached = readMemoryCache(geoidHeightCache, key);
-  if (cached) return cached;
+  if (cached !== undefined) return cached;
 
-  const request = withOverallTimeout(
-    (async () => {
+  return withAbortableTimeout(
+    (operationSignal) => geoidRequests.request(key, operationSignal, async (requestSignal) => {
+      await waitForGeoidBreakerToClear(requestSignal);
       const persistent = await readGeoidPersistentCache(key);
-      abortIfRequested(signal);
-      if (persistent !== null) return persistent;
-      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, signal, true, timeoutMs);
-      void writeGeoidPersistentCache(key, height);
+      abortIfRequested(requestSignal);
+      if (persistent !== null) {
+        writeMemoryCache(geoidHeightCache, key, persistent, GEOID_MEMORY_CACHE_MAX_ENTRIES);
+        return persistent;
+      }
+      const height = await fetchGsiGeoidHeightOnce(latitude, longitude, requestSignal, true);
+      void writeGeoidPersistentCache(key, height).catch(() => undefined);
+      writeMemoryCache(geoidHeightCache, key, height, GEOID_MEMORY_CACHE_MAX_ENTRIES);
       return height;
-    })(),
+    }),
     timeoutMs,
-    "地点別ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）"
+    "地点別ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）",
+    signal
   ).catch((error: unknown) => {
-    geoidHeightCache.delete(key);
-    if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + 8_000;
+    if (!signal?.aborted && !isAbortError(error) && (error as Error)?.name !== "TimeoutError") geoidUnavailableUntil = Date.now() + 8_000;
     throw error;
   });
-  writeMemoryCache(geoidHeightCache, key, request, GEOID_MEMORY_CACHE_MAX_ENTRIES);
-  return request;
 }
 
 /** DEMサンプルを楕円体高へ変換する際に実際に使用したジオイド高N。 */
@@ -932,7 +942,8 @@ export function __setGeoidHeightForTesting(sample: Cartographic, geoidHeightMete
 async function fetchRegionalGeoidHeights(
   points: Cartographic[],
   eligibleIndexes: number[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: TerrainSamplingOptions = {}
 ): Promise<Map<string, number>> {
   const representativeByRegion = new Map<string, Cartographic>();
   for (const index of eligibleIndexes) {
@@ -942,16 +953,27 @@ async function fetchRegionalGeoidHeights(
   }
 
   const heights = new Map<string, number>();
+  const controller = new AbortController();
+  const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  let completed = 0;
+  options.onGeoidProgress?.(0, representativeByRegion.size);
   await Promise.all(Array.from(representativeByRegion.entries()).map(async ([key, point]) => {
     try {
-      const height = await fetchGsiGeoidHeight(point, signal);
+      const height = await fetchGsiGeoidHeight(point, requestSignal);
       heights.set(key, height);
     } catch (error) {
-      if (isAbortError(error)) throw error;
+      if (requestSignal.aborted || isAbortError(error)) throw error;
+      if (options.allowWorldTerrainFallback === false) {
+        controller.abort(error);
+        throw error;
+      }
       if (Date.now() >= geoidWarningLoggedUntil) {
         geoidWarningLoggedUntil = Date.now() + 60_000;
         console.warn("一部地域のジオイド高を取得できないため該当地域はWorld Terrainを使用します", error);
       }
+    } finally {
+      completed += 1;
+      options.onGeoidProgress?.(completed, representativeByRegion.size);
     }
   }));
   return heights;
@@ -996,7 +1018,8 @@ export async function sampleWorldTerrain(
 export async function sampleWorldTerrainNeutral(
   points: Cartographic[],
   signal?: AbortSignal,
-  maximumDetail?: GsiMaximumDetail
+  maximumDetail?: GsiMaximumDetail,
+  options: TerrainSamplingOptions = {}
 ): Promise<Cartographic[]> {
   return sampleTerrainCached(
     points,
@@ -1004,7 +1027,8 @@ export async function sampleWorldTerrainNeutral(
       ? points.map(() => maximumDetail)
       : undefined,
     signal,
-    "neutral"
+    "neutral",
+    options
   );
 }
 
@@ -1186,7 +1210,8 @@ async function sampleTerrainWithGsiPriority(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
   signal?: AbortSignal,
-  interpolationMode: "los-safe" | "neutral" = "los-safe"
+  interpolationMode: "los-safe" | "neutral" = "los-safe",
+  options: TerrainSamplingOptions = {}
 ): Promise<Cartographic[]> {
   if (points.length === 0) return [];
   abortIfRequested(signal);
@@ -1209,7 +1234,8 @@ async function sampleTerrainWithGsiPriority(
   const geoidHeightByRegion = await fetchRegionalGeoidHeights(
     result,
     gsiEligibleIndexes,
-    signal
+    signal,
+    options
   );
 
   const unresolvedIndexes: number[] = [];
@@ -1243,6 +1269,13 @@ async function sampleTerrainWithGsiPriority(
   if (unresolvedIndexes.length === 0) return result;
 
   abortIfRequested(signal);
+
+  if (options.allowWorldTerrainFallback === false) {
+    const missingGeoid = unresolvedIndexes.filter((index) =>
+      gsiEligibleIndexes.includes(index) && !geoidHeightByRegion.has(geoidRegionKey(result[index]))
+    ).length;
+    throw new Error(`高精度地形を取得できません（DEM未取得 ${unresolvedIndexes.length - missingGeoid}点・ジオイド高未取得 ${missingGeoid}点 / ${result.length}点）。通信状態を確認して再実行してください`);
+  }
 
   const fallbackPoints = unresolvedIndexes.map((index) => result[index]);
   // GSIで解決できなかった地点だけWorld Terrainへ回す。最大3回、同じ座標・

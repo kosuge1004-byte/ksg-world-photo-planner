@@ -16,6 +16,7 @@ type Props = {
 
 export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCancelDownload }: Props) {
   const dialogRef = useRef<HTMLElement>(null);
+  const isOpen = state !== null;
 
   // 2026-09-05追記（実機で繰り返し報告されたため）: position:fixed;
   // inset:0 のバックドロップは、CSSのdvh/vh計算だけに頼ると、実機
@@ -25,9 +26,9 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
   // JavaScriptで確実に画面内へスクロールさせる、CSSに依存しない
   // 安全策を追加する。
   useEffect(() => {
-    if (!state) return;
+    if (!isOpen) return;
     dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
-  }, [state]);
+  }, [isOpen]);
 
   if (!state) return null;
   const { subjectLabel, progress } = state;
@@ -35,7 +36,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
   const percent =
     isDownloading && progress.totalSteps > 0
       ? Math.round((progress.completedSteps / progress.totalSteps) * 100)
-      : isDownloading
+      : isDownloading && progress.phase === "finalizing"
         ? 100
         : 0;
 
@@ -52,12 +53,11 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
           <>
             <h2>「{subjectLabel}」の三脚候補データを端末に保存しますか？</h2>
             <p className="project-dialog-note">
-              この地点を囲む全方位（360方位）の三脚候補点計算用地形データを端末に保存します。
+              この地点で太陽・月・天の川の撮影に必要な方位の三脚候補点計算用地形データを端末に保存します。
               保存済みデータは次回以降の三脚候補点計算で再利用されます。
             </p>
             <p className="project-dialog-note">
-              容量は数十MB程度、計算に数分かかることがあります。他のアプリに切り替えても
-              処理は続きますが、アプリを完全に終了すると中断されます。カメラの高さを
+              容量と所要時間は探索範囲・通信状態によって変わります。初回はジオイド高や地形の取得に数分以上かかることがあります。アプリを閉じたり、端末がバックグラウンド処理を停止した場合は中断されます。カメラの高さを
               変えると、その分だけ保存し直します（焦点距離の変更では保存し直しません）。
             </p>
             <div>
@@ -76,7 +76,9 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
               <div className="rolling-window-progress-fill" style={{ width: `${percent}%` }} />
             </div>
             <p className="project-dialog-note">
-              {progress.phase === "water"
+              {progress.phase === "preparing"
+                ? "端末の保存容量を確認しています…"
+                : progress.phase === "water"
                 ? `水面・河川情報 ${progress.completedSteps} / ${progress.totalSteps}`
                 : progress.phase === "osm"
                   ? "道路・立入・建物情報を保存しています…"
@@ -94,6 +96,11 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
                             ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
                             : "")}
             </p>
+            {progress.geoidTotal !== undefined && progress.geoidTotal > 0 && (
+              <p className="project-dialog-note" role="status">
+                ジオイド高 {progress.geoidCompleted ?? 0} / {progress.geoidTotal}地域を確認中（APIの受付間隔を待つ場合があります）
+              </p>
+            )}
             {progress.lastFailureReason && (
               <p className="project-dialog-note project-dialog-note-warning">
                 直近の失敗理由: {progress.lastFailureReason}

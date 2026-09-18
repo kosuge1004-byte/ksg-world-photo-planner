@@ -9,7 +9,7 @@ const runner=read('scripts/run-regression-tests.mjs');
 const checks=[
  ['DEM refs union existing + new', dem.includes('new Set(previous?.tileKeys ?? [])') && dem.includes('tileKeys.forEach((key) => merged.add(key))')],
  ['refresh explicitly forceRefresh', /forceRefresh: true/.test(app) && /forceRefresh,\s*onProgress/.test(app)],
- ['force refresh re-fetches all bearings', /forceRefresh \|\| !existing/.test(mgr)],
+ ['force refresh rebuilds all bearings', /if \(forceRefresh\) return true/.test(mgr)],
  ['complete requires live DEM', /dem\.referencedTiles === 0[\s\S]*dem\.liveTiles === 0/.test(stats)],
  // 2026-09-09追記: サーバー側ジョブ化を差し戻し、水面・河川情報とOSM周辺
  // 情報の取得はクライアント側（tripodBearingProfileManager.ts）が
