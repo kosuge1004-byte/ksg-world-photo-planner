@@ -19,6 +19,8 @@ import type { RefractionWeatherContext } from "../search/refractionWeatherModel"
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
 import { withOverallTimeout } from "../utils/withOverallTimeout";
+import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
+import { writePersistentSiteContexts } from "./siteContextPersistentCache";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -179,7 +181,7 @@ export type BearingBackfillProgress = {
   currentBearingDegrees: number | null;
   profilePoints?: number;
   highPrecisionPoints?: number;
-  phase?: "terrain" | "finalizing";
+  phase?: "terrain" | "water" | "osm" | "finalizing";
   terrainStage?: "profile" | "high-precision";
   // 2026-09-10追記（実機報告：「N/Total」が本当にデータを取得できている
   // 数なのか分からない）: completedStepsは成功・失敗を問わず「試行した
@@ -297,6 +299,7 @@ export async function backfillBearingProfiles(params: {
   let lastFailureReason: string | null = null;
   let nextIndex = 0;
   let abortReason: string | null = null;
+  const waterPrefetchPoints: SiteContextPoint[] = [];
 
   // 2026-09-10追記: 「初期数方位が全失敗ならシステム障害として早期中止する」
   // 判定を実際に配線する。以前はabortReasonという変数だけが用意されていて、
@@ -454,6 +457,11 @@ export async function backfillBearingProfiles(params: {
     successfulBearings += 1;
     completedAttempts += 1;
 
+    const stride = Math.max(1, Math.floor(entry.points.length / 8));
+    for (let i = 0; i < entry.points.length; i += stride) {
+      waterPrefetchPoints.push({ latitude: entry.points[i].latitude, longitude: entry.points[i].longitude });
+    }
+
     onProgress?.({
       totalSteps,
       completedSteps: completedAttempts,
@@ -489,14 +497,34 @@ export async function backfillBearingProfiles(params: {
   resumeDeviceTilePrefetch();
   if (!signal?.aborted) await flushGsiDeviceTilePrefetchQueue();
 
-  // 2026-09-11削除: 水面・河川情報／被写体周辺OSM情報の永続キャッシュ書き込みは、
-  // 保存座標(5桁小数)・purpose・includeDetailsの完全一致でしかヒットせず、
-  // ライブ検索側（tripodCandidates.ts / highestPrecision.ts / osmSubjectHeightFallback.ts）
-  // が要求する座標・purpose・includeDetailsの組み合わせと一致する読み手が
-  // 存在しなかった。実質的に書き込むだけで再利用されないネットワーク要求・
-  // ダウンロード時間・端末保存容量だったため削除した。水面標高自体の判定
-  // （calculateOneCandidates内のwaterSurfaceKind取得等）は引き続きライブ検索
-  // 時にその場で行われ、この削除の影響を受けない。
+  if (!signal?.aborted && waterPrefetchPoints.length > 0) {
+    onProgress?.({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });
+    try {
+      const waterContexts = await fetchSiteContexts(waterPrefetchPoints, signal, false);
+      await writePersistentSiteContexts(waterPrefetchPoints, waterContexts, "water-only", false, subjectId);
+    } catch (error) {
+      if (!isAbortError(error)) console.warn("[bearing-profile] 水面・河川情報の取得に失敗しました", error);
+    }
+  }
+
+  if (!signal?.aborted) {
+    onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, phase: "osm" });
+    try {
+      const detailPoints: SiteContextPoint[] = [
+        { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude },
+      ];
+      for (const radius of [25, 100]) {
+        for (const bearing of [0, 45, 90, 135, 180, 225, 270, 315]) {
+          const destination = calculateKarneyDestinationPoint(subjectPoint, bearing, radius);
+          detailPoints.push({ latitude: destination.latitude, longitude: destination.longitude });
+        }
+      }
+      const fullContexts = await fetchSiteContexts(detailPoints, signal, true);
+      await writePersistentSiteContexts(detailPoints, fullContexts, "full", true, subjectId);
+    } catch (error) {
+      if (!isAbortError(error)) console.warn("[bearing-profile] 被写体周辺情報の取得に失敗しました", error);
+    }
+  }
 
   onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, phase: "finalizing" });
   const captured = await finishGsiDeviceTileCapture(subjectId);

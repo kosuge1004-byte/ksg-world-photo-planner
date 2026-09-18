@@ -26,16 +26,6 @@ const authoritativeGsiNoDataBySample = new WeakSet<Cartographic>();
 let gsiUnavailableUntil = 0;
 let geoidUnavailableUntil = 0;
 let geoidWarningLoggedUntil = 0;
-// 2026-09-11追記: この値は「地点固有・方位横断でグローバルな」サーキット
-// ブレーカーで、どこか1点のジオイド取得が失敗しただけで、以後のあらゆる
-// 座標・あらゆる方位のジオイド取得がこの秒数だけ待たされる（waitForGeoid
-// BreakerToClear参照）。「容量は小さいのにダウンロードが長くかかる」体感の
-// 主要因の一つで、10km圏を密にサンプリングする三脚候補データダウンロード
-// では対象リージョン数が多く、どこかで一過性の通信の乱れが起きるたびに
-// 全体がこの秒数だけ足止めされ、それが繰り返し積み重なる。ブレーカー自体
-// （「即失敗ではなく解除待ちしてから通常どおり試す」という保護の意図）は
-// 変えず、待ち時間の長さだけを短縮する。
-const GEOID_BREAKER_COOLDOWN_MS = 3_000;
 const GEOID_FETCH_TIMEOUT_MS = 15_000;
 const WORLD_TERRAIN_MAX_ATTEMPTS = 3;
 const WORLD_TERRAIN_RETRY_DELAYS_MS = [250, 700] as const;
@@ -864,7 +854,7 @@ export async function fetchGsiGeoidHeight(
     if (!(isAbortError(error))) {
       // 1回の失敗で長時間ブロックすると、それだけで「頻繁にエラーが出る」体感を
       // 生んでしまうため、短い間隔にとどめる（連続失敗時の最低限の配慮のみ）。
-      geoidUnavailableUntil = Date.now() + GEOID_BREAKER_COOLDOWN_MS;
+      geoidUnavailableUntil = Date.now() + 8_000;
     }
     throw error;
   });
@@ -916,7 +906,7 @@ export async function fetchGsiGeoidHeightPointSpecific(
     "地点別ジオイドAPIがタイムアウトしました（IndexedDB待ち含む全体）"
   ).catch((error: unknown) => {
     geoidHeightCache.delete(key);
-    if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + GEOID_BREAKER_COOLDOWN_MS;
+    if (!isAbortError(error)) geoidUnavailableUntil = Date.now() + 8_000;
     throw error;
   });
   writeMemoryCache(geoidHeightCache, key, request, GEOID_MEMORY_CACHE_MAX_ENTRIES);
