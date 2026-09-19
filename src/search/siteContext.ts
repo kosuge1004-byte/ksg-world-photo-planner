@@ -19,7 +19,7 @@ const SITE_CONTEXT_BATCH_SIZE = 8;
 // The Pages function may use its full 15-second Overpass fallback budget.
 // Let one server request finish instead of aborting it at diagnosticFetch's
 // general 8-second deadline and starting duplicate Overpass work.
-const WATER_ONLY_FETCH_ATTEMPT_TIMEOUT_MS = 18_000;
+const SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS = 18_000;
 
 export type SiteContextPurpose = "full" | "height-only" | "water-only";
 
@@ -94,7 +94,7 @@ async function fetchSiteContextBatch(
       },
       body: JSON.stringify(requestBody),
       signal: requestSignal,
-    }, purpose === "water-only" ? WATER_ONLY_FETCH_ATTEMPT_TIMEOUT_MS : undefined);
+    }, SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS);
     return {
       ok: response.ok,
       status: response.status,
