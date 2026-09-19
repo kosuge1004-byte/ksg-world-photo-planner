@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "compact water-only Overpass queries preserve pointwise classification",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/water-only-query.test.mjs"] },
   { name: "download source preservation, geoid queue, cancellation and full bearing runtime",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/download-runtime.test.mjs"] },
   { name: "persistent site-context connection recovery and network fallback",

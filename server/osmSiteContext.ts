@@ -582,17 +582,18 @@ function queryForPoints(
 ): string {
   if (purpose === "water-only") {
     // 河川最近傍陸地判定専用。各点ごとにhighway/access/公園/建物等を
-    // 問い合わせず、水面ポリゴンだけを取得する。最大80点を1回に束ねても
-    // クエリ内容は4種類×地点数に限定され、従来のfullより大幅に軽い。
-    const statements = points.flatMap((point) => {
-      const around = `(around:120,${point.latitude},${point.longitude})`;
-      return [
-        `nwr${around}["natural"="water"]`,
-        `nwr${around}["water"="river"]`,
-        `nwr${around}["water"="canal"]`,
-        `way${around}["waterway"="riverbank"]`,
-      ].map((statement) => `${statement};`);
-    });
+    // 問い合わせず、水面ポリゴンだけを取得する。Overpass QLのaroundは
+    // 複数座標をlinestringとして受け取れる。全入力点をその頂点として渡せば、
+    // 各点ごとのaroundを4種類×最大80本に展開せず、同じ取得範囲を含む4本に
+    // 集約できる。返却後のpolygonContainsPointによる地点別判定は従来どおり。
+    const coordinates = points.flatMap((point) => [point.latitude, point.longitude]).join(",");
+    const around = `(around:120,${coordinates})`;
+    const statements = [
+      `nwr${around}["natural"="water"]`,
+      `nwr${around}["water"="river"]`,
+      `nwr${around}["water"="canal"]`,
+      `way${around}["waterway"="riverbank"]`,
+    ].map((statement) => `${statement};`);
     return `[out:json][timeout:12];(${statements.join("")});out tags center geom;`;
   }
   const statements = points.flatMap((point) => {
