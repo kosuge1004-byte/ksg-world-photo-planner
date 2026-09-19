@@ -10,6 +10,7 @@ const checks = [
   ["water-only purpose exists client", client.includes('"water-only"')],
   ["water-only purpose exists server", server.includes('"water-only"')],
   ["water-only purpose accepted by API", api.includes('requestedPurpose === "height-only" || requestedPurpose === "water-only"')],
+  ["water-only API accepts one 3000-point download", api.includes('const MAX_WATER_ONLY_POINTS_PER_REQUEST = 3_000') && api.includes('requestedPurpose === "water-only"')],
   ["water-only bypasses shared in-flight request", client.includes('purpose === "water-only"') && client.includes('? await request()')],
   ["water-only request propagates AbortSignal with a shorter deadline", client.includes('signal: requestSignal,') && client.includes('purpose === "water-only" ? 20_000 : 60_000') && client.includes('withAbortableTimeout')],
   ["water-only fetch lets the server finish its 15s Overpass fallback", client.includes('const WATER_ONLY_FETCH_ATTEMPT_TIMEOUT_MS = 18_000') && client.includes('purpose === "water-only" ? WATER_ONLY_FETCH_ATTEMPT_TIMEOUT_MS : undefined')],

@@ -10,10 +10,10 @@ import {
 import { errorMessage, jsonResponse } from "../_shared/http.ts";
 import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
-// クライアント側の実際の最大利用規模（Googleタイルモードの局所再探索候補は
-// 最大49地点）に対して十分な余裕を持たせた上限。これを超える1リクエストは
-// 通常の利用では発生せず、Overpass/DEM等への大量投入だけを弾く。
+// 通常の地理条件照合は小分けのままにする。water-onlyはサーバー側で地点数に
+// 依存しない1個の包含円へ集約され、ダウンロード1件の2,590地点を一括処理する。
 const MAX_POINTS_PER_REQUEST = 500;
+const MAX_WATER_ONLY_POINTS_PER_REQUEST = 3_000;
 
 function requestPoints(body: unknown): OsmContextRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body) || !Array.isArray(body.points)) {
@@ -41,9 +41,16 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     if (!points) {
       return jsonResponse({ error: "候補座標がありません" }, 400, "no-store");
     }
-    if (points.length > MAX_POINTS_PER_REQUEST) {
+    const requestedPurpose =
+      typeof body === "object" && body !== null && "purpose" in body
+        ? body.purpose
+        : undefined;
+    const maximumPoints = requestedPurpose === "water-only"
+      ? MAX_WATER_ONLY_POINTS_PER_REQUEST
+      : MAX_POINTS_PER_REQUEST;
+    if (points.length > maximumPoints) {
       return jsonResponse(
-        { error: `候補座標は1リクエストあたり最大${MAX_POINTS_PER_REQUEST}件までです` },
+        { error: `候補座標は1リクエストあたり最大${maximumPoints}件までです` },
         400,
         "no-store"
       );
@@ -55,10 +62,6 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     // 構造物・建物の高さ情報だけを取得する（詳しい経緯はosmSiteContext.ts
     // 冒頭コメント参照）。三脚候補探索など、access判定が必要な既存の
     // 呼び出しには一切影響しない（未指定時は従来どおり"full"）。
-    const requestedPurpose =
-      typeof body === "object" && body !== null && "purpose" in body
-        ? body.purpose
-        : undefined;
     const purpose: SiteContextPurpose =
       requestedPurpose === "height-only" || requestedPurpose === "water-only"
         ? requestedPurpose
