@@ -12,6 +12,7 @@ const checks = [
   ["water-only purpose accepted by API", api.includes('requestedPurpose === "height-only" || requestedPurpose === "water-only"')],
   ["water-only bypasses shared in-flight request", client.includes('purpose === "water-only"') && client.includes('? await request()')],
   ["water-only request propagates AbortSignal with a shorter deadline", client.includes('signal: requestSignal,') && client.includes('purpose === "water-only" ? 20_000 : 60_000') && client.includes('withAbortableTimeout')],
+  ["water-only fetch lets the server finish its 15s Overpass fallback", client.includes('const WATER_ONLY_FETCH_ATTEMPT_TIMEOUT_MS = 18_000') && client.includes('purpose === "water-only" ? WATER_ONLY_FETCH_ATTEMPT_TIMEOUT_MS : undefined')],
   ["water-only failed batches split and save successful work", client.includes('fetchWaterContextBatchResilient') && client.includes('points.slice(0, middle)') && client.includes('writePersistentSiteContexts(points, contexts, "water-only", false)')],
   ["river probes keep all 10 radii", tripod.includes('RIVER_NEAREST_LAND_RADII_METERS.flatMap')],
   ["river probes keep all 8 bearings", tripod.includes('RIVER_NEAREST_LAND_BEARINGS_DEGREES.map')],
