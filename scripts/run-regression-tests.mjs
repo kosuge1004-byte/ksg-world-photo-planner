@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "water-only client splits failed batches and preserves completed work",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/water-only-client-resilience.test.mjs"] },
   { name: "compact water-only Overpass queries preserve pointwise classification",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/water-only-query.test.mjs"] },
   { name: "download source preservation, geoid queue, cancellation and full bearing runtime",

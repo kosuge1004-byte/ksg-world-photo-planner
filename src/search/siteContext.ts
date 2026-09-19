@@ -96,7 +96,9 @@ async function fetchSiteContextBatch(
       status: response.status,
       data: (await response.json()) as SiteContextResponse,
     };
-  }, 60_000, "周辺情報の取得がタイムアウトしました", signal);
+  }, purpose === "water-only" ? 20_000 : 60_000,
+  purpose === "water-only" ? "水面情報の取得がタイムアウトしました" : "周辺情報の取得がタイムアウトしました",
+  signal);
   // water-only は三脚探索の時間制限付き補助判定で使う。共有要求にすると、
   // 呼出側のAbortSignalは「待機」だけを中止し基礎fetchが裏で残るため、
   // タイムアウト後も通信が競合する。water-onlyだけは共有せず、abortを
@@ -124,6 +126,27 @@ async function fetchSiteContextBatch(
   return data.contexts;
 }
 
+async function fetchWaterContextBatchResilient(
+  points: SiteContextPoint[],
+  signal?: AbortSignal
+): Promise<SiteContext[]> {
+  try {
+    const contexts = await fetchSiteContextBatch(points, signal, false, "water-only");
+    // Save every successful unit before continuing. If a later sibling fails,
+    // the retry can reuse this work instead of restarting the entire spot.
+    await writePersistentSiteContexts(points, contexts, "water-only", false);
+    return contexts;
+  } catch (error) {
+    // A user cancellation must stop immediately rather than creating retries.
+    if (signal?.aborted) throw error;
+    if (points.length <= 1) throw error;
+    const middle = Math.ceil(points.length / 2);
+    const left = await fetchWaterContextBatchResilient(points.slice(0, middle), signal);
+    const right = await fetchWaterContextBatchResilient(points.slice(middle), signal);
+    return [...left, ...right];
+  }
+}
+
 export async function fetchSiteContexts(
   points: SiteContextPoint[],
   signal?: AbortSignal,
@@ -144,7 +167,7 @@ export async function fetchSiteContexts(
   if (purpose === "water-only") {
     fetched = [];
     for (let offset = 0; offset < missingPoints.length; offset += 80) {
-      fetched.push(...await fetchSiteContextBatch(missingPoints.slice(offset, offset + 80), signal, false, purpose));
+      fetched.push(...await fetchWaterContextBatchResilient(missingPoints.slice(offset, offset + 80), signal));
     }
   } else {
     fetched = [];
@@ -155,7 +178,11 @@ export async function fetchSiteContexts(
       ));
     }
   }
-  await writePersistentSiteContexts(missingPoints, fetched, purpose, includeDetails);
+  // Water chunks are persisted as soon as each direct or split request succeeds.
+  // Other purposes retain their existing one-write behavior.
+  if (purpose !== "water-only") {
+    await writePersistentSiteContexts(missingPoints, fetched, purpose, includeDetails);
+  }
   const result = [...cached] as Array<SiteContext | null>;
   missingIndexes.forEach((originalIndex, fetchedIndex) => { result[originalIndex] = fetched[fetchedIndex]; });
   return result as SiteContext[];
