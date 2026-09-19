@@ -76,13 +76,13 @@ export type OsmElement = {
 type OverpassResponse = { elements?: unknown };
 
 const OVERPASS_ENDPOINTS = [
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   "https://overpass-api.de/api/interpreter",
-  "https://lz4.overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
 ] as const;
 const OVERPASS_RETRY_DELAYS_MS = [0, 450] as const;
-const OVERPASS_REQUEST_TIMEOUT_MS = 6_000;
-const OVERPASS_TOTAL_TIMEOUT_MS = 15_000;
+const OVERPASS_REQUEST_TIMEOUT_MS = 12_000;
+const OVERPASS_TOTAL_TIMEOUT_MS = 35_000;
 const PRIVATE_ACCESS_VALUES = new Set(["private", "no", "customers", "permit"]);
 const NON_WALKABLE_HIGHWAYS = new Set([
   "motorway",
@@ -710,7 +710,7 @@ export async function fetchOverpass(
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             Accept: "application/json",
-            "User-Agent": "AstroSight/0.0.0",
+            "User-Agent": "AstroSight/1.0 (+https://github.com/kosuge1004-byte/ksg-world-photo-planner)",
           },
           body: new URLSearchParams({ data: query }),
           signal: requestController.signal,

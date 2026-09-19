@@ -16,10 +16,10 @@ type SiteContextResponse = {
 };
 
 const SITE_CONTEXT_BATCH_SIZE = 8;
-// The Pages function may use its full 15-second Overpass fallback budget.
+// The Pages function may use its full 35-second Overpass fallback budget.
 // Let one server request finish instead of aborting it at diagnosticFetch's
 // general 8-second deadline and starting duplicate Overpass work.
-const SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS = 18_000;
+const SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS = 38_000;
 
 export type SiteContextPurpose = "full" | "height-only" | "water-only";
 
@@ -100,7 +100,7 @@ async function fetchSiteContextBatch(
       status: response.status,
       data: (await response.json()) as SiteContextResponse,
     };
-  }, purpose === "water-only" ? 20_000 : 60_000,
+  }, purpose === "water-only" ? 40_000 : 60_000,
   purpose === "water-only" ? "水面情報の取得がタイムアウトしました" : "周辺情報の取得がタイムアウトしました",
   signal);
   // water-only は三脚探索の時間制限付き補助判定で使う。共有要求にすると、
