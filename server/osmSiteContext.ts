@@ -584,7 +584,7 @@ function queryForPoints(
     // 河川最近傍陸地判定専用。各点ごとにhighway/access/公園/建物等を
     // 問い合わせず、水面ポリゴンだけを取得する。Overpass QLのaroundは
     // 複数座標をlinestringとして受け取れる。全入力点をその頂点として渡せば、
-    // 各点ごとのaroundを4種類×最大80本に展開せず、同じ取得範囲を含む4本に
+    // 各点ごとのaroundを4種類×最大500本に展開せず、同じ取得範囲を含む4本に
     // 集約できる。返却後のpolygonContainsPointによる地点別判定は従来どおり。
     const coordinates = points.flatMap((point) => [point.latitude, point.longitude]).join(",");
     const around = `(around:120,${coordinates})`;
@@ -720,7 +720,7 @@ export async function lookupOsmSiteContexts(
   includeDetails = true,
   purpose: SiteContextPurpose = "full"
 ): Promise<OsmSiteContext[]> {
-  const maximumPoints = purpose === "water-only" ? 80 : 8;
+  const maximumPoints = purpose === "water-only" ? 500 : 8;
   if (points.length === 0 || points.length > maximumPoints) {
     throw new Error(`一度に判定できる候補地点は1〜${maximumPoints}点です`);
   }

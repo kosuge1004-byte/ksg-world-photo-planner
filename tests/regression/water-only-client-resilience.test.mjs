@@ -23,8 +23,8 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), {
 
 const { fetchSiteContexts } = await import("../../src/search/siteContext.ts");
 
-test("a failed 80-point water request splits into ordered 40-point halves and caches both", async () => {
-  const points = Array.from({ length: 80 }, (_, index) => ({
+test("normal water downloads split more than 500 points without changing their order", async () => {
+  const points = Array.from({ length: 1_001 }, (_, index) => ({
     latitude: 30 + index * 0.001,
     longitude: 130 + index * 0.001,
   }));
@@ -32,20 +32,40 @@ test("a failed 80-point water request splits into ordered 40-point halves and ca
   globalThis.fetch = async (_input, init) => {
     const request = JSON.parse(init.body);
     requestSizes.push(request.points.length);
-    if (request.points.length === 80) return json({ error: "temporary overload" }, 422);
     return json({ contexts: request.points.map(contextFor) });
   };
 
   const contexts = await fetchSiteContexts(points, undefined, false, "water-only");
-  assert.deepEqual(requestSizes, [80, 40, 40]);
-  assert.deepEqual(contexts, points.map(contextFor), "split responses must retain the original point order");
+  assert.deepEqual(requestSizes, [500, 500, 1]);
+  assert.deepEqual(contexts, points.map(contextFor), "batch responses must retain the original point order");
 
   requestSizes.length = 0;
   assert.deepEqual(
     await fetchSiteContexts(points, undefined, false, "water-only"),
     contexts,
-    "both successful halves must be immediately reusable from IndexedDB"
+    "every successful batch must be immediately reusable from IndexedDB"
   );
+  assert.deepEqual(requestSizes, []);
+});
+
+test("a failed 500-point water request splits into ordered 250-point halves and caches both", async () => {
+  const points = Array.from({ length: 500 }, (_, index) => ({
+    latitude: 32 + index * 0.001,
+    longitude: 132 + index * 0.001,
+  }));
+  const requestSizes = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(init.body);
+    requestSizes.push(request.points.length);
+    if (request.points.length === 500) return json({ error: "temporary overload" }, 422);
+    return json({ contexts: request.points.map(contextFor) });
+  };
+
+  const contexts = await fetchSiteContexts(points, undefined, false, "water-only");
+  assert.deepEqual(requestSizes, [500, 250, 250]);
+  assert.deepEqual(contexts, points.map(contextFor));
+  requestSizes.length = 0;
+  assert.deepEqual(await fetchSiteContexts(points, undefined, false, "water-only"), contexts);
   assert.deepEqual(requestSizes, []);
 });
 

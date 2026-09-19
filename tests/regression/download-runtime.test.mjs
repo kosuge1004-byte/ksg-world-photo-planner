@@ -48,7 +48,7 @@ globalThis.fetch = async (input, init = {}) => {
   if (url.startsWith("/api/osm-site-context")) {
     const request = JSON.parse(init.body);
     contextRequests.push(request);
-    assert.ok(request.points.length <= (request.purpose === "water-only" ? 80 : 8));
+    assert.ok(request.points.length <= (request.purpose === "water-only" ? 500 : 8));
     return json({ contexts: request.points.map(() => ({ ...context })) });
   }
   throw new Error(`Unexpected network request: ${url}`);
@@ -146,12 +146,12 @@ test("point correction reaches cached server data while regional requests are qu
   } finally { releaseRegional?.(); controller.abort(); globalThis.fetch = original; }
 });
 
-test("water downloads over 80 points use bounded batches and preserve order", async () => {
+test("water downloads within 500 points use one bounded batch and preserve order", async () => {
   const points = Array.from({ length: 161 }, (_, i) => ({ latitude: 34, longitude: 135 + i * 0.001 }));
   const start = contextRequests.length;
   const values = await fetchSiteContexts(points, undefined, false, "water-only");
   assert.equal(values.length, points.length);
-  assert.deepEqual(contextRequests.slice(start).map((request) => request.points.length), [80, 80, 1]);
+  assert.deepEqual(contextRequests.slice(start).map((request) => request.points.length), [161]);
   assert.deepEqual(contextRequests.slice(start).flatMap((request) => request.points), points);
 });
 

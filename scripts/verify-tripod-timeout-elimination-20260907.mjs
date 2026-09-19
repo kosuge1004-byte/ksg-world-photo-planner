@@ -21,7 +21,7 @@ const checks = [
   ["initial water helper has finite 5s budget", tripod.includes('const WATER_SURFACE_CHECK_TIMEOUT_MS = 5_000')],
   ["initial water helper uses real abort", tripod.includes('() => waterController.abort()')],
   ["old Promise.race water timeout removed", !tripod.includes('水面判定がタイムアウトしました（${WATER_SURFACE_CHECK_TIMEOUT_MS}ms）')],
-  ["server allows one 80-point water-only request", server.includes('purpose === "water-only" ? 80 : 8')],
+  ["server allows one 500-point water-only request", server.includes('purpose === "water-only" ? 500 : 8')],
   ["server water-only query excludes highway/access", server.includes('if (purpose === "water-only")') && server.includes('`nwr${around}["natural"="water"]`')],
 ];
 

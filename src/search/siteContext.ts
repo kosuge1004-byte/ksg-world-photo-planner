@@ -161,13 +161,13 @@ export async function fetchSiteContexts(
   const missingIndexes = cached.map((value, index) => value === null ? index : -1).filter((index) => index >= 0);
   const missingPoints = missingIndexes.map((index) => points[index]);
   let fetched: SiteContext[];
-  // water-only はサーバー側で最大80地点を1回の軽量Overpass問い合わせへ
+  // water-only はサーバー側で最大500地点を1回の軽量Overpass問い合わせへ
   // 集約できる。河川の最近傍陸地探索（10半径×8方向）を10回直列通信に
   // しないため、ここでは1リクエストで送る。
   if (purpose === "water-only") {
     fetched = [];
-    for (let offset = 0; offset < missingPoints.length; offset += 80) {
-      fetched.push(...await fetchWaterContextBatchResilient(missingPoints.slice(offset, offset + 80), signal));
+    for (let offset = 0; offset < missingPoints.length; offset += 500) {
+      fetched.push(...await fetchWaterContextBatchResilient(missingPoints.slice(offset, offset + 500), signal));
     }
   } else {
     fetched = [];

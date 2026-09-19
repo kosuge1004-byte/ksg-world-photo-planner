@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const points = Array.from({ length: 80 }, (_, index) => ({
+const points = Array.from({ length: 500 }, (_, index) => ({
   latitude: 35 + index * 0.00001,
   longitude: 136 + index * 0.00002,
 }));
@@ -28,7 +28,7 @@ globalThis.fetch = async (_input, init) => {
 
 const { lookupOsmSiteContexts } = await import("../../server/osmSiteContext.ts");
 
-test("water-only sends all 80 vertices through four compact around-linestring filters", async () => {
+test("water-only accepts its 500-point boundary and sends every vertex through four compact filters", async () => {
   const contexts = await lookupOsmSiteContexts(points, undefined, false, "water-only");
   const around = `(around:120,${expectedCoordinates})`;
   assert.equal(capturedQuery.split(around).length - 1, 4);
@@ -38,6 +38,13 @@ test("water-only sends all 80 vertices through four compact around-linestring fi
   assert.equal(capturedQuery.match(/\["water"="canal"\]/g)?.length, 1);
   assert.equal(capturedQuery.match(/\["waterway"="riverbank"\]/g)?.length, 1);
   assert.equal(contexts.length, points.length);
+});
+
+test("water-only rejects input above the API boundary before querying Overpass", async () => {
+  await assert.rejects(
+    lookupOsmSiteContexts([...points, { latitude: 36, longitude: 137 }], undefined, false, "water-only"),
+    /1〜500/
+  );
 });
 
 test("a shared candidate set is still classified independently for every point", async () => {
