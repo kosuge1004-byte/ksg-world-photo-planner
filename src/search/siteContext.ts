@@ -132,7 +132,8 @@ async function fetchSiteContextBatch(
 
 async function fetchWaterContextBatchResilient(
   points: SiteContextPoint[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  allowSameBatchRetry = true
 ): Promise<SiteContext[]> {
   try {
     const contexts = await fetchSiteContextBatch(points, signal, false, "water-only");
@@ -143,6 +144,24 @@ async function fetchWaterContextBatchResilient(
   } catch (error) {
     // A user cancellation must stop immediately rather than creating retries.
     if (signal?.aborted) throw error;
+    // Public Overpass instances can all be busy for one 15-second server
+    // window and recover on the next request. Retry the same compact circle
+    // once before splitting it into multiple requests and increasing load.
+    if (allowSameBatchRetry) {
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          reject(signal?.reason instanceof Error ? signal.reason : new Error("処理を中止しました"));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, 750);
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+      return fetchWaterContextBatchResilient(points, signal, false);
+    }
     if (points.length <= 1) throw error;
     const middle = Math.ceil(points.length / 2);
     const left = await fetchWaterContextBatchResilient(points.slice(0, middle), signal);

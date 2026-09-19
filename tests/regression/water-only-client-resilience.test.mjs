@@ -62,11 +62,31 @@ test("a failed 3000-point water request splits into ordered 1500-point halves an
   };
 
   const contexts = await fetchSiteContexts(points, undefined, false, "water-only");
-  assert.deepEqual(requestSizes, [3_000, 1_500, 1_500]);
+  assert.deepEqual(requestSizes, [3_000, 3_000, 1_500, 1_500]);
   assert.deepEqual(contexts, points.map(contextFor));
   requestSizes.length = 0;
   assert.deepEqual(await fetchSiteContexts(points, undefined, false, "water-only"), contexts);
   assert.deepEqual(requestSizes, []);
+});
+
+test("a transient Overpass failure retries the same compact batch before splitting", async () => {
+  const points = Array.from({ length: 3_000 }, (_, index) => ({
+    latitude: 60 + index * 0.001,
+    longitude: 160 + index * 0.001,
+  }));
+  const requestSizes = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(init.body);
+    requestSizes.push(request.points.length);
+    if (requestSizes.length === 1) return json({ error: "temporary overload" }, 422);
+    return json({ contexts: request.points.map(contextFor) });
+  };
+
+  assert.deepEqual(
+    await fetchSiteContexts(points, undefined, false, "water-only"),
+    points.map(contextFor)
+  );
+  assert.deepEqual(requestSizes, [3_000, 3_000]);
 });
 
 test("successful siblings remain cached when one single-point water request cannot recover", async () => {
