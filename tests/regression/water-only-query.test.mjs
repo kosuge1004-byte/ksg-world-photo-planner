@@ -6,9 +6,15 @@ const points = Array.from({ length: 3_000 }, (_, index) => ({
   longitude: 136 + index * 0.00002,
 }));
 let capturedQuery = "";
+let capturedMethod = "";
+let capturedBody;
 
-globalThis.fetch = async (_input, init) => {
-  capturedQuery = new URLSearchParams(init.body).get("data") ?? "";
+globalThis.fetch = async (input, init = {}) => {
+  capturedMethod = init.method ?? "GET";
+  capturedBody = init.body;
+  capturedQuery = capturedMethod === "GET"
+    ? new URL(String(input)).searchParams.get("data") ?? ""
+    : new URLSearchParams(init.body).get("data") ?? "";
   return new Response(JSON.stringify({
     elements: [{
       type: "way",
@@ -30,6 +36,8 @@ const { calculateKarneySurfaceMetrics } = await import("../../src/geodesy/karney
 
 test("water-only covers every point's 120m neighborhood with four compact circle filters", async () => {
   const contexts = await lookupOsmSiteContexts(points, undefined, false, "water-only");
+  assert.equal(capturedMethod, "GET");
+  assert.equal(capturedBody, undefined);
   const matches = [...capturedQuery.matchAll(/\(around:(\d+),(-?[\d.]+),(-?[\d.]+)\)/g)];
   assert.equal(matches.length, 4);
   assert.ok(matches.every((match) => match[0] === matches[0][0]));
@@ -44,6 +52,12 @@ test("water-only covers every point's 120m neighborhood with four compact circle
   assert.equal(capturedQuery.match(/\["water"="canal"\]/g)?.length, 1);
   assert.equal(capturedQuery.match(/\["waterway"="riverbank"\]/g)?.length, 1);
   assert.equal(contexts.length, points.length);
+});
+
+test("larger full site-context queries remain POST requests", async () => {
+  await lookupOsmSiteContexts([points[0]], undefined, true, "full");
+  assert.equal(capturedMethod, "POST");
+  assert.ok(capturedBody instanceof URLSearchParams);
 });
 
 test("water-only rejects input above the API boundary before querying Overpass", async () => {
