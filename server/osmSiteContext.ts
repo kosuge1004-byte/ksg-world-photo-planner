@@ -581,13 +581,38 @@ function queryForPoints(
   purpose: SiteContextPurpose = "full"
 ): string {
   if (purpose === "water-only") {
-    // 河川最近傍陸地判定専用。各点ごとにhighway/access/公園/建物等を
-    // 問い合わせず、水面ポリゴンだけを取得する。Overpass QLのaroundは
-    // 複数座標をlinestringとして受け取れる。全入力点をその頂点として渡せば、
-    // 各点ごとのaroundを4種類×最大500本に展開せず、同じ取得範囲を含む4本に
-    // 集約できる。返却後のpolygonContainsPointによる地点別判定は従来どおり。
-    const coordinates = points.flatMap((point) => [point.latitude, point.longitude]).join(",");
-    const around = `(around:120,${coordinates})`;
+    // 入力順の座標列をaroundのlinestringへ渡すと、方位ごとの末端から次方位の
+    // 中心付近へ戻る線まで検索対象になり、1kmの候補群でも約98kmの折り返し線
+    // になりうる。全地点の球面重心を中心にし、「中心から最遠地点までのWGS84
+    // 距離 + 従来の120m」を半径にすれば、各地点の従来検索円をすべて含む。
+    // 取得集合は厳密なsupersetであり、地点別のpolygonContainsPoint判定は不変。
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    for (const point of points) {
+      const latitudeRadians = point.latitude * Math.PI / 180;
+      const longitudeRadians = point.longitude * Math.PI / 180;
+      const latitudeCosine = Math.cos(latitudeRadians);
+      x += latitudeCosine * Math.cos(longitudeRadians);
+      y += latitudeCosine * Math.sin(longitudeRadians);
+      z += Math.sin(latitudeRadians);
+    }
+    const horizontalMagnitude = Math.hypot(x, y);
+    const center = horizontalMagnitude < 1e-12 && Math.abs(z) < 1e-12
+      ? points[0]
+      : {
+          latitude: Math.atan2(z, horizontalMagnitude) * 180 / Math.PI,
+          longitude: Math.atan2(y, x) * 180 / Math.PI,
+        };
+    let maximumDistanceMeters = 0;
+    for (const point of points) {
+      maximumDistanceMeters = Math.max(
+        maximumDistanceMeters,
+        calculateKarneySurfaceMetrics(center, point).distanceMeters
+      );
+    }
+    const radiusMeters = Math.ceil(maximumDistanceMeters + 120);
+    const around = `(around:${radiusMeters},${center.latitude},${center.longitude})`;
     const statements = [
       `nwr${around}["natural"="water"]`,
       `nwr${around}["water"="river"]`,
@@ -720,7 +745,10 @@ export async function lookupOsmSiteContexts(
   includeDetails = true,
   purpose: SiteContextPurpose = "full"
 ): Promise<OsmSiteContext[]> {
-  const maximumPoints = purpose === "water-only" ? 500 : 8;
+  // The water query is one enclosing circle, so its Overpass cost no longer
+  // grows with the number of points. 3,000 covers the 2,590-point download in
+  // one request and avoids rate-limiting from six equivalent circle queries.
+  const maximumPoints = purpose === "water-only" ? 3_000 : 8;
   if (points.length === 0 || points.length > maximumPoints) {
     throw new Error(`一度に判定できる候補地点は1〜${maximumPoints}点です`);
   }

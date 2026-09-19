@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const points = Array.from({ length: 500 }, (_, index) => ({
+const points = Array.from({ length: 3_000 }, (_, index) => ({
   latitude: 35 + index * 0.00001,
   longitude: 136 + index * 0.00002,
 }));
-const expectedCoordinates = points.flatMap((point) => [point.latitude, point.longitude]).join(",");
 let capturedQuery = "";
 
 globalThis.fetch = async (_input, init) => {
@@ -27,12 +26,19 @@ globalThis.fetch = async (_input, init) => {
 };
 
 const { lookupOsmSiteContexts } = await import("../../server/osmSiteContext.ts");
+const { calculateKarneySurfaceMetrics } = await import("../../src/geodesy/karneyGeodesic.ts");
 
-test("water-only accepts its 500-point boundary and sends every vertex through four compact filters", async () => {
+test("water-only covers every point's 120m neighborhood with four compact circle filters", async () => {
   const contexts = await lookupOsmSiteContexts(points, undefined, false, "water-only");
-  const around = `(around:120,${expectedCoordinates})`;
-  assert.equal(capturedQuery.split(around).length - 1, 4);
-  assert.equal(capturedQuery.match(/\(around:120,/g)?.length, 4);
+  const matches = [...capturedQuery.matchAll(/\(around:(\d+),(-?[\d.]+),(-?[\d.]+)\)/g)];
+  assert.equal(matches.length, 4);
+  assert.ok(matches.every((match) => match[0] === matches[0][0]));
+  const radiusMeters = Number(matches[0][1]);
+  const center = { latitude: Number(matches[0][2]), longitude: Number(matches[0][3]) };
+  assert.ok(points.every((point) =>
+    calculateKarneySurfaceMetrics(center, point).distanceMeters + 120 <= radiusMeters
+  ));
+  assert.ok(capturedQuery.length < 1_000, "the query must not grow with all 3,000 coordinates");
   assert.equal(capturedQuery.match(/\["natural"="water"\]/g)?.length, 1);
   assert.equal(capturedQuery.match(/\["water"="river"\]/g)?.length, 1);
   assert.equal(capturedQuery.match(/\["water"="canal"\]/g)?.length, 1);
@@ -43,7 +49,7 @@ test("water-only accepts its 500-point boundary and sends every vertex through f
 test("water-only rejects input above the API boundary before querying Overpass", async () => {
   await assert.rejects(
     lookupOsmSiteContexts([...points, { latitude: 36, longitude: 137 }], undefined, false, "water-only"),
-    /1〜500/
+    /1〜3000/
   );
 });
 
