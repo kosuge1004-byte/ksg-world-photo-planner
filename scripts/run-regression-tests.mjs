@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "GSI z16 water polygons preserve point order, land, river and lake classification",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/gsi-water-surface.test.mjs"] },
   { name: "water-only client splits failed batches and preserves completed work",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/water-only-client-resilience.test.mjs"] },
   { name: "compact water-only Overpass queries preserve pointwise classification",

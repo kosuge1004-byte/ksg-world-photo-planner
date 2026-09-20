@@ -15,7 +15,6 @@ import { PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../server/prewarmLandmarkCore.ts";
 import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import type { R2SafetyKv } from "../server/r2SafetyBudget.ts";
-import { lookupOsmSiteContexts } from "../server/osmSiteContext.ts";
 
 // 1回の実行あたりの処理件数。
 //
@@ -38,79 +37,6 @@ interface PrewarmEnv {
   VITE_CESIUM_ION_TOKEN?: string;
   NETWORK_CACHE?: R2Bucket;
   SPOT_SEARCH_JOBS?: R2SafetyKv;
-}
-
-const PUBLIC_APP_ORIGINS = new Set([
-  "https://astrosight.pages.dev",
-]);
-
-function waterApiHeaders(origin: string | null): HeadersInit {
-  return {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store",
-    ...(origin && PUBLIC_APP_ORIGINS.has(origin)
-      ? { "access-control-allow-origin": origin, vary: "Origin" }
-      : {}),
-  };
-}
-
-async function handleWaterApi(request: Request): Promise<Response> {
-  const origin = request.headers.get("origin");
-  if (origin && !PUBLIC_APP_ORIGINS.has(origin)) {
-    return new Response(JSON.stringify({ error: "許可されていない送信元です" }), {
-      status: 403,
-      headers: waterApiHeaders(null),
-    });
-  }
-  if (request.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        ...waterApiHeaders(origin),
-        "access-control-allow-methods": "POST, OPTIONS",
-        "access-control-allow-headers": "content-type",
-        "access-control-max-age": "86400",
-      },
-    });
-  }
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POSTリクエストのみ利用できます" }), {
-      status: 405,
-      headers: waterApiHeaders(origin),
-    });
-  }
-  try {
-    const body = await request.json() as { points?: unknown };
-    if (!Array.isArray(body.points) || body.points.length < 1 || body.points.length > 3_000) {
-      throw new Error("候補座標は1〜3000件で指定してください");
-    }
-    const points = body.points.map((value) => {
-      if (typeof value !== "object" || value === null) {
-        return { latitude: Number.NaN, longitude: Number.NaN };
-      }
-      return {
-        latitude: "latitude" in value ? Number(value.latitude) : Number.NaN,
-        longitude: "longitude" in value ? Number(value.longitude) : Number.NaN,
-      };
-    });
-    const contexts = await lookupOsmSiteContexts(
-      points,
-      request.signal,
-      false,
-      "water-only"
-    );
-    return new Response(JSON.stringify({ contexts }), {
-      status: 200,
-      headers: waterApiHeaders(origin),
-    });
-  } catch (error) {
-    return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : String(error),
-    }), {
-      status: 422,
-      headers: waterApiHeaders(origin),
-    });
-  }
 }
 
 export default {
@@ -158,9 +84,6 @@ export default {
     env: PrewarmEnv,
     context: ExecutionContext
   ): Promise<Response> {
-    if (new URL(request.url).pathname === "/api/osm-water") {
-      return handleWaterApi(request);
-    }
     configureServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
       persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, request),

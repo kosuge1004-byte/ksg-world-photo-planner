@@ -6,6 +6,7 @@ import type {
   PrecisionStructureType,
 } from "./precisionStructures.ts";
 import { calculateKarneySurfaceMetrics } from "../src/geodesy/karneyGeodesic.ts";
+import { lookupGsiWaterSurfaceContexts } from "./gsiWaterSurface.ts";
 
 export type OsmContextRequestPoint = {
   latitude: number;
@@ -773,6 +774,27 @@ export async function lookupOsmSiteContexts(
       point.longitude > 180
     ) {
       throw new Error("地理条件の判定座標が不正です");
+    }
+  }
+  if (purpose === "water-only") {
+    // 国内では国土地理院の高精細ベクトルタイルを先に使う。公開Overpass
+    // APIへのCloudflare egressが混雑・遮断されてもダウンロードを止めず、
+    // relation multipolygonを平坦なgeometryとして扱っていた従来判定より
+    // 河川面を正確に拾える。GSIで全地点を安全に判定できない地域・障害時は
+    // 下の既存Overpass経路へそのまま戻す。
+    const gsiContexts = await lookupGsiWaterSurfaceContexts(points, signal);
+    if (gsiContexts) {
+      return gsiContexts.map(({ onWaterSurface, waterSurfaceKind }) => ({
+        walkingAccessible: false,
+        onMappedWay: false,
+        restrictedAccess: false,
+        onMotorRoad: false,
+        onWaterSurface,
+        waterSurfaceKind,
+        nearbyLandmarks: [],
+        nearbyBuildings: [],
+        nearbyStructures: [],
+      }));
     }
   }
   const elements = await fetchOverpass(queryForPoints(points, includeDetails, purpose), signal);

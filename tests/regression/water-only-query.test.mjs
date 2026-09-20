@@ -10,6 +10,9 @@ let capturedMethod = "";
 let capturedBody;
 
 globalThis.fetch = async (input, init = {}) => {
+  if (String(input).includes("cyberjapandata.gsi.go.jp")) {
+    return new Response(null, { status: 404 });
+  }
   capturedMethod = init.method ?? "GET";
   capturedBody = init.body;
   capturedQuery = capturedMethod === "GET"
