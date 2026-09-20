@@ -15,7 +15,7 @@ const checks = [
   ["water-only request propagates AbortSignal with a shorter deadline", client.includes('signal: requestSignal,') && client.includes('purpose === "water-only" ? 40_000 : 60_000') && client.includes('withAbortableTimeout')],
   ["site-context fetch lets the server finish its 35s Overpass fallback", client.includes('const SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS = 38_000') && client.includes('}, SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS);')],
   ["server uses current independent global Overpass instances", server.includes('overpass.private.coffee') && server.includes('maps.mail.ru/osm/tools/overpass') && !server.includes('overpass.kumi.systems')],
-  ["compact water query uses cacheable GET while larger queries stay POST", server.includes('const OVERPASS_GET_QUERY_LIMIT = 512') && server.includes('method: useGet ? "GET" : "POST"') && server.includes('useGet ? {} : { body: new URLSearchParams({ data: query }) }')],
+  ["compact water and local bounded queries use cacheable GET while large queries stay POST", server.includes('const OVERPASS_GET_URL_LIMIT = 7_000') && server.includes('queryParameters.toString().length <= OVERPASS_GET_URL_LIMIT') && server.includes('method: useGet ? "GET" : "POST"') && server.includes('useGet ? {} : { body: queryParameters }')],
   ["water-only retries once, then splits and saves successful work", client.includes('allowSameBatchRetry') && client.includes('points.slice(0, middle)') && client.includes('writePersistentSiteContexts(points, contexts, "water-only", false)')],
   ["river probes keep all 10 radii", tripod.includes('RIVER_NEAREST_LAND_RADII_METERS.flatMap')],
   ["river probes keep all 8 bearings", tripod.includes('RIVER_NEAREST_LAND_BEARINGS_DEGREES.map')],

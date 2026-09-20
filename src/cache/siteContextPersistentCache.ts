@@ -1,7 +1,7 @@
 import type { SiteContext } from "../types/geospatial";
 import type { SiteContextPoint, SiteContextPurpose } from "../search/siteContext";
 
-const DB_NAME = "astrosight-site-context-cache-v1";
+const DB_NAME = "astrosight-site-context-cache-v2";
 const DB_VERSION = 1;
 const STORE = "contexts";
 const REF_STORE = "spot-refs";

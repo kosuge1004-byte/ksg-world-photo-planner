@@ -57,10 +57,69 @@ test("water-only covers every point's 120m neighborhood with four compact circle
   assert.equal(contexts.length, points.length);
 });
 
-test("larger full site-context queries remain POST requests", async () => {
-  await lookupOsmSiteContexts([points[0]], undefined, true, "full");
+test("a local full site-context query uses a cacheable GET", async () => {
+  const contexts = await lookupOsmSiteContexts([points[0]], undefined, true, "full");
+  assert.equal(capturedMethod, "GET");
+  assert.equal(capturedBody, undefined);
+  assert.equal(contexts.length, 1);
+});
+
+test("eight nearby points use two bounded boxes without losing either search radius", async () => {
+  const nearbyPoints = Array.from({ length: 8 }, (_, index) => ({
+    latitude: 35 + Math.cos(index * Math.PI / 4) * 0.0003,
+    longitude: 136 + Math.sin(index * Math.PI / 4) * 0.0003,
+  }));
+  await lookupOsmSiteContexts(nearbyPoints, undefined, true, "full");
+  assert.equal(capturedMethod, "GET");
+  assert.equal(capturedQuery.match(/\["highway"\]/g)?.length, 1);
+  assert.equal(capturedQuery.match(/\["building"\]\["wikidata"\]/g)?.length, 1);
+  const boxes = [...capturedQuery.matchAll(
+    /(?:way|nwr)\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)/g
+  )].map((match) => ({
+    south: Number(match[1]),
+    west: Number(match[2]),
+    north: Number(match[3]),
+    east: Number(match[4]),
+  }));
+  const uniqueBoxes = [...new Map(boxes.map((box) => [
+    `${box.south},${box.west},${box.north},${box.east}`,
+    box,
+  ])).values()];
+  assert.equal(uniqueBoxes.length, 2);
+  const landmarkBox = uniqueBoxes.reduce((largest, box) =>
+    box.north - box.south > largest.north - largest.south ? box : largest
+  );
+  for (const point of nearbyPoints) {
+    const latitudeDelta = 600 / 110_000;
+    const longitudeDelta = 600 /
+      (110_000 * Math.abs(Math.cos(point.latitude * Math.PI / 180)));
+    assert.ok(landmarkBox.south <= point.latitude - latitudeDelta);
+    assert.ok(landmarkBox.north >= point.latitude + latitudeDelta);
+    assert.ok(landmarkBox.west <= point.longitude - longitudeDelta);
+    assert.ok(landmarkBox.east >= point.longitude + longitudeDelta);
+  }
+});
+
+test("spatially separated points keep bounded per-point circles and use POST", async () => {
+  const separatedPoints = Array.from({ length: 8 }, (_, index) => ({
+    latitude: 35,
+    longitude: 136 + index * 0.1,
+  }));
+  await lookupOsmSiteContexts(separatedPoints, undefined, true, "full");
   assert.equal(capturedMethod, "POST");
   assert.ok(capturedBody instanceof URLSearchParams);
+  const circles = [...capturedQuery.matchAll(
+    /\(around:(\d+),(-?[\d.]+),(-?[\d.]+)\)/g
+  )];
+  assert.ok(circles.length > 0);
+  assert.deepEqual(
+    [...new Set(circles.map((match) => Number(match[1])))].sort((a, b) => a - b),
+    [120, 600]
+  );
+  for (const point of separatedPoints) {
+    assert.ok(capturedQuery.includes(`(around:120,${point.latitude},${point.longitude})`));
+    assert.ok(capturedQuery.includes(`(around:600,${point.latitude},${point.longitude})`));
+  }
 });
 
 test("water-only rejects input above the API boundary before querying Overpass", async () => {

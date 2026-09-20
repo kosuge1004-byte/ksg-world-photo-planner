@@ -75,10 +75,10 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       })),
     };
     const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, cacheKeyInput, {
-      namespace: "osm-site-context", version: "v1", ttlSeconds: 7 * 86400,
+      namespace: "osm-site-context", version: "v2", ttlSeconds: 7 * 86400,
     }, async () => ({
       contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails, purpose),
-      attribution: "© OpenStreetMap contributors / 国土地理院 標高タイル",
+      attribution: "© OpenStreetMap contributors / 国土地理院",
     }), context.waitUntil);
     return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=300");
   } catch (error) {

@@ -81,6 +81,38 @@ test("water-only site context uses GSI without contacting Overpass when coverage
   assert.equal(nonGsiRequestCount, 0);
 });
 
+test("full site context keeps GSI water classification while using Overpass for details", async () => {
+  clearGsiWaterTileCacheForTests();
+  let overpassRequestCount = 0;
+  const serveFixture = fixtureFetch();
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("cyberjapandata.gsi.go.jp")) {
+      return serveFixture(input, init);
+    }
+    overpassRequestCount += 1;
+    return Response.json({ elements: [] });
+  };
+  const { lookupOsmSiteContexts } = await import("../../server/osmSiteContext.ts");
+  const [context] = await lookupOsmSiteContexts(
+    [{ latitude: 35.36612482179514, longitude: 136.81 }],
+    undefined,
+    true,
+    "full"
+  );
+  assert.equal(context.waterSurfaceKind, "river");
+  assert.equal(context.onWaterSurface, true);
+  assert.equal(overpassRequestCount, 1);
+});
+
+test("new full-water semantics use fresh server and device cache namespaces", async () => {
+  const [apiSource, deviceCacheSource] = await Promise.all([
+    readFile(new URL("../../functions/api/osm-site-context.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../src/cache/siteContextPersistentCache.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(apiSource, /namespace: "osm-site-context", version: "v2"/);
+  assert.match(deviceCacheSource, /astrosight-site-context-cache-v2/);
+});
+
 test("unknown GSI coverage returns null instead of guessing land or water", async () => {
   clearGsiWaterTileCacheForTests();
   globalThis.fetch = async () => new Response(null, { status: 404 });

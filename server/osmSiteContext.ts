@@ -84,7 +84,8 @@ const OVERPASS_ENDPOINTS = [
 const OVERPASS_RETRY_DELAYS_MS = [0, 450] as const;
 const OVERPASS_REQUEST_TIMEOUT_MS = 12_000;
 const OVERPASS_TOTAL_TIMEOUT_MS = 35_000;
-const OVERPASS_GET_QUERY_LIMIT = 512;
+const OVERPASS_GET_URL_LIMIT = 7_000;
+const MAX_COMBINED_BBOX_SPAN_DEGREES = 0.05;
 const PRIVATE_ACCESS_VALUES = new Set(["private", "no", "customers", "permit"]);
 const NON_WALKABLE_HIGHWAYS = new Set([
   "motorway",
@@ -577,6 +578,35 @@ function combinedLandmarks(
  */
 export type SiteContextPurpose = "full" | "height-only" | "water-only";
 
+function combinedBoundingBox(
+  points: OsmContextRequestPoint[],
+  paddingMeters: number
+): string | null {
+  let south = Number.POSITIVE_INFINITY;
+  let west = Number.POSITIVE_INFINITY;
+  let north = Number.NEGATIVE_INFINITY;
+  let east = Number.NEGATIVE_INFINITY;
+  for (const point of points) {
+    const latitudeDelta = paddingMeters / 110_000;
+    const longitudeScale = Math.cos(point.latitude * Math.PI / 180);
+    if (Math.abs(longitudeScale) < 0.01) return null;
+    const longitudeDelta = paddingMeters / (110_000 * Math.abs(longitudeScale));
+    south = Math.min(south, point.latitude - latitudeDelta);
+    west = Math.min(west, point.longitude - longitudeDelta);
+    north = Math.max(north, point.latitude + latitudeDelta);
+    east = Math.max(east, point.longitude + longitudeDelta);
+  }
+  if (
+    ![south, west, north, east].every(Number.isFinite) ||
+    south < -90 || north > 90 || west < -180 || east > 180 ||
+    north - south > MAX_COMBINED_BBOX_SPAN_DEGREES ||
+    east - west > MAX_COMBINED_BBOX_SPAN_DEGREES
+  ) {
+    return null;
+  }
+  return `(${south},${west},${north},${east})`;
+}
+
 function queryForPoints(
   points: OsmContextRequestPoint[],
   includeDetails: boolean,
@@ -623,42 +653,52 @@ function queryForPoints(
     ].map((statement) => `${statement};`);
     return `[out:json][timeout:12];(${statements.join("")});out tags center geom;`;
   }
-  const statements = points.flatMap((point) => {
-    const aroundAccess = `(around:120,${point.latitude},${point.longitude})`;
-    const aroundLandmark = `(around:600,${point.latitude},${point.longitude})`;
+  // Nearby points share almost all of their 120m/600m search areas. A small
+  // bounding box is a strict superset of every original circle and is much
+  // faster for Overpass to index. Spatially separated or dateline/polar input
+  // keeps the original per-point circles, avoiding a continent-scale query.
+  const combinedAccessArea = combinedBoundingBox(points, 120);
+  const combinedLandmarkArea = combinedBoundingBox(points, 600);
+  const queryAreas = combinedAccessArea && combinedLandmarkArea
+    ? [{ access: combinedAccessArea, landmark: combinedLandmarkArea }]
+    : points.map((point) => ({
+        access: `(around:120,${point.latitude},${point.longitude})`,
+        landmark: `(around:600,${point.latitude},${point.longitude})`,
+      }));
+  const statements = queryAreas.flatMap(({ access, landmark }) => {
     const accessStatements = purpose === "full" ? [
-      `way${aroundAccess}["highway"]`,
-      `nwr${aroundAccess}["access"~"^(private|no|customers|permit)$"]`,
-      `nwr${aroundAccess}["foot"~"^(private|no)$"]`,
+      `way${access}["highway"]`,
+      `nwr${access}["access"~"^(private|no|customers|permit)$"]`,
+      `nwr${access}["foot"~"^(private|no)$"]`,
       // 河川敷・公園・砂浜などhighwayタグを持たない開けた公共空間。
       // 近くに歩道が無くても、この中に入っていれば歩行可能とみなす。
-      `way${aroundAccess}["landuse"="riverbank"]`,
+      `way${access}["landuse"="riverbank"]`,
       // 広い河川・運河等の水面ポリゴン。細い山間河川の線形waterwayは含めない。
-      `nwr${aroundAccess}["natural"="water"]`,
-      `nwr${aroundAccess}["water"="river"]`,
-      `nwr${aroundAccess}["water"="canal"]`,
-      `way${aroundAccess}["waterway"="riverbank"]`,
-      `way${aroundAccess}["natural"="beach"]`,
-      `way${aroundAccess}["leisure"="park"]`,
+      `nwr${access}["natural"="water"]`,
+      `nwr${access}["water"="river"]`,
+      `nwr${access}["water"="canal"]`,
+      `way${access}["waterway"="riverbank"]`,
+      `way${access}["natural"="beach"]`,
+      `way${access}["leisure"="park"]`,
       // 駐車場・運動場等（landuse=riverbank等と同じく、歩道が無くても
       // 面の内側であれば歩行可能とみなす対象）。
-      `way${aroundAccess}["amenity"="parking"]`,
-      `way${aroundAccess}["leisure"="pitch"]`,
-      `way${aroundAccess}["leisure"="sports_centre"]`,
-      `way${aroundAccess}["leisure"="stadium"]`,
-      `way${aroundAccess}["leisure"="track"]`,
+      `way${access}["amenity"="parking"]`,
+      `way${access}["leisure"="pitch"]`,
+      `way${access}["leisure"="sports_centre"]`,
+      `way${access}["leisure"="stadium"]`,
+      `way${access}["leisure"="track"]`,
     ] : [];
     const detailStatements = [
-      `nwr${aroundLandmark}["amenity"="place_of_worship"]`,
-      `nwr${aroundLandmark}["ceremonial_gate"="torii"]`,
-      `nwr${aroundLandmark}["man_made"="torii"]`,
-      `nwr${aroundLandmark}["historic"]`,
-      `nwr${aroundLandmark}["tourism"="hotel"]`,
-      `nwr${aroundLandmark}["man_made"~"^(tower|communications_tower|mast)$"]`,
-      `nwr${aroundLandmark}["building"="tower"]`,
-      `nwr${aroundLandmark}["building"]["wikidata"]`,
-      `nwr${aroundLandmark}["building"]["wikipedia"]`,
-      `nwr${aroundLandmark}["building"]["tourism"="attraction"]`,
+      `nwr${landmark}["amenity"="place_of_worship"]`,
+      `nwr${landmark}["ceremonial_gate"="torii"]`,
+      `nwr${landmark}["man_made"="torii"]`,
+      `nwr${landmark}["historic"]`,
+      `nwr${landmark}["tourism"="hotel"]`,
+      `nwr${landmark}["man_made"~"^(tower|communications_tower|mast)$"]`,
+      `nwr${landmark}["building"="tower"]`,
+      `nwr${landmark}["building"]["wikidata"]`,
+      `nwr${landmark}["building"]["wikipedia"]`,
+      `nwr${landmark}["building"]["tourism"="attraction"]`,
     ];
     return [
       ...accessStatements,
@@ -707,13 +747,13 @@ export async function fetchOverpass(
         Math.min(OVERPASS_REQUEST_TIMEOUT_MS, remainingMilliseconds)
       );
       try {
-        // The compact water-only query is small enough for a normal GET. Public
-        // Overpass frontends cache and route this form more reliably from Pages,
-        // while detailed site-context queries remain POST requests to avoid URL
-        // size limits.
-        const useGet = query.length <= OVERPASS_GET_QUERY_LIMIT;
+        // Compact water and local bounding-box queries fit safely in a GET URL.
+        // Public Overpass frontends route/cache this more reliably from Pages;
+        // dispersed point batches remain POST requests to avoid URL limits.
+        const queryParameters = new URLSearchParams({ data: query });
+        const useGet = queryParameters.toString().length <= OVERPASS_GET_URL_LIMIT;
         const requestUrl = useGet
-          ? `${endpoint}?${new URLSearchParams({ data: query })}`
+          ? `${endpoint}?${queryParameters}`
           : endpoint;
         const response = await fetch(requestUrl, {
           method: useGet ? "GET" : "POST",
@@ -724,7 +764,7 @@ export async function fetchOverpass(
             Accept: "application/json",
             "User-Agent": "AstroSight/1.0 (+https://github.com/kosuge1004-byte/ksg-world-photo-planner)",
           },
-          ...(useGet ? {} : { body: new URLSearchParams({ data: query }) }),
+          ...(useGet ? {} : { body: queryParameters }),
           signal: requestController.signal,
         });
         if (!response.ok) {
@@ -776,15 +816,17 @@ export async function lookupOsmSiteContexts(
       throw new Error("地理条件の判定座標が不正です");
     }
   }
+  const gsiWaterContexts = purpose === "height-only"
+    ? null
+    : await lookupGsiWaterSurfaceContexts(points, signal);
   if (purpose === "water-only") {
     // 国内では国土地理院の高精細ベクトルタイルを先に使う。公開Overpass
-    // APIへのCloudflare egressが混雑・遮断されてもダウンロードを止めず、
-    // relation multipolygonを平坦なgeometryとして扱っていた従来判定より
+    // APIが混雑してもダウンロードを止めず、relation multipolygonを平坦な
+    // geometryとして扱っていた従来判定より
     // 河川面を正確に拾える。GSIで全地点を安全に判定できない地域・障害時は
     // 下の既存Overpass経路へそのまま戻す。
-    const gsiContexts = await lookupGsiWaterSurfaceContexts(points, signal);
-    if (gsiContexts) {
-      return gsiContexts.map(({ onWaterSurface, waterSurfaceKind }) => ({
+    if (gsiWaterContexts) {
+      return gsiWaterContexts.map(({ onWaterSurface, waterSurfaceKind }) => ({
         walkingAccessible: false,
         onMappedWay: false,
         restrictedAccess: false,
@@ -798,8 +840,9 @@ export async function lookupOsmSiteContexts(
     }
   }
   const elements = await fetchOverpass(queryForPoints(points, includeDetails, purpose), signal);
-  return points.map((point) => {
-    const waterSurfaceKind = mappedWaterSurfaceKind(elements, point);
+  return points.map((point, index) => {
+    const waterSurfaceKind = gsiWaterContexts?.[index]?.waterSurfaceKind ??
+      mappedWaterSurfaceKind(elements, point);
     if (purpose === "water-only") {
       return {
         walkingAccessible: false,
