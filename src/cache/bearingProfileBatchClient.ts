@@ -10,6 +10,15 @@ import { createAbortError, createTimeoutError, isAbortError } from "../utils/run
 
 const BATCH_REQUEST_TIMEOUT_MS = 45_000;
 const MAX_BEARINGS_PER_REQUEST = 360;
+const PRECOMPUTED_BEARING_PROFILE_FORMAT =
+  "astrosight-precomputed-bearing-profile-v1";
+
+export class PrecomputedBearingProfileUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PrecomputedBearingProfileUnavailableError";
+  }
+}
 
 function validFailure(value: unknown): value is BearingProfileBatchFailure {
   if (typeof value !== "object" || value === null) return false;
@@ -32,6 +41,50 @@ function validResponseEnvelope(value: unknown): value is BearingProfileBatchResp
     Number(response.requestedBearingCount) <= MAX_BEARINGS_PER_REQUEST &&
     Number.isSafeInteger(response.pointCount) &&
     Number(response.pointCount) >= 0;
+}
+
+function selectPublishedProfileEnvelope(
+  request: BearingProfileBatchRequest,
+  value: unknown
+): BearingProfileBatchResponseV2 | null {
+  if (typeof value !== "object" || value === null) return null;
+  const file = value as Record<string, unknown>;
+  if (
+    file.schemaVersion !== 1 ||
+    file.format !== PRECOMPUTED_BEARING_PROFILE_FORMAT ||
+    typeof file.subject !== "object" || file.subject === null ||
+    typeof file.maxDistanceMeters !== "number" ||
+    Math.abs(file.maxDistanceMeters - request.maxDistanceMeters) > 0.01 ||
+    !validResponseEnvelope(file.response) ||
+    file.response.version !== 2 ||
+    file.response.failedBearings.length !== 0
+  ) return null;
+  const subject = file.subject as Record<string, unknown>;
+  if (
+    typeof subject.latitude !== "number" ||
+    typeof subject.longitude !== "number" ||
+    subject.latitude.toFixed(7) !== request.subjectPoint.latitude.toFixed(7) ||
+    subject.longitude.toFixed(7) !== request.subjectPoint.longitude.toFixed(7)
+  ) return null;
+  const byBearing = new Map(
+    file.response.profiles.flatMap((profile) =>
+      typeof profile === "object" && profile !== null &&
+      "bearingDegrees" in profile && typeof profile.bearingDegrees === "number"
+        ? [[profile.bearingDegrees, profile] as const]
+        : []
+    )
+  );
+  const profiles = request.bearings.map((bearing) => byBearing.get(bearing));
+  if (profiles.some((profile) => !profile)) return null;
+  return {
+    version: 2,
+    precomputed: true,
+    distancesMeters: file.response.distancesMeters,
+    profiles: profiles as BearingProfileBatchResponseV2["profiles"],
+    failedBearings: [],
+    requestedBearingCount: request.bearings.length,
+    pointCount: request.bearings.length * file.response.distancesMeters.length,
+  };
 }
 
 const ELEVATION_SOURCES = new Set(["DEM1A", "DEM5A", "DEM5B", "DEM5C", "DEM10B", null]);
@@ -123,16 +176,36 @@ export async function fetchBearingProfileBatch(
       body: JSON.stringify(request),
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      if (response.status === 503) {
+        try {
+          const value: unknown = await response.json();
+          if (
+            typeof value === "object" && value !== null &&
+            "code" in value && value.code === "PRECOMPUTED_PROFILE_UNAVAILABLE" &&
+            "error" in value && typeof value.error === "string"
+          ) {
+            throw new PrecomputedBearingProfileUnavailableError(value.error);
+          }
+        } catch (error) {
+          if (error instanceof PrecomputedBearingProfileUnavailableError) throw error;
+        }
+      }
+      return null;
+    }
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
     if (!contentType.includes("application/json")) return null;
     const value: unknown = await response.json();
-    if (!validResponseEnvelope(value)) return null;
-    return value.version === 2
-      ? expandCompactResponse(request, value)
-      : value;
+    const normalized = validResponseEnvelope(value)
+      ? value
+      : selectPublishedProfileEnvelope(request, value);
+    if (!normalized) return null;
+    return normalized.version === 2
+      ? expandCompactResponse(request, normalized)
+      : normalized;
   } catch (error) {
     if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
+    if (error instanceof PrecomputedBearingProfileUnavailableError) throw error;
     if (isAbortError(error) && controller.signal.reason?.name === "TimeoutError") return null;
     return null;
   } finally {

@@ -33,11 +33,30 @@ export interface R2SafetyKv {
  * サブセット）。テスト時にモックしやすいよう、必要なメソッドだけを定義。
  */
 export interface R2MonthlyBudgetDb {
+  exec?(query: string): Promise<unknown>;
   prepare(query: string): {
     bind(...values: unknown[]): {
       first<T = unknown>(colName?: string): Promise<T | null>;
     };
   };
+}
+
+const budgetTableReady = new WeakMap<object, Promise<boolean>>();
+
+async function ensureBudgetTable(db: R2MonthlyBudgetDb): Promise<boolean> {
+  if (!db.exec) return false;
+  const identity = db as object;
+  let pending = budgetTableReady.get(identity);
+  if (!pending) {
+    pending = db.exec(
+      `CREATE TABLE IF NOT EXISTS r2_write_budget (
+        month TEXT PRIMARY KEY,
+        writes INTEGER NOT NULL DEFAULT 0
+      )`
+    ).then(() => true, () => false);
+    budgetTableReady.set(identity, pending);
+  }
+  return pending;
 }
 
 export const R2_MAX_CACHE_OBJECT_BYTES = 512 * 1024;
@@ -72,7 +91,7 @@ async function reserveCounter(
   limit: number,
 ): Promise<number | null> {
   if (!db) return null;
-  try {
+  const reserve = async (): Promise<number | null> => {
     const result = await db
       .prepare(
         `INSERT INTO r2_write_budget (month, writes) VALUES (?1, ?2)
@@ -83,8 +102,20 @@ async function reserveCounter(
       .bind(key, increment, limit)
       .first<{ writes: number }>();
     return result ? result.writes : null;
+  };
+  try {
+    return await reserve();
   } catch {
-    return null;
+    // A missing migration previously disabled every R2 read and silently sent
+    // the app back to the slow public DEM route. D1 supports idempotent schema
+    // creation; initialize this one counter table once, then retry the exact
+    // same bounded reservation. Other D1 failures still fail closed.
+    if (!await ensureBudgetTable(db)) return null;
+    try {
+      return await reserve();
+    } catch {
+      return null;
+    }
   }
 }
 

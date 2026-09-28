@@ -45,6 +45,7 @@ globalThis.fetch = async (input, init = {}) => {
       lookupGeoidHeights: async (points) => points.map(() => 38),
       nowIso: () => "2026-09-26T00:00:00.000Z",
     });
+    response.precomputed = true;
     return Response.json(response);
   }
   if (url.startsWith("/api/gsi-elevation")) {
@@ -68,7 +69,7 @@ globalThis.fetch = async (input, init = {}) => {
 
 const manager = await import("../../src/cache/tripodBearingProfileManager.ts");
 
-test("manager reduces all pending bearings to bounded batch requests", async () => {
+test("manager downloads every registered-spot bearing in one published-profile request", async () => {
   const subjectPoint = {
     latitude: 35.36,
     longitude: 136.81,
@@ -86,11 +87,11 @@ test("manager reduces all pending bearings to bounded batch requests", async () 
   assert.equal(result.requestedBearings, bearings.length);
   assert.equal(result.successfulBearings, bearings.length);
   assert.equal(result.failedBearings, 0);
-  assert.equal(batchCalls, Math.ceil(bearings.length / 32));
-  assert.ok(batchCalls <= 12, `expected at most twelve round trips, received ${batchCalls}`);
+  assert.equal(batchCalls, 1);
   assert.equal(legacyElevationCalls, 0);
   assert.equal(legacyGeoidCalls, 0);
-  assert.ok(demTileCalls > 0, "batch results must retain the explicit device DEM download");
+  assert.equal(demTileCalls, 0,
+    "the complete published profile must not redownload the same raw DEM tiles");
 
   const { getBearingProfilesMany } = await import("../../src/cache/tripodBearingProfileCache.ts");
   const profiles = await getBearingProfilesMany("batch-runtime", 1.6, bearings);

@@ -34,12 +34,42 @@ class MemoryBudgetDb {
   }
 }
 
+class MissingTableBudgetDb extends MemoryBudgetDb {
+  tableExists = false;
+  execCount = 0;
+
+  async exec(query) {
+    assert.match(query, /CREATE TABLE IF NOT EXISTS r2_write_budget/);
+    this.execCount += 1;
+    this.tableExists = true;
+  }
+
+  prepare() {
+    return {
+      bind: (key, increment, limit) => ({
+        first: async () => {
+          if (!this.tableExists) throw new Error("no such table: r2_write_budget");
+          const current = this.values.get(key) ?? 0;
+          if (current + increment > limit) return null;
+          const writes = current + increment;
+          this.values.set(key, writes);
+          return { writes };
+        },
+      }),
+    };
+  }
+}
+
 const kv = { async get() { return null; }, async put() {} };
 const month = new Date().toISOString().slice(0, 7);
 
 assert.equal(await allowR2Read(kv, {}, undefined), false, "missing D1 must fail closed");
 const readDb = new MemoryBudgetDb();
 assert.equal(await allowR2Read(kv, {}, readDb), true);
+const missingTableDb = new MissingTableBudgetDb();
+assert.equal(await allowR2Read(kv, {}, missingTableDb), true,
+  "a missing D1 migration must self-initialize instead of disabling R2");
+assert.equal(missingTableDb.execCount, 1);
 readDb.values.set(`read:${month}`, R2_MONTHLY_READ_BUDGET);
 assert.equal(await allowR2Read(kv, {}, readDb), false, "read budget must be enforced");
 readDb.fail = true;
@@ -59,8 +89,8 @@ const storageLimitDb = new MemoryBudgetDb();
 storageLimitDb.values.set("storage-reserved-bytes:v1", R2_STORAGE_RESERVATION_BUDGET_BYTES - 1);
 assert.equal(await reserveR2Write(kv, "x", 2, {}, storageLimitDb), false, "storage budget must be enforced");
 
-assert.equal(PREWARM_LANDMARKS.length, 284);
-assert.equal(ACTIVE_PREWARM_LANDMARKS.length, 195);
+assert.equal(PREWARM_LANDMARKS.length, 287);
+assert.equal(ACTIVE_PREWARM_LANDMARKS.length, 200);
 assert.deepEqual(
   ACTIVE_PREWARM_LANDMARKS.filter((item) => item.category === "mountain").map((item) => item.name),
   ["富士山"],

@@ -127,13 +127,11 @@ const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 // 方位同士は独立しているが、各方位内でもDEM APIが並列取得を行うため
 // 過剰並列にはしない。2方位だけ重ね、待ち時間を隠しつつGSI/Cloudflareを保護する。
 const BEARING_CONCURRENCY = 2;
-// 259 bearings become nine HTTP requests. The endpoint itself accepts up to
-// 360; this smaller client batch is the free-plan subrequest safety boundary.
-// 50km uses up to 640 samples per bearing. The server processes eight bearings
-// at a time and the authenticated E-drive gateway sends at most 512 points per
-// origin request, so 32 bearings require at most 40 external subrequests in one
-// Pages invocation. This stays below the Workers Free limit of 50 with margin.
-const BEARING_BATCH_SIZE = 32;
+// A registered spot is one immutable R2 object containing all 360 bearings.
+// Ask for all pending bearings at once so a normal 259-bearing download uses
+// one client/Worker/R2 round trip. Unregistered coordinates receive an explicit
+// 404 and retain the precise direct path below.
+const BEARING_BATCH_SIZE = 360;
 
 function validBatchProfile(
   value: unknown,
@@ -364,8 +362,8 @@ export async function backfillBearingProfiles(params: {
     }
   }
 
-  // Prefer the server-side all-bearing calculation. Older deployments, a
-  // temporarily unavailable endpoint, or a partial response all fall back to
+  // Prefer the published all-bearing profile. Older deployments, an endpoint
+  // miss for an unregistered coordinate, or a partial response fall back to
   // the established direct path for only the bearings that remain unresolved.
   // Values are accepted only when every distance and Karney destination matches
   // the locally generated profile, so this changes transport count, not precision.

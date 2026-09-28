@@ -7,6 +7,8 @@ export const PRECOMPUTED_BEARING_PROFILE_FORMAT =
   "astrosight-precomputed-bearing-profile-v1";
 export const PRECOMPUTED_BEARING_PROFILE_DIRECTORY =
   "precomputed-bearing-profile-v1";
+export const PRECOMPUTED_BEARING_PROFILE_R2_PREFIX =
+  `${PRECOMPUTED_BEARING_PROFILE_DIRECTORY}/`;
 
 export type PrecomputedBearingProfileFile = {
   schemaVersion: 1;
@@ -59,6 +61,31 @@ export function precomputedBearingProfileIdentity(input: {
     input.longitude.toFixed(7),
     Math.round(input.maxDistanceMeters).toString(),
   ].join(":");
+}
+
+export async function precomputedBearingProfileFileName(input: {
+  latitude: number;
+  longitude: number;
+  maxDistanceMeters: number;
+}): Promise<string> {
+  const identity = precomputedBearingProfileIdentity(input);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(identity)
+  );
+  return `${Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("")}.json.gz`;
+}
+
+export async function precomputedBearingProfileObjectKey(input: {
+  latitude: number;
+  longitude: number;
+  maxDistanceMeters: number;
+}): Promise<string> {
+  return `${PRECOMPUTED_BEARING_PROFILE_R2_PREFIX}${
+    await precomputedBearingProfileFileName(input)
+  }`;
 }
 
 export function isPrecomputedBearingProfileResponse(

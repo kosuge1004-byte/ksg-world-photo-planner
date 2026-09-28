@@ -11,7 +11,7 @@ import { fetchServerSiteContexts } from "./siteContext.ts";
 import { sampleServerWorldTerrain } from "./worldTerrain.ts";
 import { prefetchGsiTerrainAroundSubject } from "./gsiElevation.ts";
 import { formatSearchDuration, type SpotSearchPerformanceMetrics } from "../src/search/searchPerformance.ts";
-import { lookupLocalPrecomputedBearingProfile } from "./localDemGateway.ts";
+import { lookupPublishedPrecomputedBearingProfile } from "./publishedPrecomputedBearingProfiles.ts";
 import { createPrecomputedSpotSearchTerrainSampler } from "./precomputedSpotSearchTerrain.ts";
 import type { BearingProfileBatchResponseV2 } from "../src/types/bearingProfileBatch.ts";
 import { ACTIVE_PREWARM_LANDMARKS } from "./landmarkPrewarmSeed.ts";
@@ -93,7 +93,7 @@ async function lookupSpotSearchPrecomputedProfile(
   // deadline ensures an offline E-drive can never make live search slower.
   const timeout = setTimeout(() => controller.abort(), 1_500);
   try {
-    return await lookupLocalPrecomputedBearingProfile({
+    return await lookupPublishedPrecomputedBearingProfile({
       subjectPoint: subject,
       cameraSettings: { lensCenterHeightMeters },
       bearings: Array.from({ length: 360 }, (_, bearing) => bearing),

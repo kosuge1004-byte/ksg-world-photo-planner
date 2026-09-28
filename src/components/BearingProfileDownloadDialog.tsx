@@ -98,7 +98,10 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
             </p>
             {progress.geoidTotal !== undefined && progress.geoidTotal > 0 && (
               <p className="project-dialog-note" role="status">
-                ジオイド高 {progress.geoidCompleted ?? 0} / {progress.geoidTotal}地域を確認中（APIの受付間隔を待つ場合があります）
+                ジオイド高 {progress.geoidCompleted ?? 0} / {progress.geoidTotal}地域
+                {(progress.geoidCompleted ?? 0) >= progress.geoidTotal
+                  ? "を確認済み"
+                  : "を確認中"}
               </p>
             )}
             {progress.lastFailureReason && (

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 
 import {
   computeBearingProfileBatch,
@@ -7,8 +8,15 @@ import {
   lookupBearingProfileGeoidHeights,
 } from "../../server/bearingProfileBatch.ts";
 import { fetchBearingProfileBatch } from "../../src/cache/bearingProfileBatchClient.ts";
+import { configureServerRuntime } from "../../server/cloudflareRuntime.ts";
 import { calculateKarneyDestinationPoint } from "../../src/geodesy/karneyGeodesic.ts";
 import { lookupLocalJpgeo2024Height } from "../../server/jpgeo2024Local.ts";
+import {
+  PRECOMPUTED_BEARING_PROFILE_FORMAT,
+  precomputedBearingProfileObjectKey,
+} from "../../server/precomputedBearingProfiles.ts";
+import { lookupR2PrecomputedBearingProfile } from "../../server/publishedPrecomputedBearingProfiles.ts";
+import { onRequest as bearingProfileBatchEndpoint } from "../../functions/api/bearing-profile-batch.ts";
 
 const request = {
   subjectPoint: { latitude: 35.36, longitude: 136.81, height: 100 },
@@ -122,6 +130,73 @@ test("a complete precomputed profile bypasses every DEM and geoid calculation", 
   });
   assert.equal(precomputedLookups, 1);
   assert.deepEqual(result, precomputed);
+});
+
+test("one immutable R2 object supplies any requested bearing subset", async (t) => {
+  t.after(() => configureServerRuntime({}));
+  const storedBearings = [0, 90, 180];
+  const stored = {
+    schemaVersion: 1,
+    format: PRECOMPUTED_BEARING_PROFILE_FORMAT,
+    subject: {
+      name: "test target",
+      latitude: request.subjectPoint.latitude,
+      longitude: request.subjectPoint.longitude,
+    },
+    maxDistanceMeters: request.maxDistanceMeters,
+    generatedAt: "2026-09-29T00:00:00.000Z",
+    response: {
+      version: 2,
+      distancesMeters: [8, request.maxDistanceMeters],
+      profiles: storedBearings.map((bearingDegrees) => ({
+        bearingDegrees,
+        ellipsoidalHeightsMeters: [100 + bearingDegrees, 101 + bearingDegrees],
+        elevationSources: ["DEM1A", "DEM5A"],
+        computedAtIso: "2026-09-29T00:00:00.000Z",
+      })),
+      failedBearings: [],
+      requestedBearingCount: storedBearings.length,
+      pointCount: storedBearings.length * 2,
+    },
+  };
+  const compressed = gzipSync(Buffer.from(JSON.stringify(stored), "utf8"));
+  const bytes = compressed.buffer.slice(
+    compressed.byteOffset,
+    compressed.byteOffset + compressed.byteLength
+  );
+  const expectedKey = await precomputedBearingProfileObjectKey({
+    latitude: request.subjectPoint.latitude,
+    longitude: request.subjectPoint.longitude,
+    maxDistanceMeters: request.maxDistanceMeters,
+  });
+  const keys = [];
+  configureServerRuntime({
+    persistentCache: {
+      async get() { return null; },
+      async getWithStatus(key) {
+        keys.push(key);
+        return { status: "hit", value: bytes };
+      },
+      async put() {},
+    },
+  });
+  const result = await lookupR2PrecomputedBearingProfile(request);
+  assert.deepEqual(keys, [expectedKey]);
+  assert.ok(result);
+  assert.equal(result.precomputed, true);
+  assert.deepEqual(result.profiles.map((profile) => profile.bearingDegrees), request.bearings);
+  assert.equal(result.requestedBearingCount, request.bearings.length);
+  assert.equal(result.pointCount, request.bearings.length * 2);
+
+  const browserResult = await fetchBearingProfileBatch(
+    request,
+    undefined,
+    async () => Response.json(stored)
+  );
+  assert.ok(browserResult,
+    "the browser must validate and select requested bearings from the full R2 envelope");
+  assert.equal(browserResult.precomputed, true);
+  assert.deepEqual(browserResult.profiles.map((profile) => profile.bearingDegrees), request.bearings);
 });
 
 test("production batch geoid path uses each original JPGEO2024 coordinate", async (t) => {
@@ -265,6 +340,18 @@ test("batch client falls back on an unavailable endpoint and preserves user abor
   );
   assert.equal(unavailable, null);
 
+  await assert.rejects(
+    fetchBearingProfileBatch(
+      request,
+      undefined,
+      async () => Response.json({
+        code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
+        error: "登録スポットの計算済み地形データを読み出せません。",
+      }, { status: 503 })
+    ),
+    { name: "PrecomputedBearingProfileUnavailableError" }
+  );
+
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(
@@ -273,4 +360,114 @@ test("batch client falls back on an unavailable endpoint and preserves user abor
     }),
     { name: "AbortError" }
   );
+});
+
+test("Pages batch endpoint fails registered-profile misses quickly instead of computing", async () => {
+  const body = {
+    ...request,
+    subjectPoint: {
+      latitude: 35.7100627,
+      longitude: 139.8107004,
+      height: 634,
+    },
+    bearings: [0],
+    maxDistanceMeters: 10_000,
+  };
+  const response = await bearingProfileBatchEndpoint({
+    request: new Request("https://example.test/api/bearing-profile-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    env: {},
+    waitUntil() {},
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
+    error: "登録スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
+  });
+});
+
+test("Pages batch endpoint streams the R2 gzip without Worker-side inflation", async () => {
+  const body = {
+    ...request,
+    subjectPoint: {
+      latitude: 35.7100627,
+      longitude: 139.8107004,
+      height: 634,
+    },
+    bearings: [0],
+    maxDistanceMeters: 10_000,
+  };
+  const stored = {
+    schemaVersion: 1,
+    format: PRECOMPUTED_BEARING_PROFILE_FORMAT,
+    subject: {
+      name: "東京スカイツリー",
+      latitude: body.subjectPoint.latitude,
+      longitude: body.subjectPoint.longitude,
+    },
+    maxDistanceMeters: body.maxDistanceMeters,
+    generatedAt: "2026-09-29T00:00:00.000Z",
+    response: {
+      version: 2,
+      distancesMeters: [8, 10_000],
+      profiles: [{
+        bearingDegrees: 0,
+        ellipsoidalHeightsMeters: [38, 39],
+        elevationSources: ["DEM1A", "DEM5A"],
+        computedAtIso: "2026-09-29T00:00:00.000Z",
+      }],
+      failedBearings: [],
+      requestedBearingCount: 1,
+      pointCount: 2,
+    },
+  };
+  const compressed = gzipSync(Buffer.from(JSON.stringify(stored), "utf8"));
+  const budget = new Map();
+  const response = await bearingProfileBatchEndpoint({
+    request: new Request("https://example.test/api/bearing-profile-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    env: {
+      NETWORK_CACHE: {
+        async get() {
+          return {
+            async arrayBuffer() {
+              return compressed.buffer.slice(
+                compressed.byteOffset,
+                compressed.byteOffset + compressed.byteLength
+              );
+            },
+          };
+        },
+        async put() {},
+      },
+      SPOT_SEARCH_JOBS: { async get() { return null; }, async put() {} },
+      R2_WRITE_BUDGET_DB: {
+        prepare() {
+          return {
+            bind(key, increment, limit) {
+              return {
+                async first() {
+                  const next = (budget.get(key) ?? 0) + increment;
+                  if (next > limit) return null;
+                  budget.set(key, next);
+                  return { writes: next };
+                },
+              };
+            },
+          };
+        },
+      },
+    },
+    waitUntil() {},
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-encoding"), "gzip");
+  const streamed = Buffer.from(await response.arrayBuffer());
+  assert.deepEqual(streamed, compressed);
 });

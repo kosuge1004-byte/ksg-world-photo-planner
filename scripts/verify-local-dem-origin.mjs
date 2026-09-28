@@ -71,7 +71,7 @@ assert.match(gateway, /export async function lookupLocalPrecomputedBearingProfil
 assert.match(app, /record\.mode === ["']auto["']/);
 assert.match(app, /complete:\s*true/);
 assert.match(elevation, /lookupLocalDemGatewayAuto\(gatewayPoints, signal\)/);
-assert.match(bearingManager, /const BEARING_BATCH_SIZE = 32/);
+assert.match(bearingManager, /const BEARING_BATCH_SIZE = 360/);
 assert.match(bearingManager, /usesPrecomputedRegisteredSpotProfile/);
 
 assert.match(runtime, /new AsyncLocalStorage<RuntimeConfiguration>/);
