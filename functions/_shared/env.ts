@@ -1,4 +1,7 @@
-import { configureServerRuntime } from "../../server/cloudflareRuntime.ts";
+import {
+  runWithServerRuntime,
+  type RuntimeConfiguration,
+} from "../../server/cloudflareRuntime.ts";
 import { persistentCacheFromR2 } from "../../server/r2PersistentCache.ts";
 import type {
   SpotSearchJobKv,
@@ -23,6 +26,13 @@ export interface CloudflareEnv {
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
   GOOGLE_MAPS_API_KEY?: string;
+  /** HTTPS endpoint published by Cloudflare Tunnel. Never points at a drive/share. */
+  LOCAL_DEM_API_URL?: string;
+  /** Origin-level shared secret; configure as a Cloudflare secret. */
+  LOCAL_DEM_ORIGIN_TOKEN?: string;
+  /** Cloudflare Access service-token credentials; configure both as secrets. */
+  LOCAL_DEM_ACCESS_CLIENT_ID?: string;
+  LOCAL_DEM_ACCESS_CLIENT_SECRET?: string;
   NETWORK_CACHE?: R2Bucket;
   /**
    * 2026-08-27追記: R2月間書き込み総数を数えるためのD1データベース。
@@ -43,10 +53,10 @@ export function bearingProfileDownloadJobKv(env: CloudflareEnv): BearingProfileD
     : null;
 }
 
-export function configureCloudflareServerRuntime(
+function cloudflareServerRuntimeConfiguration(
   context: EventContext<CloudflareEnv, string, unknown>
-): void {
-  configureServerRuntime({
+): RuntimeConfiguration {
+  return {
     cesiumIonToken:
       context.env.CESIUM_ION_TOKEN ?? context.env.VITE_CESIUM_ION_TOKEN,
     persistentCache: persistentCacheFromR2(
@@ -57,5 +67,19 @@ export function configureCloudflareServerRuntime(
     ),
     waitUntil: (promise) => context.waitUntil(promise),
     r2WriteBudgetDb: context.env.R2_WRITE_BUDGET_DB,
-  });
+    localDemGateway: {
+      endpoint: context.env.LOCAL_DEM_API_URL,
+      originToken: context.env.LOCAL_DEM_ORIGIN_TOKEN,
+      accessClientId: context.env.LOCAL_DEM_ACCESS_CLIENT_ID,
+      accessClientSecret: context.env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+    },
+  };
+}
+
+/** Keep request-bound bindings and credentials isolated across concurrent requests. */
+export function withCloudflareServerRuntime<T>(
+  context: EventContext<CloudflareEnv, string, unknown>,
+  task: () => T
+): T {
+  return runWithServerRuntime(cloudflareServerRuntimeConfiguration(context), task);
 }

@@ -7,7 +7,12 @@ import {
   spotSearchJobKv,
   type CloudflareEnv,
 } from "../_shared/env.ts";
-import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import {
+  errorMessage,
+  jsonResponse,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 
 function validResults(value: unknown): value is SerializedSpotPresetResult[] {
   return Array.isArray(value) && value.length <= 100 && value.every((result) =>
@@ -20,7 +25,7 @@ function validResults(value: unknown): value is SerializedSpotPresetResult[] {
 export const onRequest: PagesFunction<CloudflareEnv> = async ({ request, env }) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
   try {
-    const body = await request.json() as {
+    const body = await readJsonRequest(request, 1024 * 1024) as {
       clientId?: unknown;
       jobId?: unknown;
       results?: unknown;
@@ -59,6 +64,6 @@ export const onRequest: PagesFunction<CloudflareEnv> = async ({ request, env }) 
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
-    return jsonResponse({ error: errorMessage(error) }, 422);
+    return jsonResponse({ error: errorMessage(error) }, requestErrorStatus(error, 422));
   }
 };

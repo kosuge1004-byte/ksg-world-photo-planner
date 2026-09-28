@@ -3,9 +3,12 @@ export type HeightSource =
   | "terrain"
   | "3d-picked"
   | "manual"
+  | "catalogued-structure-height"
   | "osm-surveyed-height"
   | "osm-levels-estimate"
   | "legacy";
+
+export type SubjectSurfaceTarget = "terrain" | "structure-roof";
 
 export type GroundPoint = {
   latitude: number;
@@ -19,6 +22,14 @@ export type GroundPoint = {
   /** Geoid separation N = h_ellipsoid - H_orthometric. */
   geoidHeightMeters?: number;
   heightSource?: HeightSource;
+  /**
+   * 被写体として狙う表面。スポット検索で建物・塔と判明した地点は
+   * structure-roof を保持し、履歴・プロジェクトからの再配置でも地表へ
+   * 暗黙に戻さない。
+   */
+  subjectSurfaceTarget?: SubjectSurfaceTarget;
+  /** カタログ等で確認済みの、接地面から構造物頂上までの高さ。 */
+  structureHeightMeters?: number;
   label: string;
 };
 

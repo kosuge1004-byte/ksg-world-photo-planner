@@ -6,9 +6,11 @@
 //   npx tsx server/prewarmLandmarkCache.ts --category=mountain
 //   npx tsx server/prewarmLandmarkCache.ts --start=10 --count=5
 
-import { PREWARM_LANDMARKS, type PrewarmLandmark } from "./landmarkPrewarmSeed.ts";
+import { ACTIVE_PREWARM_LANDMARKS, type PrewarmLandmark } from "./landmarkPrewarmSeed.ts";
 import { prewarmMany } from "./prewarmLandmarkCore.ts";
 import { configureServerRuntime } from "./cloudflareRuntime.ts";
+import { persistentCacheFromR2 } from "./r2PersistentCache.ts";
+import type { R2MonthlyBudgetDb, R2SafetyKv } from "./r2SafetyBudget.ts";
 import { getPlatformProxy } from "wrangler";
 
 function parseArgs(): { category?: PrewarmLandmark["category"]; start: number; count: number } {
@@ -23,7 +25,7 @@ function parseArgs(): { category?: PrewarmLandmark["category"]; start: number; c
 
 async function main() {
   const { category, start, count } = parseArgs();
-  let targets = PREWARM_LANDMARKS;
+  let targets = ACTIVE_PREWARM_LANDMARKS;
   if (category) targets = targets.filter((l) => l.category === category);
   targets = targets.slice(start, start + count);
 
@@ -32,17 +34,26 @@ async function main() {
   // bindingが定義されている前提。無い場合はpersistentCacheがundefinedに
   // なり、書き込みは行われず従来どおり通信するだけになる（安全なフォール
   // バック）。
-  const platform = await getPlatformProxy<{ NETWORK_CACHE?: R2Bucket }>();
+  const platform = await getPlatformProxy<{
+    NETWORK_CACHE?: R2Bucket;
+    SPOT_SEARCH_JOBS?: R2SafetyKv;
+    R2_WRITE_BUDGET_DB?: R2MonthlyBudgetDb;
+  }>();
   configureServerRuntime({
-    persistentCache: undefined, // R2 safety: manual prewarm writes disabled
-    waitUntil: (promise) => promise,
+    persistentCache: persistentCacheFromR2(
+      platform.env.NETWORK_CACHE,
+      platform.env.SPOT_SEARCH_JOBS,
+      targets,
+      platform.env.R2_WRITE_BUDGET_DB,
+    ),
+    r2WriteBudgetDb: platform.env.R2_WRITE_BUDGET_DB,
   });
 
   console.log(`対象ランドマーク: ${targets.length}件${category ? `（${category}のみ）` : ""}`);
   console.log(
-    platform.env.NETWORK_CACHE
-      ? "R2永続キャッシュ（NETWORK_CACHE）に接続しました。"
-      : "⚠ NETWORK_CACHEのR2 bindingが見つかりません。DEMは取得しますがキャッシュへの書き込みは行われません。"
+    platform.env.NETWORK_CACHE && platform.env.SPOT_SEARCH_JOBS && platform.env.R2_WRITE_BUDGET_DB
+      ? "R2永続キャッシュ（NETWORK_CACHE）に無料枠ガード経由で接続しました。"
+      : "⚠ R2・安全ゲートKV・予算D1のいずれかが見つかりません。DEMは取得しますがR2はバイパスします。"
   );
 
   const { totalAttempts, totalCandidates } = await prewarmMany(targets, (message) => console.log(message));

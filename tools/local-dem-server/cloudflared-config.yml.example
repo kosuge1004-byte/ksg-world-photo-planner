@@ -1,0 +1,9 @@
+# Copy this file outside the repository and replace only the placeholders.
+# Never commit the generated tunnel credentials JSON.
+tunnel: <TUNNEL-UUID>
+credentials-file: C:\Users\<WINDOWS-USER>\.cloudflared\<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: <PRIVATE-DEM-HOSTNAME>
+    service: http://127.0.0.1:8789
+  - service: http_status:404

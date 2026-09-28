@@ -3,7 +3,9 @@ export type SearchResult = {
   display_name: string;
   lat: string;
   lon: string;
+  category?: string;
   type?: string;
+  extratags?: Record<string, unknown>;
 };
 
 export type GoogleMapsResolveResponse = {

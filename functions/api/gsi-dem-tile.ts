@@ -3,7 +3,7 @@ import {
   type GsiElevationSource,
 } from "../../server/gsiElevation.ts";
 import {
-  configureCloudflareServerRuntime,
+  withCloudflareServerRuntime,
   type CloudflareEnv,
 } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
@@ -16,7 +16,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "GET") {
     return jsonResponse({ error: "GETリクエストのみ利用できます" }, 405, "no-store");
   }
-  configureCloudflareServerRuntime(context);
+  return withCloudflareServerRuntime(context, async () => {
   const url = new URL(context.request.url);
   const sourceValue = url.searchParams.get("source") as GsiElevationSource | null;
   const x = Number(url.searchParams.get("x"));
@@ -46,5 +46,6 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       "X-AstroSight-DEM-Height": String(tile.height),
       "X-Content-Type-Options": "nosniff",
     },
+  });
   });
 };

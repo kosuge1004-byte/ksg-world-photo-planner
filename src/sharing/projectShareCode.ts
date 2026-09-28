@@ -5,8 +5,10 @@ import type { ForegroundObjectType } from "../types/foreground";
 /**
  * 共有URLに載せるプロジェクトの中身。
  *
- * 緯度経度・カメラ設定・表示設定だけを含み、高度（ellipsoidalHeightMeters /
- * orthometricHeightMeters / geoidHeightMeters / height）は一切含めない。
+ * 緯度経度・カメラ設定・表示設定だけを含み、絶対高度
+ * （ellipsoidalHeightMeters / orthometricHeightMeters / geoidHeightMeters /
+ * height）は一切含めない。建物を地表へ戻さないための表面種別と、公開
+ * カタログ由来の構造物高だけは任意メタデータとして引き継ぐ。
  * 送信側の環境（DEM取得タイミング・3Dピック結果）を無条件に信頼すると
  * 標高と楕円体高の混在や、地形データ更新後の食い違いにつながるため、
  * 高度は受信側でHeightResolverを通して必ず取り直す（0mフォールバックはしない）。
@@ -26,7 +28,13 @@ export type SharedProjectPayloadV1 = {
   name: string;
   shootingDateTimeLocal: string;
   timeZone: string;
-  subject: { latitude: number; longitude: number; label: string };
+  subject: {
+    latitude: number;
+    longitude: number;
+    label: string;
+    subjectSurfaceTarget?: "terrain" | "structure-roof";
+    structureHeightMeters?: number;
+  };
   tripod: { latitude: number; longitude: number; label: string };
   foregroundObjects: SharedForegroundObject[];
   cameraSettings: CameraSettings;
@@ -62,13 +70,30 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function assertPoint(value: unknown, label: string): asserts value is { latitude: number; longitude: number; label: string } {
-  const point = value as { latitude?: unknown; longitude?: unknown; label?: unknown } | null;
+function assertPoint(value: unknown, label: string): asserts value is {
+  latitude: number;
+  longitude: number;
+  label: string;
+  subjectSurfaceTarget?: "terrain" | "structure-roof";
+  structureHeightMeters?: number;
+} {
+  const point = value as {
+    latitude?: unknown;
+    longitude?: unknown;
+    label?: unknown;
+    subjectSurfaceTarget?: unknown;
+    structureHeightMeters?: unknown;
+  } | null;
   if (
     !point ||
     !isFiniteNumber(point.latitude) || point.latitude < -90 || point.latitude > 90 ||
     !isFiniteNumber(point.longitude) || point.longitude < -180 || point.longitude > 180 ||
-    typeof point.label !== "string"
+    typeof point.label !== "string" ||
+    (point.subjectSurfaceTarget !== undefined &&
+      point.subjectSurfaceTarget !== "terrain" &&
+      point.subjectSurfaceTarget !== "structure-roof") ||
+    (point.structureHeightMeters !== undefined &&
+      (!isFiniteNumber(point.structureHeightMeters) || point.structureHeightMeters <= 0))
   ) {
     throw new ProjectShareCodeError(`共有リンクの${label}の座標が不正です`);
   }

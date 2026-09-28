@@ -2,6 +2,7 @@ import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.
 import { LruPromiseCache } from "./lruPromiseCache.ts";
 import { createTimeoutError, isAbortError } from "./runtimeErrors.ts";
 import { AbortableSemaphore } from "../src/utils/abortableSemaphore.ts";
+import { lookupLocalJpgeo2024Height } from "./jpgeo2024Local.ts";
 
 type GsiGeoidResponse = {
   OutputData?: {
@@ -18,10 +19,10 @@ function validatedCoordinate(latitude: number, longitude: number): void {
   if (
     !Number.isFinite(latitude) ||
     !Number.isFinite(longitude) ||
-    latitude < 20 ||
-    latitude > 46.5 ||
-    longitude < 122 ||
-    longitude > 154
+    latitude < 15 ||
+    latitude > 50 ||
+    longitude < 120 ||
+    longitude > 160
   ) {
     throw new Error("ジオイド高の取得範囲外です");
   }
@@ -215,6 +216,17 @@ export async function lookupGsiGeoidHeight(
   if (cached) return cached;
 
   const request = (async () => {
+    // The whole rectangle used by AstroSight in Japan (20-46.5 N,
+    // 122-154 E) is bundled from the official JPGEO2024 ISG model. This path
+    // is a synchronous array lookup after a small lossless tile decode: it has
+    // no network, timeout or retry failure mode. Both regional and point-mode
+    // callers reach this same branch because they share this function.
+    const localHeight = lookupLocalJpgeo2024Height(queryLatitude, queryLongitude);
+    if (localHeight !== null) return localHeight;
+
+    // The official ISG model extends beyond the bundled Japan rectangle. Keep
+    // the legacy persistent cache/CGI only for those genuinely uncovered
+    // surrounding coordinates so existing API callers retain their fallback.
     const persisted = await readPersistentGeoidHeight(key);
     if (persisted !== null) return persisted;
     const height = await fetchGeoidHeightWithRetry(queryLatitude, queryLongitude, signal);

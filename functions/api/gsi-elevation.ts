@@ -4,16 +4,22 @@ import {
   type GsiElevationRequestPoint,
 } from "../../server/gsiElevation.ts";
 import {
-  configureCloudflareServerRuntime,
+  withCloudflareServerRuntime,
   type CloudflareEnv,
 } from "../_shared/env.ts";
-import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import {
+  errorMessage,
+  jsonResponse,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 
 // クライアント側の実際の最大利用規模（地形稜線の粗走査1方位あたり最大112点、
 // 複数天体を同時判定してもマイクロタスク単位でまとめて数百点程度）に対して
 // 十分な余裕を持たせた上限。これを超える1リクエストは通常の利用では発生
 // せず、大量投入による負荷（CPU・外部通信・R2キャッシュ）だけを弾く。
 const MAX_POINTS_PER_REQUEST = 2000;
+const MAX_REQUEST_BYTES = 256 * 1024;
 
 function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body)) return null;
@@ -40,9 +46,9 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
   }
-  configureCloudflareServerRuntime(context);
-  try {
-    const points = requestPoints(await context.request.json());
+  return withCloudflareServerRuntime(context, async () => {
+    try {
+    const points = requestPoints(await readJsonRequest(context.request, MAX_REQUEST_BYTES));
     if (!points) {
       return jsonResponse({ error: "座標の配列がありません" }, 400, "no-store");
     }
@@ -74,10 +80,15 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         tileCacheBypass: tileCacheCounter.bypass,
       },
       200,
-      "public, max-age=86400"
+      "no-store"
     );
-  } catch (error) {
+    } catch (error) {
     // エラー応答は公開キャッシュしない（失敗を1時間キャッシュして再試行を妨げない）。
-    return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
-  }
+      return jsonResponse(
+        { error: errorMessage(error) },
+        requestErrorStatus(error),
+        "no-store"
+      );
+    }
+  });
 };

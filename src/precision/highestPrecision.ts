@@ -23,6 +23,7 @@ import {
 import { computeApparentElevation } from "../apparent/apparentElevation";
 import { createSearchProgressEstimator } from "../search/searchProgress";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
+import { selectSubjectSurfacePoint } from "../height/subjectSurfaceResolution";
 
 export type HighestPrecisionProgress = {
   percent: number;
@@ -233,6 +234,23 @@ export async function refineSpotPresetHighestPrecision(
     signal
   );
 
+  // A Google surface clamp can intersect a lower neighbouring roof or the
+  // terrain when the target model is late or incomplete. A subject already
+  // proven to be a structure roof must never be downgraded to that ground
+  // result. Re-run the same central selector against the fresh DEM ground,
+  // the Google surface and the previously verified roof; it also prevents a
+  // catalogued height from being added to an already elevated point.
+  const refinedSubject = result.subject.subjectSurfaceTarget === "structure-roof"
+    ? selectSubjectSurfacePoint({
+        groundPoint: terrainSubject,
+        roofPoint: meshSubject,
+        osmPoint: result.subject,
+        requireStructureRoof: true,
+        knownStructureHeightMeters: result.subject.structureHeightMeters,
+        label: result.subject.label,
+      })
+    : meshSubject;
+
   reportProgress(72, "構図を再判定しています");
   const verified: CompositionVerifiedCandidate[] = [];
   for (let index = 0; index < meshCandidates.length; index += 1) {
@@ -247,7 +265,7 @@ export async function refineSpotPresetHighestPrecision(
     // 局所再探索の範囲（半径20m以内）では地形遮蔽の状況は実質的に変わらない。
     const composition = verifyComposition(
       candidate,
-      meshSubject,
+      refinedSubject,
       result,
       cameraSettings,
       previewAspectRatio,
@@ -279,5 +297,5 @@ export async function refineSpotPresetHighestPrecision(
     return candidateOffset < bestOffset ? candidate : best;
   }).point;
   reportProgress(100, "Googleタイルモードの座標を確定しました");
-  return { subject: meshSubject, tripod };
+  return { subject: refinedSubject, tripod };
 }

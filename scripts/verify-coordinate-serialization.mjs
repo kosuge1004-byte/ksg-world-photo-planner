@@ -27,7 +27,7 @@ const gsiElevationServer = read("server/gsiElevation.ts");
 assert.match(gsiElevationServer, /function persistentTileKey\(source: ElevationTileSource, x: number, y: number\)/);
 
 const osmApi = read("functions/api/osm-site-context.ts");
-assert.match(osmApi, /lookupOsmSiteContexts\(points,/);
+assert.match(osmApi, /lookupOsmSiteContexts\(\s*points,/);
 assert.match(osmApi, /cacheKeyInput[\s\S]*toFixed\(5\)/);
 
 console.log("coordinate serialization verification passed");

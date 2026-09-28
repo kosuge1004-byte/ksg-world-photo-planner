@@ -3,6 +3,13 @@
 	"appName": "AstroSight",
 	"webDir": "dist",
 	"backgroundColor": "#05070a",
+	"server": {
+		"allowNavigation": [
+			"ion.cesium.com",
+			"api.cesium.com",
+			"astrosight.pages.dev"
+		]
+	},
 	"ios": {
 		"contentInset": "never",
 		"preferredContentMode": "mobile",

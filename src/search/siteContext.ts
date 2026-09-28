@@ -16,10 +16,10 @@ type SiteContextResponse = {
 };
 
 const SITE_CONTEXT_BATCH_SIZE = 8;
-// The Pages function may use its full 35-second Overpass fallback budget.
-// Let one server request finish instead of aborting it at diagnosticFetch's
-// general 8-second deadline and starting duplicate Overpass work.
-const SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS = 38_000;
+// Pages gives Cloudflare egress a short attempt before the browser switches to
+// direct read-only Overpass access. Keep this above the server's six-second
+// budget without making a saved-spot download wait for the old 35-second stall.
+const SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS = 12_000;
 
 export type SiteContextPurpose = "full" | "height-only" | "water-only";
 
@@ -86,19 +86,49 @@ async function fetchSiteContextBatch(
   }));
   const requestKey = `osm-site-context:${includeDetails ? "details" : "flags"}:${purpose}:${JSON.stringify(cacheKeyPoints)}`;
   const request = () => withAbortableTimeout(async (requestSignal) => {
-    const response = await diagnosticFetch("osm-site-context", "/api/osm-site-context", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(requestBody),
-      signal: requestSignal,
-    }, SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS);
+    let pagesResult: {
+      ok: boolean;
+      status: number;
+      data: SiteContextResponse;
+    } | null = null;
+    try {
+      const response = await diagnosticFetch("osm-site-context", "/api/osm-site-context", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(requestBody),
+        signal: requestSignal,
+      }, SITE_CONTEXT_FETCH_ATTEMPT_TIMEOUT_MS);
+      pagesResult = {
+        ok: response.ok,
+        status: response.status,
+        data: (await response.json()) as SiteContextResponse,
+      };
+      if (pagesResult.ok || purpose === "water-only" ||
+        (pagesResult.status < 500 && pagesResult.status !== 422)) {
+        return pagesResult;
+      }
+    } catch (error) {
+      if (requestSignal.aborted || purpose === "water-only") throw error;
+    }
+
+    // Overpass is explicitly the read-only OSM API. Some public instances block
+    // or delay Cloudflare egress while accepting the same bounded query from a
+    // normal browser network. Load this browser-safe path only when Pages misses
+    // or times out, so the normal bundle and cache-hit path stay small and fast.
+    const { lookupOsmSiteContexts } = await import("../../server/osmSiteContext.ts");
+    const contexts = await lookupOsmSiteContexts(
+      points,
+      requestSignal,
+      includeDetails,
+      purpose
+    );
     return {
-      ok: response.ok,
-      status: response.status,
-      data: (await response.json()) as SiteContextResponse,
+      ok: true,
+      status: 200,
+      data: { contexts },
     };
   }, purpose === "water-only" ? 40_000 : 60_000,
   purpose === "water-only" ? "水面情報の取得がタイムアウトしました" : "周辺情報の取得がタイムアウトしました",

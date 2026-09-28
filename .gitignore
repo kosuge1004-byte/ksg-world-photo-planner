@@ -23,6 +23,10 @@ ios/App/Pods/
 
 # Cloudflare Wrangler
 .wrangler/
+.wrangler*/
+.cloudflared/
+cert.pem
+*tunnel-credentials*.json
 
 # Editor / OS
 .DS_Store

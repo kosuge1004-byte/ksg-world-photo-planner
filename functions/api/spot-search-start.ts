@@ -10,7 +10,12 @@ import {
   spotSearchJobKv,
   type CloudflareEnv,
 } from "../_shared/env.ts";
-import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import {
+  errorMessage,
+  jsonResponse,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 
 type StartRequest = {
   clientId?: unknown;
@@ -30,7 +35,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async ({ request, env }) 
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405);
   }
   try {
-    const body = await request.json() as StartRequest;
+    const body = await readJsonRequest(request, 256 * 1024) as StartRequest;
     if (!validSearchJobId(body.clientId) || !validSearchJobId(body.jobId) ||
       !validSpotSearchJobInput(body.input)) {
       return jsonResponse({ error: "バックグラウンド検索条件が不正です" }, 400);
@@ -78,6 +83,6 @@ export const onRequest: PagesFunction<CloudflareEnv> = async ({ request, env }) 
     }
     return jsonResponse({ jobId: job.jobId, status: "queued" }, 202);
   } catch (error) {
-    return jsonResponse({ error: errorMessage(error) }, 422);
+    return jsonResponse({ error: errorMessage(error) }, requestErrorStatus(error, 422));
   }
 };

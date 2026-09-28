@@ -8,8 +8,8 @@ const seed = fs.readFileSync(path.join(root, "server/landmarkPrewarmSeed.ts"), "
 
 const seedCount = [...seed.matchAll(/\{ name: "[^"]+", category: "[^"]+", latitude:/g)].length;
 const staticCount = [...data.matchAll(/\{ name: "[^"]+", category: "[^"]+", latitude:/g)].length;
-if (seedCount !== 278) throw new Error(`unexpected seed count: ${seedCount}`);
-if (staticCount < seedCount) throw new Error(`static landmark count ${staticCount} < seed ${seedCount}`);
+if (seedCount !== 284) throw new Error(`unexpected seed count: ${seedCount}`);
+if (staticCount !== seedCount) throw new Error(`static landmark count ${staticCount} != seed ${seedCount}`);
 if (!search.includes("resolveStaticJapanLandmark(normalizedQuery)")) throw new Error("static resolver is not wired before network search");
 const staticIndex = search.indexOf("resolveStaticJapanLandmark(normalizedQuery)");
 const cacheIndex = search.indexOf("readCachedSpotLocation(normalizedQuery)");

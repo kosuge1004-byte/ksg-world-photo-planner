@@ -10,8 +10,8 @@
 // 未設定/取得できない場合はfail-closedでR2書き込みをスキップする
 // （persistentCacheFromR2がsafetyKv未提供時に内部でallowされない設計）。
 
-import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
-import { PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
+import { runWithServerRuntime } from "../server/cloudflareRuntime.ts";
+import { ACTIVE_PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../server/prewarmLandmarkCore.ts";
 import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import type { R2SafetyKv } from "../server/r2SafetyBudget.ts";
@@ -35,8 +35,13 @@ const CHUNK_SIZE = 35;
 interface PrewarmEnv {
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
+  LOCAL_DEM_API_URL?: string;
+  LOCAL_DEM_ORIGIN_TOKEN?: string;
+  LOCAL_DEM_ACCESS_CLIENT_ID?: string;
+  LOCAL_DEM_ACCESS_CLIENT_SECRET?: string;
   NETWORK_CACHE?: R2Bucket;
   SPOT_SEARCH_JOBS?: R2SafetyKv;
+  R2_WRITE_BUDGET_DB?: D1Database;
 }
 
 export default {
@@ -61,13 +66,30 @@ export default {
           "安全のためR2への保存はスキップされます。wrangler.prewarm.jsoncのkv_namespacesを確認してください。"
       );
     }
-    configureServerRuntime({
+    if (!env.R2_WRITE_BUDGET_DB) {
+      console.warn(
+        "[prewarm-cron] R2_WRITE_BUDGET_DBが未設定のため、安全上R2アクセスはバイパスされます。"
+      );
+    }
+    return runWithServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, event),
+      persistentCache: persistentCacheFromR2(
+        env.NETWORK_CACHE,
+        env.SPOT_SEARCH_JOBS,
+        event,
+        env.R2_WRITE_BUDGET_DB,
+      ),
       waitUntil: (promise) => context.waitUntil(promise),
-    });
+      r2WriteBudgetDb: env.R2_WRITE_BUDGET_DB,
+      localDemGateway: {
+        endpoint: env.LOCAL_DEM_API_URL,
+        originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
+        accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
+        accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+      },
+    }, async () => {
 
-    const targets = selectDailyChunk(PREWARM_LANDMARKS, CHUNK_SIZE);
+    const targets = selectDailyChunk(ACTIVE_PREWARM_LANDMARKS, CHUNK_SIZE);
     console.log(`[prewarm-cron] 本日の担当分: ${targets.length}件 (${targets.map((t) => t.name).join(", ")})`);
 
     const { totalAttempts, totalCandidates } = await prewarmMany(targets, (message) =>
@@ -75,6 +97,7 @@ export default {
     );
 
     console.log(`[prewarm-cron] 完了。合計試行 ${totalAttempts}回、候補 ${totalCandidates}件。`);
+    });
   },
 
   // Cron Trigger専用のWorkerだが、手動での動作確認用にHTTPからも
@@ -84,13 +107,25 @@ export default {
     env: PrewarmEnv,
     context: ExecutionContext
   ): Promise<Response> {
-    configureServerRuntime({
+    return runWithServerRuntime({
       cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
-      persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, request),
+      persistentCache: persistentCacheFromR2(
+        env.NETWORK_CACHE,
+        env.SPOT_SEARCH_JOBS,
+        request,
+        env.R2_WRITE_BUDGET_DB,
+      ),
       waitUntil: (promise) => context.waitUntil(promise),
-    });
+      r2WriteBudgetDb: env.R2_WRITE_BUDGET_DB,
+      localDemGateway: {
+        endpoint: env.LOCAL_DEM_API_URL,
+        originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
+        accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
+        accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+      },
+    }, async () => {
 
-    const targets = selectDailyChunk(PREWARM_LANDMARKS, CHUNK_SIZE);
+    const targets = selectDailyChunk(ACTIVE_PREWARM_LANDMARKS, CHUNK_SIZE);
     const logs: string[] = [`本日の担当分: ${targets.length}件 (${targets.map((t) => t.name).join(", ")})`];
     if (!env.NETWORK_CACHE) {
       logs.push(
@@ -107,6 +142,7 @@ export default {
     logs.push(`完了。合計試行 ${totalAttempts}回、候補 ${totalCandidates}件。`);
     return new Response(logs.join("\n"), {
       headers: { "content-type": "text/plain; charset=utf-8" },
+    });
     });
   },
 };

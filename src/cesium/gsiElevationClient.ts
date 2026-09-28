@@ -61,6 +61,16 @@ const REQUEST_TIMEOUT_MS = 12_000;
 // 座標数・DEM詳細度・補間方法は変更しない。
 const MAX_CONCURRENT_REQUESTS = 6;
 const SINGLE_POINT_RETRY_DELAY_MS = 250;
+// A failed recovery chunk can contain healthy neighboring points because the
+// anti-fan-out floor intentionally stops recursive splitting at eight points.
+// Before the caller escalates that partial failure to a whole-bearing retry,
+// isolate only those failed indexes and retry each exact coordinate at most
+// twice. Coordinates, requested detail and interpolation mode are unchanged.
+const MAX_INDIVIDUAL_POINT_RETRIES = 2;
+// Do not turn a total API outage into one request per terrain point. A single
+// transient point failure is represented by at most a few eight-point recovery
+// floors; a larger failed set is escalated to the existing bearing/system retry.
+const MAX_INDIVIDUAL_RETRY_POINTS = 32;
 
 // 2026-08-28追記: 「R2キャッシュ（DEMタイル単位）が実際に活用されて
 // いるか」を、通信フローの型シグネチャ（TerrainSampler等）を変えずに
@@ -468,7 +478,7 @@ export async function fetchGsiElevationSamples(
     { length: workerCount },
     () => worker()
   ));
-  const finalResult = {
+  const finalResult: GsiElevationClientResult = {
     samples: results.flatMap((result) => result.samples),
     failedPointCount: results.reduce((sum, result) => sum + result.failedPointCount, 0),
     // 各バッチのfailedIndexesはバッチ内ローカルindexなので、そのバッチが
@@ -485,6 +495,51 @@ export async function fetchGsiElevationSamples(
     tileCacheSharedCount: results.reduce((sum, result) => sum + result.tileCacheSharedCount, 0),
     tileCacheBypassCount: results.reduce((sum, result) => sum + result.tileCacheBypassCount, 0),
   };
+
+  // requestBatchWithRecovery deliberately stops splitting at eight points to
+  // prevent a transient outage from exploding into hundreds of requests. For
+  // an explicit high-precision bearing download, however, the caller needs to
+  // know whether an individual coordinate can recover before it retries the
+  // whole bearing. failedIndexes gives us that exact set. Retry only those
+  // points, preserving the original array order and precision parameters.
+  let failedIndexes = [...finalResult.failedIndexes];
+  let lastIndividualError = finalResult.lastError;
+  for (
+    let retry = 0;
+    retry < MAX_INDIVIDUAL_POINT_RETRIES &&
+    failedIndexes.length > 0 &&
+    failedIndexes.length <= MAX_INDIVIDUAL_RETRY_POINTS;
+    retry += 1
+  ) {
+    await waitForSinglePointRetry(signal);
+    const attempts = await Promise.all(failedIndexes.map(async (index) => {
+      try {
+        return { index, result: await request([points[index]]), error: null };
+      } catch (error) {
+        if (signal?.aborted) throw abortError();
+        return { index, result: null, error };
+      }
+    }));
+    const stillFailed: number[] = [];
+    for (const attempt of attempts) {
+      if (!attempt.result) {
+        stillFailed.push(attempt.index);
+        lastIndividualError = attempt.error;
+        continue;
+      }
+      finalResult.samples[attempt.index] = attempt.result.samples[0];
+      finalResult.tileCacheHitCount += attempt.result.tileCacheHit;
+      finalResult.tileCacheMissCount += attempt.result.tileCacheMiss;
+      finalResult.tileMemoryHitCount += attempt.result.tileMemoryHit;
+      finalResult.tileCacheSharedCount += attempt.result.tileCacheShared;
+      finalResult.tileCacheBypassCount += attempt.result.tileCacheBypass;
+    }
+    failedIndexes = stillFailed;
+  }
+  finalResult.failedIndexes = failedIndexes;
+  finalResult.failedPointCount = failedIndexes.length;
+  finalResult.lastError = failedIndexes.length > 0 ? lastIndividualError : null;
+
   globalCacheHitCount += finalResult.tileCacheHitCount;
   globalCacheMissCount += finalResult.tileCacheMissCount;
   globalMemoryHitCount += finalResult.tileMemoryHitCount;

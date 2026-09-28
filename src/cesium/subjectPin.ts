@@ -48,6 +48,8 @@ export type HeightMetadata = {
   orthometricHeightMeters?: number;
   geoidHeightMeters?: number;
   heightSource?: GroundPoint["heightSource"];
+  subjectSurfaceTarget?: GroundPoint["subjectSurfaceTarget"];
+  structureHeightMeters?: number;
 };
 
 function withHeightMetadata(point: GroundPoint, metadata?: HeightMetadata): GroundPoint {
@@ -66,6 +68,8 @@ function withHeightMetadata(point: GroundPoint, metadata?: HeightMetadata): Grou
     orthometricHeightMeters: metadata.orthometricHeightMeters,
     geoidHeightMeters: metadata.geoidHeightMeters,
     heightSource: metadata.heightSource,
+    subjectSurfaceTarget: metadata.subjectSurfaceTarget,
+    structureHeightMeters: metadata.structureHeightMeters,
   };
 }
 

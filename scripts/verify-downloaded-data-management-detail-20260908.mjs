@@ -18,9 +18,9 @@ check('download selection resolves current subject height',
   spot.includes('onSelectDownloadedSpotData(record)') &&
   app.includes('async function applyDownloadedSpotData') &&
   app.includes('const point = await resolveSearchSubject('));
-check('download refresh resolves current ground height',
+check('download refresh resolves current subject surface height',
   app.includes('async function refreshDownloadedSpotData') &&
-  app.includes('const point = await resolveGroundPoint('));
+  app.includes('const point = await resolveSearchSubject('));
 check('download paths do not fabricate zero-meter ground points',
   !app.includes('const point: GroundPoint = { latitude: record.latitude, longitude: record.longitude, height: 0 }'));
 check('download state distinguishes complete/partial/update', spot.includes('保存完了') && spot.includes('一部不足') && spot.includes('更新が必要'));

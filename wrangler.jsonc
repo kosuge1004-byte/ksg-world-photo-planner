@@ -21,33 +21,15 @@
       "id": "2fb4bcb1132140a6bfbfd73ddab4a9f0"
     }
   ],
-  // 地形標高（GSI DEMタイル）・気象等のサーバー側キャッシュにR2を使う
-  // 選択肢もあるが、R2の有効化にはCloudflareアカウントへの支払い方法
-  // 登録が必要（無料枠内でも登録自体は必須）なため、2026-08-23に
-  // カード登録なしで運用する方針へ戻した。NETWORK_CACHEバインディング
-  // が無くても、functions/_shared/r2Cache.ts・server/gsiElevation.ts側は
-  // bucket=undefinedを安全に許容し、キャッシュをバイパスして毎回
-  // 国土地理院サーバーへ直接問い合わせるだけで正常に動作する
-  // （速度面のメリットが無くなるだけで、機能上の問題は無い）。
-  // 将来カード登録済みでR2を使いたくなったら、以下を有効にする：
+  // 地形標高（GSI DEMタイル）等の共有キャッシュ。R2は有効なまま維持し、
+  // server/r2SafetyBudget.tsの無料枠ガードを全経路に適用する。
   "r2_buckets": [
     {
       "binding": "NETWORK_CACHE",
       "bucket_name": "astrosight-network-cache"
     }
   ],
-  // 2026-08-27追記: 「R2の月間書き込み総数」を数えるためのD1データベース。
-  // 支払い方法登録済み・R2が有効な状態で、将来利用者が増えた場合に
-  // R2の無料枠(月100万回書き込み)を超えて自動課金されるのを防ぐための
-  // 安全網（server/r2SafetyBudget.ts参照）。KVの無料枠(書き込み1,000回/日)
-  // より100倍大きいD1(書き込み100,000回/日)を採用。
-  //
-  // 【重要】D1データベースをCloudflareダッシュボードで作成し、実際の
-  // database_idを取得するまでは、以下のブロックをコメントアウトの
-  // ままにしておくこと。存在しないdatabase_idのまま有効化すると、
-  // Cloudflare Pagesのビルド自体が失敗する。
-  // 手順: README_D1_R2_WRITE_BUDGET_SETUP.md を参照。
-  //
+  // R2の容量・月間読み取り・月間書き込みを共有集計するD1。
   "d1_databases": [
     {
       "binding": "R2_WRITE_BUDGET_DB",

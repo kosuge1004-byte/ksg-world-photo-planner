@@ -3,6 +3,8 @@ import { inflateSync } from "node:zlib";
 import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.ts";
 import { bilinearInterpolate } from "./bilinearInterpolation.ts";
 import { constrainedBicubicInterpolate, type BicubicGrid4x4 } from "./constrainedBicubicInterpolation.ts";
+import { lookupLocalDemElevationsForSource } from "./gsiLocalDem.ts";
+import { lookupLocalDemGatewayForSource } from "./localDemGateway.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -57,14 +59,68 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
 ];
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
-const MAX_TILE_CACHE_ENTRIES = 512;
+// A decoded 256x256 Int32 tile is 256 KiB. A count-only limit of 512 could
+// therefore retain about 128 MiB before Map/Promise overhead, exceeding the
+// whole Worker isolate limit. Keep a byte budget and a separate small-entry
+// ceiling for cached 404 markers.
+const MAX_TILE_CACHE_BYTES = 24 * 1024 * 1024;
+const MAX_TILE_CACHE_ENTRIES = 256;
+const MAX_BASE_TILES_PER_PROCESSING_CHUNK = 8;
 export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 6;
 type MemoryTileCacheEntry = {
   promise: Promise<DecodedElevationTile | null>;
   settled: boolean;
+  bytes: number;
 };
 const tileCache = new Map<string, MemoryTileCacheEntry>();
+let tileCacheBytes = 0;
+
+function deleteMemoryTile(key: string): void {
+  const entry = tileCache.get(key);
+  if (!entry) return;
+  tileCache.delete(key);
+  tileCacheBytes = Math.max(0, tileCacheBytes - entry.bytes);
+}
+
+function trimMemoryTiles(): void {
+  while (
+    tileCacheBytes > MAX_TILE_CACHE_BYTES ||
+    tileCache.size > MAX_TILE_CACHE_ENTRIES
+  ) {
+    let removed = false;
+    for (const [key, entry] of tileCache) {
+      // Keep in-flight lookups shareable. The request limiter and processing
+      // chunks bound their number; trim as soon as they settle.
+      if (!entry.settled) continue;
+      deleteMemoryTile(key);
+      removed = true;
+      break;
+    }
+    if (!removed) break;
+  }
+}
+
+/** Regression diagnostics; production code must not depend on isolate cache state. */
+export function gsiElevationMemoryCacheStatsForTests(): {
+  entries: number;
+  bytes: number;
+  maximumBytes: number;
+  maximumEntries: number;
+} {
+  return {
+    entries: tileCache.size,
+    bytes: tileCacheBytes,
+    maximumBytes: MAX_TILE_CACHE_BYTES,
+    maximumEntries: MAX_TILE_CACHE_ENTRIES,
+  };
+}
+
+/** Regression reset; call only when no elevation lookup is in flight. */
+export function resetGsiElevationMemoryCacheForTests(): void {
+  tileCache.clear();
+  tileCacheBytes = 0;
+}
 
 /**
  * 2026-08-28追記: 「複数点をまとめた外側のバッチキャッシュ」は三脚探索の
@@ -446,6 +502,8 @@ async function fetchDecodedTile(
   const key = `${source.id}/${source.zoom}/${x}/${y}`;
   const cached = tileCache.get(key);
   if (cached) {
+    tileCache.delete(key);
+    tileCache.set(key, cached);
     if (counter) {
       if (cached.settled) counter.memoryHit++;
       else counter.shared++;
@@ -484,24 +542,34 @@ async function fetchDecodedTile(
     return decoded;
   }).catch((error: unknown) => {
     // 中断や一時的な通信失敗をキャッシュせず、次の判定で再取得できるようにする。
-    tileCache.delete(key);
-    if (isAbortError(error)) {
-      throw error;
+    deleteMemoryTile(key);
+    if (!isAbortError(error)) {
+      console.warn(`国土地理院標高タイル ${key} を利用できません`, error);
     }
-    console.warn(`国土地理院標高タイル ${key} を利用できません`, error);
-    return null;
+    // 404/R2のemptyだけが「このDEMソースにデータが無い」という確定結果。
+    // タイムアウト、5xx、PNG破損等をnullへ潰すと、呼び出し側は海面・正規の
+    // NoDataと区別できず、点単位リトライを行えない。1mの4x4補間では一時的に
+    // 取得できなかった隣接タイルをNoDataと誤認してBilinearへ落ち、精度まで
+    // 静かに変わるため、通信・復号エラーは必ず上位へ伝播させる。
+    throw error;
   });
 
-  const entry: MemoryTileCacheEntry = { promise, settled: false };
+  const entry: MemoryTileCacheEntry = { promise, settled: false, bytes: 0 };
   tileCache.set(key, entry);
-  const markSettled = () => {
-    if (tileCache.get(key) === entry) entry.settled = true;
-  };
-  void promise.then(markSettled, markSettled);
-  if (tileCache.size > MAX_TILE_CACHE_ENTRIES) {
-    const oldestKey = tileCache.keys().next().value;
-    if (typeof oldestKey === "string") tileCache.delete(oldestKey);
-  }
+  void promise.then(
+    (tile) => {
+      if (tileCache.get(key) !== entry) return;
+      entry.settled = true;
+      entry.bytes = tile ? tile.heightsCentimeters.byteLength + 128 : 64;
+      tileCacheBytes += entry.bytes;
+      trimMemoryTiles();
+    },
+    () => {
+      // The catch above deletes rejected lookups. Keep this callback solely to
+      // consume the branch explicitly and avoid a floating rejection handler.
+    }
+  );
+  trimMemoryTiles();
   return awaitWithAbort(promise, signal);
 }
 
@@ -756,77 +824,151 @@ export async function lookupGsiElevations(
     const resolved = new Map<number, { heightMeters: number; source: GsiElevationSource }>();
     if (targetIndices.size === 0) return resolved;
 
+    // R2へ事前配置した基盤地図情報GML由来グリッドを最初に参照する。
+    // ソース優先順位、maximumDetail、neutral/los-safe補間は公開PNG経路と
+    // 同一に保つ。未導入・欠測・GMLメッシュ境界・R2障害の場合はMapに
+    // 入らないため、直後の既存PNGタイル処理へその点だけフォールバックする。
+    const localRequests = [...targetIndices]
+      .filter((index) => sourceIsAllowedForPoint(source, points[index]))
+      .map((index) => ({
+        index,
+        latitude: points[index].latitude,
+        longitude: points[index].longitude,
+        interpolation: points[index].maximumDetail === "1m"
+          ? "constrained-bicubic" as const
+          : "bilinear" as const,
+        interpolationMode: points[index].interpolationMode ?? "los-safe" as const,
+      }));
+    const localHeights = await lookupLocalDemElevationsForSource(
+      source.label,
+      localRequests,
+      signal
+    );
+    for (const [index, heightMeters] of localHeights) {
+      resolved.set(index, { heightMeters, source: source.label });
+    }
+
+    // Keep the existing precision tier order unchanged. For this same source,
+    // consult the authenticated E-drive origin only after an R2 GML miss and
+    // before the public GSI PNG path. An unavailable/malformed origin returns no
+    // values, so only those points continue to GSI; it is never treated as 0 m.
+    const gatewayHeights = await lookupLocalDemGatewayForSource(
+      source.label,
+      localRequests
+        .filter((request) => !resolved.has(request.index))
+        .map((request) => ({
+          index: request.index,
+          latitude: request.latitude,
+          longitude: request.longitude,
+          interpolation: request.interpolation,
+          interpolationMode: request.interpolationMode,
+        })),
+      signal
+    );
+    for (const [index, heightMeters] of gatewayHeights) {
+      resolved.set(index, { heightMeters, source: source.label });
+    }
+
     const requests: Array<{
       index: number;
       coordinate: ReturnType<typeof tileCoordinates>;
       tileKey: string;
       interpolation: "bilinear" | "constrained-bicubic";
     }> = [];
-    const uniqueTiles = new Map<string, { x: number; y: number }>();
 
     for (const index of targetIndices) {
       const point = points[index];
       if (!sourceIsAllowedForPoint(source, point)) continue;
+      if (resolved.has(index)) continue;
       const coordinate = tileCoordinates(point, source.zoom);
       const tileKey = `${coordinate.x}/${coordinate.y}`;
       const interpolation: "bilinear" | "constrained-bicubic" =
         point.maximumDetail === "1m" ? "constrained-bicubic" : "bilinear";
       requests.push({ index, coordinate, tileKey, interpolation });
-      if (!uniqueTiles.has(tileKey)) {
-        uniqueTiles.set(tileKey, { x: coordinate.x, y: coordinate.y });
-      }
-      if (interpolation === "constrained-bicubic") {
-        // タイル境界で4x4近傍が欠けないよう、必要な隣接タイルも同じ
-        // 一括取得（uniqueTiles → fetchDecodedTileの既存キャッシュ）へ
-        // 相乗りさせる。重複取得は fetchDecodedTile の tileCache が防ぐ。
-        for (const { tileOffsetX, tileOffsetY } of neighborTileOffsetsFor4x4Grid(
-          coordinate.pixelX,
-          coordinate.pixelY
-        )) {
-          if (tileOffsetX === 0 && tileOffsetY === 0) continue;
-          const neighborX = coordinate.x + tileOffsetX;
-          const neighborY = coordinate.y + tileOffsetY;
-          const neighborKey = `${neighborX}/${neighborY}`;
-          if (!uniqueTiles.has(neighborKey)) {
-            uniqueTiles.set(neighborKey, { x: neighborX, y: neighborY });
-          }
-        }
-      }
     }
 
     if (requests.length === 0) return resolved;
 
-    const tileEntries = await Promise.all(
-      [...uniqueTiles.entries()].map(async ([tileKey, coordinate]) => [
-        tileKey,
-        await fetchDecodedTile(source, coordinate.x, coordinate.y, signal, tileCacheCounter),
-      ] as const)
-    );
-    const tiles = new Map<string, DecodedElevationTile | null>(tileEntries);
-
+    const requestsByBaseTile = new Map<string, typeof requests>();
     for (const request of requests) {
-      const tile = tiles.get(request.tileKey) ?? null;
-      if (!tile) continue;
-      const heightMeters = request.interpolation === "constrained-bicubic"
-        ? heightFromNeighborhood(
-            tiles,
-            request.coordinate.x,
-            request.coordinate.y,
+      const group = requestsByBaseTile.get(request.tileKey);
+      if (group) group.push(request);
+      else requestsByBaseTile.set(request.tileKey, [request]);
+    }
+    const baseTileGroups = [...requestsByBaseTile.entries()];
+
+    // Do not retain decoded tiles for every arbitrary point in a 2,048-point
+    // request at once. Each chunk produces exactly the same values and source
+    // order, while bounding per-invocation references even when points are
+    // scattered across Japan. fetchDecodedTile still deduplicates neighbours.
+    for (
+      let groupOffset = 0;
+      groupOffset < baseTileGroups.length;
+      groupOffset += MAX_BASE_TILES_PER_PROCESSING_CHUNK
+    ) {
+      if (signal?.aborted) throw createAbortError();
+      const groupChunk = baseTileGroups.slice(
+        groupOffset,
+        groupOffset + MAX_BASE_TILES_PER_PROCESSING_CHUNK
+      );
+      const uniqueTiles = new Map<string, { x: number; y: number }>();
+      const chunkRequests: typeof requests = [];
+      for (const [, group] of groupChunk) {
+        chunkRequests.push(...group);
+        for (const request of group) {
+          if (!uniqueTiles.has(request.tileKey)) {
+            uniqueTiles.set(request.tileKey, {
+              x: request.coordinate.x,
+              y: request.coordinate.y,
+            });
+          }
+          if (request.interpolation !== "constrained-bicubic") continue;
+          for (const { tileOffsetX, tileOffsetY } of neighborTileOffsetsFor4x4Grid(
             request.coordinate.pixelX,
-            request.coordinate.pixelY,
-            request.coordinate.fracX,
-            request.coordinate.fracY,
-            points[request.index].interpolationMode ?? "los-safe"
-          )
-        : heightFromTile(
-            tile,
-            request.coordinate.pixelX,
-            request.coordinate.pixelY,
-            request.coordinate.fracX,
-            request.coordinate.fracY
-          );
-      if (heightMeters === null) continue;
-      resolved.set(request.index, { heightMeters, source: source.label });
+            request.coordinate.pixelY
+          )) {
+            const neighborX = request.coordinate.x + tileOffsetX;
+            const neighborY = request.coordinate.y + tileOffsetY;
+            const neighborKey = `${neighborX}/${neighborY}`;
+            if (!uniqueTiles.has(neighborKey)) {
+              uniqueTiles.set(neighborKey, { x: neighborX, y: neighborY });
+            }
+          }
+        }
+      }
+
+      const tileEntries = await Promise.all(
+        [...uniqueTiles.entries()].map(async ([tileKey, coordinate]) => [
+          tileKey,
+          await fetchDecodedTile(source, coordinate.x, coordinate.y, signal, tileCacheCounter),
+        ] as const)
+      );
+      const tiles = new Map<string, DecodedElevationTile | null>(tileEntries);
+
+      for (const request of chunkRequests) {
+        const tile = tiles.get(request.tileKey) ?? null;
+        if (!tile) continue;
+        const heightMeters = request.interpolation === "constrained-bicubic"
+          ? heightFromNeighborhood(
+              tiles,
+              request.coordinate.x,
+              request.coordinate.y,
+              request.coordinate.pixelX,
+              request.coordinate.pixelY,
+              request.coordinate.fracX,
+              request.coordinate.fracY,
+              points[request.index].interpolationMode ?? "los-safe"
+            )
+          : heightFromTile(
+              tile,
+              request.coordinate.pixelX,
+              request.coordinate.pixelY,
+              request.coordinate.fracX,
+              request.coordinate.fracY
+            );
+        if (heightMeters === null) continue;
+        resolved.set(request.index, { heightMeters, source: source.label });
+      }
     }
     return resolved;
   }

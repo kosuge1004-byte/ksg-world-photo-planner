@@ -3,7 +3,12 @@ import {
   resolveGoogleMapsSharedUrl,
 } from "../../server/googleMaps.ts";
 import type { CloudflareEnv } from "../_shared/env.ts";
-import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import {
+  errorMessage,
+  jsonResponse,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
 function requestId(): string {
@@ -27,14 +32,14 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   }
   let requestBody: unknown;
   try {
-    requestBody = await request.json();
+    requestBody = await readJsonRequest(request, 16 * 1024);
   } catch (error) {
     return jsonResponse({
       error: "送信内容を読み取れませんでした",
       code: "INVALID_JSON",
       requestId: currentRequestId,
       details: { message: errorMessage(error) },
-    }, 400);
+    }, requestErrorStatus(error, 400));
   }
   const sharedUrl = typeof requestBody === "object" && requestBody !== null &&
     "url" in requestBody && typeof requestBody.url === "string"

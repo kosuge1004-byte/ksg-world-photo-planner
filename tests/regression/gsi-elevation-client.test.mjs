@@ -65,9 +65,14 @@ test("large DEM requests split until Cloudflare can complete them", async () => 
   assert.ok(maximumActiveRequests <= 6);
 });
 
-test("an unrecoverable DEM point does not discard its neighboring points", async () => {
+test("failed DEM indexes get at most two individual retries before bearing-level failure", async () => {
+  const individualCalls = new Map();
   const fetcher = async (_url, init) => {
     const requested = JSON.parse(init.body).points;
+    if (requested.length === 1) {
+      const key = requested[0].latitude;
+      individualCalls.set(key, (individualCalls.get(key) ?? 0) + 1);
+    }
     if (requested.some((point) => point.latitude === 35)) {
       return new Response("gateway failure", {
         status: 502,
@@ -81,17 +86,17 @@ test("an unrecoverable DEM point does not discard its neighboring points", async
 
   const result = await fetchGsiElevationSamples(points(16), undefined, fetcher);
 
-  // 2026-08-27追記: 以前は「失敗したら1点単位まで無限に分割して再送する」
-  // 設計だったため、失敗する点(緯度35)だけが隔離され、周辺は正常に
-  // 取得できていた。しかしこれが実機で「64点のバッチが最悪1点単位まで
-  // 分裂し、497件のリクエストに膨れ上がる」輻輳の悪化を引き起こしたため、
-  // 「MIN_RECOVERY_SPLIT_SIZE(8点)より細かくは分割しない」という安全策に
-  // 変更した（gsiElevationClient.tsのコメント参照）。そのため、失敗する
-  // 点を含む最小8点のバッチは、その8点全体が失敗扱いになる
-  // （1点だけが隔離されるわけではない）。
+  // Recursive recovery still stops at eight points, avoiding the old unbounded
+  // fan-out. Only the final failed indexes are then isolated. Seven healthy
+  // neighbors recover on their first individual request; the actual bad point
+  // is attempted exactly twice and remains failed.
   assert.equal(result.samples.length, 16);
-  assert.equal(result.failedPointCount, 8, "8点floorにより、失敗点を含む8点のバッチ全体が失敗扱いになる");
-  assert.equal(result.samples.slice(0, 8).every((sample) => sample.source === null), true);
+  assert.equal(result.failedPointCount, 1);
+  assert.deepEqual(result.failedIndexes, [0]);
+  assert.equal(result.samples[0].source, null);
+  assert.equal(result.samples.slice(1).every((sample) => sample.source === "DEM10B"), true);
+  assert.equal(individualCalls.get(35), 2, "the unrecoverable point must not exceed two individual retries");
+  assert.equal(individualCalls.get(35.0001), 1, "a recovered neighbor must not be retried again");
   assert.equal(result.samples.slice(8).every((sample) => sample.source === "DEM10B"), true);
 });
 
@@ -104,6 +109,31 @@ test("DEM requests preserve user cancellation", async () => {
     }),
     (error) => isAbortError(error)
   );
+});
+
+test("individual retry preserves exact coordinate, detail and interpolation mode", async () => {
+  const point = {
+    latitude: 35.123456789,
+    longitude: 136.987654321,
+    maximumDetail: "10m",
+    interpolationMode: "los-safe",
+  };
+  const bodies = [];
+  const fetcher = async (_url, init) => {
+    const requested = JSON.parse(init.body).points;
+    bodies.push(requested);
+    if (bodies.length <= 2) {
+      return jsonResponse({ error: "temporary" }, 503);
+    }
+    return jsonResponse({ samples: [{ heightMeters: 12.34, source: "DEM10B" }] });
+  };
+
+  const result = await fetchGsiElevationSamples([point], undefined, fetcher);
+  assert.equal(result.failedPointCount, 0);
+  assert.deepEqual(result.samples, [{ heightMeters: 12.34, source: "DEM10B" }]);
+  assert.equal(bodies.length, 3);
+  assert.ok(bodies.every((body) => body.length === 1));
+  assert.ok(bodies.every((body) => JSON.stringify(body[0]) === JSON.stringify(point)));
 });
 
 test("tile cache diagnostics aggregate every server cache path across batches", async () => {

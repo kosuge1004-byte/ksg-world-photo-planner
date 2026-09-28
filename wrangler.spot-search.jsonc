@@ -10,20 +10,21 @@
       "id": "92197c38d81d48489ef4fdd25b1b9a58"
     }
   ],
-  // Pages Functions側のNETWORK_CACHEと同じR2バケットをここにも束縛すると、
+  // Pages Functions側のNETWORK_CACHEと同じR2バケットをここにも束縛し、
   // DEMタイルキャッシュ（空判定含む）を対話的な三脚候補探索とバックグラウンドの
-  // スポット検索ジョブの両方で共有できる。未設定のままでも従来どおり動作する
-  // （persistentCacheFromR2がundefinedを安全に許容するため、キャッシュへの
-  // 保存だけがスキップされ、通信自体はそのまま成功する）。
-  //
-  // R2の有効化にはCloudflareアカウントへの支払い方法登録が必要（無料枠内でも
-  // 登録自体は必須）なため、2026-08-23にカード登録なしで運用する方針へ戻した。
-  // 将来カード登録済みでR2を使いたくなったら、以下のコメントを外して
-  // bucket_nameを実際に作成したR2バケット名に置き換えるだけでよい。
+  // スポット検索ジョブの両方で共有する。R2は有効なまま維持し、すべての
+  // 読み書きにR2_WRITE_BUDGET_DBの無料枠ガードを適用する。
   "r2_buckets": [
     {
       "binding": "NETWORK_CACHE",
       "bucket_name": "astrosight-network-cache"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "R2_WRITE_BUDGET_DB",
+      "database_name": "astrosight-r2-write-budget",
+      "database_id": "a679879f-6411-437e-b7f2-1a161fce8237"
     }
   ],
   "queues": {

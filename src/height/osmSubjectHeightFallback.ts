@@ -37,6 +37,24 @@ export type OsmSubjectHeightHint = {
   name: string;
 };
 
+export type OsmSubjectSurfaceInspection = {
+  /** 検索名と一致する建物・塔がOSM上で確認できたか。 */
+  isStructure: boolean;
+  heightHint: OsmSubjectHeightHint | null;
+};
+
+function normalizedSubjectName(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("ja")
+    .replaceAll(/[\s,、・･()（）\[\]【】\-ー]/gu, "");
+}
+
+function nameMatchesSubjectLabel(candidateName: string, subjectLabel: string): boolean {
+  const candidate = normalizedSubjectName(candidateName);
+  const subject = normalizedSubjectName(subjectLabel);
+  if (!candidate || !subject || candidate.includes("名称未登録")) return false;
+  return candidate === subject || subject.startsWith(candidate) || subject.includes(candidate);
+}
+
 /**
  * 検索座標近傍の名前付き建物・構造物のうち、最も近く・高さ情報を持つ
  * ものを1件だけ返す。見つからない場合はnull（呼び出し側は通常の
@@ -47,6 +65,20 @@ export async function findOsmSubjectHeightHint(
   longitude: number,
   signal?: AbortSignal
 ): Promise<OsmSubjectHeightHint | null> {
+  return (await inspectOsmSubjectSurface(latitude, longitude, "", signal)).heightHint;
+}
+
+/**
+ * 高さだけでなく「検索対象そのものが建物・塔か」も返す。高さタグが無い
+ * 建物でも屋上必須であることを呼び出し側へ伝え、PLATEAU失敗時にDEM地表を
+ * 正常値として確定しないために使う。
+ */
+export async function inspectOsmSubjectSurface(
+  latitude: number,
+  longitude: number,
+  subjectLabel: string,
+  signal?: AbortSignal
+): Promise<OsmSubjectSurfaceInspection> {
   let contexts;
   try {
     // 2026-09-05修正: この関数はnearbyStructures/nearbyBuildingsしか
@@ -62,12 +94,35 @@ export async function findOsmSubjectHeightHint(
     );
   } catch (error) {
     console.warn("被写体の高さ推定用OSM情報を取得できませんでした", error);
-    return null;
+    return { isStructure: false, heightHint: null };
   }
   const context = contexts[0];
-  if (!context) return null;
+  if (!context) return { isStructure: false, heightHint: null };
 
-  const structureCandidates = context.nearbyStructures
+  const allStructures = context.nearbyStructures
+    .filter((structure) => structure.distanceMeters <= MAX_MATCH_DISTANCE_METERS);
+  const allBuildings = context.nearbyBuildings
+    .filter((building) => building.distanceMeters <= MAX_MATCH_DISTANCE_METERS);
+  const matchingStructures = subjectLabel
+    ? allStructures.filter((structure) => nameMatchesSubjectLabel(structure.name, subjectLabel))
+    : allStructures;
+  const matchingBuildings = subjectLabel
+    ? allBuildings.filter((building) => nameMatchesSubjectLabel(building.name, subjectLabel))
+    : allBuildings;
+  const isStructure = matchingStructures.length > 0 || matchingBuildings.length > 0;
+
+  const selectableStructures = subjectLabel
+    ? (matchingStructures.length > 0
+        ? matchingStructures
+        : allStructures.filter((structure) => structure.distanceMeters <= 5))
+    : allStructures;
+  const selectableBuildings = subjectLabel
+    ? (matchingBuildings.length > 0
+        ? matchingBuildings
+        : allBuildings.filter((building) => building.distanceMeters <= 5))
+    : allBuildings;
+
+  const structureCandidates = selectableStructures
     .filter((structure) => structure.structureHeightMeters !== null &&
       Number.isFinite(structure.structureHeightMeters) &&
       (structure.structureHeightMeters as number) > 0 &&
@@ -80,7 +135,7 @@ export async function findOsmSubjectHeightHint(
       name: structure.name,
       distanceMeters: structure.distanceMeters,
     }));
-  const buildingCandidates = context.nearbyBuildings
+  const buildingCandidates = selectableBuildings
     .filter((building) => building.heightMeters !== null &&
       Number.isFinite(building.heightMeters) &&
       (building.heightMeters as number) > 0 &&
@@ -103,8 +158,12 @@ export async function findOsmSubjectHeightHint(
   const best = structureCandidates.length > 0
     ? structureCandidates.sort((a, b) => a.distanceMeters - b.distanceMeters)[0]
     : buildingCandidates.sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
-  if (!best) return null;
-  return { heightMeters: best.heightMeters, source: best.source, name: best.name };
+  return {
+    isStructure,
+    heightHint: best
+      ? { heightMeters: best.heightMeters, source: best.source, name: best.name }
+      : null,
+  };
 }
 
 /**

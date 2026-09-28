@@ -10,6 +10,10 @@ import {
 import { resolveJapanesePlaceName } from "./server/placeGeocode.ts";
 import { lookupGsiElevations, prefetchGsiTerrainAroundSubject } from "./server/gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./server/gsiGeoid.ts";
+import {
+  computeBearingProfileBatch,
+  isBearingProfileBatchRequest,
+} from "./server/bearingProfileBatch.ts";
 import { lookupOsmSiteContexts } from "./server/osmSiteContext.ts";
 import { runSpotSearchJob } from "./server/runSpotSearchJob.ts";
 import type { SpotSearchJobUpdater } from "./server/runSpotSearchJob.ts";
@@ -153,6 +157,37 @@ function localGsiElevationApi(): Plugin {
   return {
     name: "ksg-local-gsi-elevation-api",
     configureServer(server) {
+      server.middlewares.use(
+        "/api/bearing-profile-batch",
+        async (request, response) => {
+          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          response.setHeader("Cache-Control", "no-store");
+          if (request.method !== "POST") {
+            response.statusCode = 405;
+            response.end(JSON.stringify({ error: "POSTリクエストのみ利用できます" }));
+            return;
+          }
+          try {
+            let rawBody = "";
+            for await (const chunk of request) {
+              rawBody += chunk.toString();
+              if (rawBody.length > 65_536) throw new Error("送信内容が大きすぎます");
+            }
+            const body: unknown = JSON.parse(rawBody);
+            if (!isBearingProfileBatchRequest(body)) {
+              throw new Error("全方位地形の取得条件が不正です");
+            }
+            response.statusCode = 200;
+            response.end(JSON.stringify(await computeBearingProfileBatch(body)));
+          } catch (error) {
+            response.statusCode = 422;
+            response.end(JSON.stringify({
+              error: error instanceof Error ? error.message : String(error),
+            }));
+          }
+        }
+      );
+
       server.middlewares.use(
         "/api/spot-terrain-prefetch",
         async (request, response) => {

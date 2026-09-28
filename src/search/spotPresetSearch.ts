@@ -38,6 +38,7 @@ import {
 import { calculateTripodCandidates } from "../cesium/tripodCandidates";
 import {
   extractGoogleMapsCoordinates,
+  extractGoogleMapsPlaceQuery,
   extractGoogleMapsSharedUrl,
 } from "./googleMapsUrl";
 import {
@@ -91,9 +92,20 @@ export type ResolvedSpotLocation = {
   latitude: number;
   longitude: number;
   label: string;
+  /** 建物・塔の検索結果は、DEM地表ではなく頂上解決を必須にする。 */
+  subjectSurfaceTarget?: "terrain" | "structure-roof";
+  /** 内蔵カタログで確認済みの、接地面から頂上までの高さ。 */
+  structureHeightMeters?: number;
 };
 
-const LOCATION_CACHE_STORAGE_KEY = "astrosight-place-search-cache-v2";
+export type SpotSubjectSurfaceHint = {
+  requireStructureRoof: boolean;
+  knownStructureHeightMeters?: number;
+};
+
+// v3 stores structure classification/known height. v2 entries could make a
+// building look like a generic ground location until their seven-day TTL elapsed.
+const LOCATION_CACHE_STORAGE_KEY = "astrosight-place-search-cache-v3";
 const LOCATION_CACHE_TTL_MS = 7 * DAY_MS;
 const LOCATION_CACHE_MAX_ENTRIES = 80;
 const locationMemoryCache = new Map<string, { value: ResolvedSpotLocation; expiresAt: number }>();
@@ -120,6 +132,14 @@ function landmarkSearchKeys(landmark: JapanLandmark): string[] {
     .filter(Boolean);
 }
 
+function landmarkRequiresStructureRoof(landmark: JapanLandmark): boolean {
+  return landmark.category === "building" ||
+    landmark.category === "tower" ||
+    landmark.category === "castle" ||
+    landmark.category === "temple" ||
+    landmark.category === "ferriswheel";
+}
+
 const landmarkByExactSearchKey = new Map<string, JapanLandmark>();
 for (const landmark of JAPAN_LANDMARKS) {
   for (const key of landmarkSearchKeys(landmark)) {
@@ -132,7 +152,55 @@ function resolveStaticJapanLandmark(query: string): ResolvedSpotLocation | null 
   if (!key) return null;
   const exact = landmarkByExactSearchKey.get(key);
   if (!exact) return null;
-  return { latitude: exact.latitude, longitude: exact.longitude, label: exact.name };
+  const structure = landmarkRequiresStructureRoof(exact);
+  return {
+    latitude: exact.latitude,
+    longitude: exact.longitude,
+    label: exact.name,
+    subjectSurfaceTarget: structure ? "structure-roof" : "terrain",
+    structureHeightMeters: structure && Number.isFinite(exact.heightMeters)
+      ? exact.heightMeters
+      : undefined,
+  };
+}
+
+/**
+ * 新しい検索結果だけでなく、修正前に保存された履歴（屋上種別を持たない）も
+ * 内蔵ランドマーク座標から復元する。既知の建物・塔を履歴から選び直した時に
+ * 古い地表高度をそのまま再利用しないための互換経路。
+ */
+export function subjectSurfaceHintForSpotLocation(
+  location: Pick<ResolvedSpotLocation, "latitude" | "longitude" | "label" | "subjectSurfaceTarget" | "structureHeightMeters">
+): SpotSubjectSurfaceHint {
+  if (location.subjectSurfaceTarget === "structure-roof") {
+    return {
+      requireStructureRoof: true,
+      knownStructureHeightMeters: Number.isFinite(location.structureHeightMeters)
+        ? location.structureHeightMeters
+        : undefined,
+    };
+  }
+  const normalizedLabel = normalizedLocationQuery(location.label);
+  const landmark = JAPAN_LANDMARKS.find((candidate) => {
+    if (!landmarkRequiresStructureRoof(candidate)) return false;
+    const latitudeDelta = Math.abs(candidate.latitude - location.latitude);
+    const longitudeDelta = Math.abs(candidate.longitude - location.longitude);
+    // 保存済みデータは名称変更できるため、ほぼ同一座標なら名称に依存せず
+    // 復元する。少しずれた旧座標は名称一致も要求して誤分類を避ける。
+    if (latitudeDelta <= 0.000005 && longitudeDelta <= 0.000005) return true;
+    if (latitudeDelta > 0.00002 || longitudeDelta > 0.00002) return false;
+    return landmarkSearchKeys(candidate).some((key) =>
+      normalizedLabel === key || normalizedLabel.startsWith(`${key},`) || normalizedLabel.includes(key)
+    );
+  });
+  return landmark
+    ? {
+        requireStructureRoof: true,
+        knownStructureHeightMeters: Number.isFinite(landmark.heightMeters)
+          ? landmark.heightMeters
+          : undefined,
+      }
+    : { requireStructureRoof: false };
 }
 
 function readCachedSpotLocation(query: string): ResolvedSpotLocation | null {
@@ -159,7 +227,21 @@ function readCachedSpotLocation(query: string): ResolvedSpotLocation | null {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || typeof entry.value.label !== "string") {
       return null;
     }
-    const value = { latitude, longitude, label: entry.value.label };
+    const subjectSurfaceTarget = entry.value.subjectSurfaceTarget === "structure-roof"
+      ? "structure-roof" as const
+      : entry.value.subjectSurfaceTarget === "terrain"
+        ? "terrain" as const
+        : undefined;
+    const structureHeightMeters = Number(entry.value.structureHeightMeters);
+    const value: ResolvedSpotLocation = {
+      latitude,
+      longitude,
+      label: entry.value.label,
+      subjectSurfaceTarget,
+      structureHeightMeters: Number.isFinite(structureHeightMeters) && structureHeightMeters > 0
+        ? structureHeightMeters
+        : undefined,
+    };
     locationMemoryCache.set(key, { value, expiresAt: entry.expiresAt });
     return value;
   } catch {
@@ -190,6 +272,32 @@ function writeCachedSpotLocation(query: string, value: ResolvedSpotLocation): vo
   } catch {
     // localStorage が利用できない環境でも検索自体は継続する。
   }
+}
+
+function searchResultSubjectSurfaceMetadata(
+  result: Pick<SearchResult, "category" | "type" | "extratags">
+): Pick<ResolvedSpotLocation, "subjectSurfaceTarget" | "structureHeightMeters"> {
+  const category = result.category ?? "";
+  const type = result.type ?? "";
+  const isStructure = category === "building" ||
+    (category === "man_made" && [
+      "tower", "communications_tower", "mast", "lighthouse", "chimney", "water_tower", "obelisk",
+    ].includes(type)) ||
+    (category === "historic" && ["castle", "fort", "monument"].includes(type)) ||
+    (category === "amenity" && type === "place_of_worship") ||
+    (category === "tourism" && ["hotel", "museum"].includes(type)) ||
+    (category === "leisure" && type === "stadium");
+  if (!isStructure) return {};
+  const mappedHeight = Number.parseFloat(String(result.extratags?.height ?? ""));
+  const levels = Number.parseFloat(String(result.extratags?.["building:levels"] ?? ""));
+  return {
+    subjectSurfaceTarget: "structure-roof",
+    structureHeightMeters: Number.isFinite(mappedHeight) && mappedHeight > 0
+      ? mappedHeight
+      : Number.isFinite(levels) && levels > 0
+        ? levels * 3
+        : undefined,
+  };
 }
 
 type SearchSample = {
@@ -286,7 +394,7 @@ async function resolveSpotLocationUncached(
     if (direct) {
       const resolved = {
         ...direct,
-        label: "Googleマップ共有地点",
+        label: extractGoogleMapsPlaceQuery(googleMapsUrl) ?? "Googleマップ共有地点",
       };
       writeCachedSpotLocation(normalizedQuery, resolved);
       return resolved;
@@ -299,7 +407,9 @@ async function resolveSpotLocationUncached(
       const resolved = {
         latitude: nativeLocation.latitude,
         longitude: nativeLocation.longitude,
-        label: "Googleマップ共有地点",
+        label: extractGoogleMapsPlaceQuery(nativeLocation.resolvedUrl) ??
+          extractGoogleMapsPlaceQuery(googleMapsUrl) ??
+          "Googleマップ共有地点",
       };
       writeCachedSpotLocation(normalizedQuery, resolved);
       return resolved;
@@ -353,6 +463,8 @@ async function resolveSpotLocationUncached(
         latitude?: unknown;
         longitude?: unknown;
         label?: unknown;
+        subjectSurfaceTarget?: unknown;
+        structureHeightMeters?: unknown;
       };
       const latitude = Number(location.latitude);
       const longitude = Number(location.longitude);
@@ -361,7 +473,18 @@ async function resolveSpotLocationUncached(
         Number.isFinite(longitude) &&
         typeof location.label === "string"
       ) {
-        const resolved = { latitude, longitude, label: location.label };
+        const structureHeightMeters = Number(location.structureHeightMeters);
+        const resolved: ResolvedSpotLocation = {
+          latitude,
+          longitude,
+          label: location.label,
+          subjectSurfaceTarget: location.subjectSurfaceTarget === "structure-roof"
+            ? "structure-roof"
+            : undefined,
+          structureHeightMeters: Number.isFinite(structureHeightMeters) && structureHeightMeters > 0
+            ? structureHeightMeters
+            : undefined,
+        };
         writeCachedSpotLocation(normalizedQuery, resolved);
         return resolved;
       }
@@ -390,6 +513,7 @@ async function resolveSpotLocationUncached(
     limit: "1",
     addressdetails: "1",
     namedetails: "1",
+    extratags: "1",
     countrycodes: "jp",
     "accept-language": "ja",
   });
@@ -431,7 +555,12 @@ async function resolveSpotLocationUncached(
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     throw new Error("検索地点の座標が不正です");
   }
-  const resolved = { latitude, longitude, label: result.display_name };
+  const resolved: ResolvedSpotLocation = {
+    latitude,
+    longitude,
+    label: result.display_name,
+    ...searchResultSubjectSurfaceMetadata(result),
+  };
   writeCachedSpotLocation(normalizedQuery, resolved);
   return resolved;
 }

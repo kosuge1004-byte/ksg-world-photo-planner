@@ -729,10 +729,11 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<voi
 
 export async function fetchOverpass(
   query: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  totalTimeoutMs = OVERPASS_TOTAL_TIMEOUT_MS
 ): Promise<OsmElement[]> {
   let lastError: Error | null = null;
-  const deadline = Date.now() + OVERPASS_TOTAL_TIMEOUT_MS;
+  const deadline = Date.now() + totalTimeoutMs;
   for (const retryDelay of OVERPASS_RETRY_DELAYS_MS) {
     if (Date.now() >= deadline) break;
     await abortableDelay(retryDelay, signal);
@@ -795,7 +796,8 @@ export async function lookupOsmSiteContexts(
   points: OsmContextRequestPoint[],
   signal?: AbortSignal,
   includeDetails = true,
-  purpose: SiteContextPurpose = "full"
+  purpose: SiteContextPurpose = "full",
+  overpassTotalTimeoutMs = OVERPASS_TOTAL_TIMEOUT_MS
 ): Promise<OsmSiteContext[]> {
   // The water query is one enclosing circle, so its Overpass cost no longer
   // grows with the number of points. 3,000 covers the 2,590-point download in
@@ -839,7 +841,11 @@ export async function lookupOsmSiteContexts(
       }));
     }
   }
-  const elements = await fetchOverpass(queryForPoints(points, includeDetails, purpose), signal);
+  const elements = await fetchOverpass(
+    queryForPoints(points, includeDetails, purpose),
+    signal,
+    overpassTotalTimeoutMs
+  );
   return points.map((point, index) => {
     const waterSurfaceKind = gsiWaterContexts?.[index]?.waterSurfaceKind ??
       mappedWaterSurfaceKind(elements, point);

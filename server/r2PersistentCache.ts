@@ -59,7 +59,7 @@ export function persistentCacheFromR2(
   }> {
     // Fail closed: once the conservative Class B budget is reached,
     // bypass R2 entirely so the normal upstream path can run.
-    if (!await allowR2Read(safetyKv, requestIdentity)) {
+    if (!await allowR2Read(safetyKv, requestIdentity, budgetDb)) {
       return { status: "bypass", value: null };
     }
     try {

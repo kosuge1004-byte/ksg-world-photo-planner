@@ -787,7 +787,12 @@ async function fetchGsiGeoidHeightOnce(
       error?: unknown;
       cache?: unknown;
     };
-    if (!pointSpecific && data.cache === "hit") lastUncachedGeoidRequestAt = 0;
+    // A bundled JPGEO2024 result, like an R2 hit, never reaches GSI's CGI.
+    // Clear the legacy upstream pacing marker immediately so regional download
+    // requests do not retain the old 3.5-second CGI interval on the local path.
+    if (!pointSpecific && (data.cache === "hit" || data.cache === "local")) {
+      lastUncachedGeoidRequestAt = 0;
+    }
     if (
       !response.ok ||
       typeof data.geoidHeightMeters !== "number" ||

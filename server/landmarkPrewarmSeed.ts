@@ -8,10 +8,10 @@
 
 export type PrewarmLandmark = {
   name: string;
-  category: "mountain" | "castle" | "themepark" | "building" | "tower" | "temple";
+  category: "mountain" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel";
   latitude: number;
   longitude: number;
-  /** buildingのみ: 高さ(m)。事前取得の対象根拠（100m以上）を示すために記録する。 */
+  /** 建物・塔・大型像等の、接地面から頂上までの確認済み高さ(m)。 */
   heightMeters?: number;
 };
 
@@ -314,6 +314,13 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   { name: "会津慈母大観音", category: "temple", latitude: 37.5534047, longitude: 139.9538613, heightMeters: 57 },
   { name: "北海道大観音", category: "temple", latitude: 43.5281276, longitude: 142.1980184, heightMeters: 88 },
   { name: "加賀大観音", category: "temple", latitude: 36.3256867, longitude: 136.3487974 },
+  // ---- 観覧車（スポット検索の静的カタログと同一の6件） ----
+  { name: "コスモクロック21", category: "ferriswheel", latitude: 35.4554, longitude: 139.637 },
+  { name: "ダイヤと花の大観覧車", category: "ferriswheel", latitude: 35.64394, longitude: 139.85725 },
+  { name: "Sky-Boat", category: "ferriswheel", latitude: 35.16965, longitude: 136.90628 },
+  { name: "HEP FIVE観覧車", category: "ferriswheel", latitude: 34.704, longitude: 135.50009 },
+  { name: "Fuji Sky View", category: "ferriswheel", latitude: 35.16175, longitude: 138.61735 },
+  { name: "アミュラン", category: "ferriswheel", latitude: 31.584601, longitude: 130.542596 },
   // TODO: 比叡山延暦寺、出羽三山（月山神社・湯殿山神社）、淡路島世界平和
   // 大観音（解体済のため除外）など、他の山上寺社仏閣も今後追加検討。
   // 沖縄県で高さ100m以上の建物はリュークスタワー（The WEST/The EAST）のみ
@@ -328,3 +335,15 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   // モード学園コクーンタワー、京王プラザホテル、梅田阪急ビル、
   // ザ・キタハマ。
 ];
+
+/**
+ * R2 の定期先読み対象。
+ *
+ * 山岳は富士山だけを先読みし、城・建築物・塔・寺社・テーマパーク・
+ * 観覧車はすべて維持する。これは R2 へ保存する対象を絞るための設定で、
+ * スポット検索のランドマーク一覧や地形計算の精度には影響しない。
+ */
+export const ACTIVE_PREWARM_LANDMARKS: PrewarmLandmark[] =
+  PREWARM_LANDMARKS.filter(
+    (landmark) => landmark.category !== "mountain" || landmark.name === "富士山"
+  );

@@ -1,4 +1,9 @@
-import { jsonResponse, errorMessage } from "../_shared/http.ts";
+import {
+  jsonResponse,
+  errorMessage,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 
 /**
  * Cesium ion OAuth 2.0（PKCE方式）のトークン交換を仲介する。
@@ -49,7 +54,17 @@ function parseRequestBody(body: unknown): TokenExchangeRequestBody | null {
 
 export const onRequestPost: PagesFunction = async (context) => {
   const { request } = context;
-  const parsed = parseRequestBody(await request.json().catch(() => null));
+  let requestBody: unknown;
+  try {
+    requestBody = await readJsonRequest(request, 64 * 1024);
+  } catch (error) {
+    return jsonResponse(
+      { error: "リクエストの形式が不正です" },
+      requestErrorStatus(error, 400),
+      "no-store"
+    );
+  }
+  const parsed = parseRequestBody(requestBody);
   if (!parsed) {
     return jsonResponse({ error: "リクエストの形式が不正です" }, 400, "no-store");
   }

@@ -2,6 +2,8 @@ export type ResolvedPlaceName = {
   latitude: number;
   longitude: number;
   label: string;
+  subjectSurfaceTarget?: "terrain" | "structure-roof";
+  structureHeightMeters?: number;
 };
 
 type NominatimPlace = {
@@ -13,6 +15,7 @@ type NominatimPlace = {
   category?: unknown;
   type?: unknown;
   importance?: unknown;
+  extratags?: unknown;
 };
 
 type GsiAddressFeature = {
@@ -82,7 +85,24 @@ export async function resolveJapanesePlaceName(
   if (gsiOutcome.status === "fulfilled") candidates.push(...gsiOutcome.value);
 
   candidates.sort(compareRankedPlaces);
-  if (candidates[0]) return candidates[0].resolved;
+  if (candidates[0]) {
+    const best = candidates[0].resolved;
+    if (best.subjectSurfaceTarget === "structure-roof") return best;
+    // GSI住所検索が名称一致で1位になっても、ほぼ同じ座標のNominatim
+    // 建物分類・高さタグは捨てない。座標は従来どおり1位候補を維持する。
+    const structureMetadata = candidates.find((candidate) =>
+      candidate.resolved.subjectSurfaceTarget === "structure-roof" &&
+      Math.abs(candidate.resolved.latitude - best.latitude) <= 0.001 &&
+      Math.abs(candidate.resolved.longitude - best.longitude) <= 0.001
+    )?.resolved;
+    return structureMetadata
+      ? {
+          ...best,
+          subjectSurfaceTarget: "structure-roof",
+          structureHeightMeters: structureMetadata.structureHeightMeters,
+        }
+      : best;
+  }
 
   // 一方が落ちても他方が「検索結果なし」まで正常完了していれば、通信障害を
   // ユーザーへ誤って最終原因として見せない。両方が通信失敗した場合だけ通信
@@ -120,6 +140,7 @@ async function searchNominatim(
     limit: "5",
     addressdetails: "1",
     namedetails: "1",
+    extratags: "1",
     countrycodes: "jp",
     "accept-language": "ja",
   });
@@ -145,6 +166,7 @@ async function searchNominatim(
       latitude: Number(place.lat),
       longitude: Number(place.lon),
       label: String(place.display_name),
+      ...nominatimSubjectSurfaceMetadata(place),
     };
     const importance = Number(place.importance);
     // display_name は住所まで含むため、施設名が完全一致していても
@@ -223,6 +245,36 @@ function isNominatimPoi(place: NominatimPlace): boolean {
   const type = typeof place.type === "string" ? place.type : "";
   return ["tourism", "historic", "amenity", "man_made", "leisure"].includes(category) ||
     ["castle", "attraction", "museum", "monument", "memorial", "viewpoint"].includes(type);
+}
+
+function nominatimSubjectSurfaceMetadata(
+  place: NominatimPlace
+): Pick<ResolvedPlaceName, "subjectSurfaceTarget" | "structureHeightMeters"> {
+  const category = typeof place.category === "string" ? place.category : "";
+  const type = typeof place.type === "string" ? place.type : "";
+  const isStructure = category === "building" ||
+    (category === "man_made" && [
+      "tower", "communications_tower", "mast", "lighthouse", "chimney", "water_tower", "obelisk",
+    ].includes(type)) ||
+    (category === "historic" && ["castle", "fort", "monument"].includes(type)) ||
+    (category === "amenity" && type === "place_of_worship") ||
+    (category === "tourism" && ["hotel", "museum"].includes(type)) ||
+    (category === "leisure" && type === "stadium");
+  if (!isStructure) return {};
+  const tags = place.extratags && typeof place.extratags === "object"
+    ? place.extratags as Record<string, unknown>
+    : {};
+  const mappedHeight = Number.parseFloat(String(tags.height ?? ""));
+  const levels = Number.parseFloat(String(tags["building:levels"] ?? ""));
+  const structureHeightMeters = Number.isFinite(mappedHeight) && mappedHeight > 0
+    ? mappedHeight
+    : Number.isFinite(levels) && levels > 0
+      ? levels * 3
+      : undefined;
+  return {
+    subjectSurfaceTarget: "structure-roof",
+    structureHeightMeters,
+  };
 }
 
 function providerSignal(parentSignal?: AbortSignal): AbortSignal {

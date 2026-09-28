@@ -1,10 +1,9 @@
 /**
  * Application-side R2 write/read guard.
  *
- * 2026-08-26 大幅刷新: 以前はここでWorkers KVを使い、「今月R2を何回
- * 使ったか」を月単位で正確に集計していた。しかし実際に運用してみると、
- * 見張られている側のR2よりも、見張り役のKVの方がずっと厳しい無料枠しか
- * 持たない、という本末転倒な構造だったことが判明した:
+ * R2 は有効なまま使い、無料枠を超えないためのアプリ側上限だけをここで
+ * 強制する。Workers KV はジョブ保存にも使うため、カウンター更新には使わず、
+ * 無料枠が大きく原子的な更新ができる D1 を共有する。
  *
  *   R2 書き込み(Class A) : 100万回/月   (Cloudflare公式無料枠)
  *   R2 読み取り(Class B) : 1000万回/月  (Cloudflare公式無料枠)
@@ -17,21 +16,11 @@
  * 増えれば必ずまたKVの日次上限に先に到達してしまう
  * （実際に開発中の検証作業だけで複数回到達した）。
  *
- * 2026-08-27追記: 開発中の検証作業だけならR2の無料枠に到達する現実的な
- * リスクは低いが、実際に利用者が数千人規模に増えた場合は話が別（試算では
- * 数千〜1万人規模でR2の月間無料枠に到達しうる）。さらに支払い方法を
- * 登録済みのため、無料枠を超えた分は自動的に課金される。Cloudflare自体に
- * 「無料枠を超えたら完全に止める」機能は存在しない
- * （Budget Alertsは事後の通知のみで、しかも1日遅れ）ため、アプリ側で
- * 事前に確実に止める仕組みが必要。
- *
- * KVの代わりに Cloudflare D1（無料枠: 書き込み100,000回/日 = KVの100倍）
- * を使い、月間のR2書き込み総数を数える。D1はPages Functionsに直接
- * バインディングできる（Durable Objectsのような別Worker新設が不要）ため、
- * KV/R2と同じ運用感で組み込める。R2自体の無料枠（月100万回書き込み）に
- * 対して10%の安全マージンを残した90万回に達したら、以降は新規のR2書き込み
- * （＝キャッシュへの保存）を諦め、直接処理へフォールバックする
- * （読み取り・アプリの表示自体は止めない。速度が落ちるだけ）。
+ * 上限は Standard R2 無料枠より十分低く固定する:
+ *   新規保存予約量 4 GB / 全期間、Class A相当 10万回/月、
+ *   Class B相当 100万回/月。
+ * D1が無い、または集計に失敗した場合はR2アクセスを許可しない。アプリ本体は
+ * 国土地理院等の通常経路へフォールバックするため、精度と機能は維持される。
  */
 
 export interface R2SafetyKv {
@@ -54,15 +43,17 @@ export interface R2MonthlyBudgetDb {
 export const R2_MAX_CACHE_OBJECT_BYTES = 512 * 1024;
 export const R2_MAX_WRITES_PER_REQUEST = 64;
 export const R2_MAX_READS_PER_REQUEST = 256;
-// R2自体の無料枠（月100万回書き込み）に対し10%の安全マージンを残す。
-export const R2_MONTHLY_WRITE_BUDGET = 900_000;
+export const R2_MONTHLY_WRITE_BUDGET = 100_000;
+export const R2_MONTHLY_READ_BUDGET = 1_000_000;
+export const R2_STORAGE_RESERVATION_BUDGET_BYTES = 4_000_000_000;
+const R2_READ_RESERVATION_BLOCK = 32;
 
-type RequestCounts = { reads: number; writes: number };
+type RequestCounts = { reads: number; reservedReads: number; writes: number };
 const perRequest = new WeakMap<object, RequestCounts>();
 function counts(id?: object): RequestCounts {
-  if (!id) return { reads: 0, writes: 0 };
+  if (!id) return { reads: 0, reservedReads: 0, writes: 0 };
   let v = perRequest.get(id);
-  if (!v) { v = { reads: 0, writes: 0 }; perRequest.set(id, v); }
+  if (!v) { v = { reads: 0, reservedReads: 0, writes: 0 }; perRequest.set(id, v); }
   return v;
 }
 
@@ -71,22 +62,25 @@ function monthKey(d = new Date()): string {
 }
 
 /**
- * 月間のR2書き込み回数をD1でアトミックに1件加算し、その後の値を返す。
- * D1未設定、またはD1側で何らかのエラーが起きた場合は、月間予算の
- * チェック自体をスキップする（従来どおりリクエスト単位の上限のみで
- * 判定するフェイルオープン。月間集計という「追加の安全網」だけが
- * 無効になるだけで、基本の暴走防止は維持される）。
+ * 指定カウンターを上限以内でだけアトミックに予約する。
+ * 上限到達、D1未設定、D1障害はいずれも null としてフェイルクローズする。
  */
-async function incrementMonthlyR2Writes(db: R2MonthlyBudgetDb | undefined): Promise<number | null> {
+async function reserveCounter(
+  db: R2MonthlyBudgetDb | undefined,
+  key: string,
+  increment: number,
+  limit: number,
+): Promise<number | null> {
   if (!db) return null;
   try {
     const result = await db
       .prepare(
-        `INSERT INTO r2_write_budget (month, writes) VALUES (?1, 1)
-         ON CONFLICT(month) DO UPDATE SET writes = writes + 1
+        `INSERT INTO r2_write_budget (month, writes) VALUES (?1, ?2)
+         ON CONFLICT(month) DO UPDATE SET writes = writes + ?2
+           WHERE writes + ?2 <= ?3
          RETURNING writes`
       )
-      .bind(monthKey())
+      .bind(key, increment, limit)
       .first<{ writes: number }>();
     return result ? result.writes : null;
   } catch {
@@ -100,10 +94,30 @@ async function incrementMonthlyR2Writes(db: R2MonthlyBudgetDb | undefined): Prom
  * falseを返す（呼び出し元がkvの有無自体を「R2キャッシュが構成された
  * 環境かどうか」の判定に使っているため、後方互換としてこの挙動を残す）。
  */
-export async function allowR2Read(kv: R2SafetyKv | undefined, id?: object): Promise<boolean> {
-  if (!kv) return false;
+export async function allowR2Read(
+  kv: R2SafetyKv | undefined,
+  id?: object,
+  budgetDb?: R2MonthlyBudgetDb,
+): Promise<boolean> {
+  if (!kv || !budgetDb) return false;
   const c = counts(id);
   if (c.reads >= R2_MAX_READS_PER_REQUEST) return false;
+  if (c.reads >= c.reservedReads) {
+    // D1往復を各R2読み取りに追加しないよう、同一リクエスト分を32回ずつ
+    // 先に予約する。未使用分は戻さないため集計誤差は常に安全側になる。
+    const reservation = Math.min(
+      R2_READ_RESERVATION_BLOCK,
+      R2_MAX_READS_PER_REQUEST - c.reservedReads,
+    );
+    const monthlyReads = await reserveCounter(
+      budgetDb,
+      `read:${monthKey()}`,
+      reservation,
+      R2_MONTHLY_READ_BUDGET,
+    );
+    if (monthlyReads === null) return false;
+    c.reservedReads += reservation;
+  }
   c.reads++;
   return true;
 }
@@ -111,10 +125,8 @@ export async function allowR2Read(kv: R2SafetyKv | undefined, id?: object): Prom
 /**
  * R2への書き込みを許可するかどうか。
  * 1リクエストあたりの書き込み回数上限・1オブジェクトあたりの最大
- * バイト数（KV不使用）に加え、budgetDb（D1）が渡された場合のみ、
- * 月間のR2書き込み総数を確認する（R2無料枠の90%に達したら拒否）。
- * budgetDb未設定、またはD1エラー時は月間チェックをスキップする
- * （フェイルオープン。基本の暴走防止＝リクエスト単位の上限は維持される）。
+ * バイト数（KV不使用）に加え、D1で月間書き込み回数と全期間の保存予約量を
+ * 確認する。D1未設定・D1エラー・いずれかの上限到達時は拒否する。
  */
 export async function reserveR2Write(
   kv: R2SafetyKv | undefined,
@@ -124,12 +136,27 @@ export async function reserveR2Write(
   budgetDb?: R2MonthlyBudgetDb
 ): Promise<boolean> {
   void objectKey; // 2026-08-26: 個別オブジェクトのサイズ追跡（KV経由）を廃止したため未使用。シグネチャは呼び出し元との互換のため維持。
-  if (!kv || !Number.isFinite(newBytes) || newBytes < 0 || newBytes > R2_MAX_CACHE_OBJECT_BYTES) return false;
+  if (!kv || !budgetDb || !Number.isFinite(newBytes) || newBytes < 0 || newBytes > R2_MAX_CACHE_OBJECT_BYTES) return false;
   const c = counts(id);
   if (c.writes >= R2_MAX_WRITES_PER_REQUEST) return false;
 
-  const monthlyWrites = await incrementMonthlyR2Writes(budgetDb);
-  if (monthlyWrites !== null && monthlyWrites > R2_MONTHLY_WRITE_BUDGET) return false;
+  const monthlyWrites = await reserveCounter(
+    budgetDb,
+    `write:${monthKey()}`,
+    1,
+    R2_MONTHLY_WRITE_BUDGET,
+  );
+  if (monthlyWrites === null) return false;
+
+  // 実書き込み前に予約し、失敗や同一キー上書きでも減算しない。容量を
+  // 過大評価する方向だけに誤差が出るため、課金防止側には安全に倒れる。
+  const reservedBytes = await reserveCounter(
+    budgetDb,
+    "storage-reserved-bytes:v1",
+    newBytes,
+    R2_STORAGE_RESERVATION_BUDGET_BYTES,
+  );
+  if (reservedBytes === null) return false;
 
   c.writes++;
   return true;

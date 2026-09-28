@@ -4,16 +4,26 @@ import {
   type SiteContextPurpose,
 } from "../../server/osmSiteContext.ts";
 import {
-  configureCloudflareServerRuntime,
+  withCloudflareServerRuntime,
   type CloudflareEnv,
 } from "../_shared/env.ts";
-import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import {
+  errorMessage,
+  jsonResponse,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
 // 通常の地理条件照合は小分けのままにする。water-onlyはサーバー側で地点数に
 // 依存しない1個の包含円へ集約され、ダウンロード1件の2,590地点を一括処理する。
 const MAX_POINTS_PER_REQUEST = 500;
 const MAX_WATER_ONLY_POINTS_PER_REQUEST = 3_000;
+const MAX_REQUEST_BYTES = 512 * 1024;
+// Cloudflare's public egress to the community Overpass instances can stall even
+// when the same small query succeeds from the user's network. Return promptly
+// so the browser can use its direct read-only Overpass fallback.
+const CLOUDFLARE_OVERPASS_TIMEOUT_MS = 6_000;
 
 function requestPoints(body: unknown): OsmContextRequestPoint[] | null {
   if (typeof body !== "object" || body === null || !("points" in body) || !Array.isArray(body.points)) {
@@ -34,9 +44,9 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
   }
-  configureCloudflareServerRuntime(context);
+  return withCloudflareServerRuntime(context, async () => {
   try {
-    const body = await context.request.json() as unknown;
+    const body = await readJsonRequest(context.request, MAX_REQUEST_BYTES);
     const points = requestPoints(body);
     if (!points) {
       return jsonResponse({ error: "候補座標がありません" }, 400, "no-store");
@@ -77,12 +87,23 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, cacheKeyInput, {
       namespace: "osm-site-context", version: "v2", ttlSeconds: 7 * 86400,
     }, async () => ({
-      contexts: await lookupOsmSiteContexts(points, context.request.signal, includeDetails, purpose),
+      contexts: await lookupOsmSiteContexts(
+        points,
+        context.request.signal,
+        includeDetails,
+        purpose,
+        purpose === "water-only" ? undefined : CLOUDFLARE_OVERPASS_TIMEOUT_MS
+      ),
       attribution: "© OpenStreetMap contributors / 国土地理院",
     }), context.waitUntil);
-    return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=300");
+    return jsonResponse({ ...result.value, cache: result.cache }, 200, "no-store");
   } catch (error) {
     // エラー応答は公開キャッシュしない（失敗を5分キャッシュして再試行を妨げない）。
-    return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
+    return jsonResponse(
+      { error: errorMessage(error) },
+      requestErrorStatus(error),
+      "no-store"
+    );
   }
+  });
 };

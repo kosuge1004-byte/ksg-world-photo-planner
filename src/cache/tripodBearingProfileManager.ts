@@ -10,16 +10,18 @@ import {
   rayCartographicAtDistance,
 } from "../cesium/tripodCandidates";
 import { sampleWorldTerrainNeutral, terrainDataSource } from "../cesium/worldTerrain";
-import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, flushGsiDeviceTilePrefetchQueue, pauseGsiDeviceTilePrefetch, recordGsiDeviceTileReferencesForPoints, resumeGsiDeviceTilePrefetch } from "../cesium/gsiDemTileCache";
+import { beginGsiDeviceTileCapture, finishGsiDeviceTileCapture, flushGsiDeviceTilePrefetchQueue, pauseGsiDeviceTilePrefetch, prefetchGsiDeviceTilesForSamples, recordGsiDeviceTileReferencesForPoints, resumeGsiDeviceTilePrefetch } from "../cesium/gsiDemTileCache";
 import { idFor } from "../subjectStorage";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type { CelestialScreenPoint, TripodCandidate } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
+import type { BearingProfileBatchProfile } from "../types/bearingProfileBatch";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
 import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
 import { writePersistentSiteContexts, getPersistentSiteContextWriteFailureCount } from "./siteContextPersistentCache";
+import { fetchBearingProfileBatch } from "./bearingProfileBatchClient";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -125,6 +127,33 @@ const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 // 方位同士は独立しているが、各方位内でもDEM APIが並列取得を行うため
 // 過剰並列にはしない。2方位だけ重ね、待ち時間を隠しつつGSI/Cloudflareを保護する。
 const BEARING_CONCURRENCY = 2;
+// 259 bearings become five HTTP requests while keeping the largest 50 km
+// response comfortably below one all-360 response. The endpoint itself accepts
+// up to 360; this is only a client memory/timeout guard.
+const BEARING_BATCH_SIZE = 64;
+
+function validBatchProfile(
+  value: unknown,
+  bearingDegrees: number,
+  distances: readonly number[],
+  subjectPoint: GroundPoint
+): value is BearingProfileBatchProfile {
+  if (typeof value !== "object" || value === null) return false;
+  const profile = value as Partial<BearingProfileBatchProfile>;
+  if (profile.bearingDegrees !== bearingDegrees || !Array.isArray(profile.points) ||
+    profile.points.length !== distances.length || typeof profile.computedAtIso !== "string") return false;
+  return profile.points.every((point, index) => {
+    if (typeof point !== "object" || point === null ||
+      !Number.isFinite(point.distanceMeters) || !Number.isFinite(point.latitude) ||
+      !Number.isFinite(point.longitude) || !Number.isFinite(point.ellipsoidalHeightMeters) ||
+      !(["DEM1A", "DEM5A", "DEM5B", "DEM5C", "DEM10B", null] as const)
+        .includes(point.elevationSource) ||
+      Math.abs(point.distanceMeters - distances[index]) > 0.001) return false;
+    const expected = calculateKarneyDestinationPoint(subjectPoint, bearingDegrees, distances[index]);
+    return Math.abs(point.latitude - expected.latitude) <= 1e-9 &&
+      Math.abs(point.longitude - expected.longitude) <= 1e-9;
+  });
+}
 
 export type BearingProfileOptIn = {
   subjectId: string;
@@ -311,6 +340,103 @@ export async function backfillBearingProfiles(params: {
     }
   });
 
+  async function acceptProfile(entry: BearingProfileEntry): Promise<void> {
+    await setBearingProfile(
+      subjectId,
+      cameraSettings.lensCenterHeightMeters,
+      entry.bearingDegrees,
+      entry
+    );
+    recordGsiDeviceTileReferencesForPoints(subjectId, entry.points);
+    totalProfilePoints += entry.points.length;
+    totalHighPrecisionPoints += entry.points.length;
+    successfulBearings += 1;
+    completedAttempts += 1;
+    const stride = Math.max(1, Math.floor(entry.points.length / 8));
+    for (let i = 0; i < entry.points.length; i += stride) {
+      waterPrefetchPoints.push({
+        latitude: entry.points[i].latitude,
+        longitude: entry.points[i].longitude,
+      });
+    }
+  }
+
+  // Prefer the server-side all-bearing calculation. Older deployments, a
+  // temporarily unavailable endpoint, or a partial response all fall back to
+  // the established direct path for only the bearings that remain unresolved.
+  // Values are accepted only when every distance and Karney destination matches
+  // the locally generated profile, so this changes transport count, not precision.
+  const remainingBearingSet = new Set(pendingBearings);
+  for (let start = 0; start < pendingBearings.length; start += BEARING_BATCH_SIZE) {
+    if (signal?.aborted) break;
+    const batchBearings = pendingBearings.slice(start, start + BEARING_BATCH_SIZE);
+    onProgress?.({
+      totalSteps,
+      completedSteps: completedAttempts,
+      successfulSteps: successfulBearings,
+      failedSteps: failedBearings,
+      currentBearingDegrees: batchBearings[0] ?? null,
+      phase: "terrain",
+      terrainStage: "profile",
+    });
+    const batch = await fetchBearingProfileBatch({
+      subjectPoint,
+      cameraSettings: { lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters },
+      bearings: batchBearings,
+      maxDistanceMeters: requestedMaxDistanceMeters,
+    }, signal);
+    if (!batch) break;
+    if (batch.requestedBearingCount !== batchBearings.length ||
+      batch.pointCount !== batchBearings.length * baseDistances.length) continue;
+    const profileByBearing = new Map(
+      batch.profiles.map((profile) => [profile.bearingDegrees, profile] as const)
+    );
+    for (const bearing of batchBearings) {
+      const profile = profileByBearing.get(bearing);
+      if (!validBatchProfile(profile, bearing, baseDistances, subjectPoint)) continue;
+      // The direct path warms the decoded device tiles after receiving the
+      // authoritative elevation source for every point. Preserve that download
+      // contract on the batch path; otherwise the profile would exist but the
+      // explicit surrounding-DEM download would report/store zero tiles.
+      prefetchGsiDeviceTilesForSamples(
+        profile.points.map((point) => ({
+          latitude: point.latitude,
+          longitude: point.longitude,
+          maximumDetail: "1m" as const,
+          interpolationMode: "neutral" as const,
+        })),
+        profile.points.map((point) => ({
+          heightMeters: point.elevationSource === null ? null : 0,
+          source: point.elevationSource,
+        }))
+      );
+      const entry: BearingProfileEntry = {
+        bearingDegrees: profile.bearingDegrees,
+        computedAtIso: profile.computedAtIso,
+        points: profile.points.map((point) => ({
+          distanceMeters: point.distanceMeters,
+          longitude: point.longitude,
+          latitude: point.latitude,
+          ellipsoidalHeightMeters: point.ellipsoidalHeightMeters,
+        })),
+      };
+      await acceptProfile(entry);
+      remainingBearingSet.delete(bearing);
+      onProgress?.({
+        totalSteps,
+        completedSteps: completedAttempts,
+        successfulSteps: successfulBearings,
+        failedSteps: failedBearings,
+        currentBearingDegrees: bearing,
+        phase: "terrain",
+        terrainStage: "high-precision",
+        profilePoints: totalProfilePoints,
+        highPrecisionPoints: totalHighPrecisionPoints,
+      });
+    }
+  }
+  const remainingBearings = pendingBearings.filter((bearing) => remainingBearingSet.has(bearing));
+
   // 2026-09-10追記: 「初期数方位が全失敗ならシステム障害として早期中止する」
   // 判定を実際に配線する。以前はabortReasonという変数だけが用意されていて、
   // どこからも代入されておらず、GSI/ジオイドAPIが落ちていても360方位を
@@ -327,7 +453,7 @@ export async function backfillBearingProfiles(params: {
 
   async function processBearing(index: number): Promise<void> {
     if (signal?.aborted || abortReason) return;
-    const bearing = pendingBearings[index];
+    const bearing = remainingBearings[index];
     onProgress?.({
       totalSteps,
       completedSteps: completedAttempts,
@@ -366,7 +492,11 @@ export async function backfillBearingProfiles(params: {
       try {
         // Each network/cache operation is bounded. A whole-bearing watchdog
         // incorrectly cancelled healthy rate-limited geoid work, then left its
-        // Promise running behind the next attempt.
+        // Promise running behind the next attempt. The DEM client resolves its
+        // sparse failedIndexes first by retrying only those exact points (at
+        // most two individual retries); this whole-bearing attempt is reached
+        // only after those point-level retries have been exhausted. A full API
+        // outage skips per-point fan-out and is escalated directly.
         const samples = await sampleWorldTerrainNeutral(terrainPoints, signal, "1m", {
           allowWorldTerrainFallback: false,
           onGeoidProgress: (geoidCompleted, geoidTotal) => onProgress?.({
@@ -458,17 +588,7 @@ export async function backfillBearingProfiles(params: {
       })),
       computedAtIso: new Date().toISOString(),
     };
-    await setBearingProfile(subjectId, cameraSettings.lensCenterHeightMeters, bearing, entry);
-    recordGsiDeviceTileReferencesForPoints(subjectId, entry.points);
-    totalProfilePoints += entry.points.length;
-    totalHighPrecisionPoints += entry.points.length;
-    successfulBearings += 1;
-    completedAttempts += 1;
-
-    const stride = Math.max(1, Math.floor(entry.points.length / 8));
-    for (let i = 0; i < entry.points.length; i += stride) {
-      waterPrefetchPoints.push({ latitude: entry.points[i].latitude, longitude: entry.points[i].longitude });
-    }
+    await acceptProfile(entry);
 
     onProgress?.({
       totalSteps,
@@ -485,13 +605,13 @@ export async function backfillBearingProfiles(params: {
   async function worker(): Promise<void> {
     while (!signal?.aborted && !abortReason) {
       const index = nextIndex;
-      if (index >= pendingBearings.length) return;
+      if (index >= remainingBearings.length) return;
       nextIndex += 1;
       await processBearing(index);
     }
   }
 
-  const workerCount = Math.min(BEARING_CONCURRENCY, pendingBearings.length);
+  const workerCount = Math.min(BEARING_CONCURRENCY, remainingBearings.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   if (abortReason) {

@@ -58,7 +58,8 @@ export async function getOrCreateR2Json<T>(
 
   const task = (async (): Promise<{ value: T; cache: "hit" | "miss" }> => {
     try {
-      if (await allowR2Read(safetyKv, requestIdentity)) {
+      const budgetDb = serverR2WriteBudgetDb();
+      if (await allowR2Read(safetyKv, requestIdentity, budgetDb)) {
         const object = await bucket.get(key).catch(() => null);
         if (object) {
           try {
@@ -87,7 +88,7 @@ export async function getOrCreateR2Json<T>(
       const serialized = JSON.stringify(envelope);
       const newBytes = valueBytes(serialized);
 
-      if (await reserveR2Write(safetyKv, key, newBytes, requestIdentity, serverR2WriteBudgetDb())) {
+      if (await reserveR2Write(safetyKv, key, newBytes, requestIdentity, budgetDb)) {
         const write = bucket.put(key, serialized, {
           httpMetadata: { contentType: "application/json" },
           customMetadata: {

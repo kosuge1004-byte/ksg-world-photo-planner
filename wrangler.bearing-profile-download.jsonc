@@ -10,14 +10,19 @@
       "id": "2fb4bcb1132140a6bfbfd73ddab4a9f0"
     }
   ],
-  // wrangler.spot-search.jsonc と同じ理由でR2は未設定でも動く（NETWORK_CACHE
-  // 未設定時はpersistentCacheFromR2が保存だけをスキップし通信自体は成功する）。
-  // 既にastrosight-network-cacheバケットを作成済みなら、そのまま束縛して
-  // ライブ三脚探索・スポット検索と同じDEMタイルキャッシュを共有できる。
+  // ライブ三脚探索・スポット検索と同じR2 DEMタイルキャッシュを共有する。
+  // R2は有効なまま維持し、R2_WRITE_BUDGET_DBの無料枠ガードを適用する。
   "r2_buckets": [
     {
       "binding": "NETWORK_CACHE",
       "bucket_name": "astrosight-network-cache"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "R2_WRITE_BUDGET_DB",
+      "database_name": "astrosight-r2-write-budget",
+      "database_id": "a679879f-6411-437e-b7f2-1a161fce8237"
     }
   ],
   "queues": {

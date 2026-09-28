@@ -163,6 +163,11 @@ export function TopSettingsBar({
     setLightPollutionGuideOpen(false);
   };
 
+  const closeMenu = () => {
+    closeDetailPanels();
+    setModeMenuOpen(false);
+  };
+
   const toggleDetailPanel = (panel: "precision" | "3d" | "light" | "sources") => {
     const next = {
       precision: panel === "precision" ? !precisionMenuOpen : false,
@@ -218,7 +223,7 @@ export function TopSettingsBar({
     setInstallHint("");
     const result = await pwaInstall.install();
     if (result === "accepted" || result === "installed") {
-      setModeMenuOpen(false);
+      closeMenu();
       return;
     }
     if (result === "dismissed") {
@@ -255,163 +260,19 @@ export function TopSettingsBar({
         >
           <div className="menu-dialog-header">
             <strong>メニュー</strong>
-            <button type="button" className="menu-close-button" onClick={() => { closeDetailPanels(); setModeMenuOpen(false); }} aria-label="メニューを閉じる">閉じる</button>
+            <button type="button" className="menu-close-button" onClick={closeMenu} aria-label="メニューを閉じる">閉じる</button>
           </div>
-          <button type="button" onClick={() => toggleDetailPanel("3d")} aria-expanded={threeDSourceMenuOpen}>
+          <button
+            type="button"
+            className={threeDSourceMenuOpen ? "active" : undefined}
+            onClick={() => toggleDetailPanel("3d")}
+            aria-expanded={threeDSourceMenuOpen}
+            aria-controls="three-d-display-settings"
+          >
             <b>3D表示選択</b><small>3Dマップの表示データと2D/3D切替</small>
           </button>
-          <button type="button" onClick={() => {
-            setModeMenuOpen(false);
-            onOpenCalendar();
-          }}>
-            <b>カレンダー</b><small>撮影予定とプロジェクト</small>
-          </button>
-          <button type="button" onClick={() => {
-            setModeMenuOpen(false);
-            onOpenMoonAgeCalendar();
-          }}>
-            <b>月齢</b><small>月の形と月齢をオフライン表示</small>
-          </button>
-          <button type="button" onClick={() => {
-            setModeMenuOpen(false);
-            onOpenArCamera();
-          }}>
-            <b>ARカメラ</b><small>実景と3D・天体を重ねて確認</small>
-          </button>
-          {pwaInstall.supported && !pwaInstall.installed && (
-            <>
-              <button
-                type="button"
-                onClick={() => void installWebApp()}
-                disabled={pwaInstall.installing}
-              >
-                <b>アプリ追加</b>
-                <small>
-                  {pwaInstall.installing
-                    ? "インストール画面を準備中"
-                    : pwaInstall.canInstall
-                      ? "この端末にインストール"
-                      : "ホーム画面に追加"}
-                </small>
-              </button>
-              {installHint && (
-                <small className="pwa-install-hint" role="status">{installHint}</small>
-              )}
-            </>
-          )}
-          <button type="button" onClick={() => toggleDetailPanel("precision")} aria-expanded={precisionMenuOpen}>
-            <b>精度設定</b><small>三脚候補の検算・屈折補正</small>
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleDetailPanel("light")}
-            aria-expanded={lightPollutionGuideOpen}
-          >
-            <b>光害マップの見方</b><small>明るさと天の川撮影の目安</small>
-          </button>
-          {lightPollutionGuideOpen && (
-            <section className="light-pollution-guide" aria-label="光害マップの見方">
-              <div className="menu-panel-header"><strong>光害マップの見方</strong><button type="button" onClick={() => setLightPollutionGuideOpen(false)}>閉じる</button></div>
-              <div className="light-pollution-guide-row">
-                <b>暗い地域</b>
-                <span>人工の夜間光が少ない</span>
-                <small>天の川撮影：撮りやすい</small>
-              </div>
-              <div className="light-pollution-guide-row">
-                <b>中間の明るさ</b>
-                <span>周辺の街明かりの影響あり</span>
-                <small>天の川撮影：条件次第</small>
-              </div>
-              <div className="light-pollution-guide-row">
-                <b>明るい地域</b>
-                <span>人工の夜間光が多い</span>
-                <small>天の川撮影：難しい</small>
-              </div>
-              <p>明るく表示されるほど人工光が強く、暗いほど人工光が少ない地域です。</p>
-              <p className="light-pollution-guide-note">このマップはNASA VIIRS Black Marbleの地上夜間光を示すもので、空の明るさ（skyglow）そのものではありません。月、雲、透明度、天の川の高度・方向は含まれないため、撮影可否を断定する表示ではありません。</p>
-            </section>
-          )}
-          <button
-            type="button"
-            onClick={() => toggleDetailPanel("sources")}
-            aria-expanded={mapSourcesOpen}
-          >
-            <b>地図出典</b><small>使用中の地図・標高データ</small>
-          </button>
-          {mapSourcesOpen && (
-            <section className="map-data-sources" aria-label="地図データ出典元">
-              <div className="menu-panel-header"><strong>地図データ出典元</strong><button type="button" onClick={() => setMapSourcesOpen(false)}>閉じる</button></div>
-              <dl>
-                <div>
-                  <dt>2D地図・航空写真</dt>
-                  <dd>OpenFreeMap / OpenStreetMap・国土地理院</dd>
-                </div>
-                <div>
-                  <dt>地点共有・地図リンク</dt>
-                  <dd>Google Maps</dd>
-                </div>
-                <div>
-                  <dt>3D地図・建物・地表形状</dt>
-                  <dd>{precisionSettings.accuracyMode === "highest" ? "Google Photorealistic 3D Tiles" : "国土地理院地図＋PLATEAU建物"}</dd>
-                </div>
-                <div>
-                  <dt>日本国内の標高・地形</dt>
-                  <dd>国土地理院 標高タイル・ジオイド関連データ</dd>
-                </div>
-                <div>
-                  <dt>地名検索・道路等の登録情報</dt>
-                  <dd>© OpenStreetMap contributors / Nominatim</dd>
-                </div>
-                <div>
-                  <dt>標高データの補完</dt>
-                  <dd>Cesium World Terrain</dd>
-                </div>
-              </dl>
-              <small>表示・検索・計算内容に応じて、上記の一部または複数を使用します。</small>
-              <div className="offline-tile-cache">
-                <p>
-                  標準3D表示（国土地理院地図＋PLATEAU）で読み込んだ地図タイルは、
-                  次回同じ場所を表示するときに素早く出せるよう端末に保存されます
-                  （地理院タイル・PLATEAUは複製・保存が認められているデータのため）。
-                  Google Photorealistic 3D Tilesはこの保存の対象外です（利用規約により
-                  キャッシュ・保存が禁止されているため、常にその都度取得します）。
-                </p>
-                <button type="button" onClick={() => void handleClearOfflineTileCache()} disabled={tileCacheClearState === "clearing"}>
-                  {tileCacheClearState === "clearing" ? "削除中…" : "保存した地図タイルを削除"}
-                </button>
-                {tileCacheClearState === "cleared" && <small role="status">削除しました。</small>}
-                {tileCacheClearState === "failed" && <small role="status">削除できませんでした。時間をおいて再試行してください。</small>}
-              </div>
-              <details className="freeze-diagnostics-section">
-                <summary>フリーズ診断</summary>
-                <small>
-                  画面が固まった(フリーズした)場合、その情報がここに記録されます。固まった直後に押してもらえると、原因調査に役立ちます。
-                </small>
-                <button type="button" onClick={handleCopyFreezeDiagnostics}>
-                  {freezeDiagnosticsCopyState === "copied"
-                    ? "コピーしました"
-                    : freezeDiagnosticsCopyState === "empty"
-                      ? "記録されたフリーズはありません"
-                      : freezeDiagnosticsCopyState === "failed"
-                        ? "コピーできませんでした"
-                        : "フリーズ診断情報をコピー"}
-                </button>
-                <button type="button" onClick={() => { clearRecordedFreezes(); setFreezeDiagnosticsCopyState("idle"); }}>
-                  記録をクリア
-                </button>
-              </details>
-              <nav aria-label="出典元の詳細">
-                <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">OpenFreeMap</a>
-                <a href="https://www.google.com/maps" target="_blank" rel="noreferrer">Google Maps</a>
-                <a href="https://developers.google.com/maps/documentation/tile/3d-tiles" target="_blank" rel="noreferrer">Google 3D Tiles</a>
-                <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noreferrer">国土地理院</a>
-                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
-                <a href="https://cesium.com/platform/cesium-ion/content/cesium-world-terrain/" target="_blank" rel="noreferrer">Cesium World Terrain</a>
-              </nav>
-            </section>
-          )}
           {threeDSourceMenuOpen && (
-            <fieldset className="precision-settings-panel">
+            <fieldset id="three-d-display-settings" className="precision-settings-panel">
               <legend>3D表示選択</legend>
               <div className="menu-panel-header"><strong>表示データ</strong><button type="button" onClick={() => setThreeDSourceMenuOpen(false)}>閉じる</button></div>
               <div className="precision-subsection">
@@ -420,7 +281,7 @@ export function TopSettingsBar({
                   type="button"
                   className="precision-choice map-display-mode-toggle"
                   onClick={() => {
-                    setModeMenuOpen(false);
+                    closeMenu();
                     onOpenMap3D();
                   }}
                 >
@@ -502,7 +363,7 @@ export function TopSettingsBar({
                 ) : (
                   <>
                     <small>Google Photorealistic 3D Tilesの利用には、ご自身のCesium ionアカウントの接続が必要です。</small>
-                    <button type="button" onClick={onConnectCesiumIon}>Cesium ionアカウントに接続</button>
+                    <button type="button" onClick={() => { closeMenu(); onConnectCesiumIon(); }}>Cesium ionアカウントに接続</button>
                     <button type="button" onClick={openCesiumIonUsage}>Cesium ion公式Usageを確認</button>
                   </>
                 )}
@@ -524,8 +385,56 @@ export function TopSettingsBar({
               </div>
             </fieldset>
           )}
+          <button type="button" onClick={() => {
+            closeMenu();
+            onOpenCalendar();
+          }}>
+            <b>カレンダー</b><small>撮影予定とプロジェクト</small>
+          </button>
+          <button type="button" onClick={() => {
+            closeMenu();
+            onOpenMoonAgeCalendar();
+          }}>
+            <b>月齢</b><small>月の形と月齢をオフライン表示</small>
+          </button>
+          <button type="button" onClick={() => {
+            closeMenu();
+            onOpenArCamera();
+          }}>
+            <b>ARカメラ</b><small>実景と3D・天体を重ねて確認</small>
+          </button>
+          {pwaInstall.supported && !pwaInstall.installed && (
+            <>
+              <button
+                type="button"
+                onClick={() => void installWebApp()}
+                disabled={pwaInstall.installing}
+              >
+                <b>アプリ追加</b>
+                <small>
+                  {pwaInstall.installing
+                    ? "インストール画面を準備中"
+                    : pwaInstall.canInstall
+                      ? "この端末にインストール"
+                      : "ホーム画面に追加"}
+                </small>
+              </button>
+              {installHint && (
+                <small className="pwa-install-hint" role="status">{installHint}</small>
+              )}
+            </>
+          )}
+          <button
+            type="button"
+            className={precisionMenuOpen ? "active" : undefined}
+            onClick={() => toggleDetailPanel("precision")}
+            aria-expanded={precisionMenuOpen}
+            aria-controls="precision-settings"
+          >
+            <b>精度設定</b><small>三脚候補の検算・屈折補正</small>
+          </button>
           {precisionMenuOpen && (
-            <fieldset className="precision-settings-panel">
+            <fieldset id="precision-settings" className="precision-settings-panel">
               <legend>精度設定</legend>
               <div className="menu-panel-header"><strong>三脚候補・補正</strong><button type="button" onClick={() => setPrecisionMenuOpen(false)}>閉じる</button></div>
               <div className="precision-subsection">
@@ -592,6 +501,118 @@ export function TopSettingsBar({
               ))}
               </div>
             </fieldset>
+          )}
+          <button
+            type="button"
+            className={lightPollutionGuideOpen ? "active" : undefined}
+            onClick={() => toggleDetailPanel("light")}
+            aria-expanded={lightPollutionGuideOpen}
+            aria-controls="light-pollution-guide"
+          >
+            <b>光害マップの見方</b><small>明るさと天の川撮影の目安</small>
+          </button>
+          {lightPollutionGuideOpen && (
+            <section id="light-pollution-guide" className="light-pollution-guide" aria-label="光害マップの見方">
+              <div className="menu-panel-header"><strong>光害マップの見方</strong><button type="button" onClick={() => setLightPollutionGuideOpen(false)}>閉じる</button></div>
+              <div className="light-pollution-guide-row">
+                <b>暗い地域</b>
+                <span>人工の夜間光が少ない</span>
+                <small>天の川撮影：撮りやすい</small>
+              </div>
+              <div className="light-pollution-guide-row">
+                <b>中間の明るさ</b>
+                <span>周辺の街明かりの影響あり</span>
+                <small>天の川撮影：条件次第</small>
+              </div>
+              <div className="light-pollution-guide-row">
+                <b>明るい地域</b>
+                <span>人工の夜間光が多い</span>
+                <small>天の川撮影：難しい</small>
+              </div>
+              <p>明るく表示されるほど人工光が強く、暗いほど人工光が少ない地域です。</p>
+              <p className="light-pollution-guide-note">このマップはNASA VIIRS Black Marbleの地上夜間光を示すもので、空の明るさ（skyglow）そのものではありません。月、雲、透明度、天の川の高度・方向は含まれないため、撮影可否を断定する表示ではありません。</p>
+            </section>
+          )}
+          <button
+            type="button"
+            className={mapSourcesOpen ? "active" : undefined}
+            onClick={() => toggleDetailPanel("sources")}
+            aria-expanded={mapSourcesOpen}
+            aria-controls="map-data-sources"
+          >
+            <b>地図出典</b><small>使用中の地図・標高データ</small>
+          </button>
+          {mapSourcesOpen && (
+            <section id="map-data-sources" className="map-data-sources" aria-label="地図データ出典元">
+              <div className="menu-panel-header"><strong>地図データ出典元</strong><button type="button" onClick={() => setMapSourcesOpen(false)}>閉じる</button></div>
+              <dl>
+                <div>
+                  <dt>2D地図・航空写真</dt>
+                  <dd>OpenFreeMap / OpenStreetMap・国土地理院</dd>
+                </div>
+                <div>
+                  <dt>地点共有・地図リンク</dt>
+                  <dd>Google Maps</dd>
+                </div>
+                <div>
+                  <dt>3D地図・建物・地表形状</dt>
+                  <dd>{precisionSettings.accuracyMode === "highest" ? "Google Photorealistic 3D Tiles" : "国土地理院地図＋PLATEAU建物"}</dd>
+                </div>
+                <div>
+                  <dt>日本国内の標高・地形</dt>
+                  <dd>国土地理院 標高タイル・ジオイド関連データ</dd>
+                </div>
+                <div>
+                  <dt>地名検索・道路等の登録情報</dt>
+                  <dd>© OpenStreetMap contributors / Nominatim</dd>
+                </div>
+                <div>
+                  <dt>標高データの補完</dt>
+                  <dd>Cesium World Terrain</dd>
+                </div>
+              </dl>
+              <small>表示・検索・計算内容に応じて、上記の一部または複数を使用します。</small>
+              <div className="offline-tile-cache">
+                <p>
+                  標準3D表示（国土地理院地図＋PLATEAU）で読み込んだ地図タイルは、
+                  次回同じ場所を表示するときに素早く出せるよう端末に保存されます
+                  （地理院タイル・PLATEAUは複製・保存が認められているデータのため）。
+                  Google Photorealistic 3D Tilesはこの保存の対象外です（利用規約により
+                  キャッシュ・保存が禁止されているため、常にその都度取得します）。
+                </p>
+                <button type="button" onClick={() => void handleClearOfflineTileCache()} disabled={tileCacheClearState === "clearing"}>
+                  {tileCacheClearState === "clearing" ? "削除中…" : "保存した地図タイルを削除"}
+                </button>
+                {tileCacheClearState === "cleared" && <small role="status">削除しました。</small>}
+                {tileCacheClearState === "failed" && <small role="status">削除できませんでした。時間をおいて再試行してください。</small>}
+              </div>
+              <details className="freeze-diagnostics-section">
+                <summary>フリーズ診断</summary>
+                <small>
+                  画面が固まった(フリーズした)場合、その情報がここに記録されます。固まった直後に押してもらえると、原因調査に役立ちます。
+                </small>
+                <button type="button" onClick={handleCopyFreezeDiagnostics}>
+                  {freezeDiagnosticsCopyState === "copied"
+                    ? "コピーしました"
+                    : freezeDiagnosticsCopyState === "empty"
+                      ? "記録されたフリーズはありません"
+                      : freezeDiagnosticsCopyState === "failed"
+                        ? "コピーできませんでした"
+                        : "フリーズ診断情報をコピー"}
+                </button>
+                <button type="button" onClick={() => { clearRecordedFreezes(); setFreezeDiagnosticsCopyState("idle"); }}>
+                  記録をクリア
+                </button>
+              </details>
+              <nav aria-label="出典元の詳細">
+                <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">OpenFreeMap</a>
+                <a href="https://www.google.com/maps" target="_blank" rel="noreferrer">Google Maps</a>
+                <a href="https://developers.google.com/maps/documentation/tile/3d-tiles" target="_blank" rel="noreferrer">Google 3D Tiles</a>
+                <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noreferrer">国土地理院</a>
+                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
+                <a href="https://cesium.com/platform/cesium-ion/content/cesium-world-terrain/" target="_blank" rel="noreferrer">Cesium World Terrain</a>
+              </nav>
+            </section>
           )}
         </div>
       )}

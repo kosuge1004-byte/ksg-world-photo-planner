@@ -159,7 +159,11 @@ import {
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
 import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
-import { findOsmSubjectHeightHint, applyOsmSubjectHeightHint } from "./height/osmSubjectHeightFallback";
+import { inspectOsmSubjectSurface, applyOsmSubjectHeightHint } from "./height/osmSubjectHeightFallback";
+import {
+  selectSubjectSurfacePoint,
+  SubjectRoofResolutionError,
+} from "./height/subjectSurfaceResolution";
 
 import {
   DEFAULT_CAMERA_SETTINGS,
@@ -188,7 +192,7 @@ import {
   isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
-import { withLensCenterHeight, withVerticalOffset, ellipsoidalHeightMeters } from "./types/points";
+import { withLensCenterHeight, withVerticalOffset } from "./types/points";
 import {
   DEFAULT_FOREGROUND_HEIGHT_CM,
   normalizeForegroundHeightCm,
@@ -227,6 +231,8 @@ import {
   resolveSpotLocation,
   resolveSpotTimeZone,
   searchSpotPresets,
+  subjectSurfaceHintForSpotLocation,
+  type SpotSubjectSurfaceHint,
 } from "./search/spotPresetSearch";
 import {
   clearActiveSpotSearchJob,
@@ -3092,7 +3098,9 @@ function App() {
     latitude: number,
     longitude: number,
     label: string,
-    sharedGroundPointPromise?: Promise<GroundPoint>
+    sharedGroundPointPromise?: Promise<GroundPoint>,
+    providedSurfaceHint?: SpotSubjectSurfaceHint,
+    signal?: AbortSignal
   ): Promise<GroundPoint> {
     // 検索・URL・座標入力では、DEM（地面）確定・建物屋根面への合わせ込み・
     // OSM高さ推定の3つを並行して行う（互いに入力の緯度経度だけから独立に
@@ -3104,6 +3112,11 @@ function App() {
     // Googleタイルのまま）。建物が無い・検証できない場合は、DEM地面の値の
     // まま変更しない。
     const viewer = mapViewerRef.current;
+    const surfaceHint = providedSurfaceHint ?? subjectSurfaceHintForSpotLocation({
+      latitude,
+      longitude,
+      label,
+    });
     // スポット検索では同じ座標の「被写体地表」と「被写体高さ解決」が同時に
     // 必要になる。呼び出し側から同一Promiseを渡せるようにして、同じDEM取得を
     // 二重発行しない。精度・計算値は変えず、通信失敗点だけを減らす。
@@ -3116,7 +3129,7 @@ function App() {
           await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
           if (viewer.isDestroyed()) return null;
         }
-        return await resolvePlateauRoofGroundPoint(viewer, latitude, longitude, label);
+        return await resolvePlateauRoofGroundPoint(viewer, latitude, longitude, label, signal);
       } catch (error) {
         console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
         return null;
@@ -3131,38 +3144,59 @@ function App() {
     // 残っていた。roofPointの有無で早期returnせず、OSM高さ推定も必ず
     // 並行して取得し、両方が得られた場合はより高い（＝構造物の本体をより
     // よく捉えている可能性が高い）方を採用するよう修正する。
-    const osmHintPromise = Promise.race([
-      findOsmSubjectHeightHint(latitude, longitude),
-      // 2026-09-05追記（実機報告：「スカイツリー」検索が0%のまま無反応）:
-      // findOsmSubjectHeightHintはfetchSiteContexts（OSM/Overpass経由）を
-      // 呼ぶが、これは最悪8秒×3回=24秒かかりうる（他の箇所で繰り返し
-      // 確認済みの同種API）。スカイツリーはこの関数のdocコメントにも
-      // 名指しされている典型例（PLATEAUに構造物データが無い塔）で、まさに
-      // この経路が使われる。resolveSearchSubjectはPromise.allで待つため、
-      // ここが遅いと進捗表示が一切更新されないまま被写体検索全体が
-      // 24秒近く固まって見えていた。この推定はあくまでベストエフォートの
-      // 補正（失敗時は元々DEM地面高のままにするフォールバックがある）なので、
-      // 短いタイムアウトで打ち切って構わない。
-      new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), 6_000);
-      }),
-    ]).catch((error) => {
+    const osmInspectionPromise = withAbortableTimeout(
+      (requestSignal) => inspectOsmSubjectSurface(
+        latitude,
+        longitude,
+        label,
+        requestSignal
+      ),
+      6_000,
+      `${label}のOSM建物情報取得がタイムアウトしました`,
+      signal
+    ).catch((error) => {
+      if (signal?.aborted || isAbortError(error)) throw error;
       console.warn("被写体地点のOSM高さ推定に失敗しました", error);
-      return null;
+      return { isStructure: false, heightHint: null };
     });
-    const [groundPoint, roofPoint, osmHint] = await Promise.all([
+    const [groundPoint, firstRoofPoint, osmInspection] = await Promise.all([
       groundPointPromise,
       roofPointPromise,
-      osmHintPromise,
+      osmInspectionPromise,
     ]);
-    const osmPoint = osmHint ? applyOsmSubjectHeightHint(groundPoint, osmHint, label) : null;
-    const candidates = [roofPoint, osmPoint].filter(
-      (point): point is GroundPoint => point !== null
-    );
-    if (candidates.length === 0) return groundPoint;
-    return candidates.reduce((tallest, current) =>
-      ellipsoidalHeightMeters(current) > ellipsoidalHeightMeters(tallest) ? current : tallest
-    );
+    if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
+    const osmPoint = osmInspection.heightHint
+      ? applyOsmSubjectHeightHint(groundPoint, osmInspection.heightHint, label)
+      : null;
+    const requireStructureRoof = surfaceHint.requireStructureRoof || osmInspection.isStructure;
+    const select = (roofPoint: GroundPoint | null) => selectSubjectSurfacePoint({
+      groundPoint,
+      roofPoint,
+      osmPoint,
+      requireStructureRoof,
+      knownStructureHeightMeters: surfaceHint.knownStructureHeightMeters,
+      label,
+    });
+    try {
+      return select(firstRoofPoint);
+    } catch (error) {
+      // 高さ未登録の建物で初回PLATEAU読込が間に合わなかった場合だけ、
+      // 描画要求後にもう一度屋根を探索する。既知高さを持つ建物・塔は通信に
+      // 依存せず上で確定済みなので、この追加待ちは発生しない。
+      if (!(error instanceof SubjectRoofResolutionError) || !viewer || viewer.isDestroyed()) {
+        throw error;
+      }
+      viewer.scene.requestRender();
+      const retryRoofPoint = await resolvePlateauRoofGroundPoint(
+        viewer,
+        latitude,
+        longitude,
+        label,
+        signal
+      );
+      if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
+      return select(retryRoofPoint);
+    }
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -3201,12 +3235,39 @@ function App() {
     let subject: GroundPoint;
     let subjectGround: GroundPoint;
     if (criteria.useCurrentSubjectPin && activeSubject) {
-      subject = activeSubject;
-      subjectGround = await resolveGroundPoint(
+      const currentGroundPromise = resolveGroundPoint(
         location.latitude,
         location.longitude,
         `${location.label} 地表`
       );
+      const currentSurfaceHint = subjectSurfaceHintForSpotLocation(activeSubject);
+      const needsRoofRevalidation = currentSurfaceHint.requireStructureRoof &&
+        activeSubject.subjectSurfaceTarget !== "structure-roof";
+      [subject, subjectGround] = await Promise.all([
+        needsRoofRevalidation
+          ? resolveSearchSubject(
+              location.latitude,
+              location.longitude,
+              location.label,
+              currentGroundPromise,
+              currentSurfaceHint,
+              signal
+            )
+          : Promise.resolve(activeSubject),
+        currentGroundPromise,
+      ]);
+      if (needsRoofRevalidation) {
+        setSubjectPoint(subject);
+        const viewer = mapViewerRef.current;
+        if (viewer && !viewer.isDestroyed()) {
+          setSubjectPinFromPosition(
+            viewer,
+            Cartesian3.fromDegrees(subject.longitude, subject.latitude, subject.height),
+            subject.label,
+            subject
+          );
+        }
+      }
     } else {
       // 同一座標のDEM取得を1本へ統合する。以前はresolveSearchSubject()内部と
       // subjectGround用で同じ地形取得を二重に走らせており、一時的な外部API障害へ
@@ -3221,7 +3282,9 @@ function App() {
           location.latitude,
           location.longitude,
           location.label,
-          sharedGroundPointPromise
+          sharedGroundPointPromise,
+          subjectSurfaceHintForSpotLocation(location),
+          signal
         ),
         sharedGroundPointPromise,
       ]);
@@ -3413,7 +3476,10 @@ ${diagnosticMessage}
     const subject = await resolveSearchSubject(
       location.latitude,
       location.longitude,
-      location.label
+      location.label,
+      undefined,
+      subjectSurfaceHintForSpotLocation(location),
+      signal
     );
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const pinned = viewer && !viewer.isDestroyed()
@@ -3456,31 +3522,52 @@ ${diagnosticMessage}
     }
   }
 
-  function applyStoredSubject(record: SubjectRecord) {
+  async function applyStoredSubject(record: SubjectRecord) {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
-    stopAllEditModes();
-    const pinned = setSubjectPinFromPosition(
-      viewer,
-      Cartesian3.fromDegrees(record.longitude, record.latitude, record.height),
-      record.label,
-      record
-    );
-    const center = { latitude: pinned.latitude, longitude: pinned.longitude };
-    setSubjectPoint(pinned);
-    setSubjectHistory(addSubjectHistory(pinned, record.searchType));
-    mapCenterRef.current = center;
-    setMapCenter(center);
-    if (mapDisplayMode === "3d") {
-      flyMapToTarget(
+    try {
+      // 修正前の履歴には屋上/地表の種別が無い。特に既知の建物・塔でDEM
+      // 高度が保存されている場合、その値を再表示せず現在の屋上解決経路を
+      // 通す。一度新形式で確定した履歴はそのまま再利用できる。
+      const surfaceHint = subjectSurfaceHintForSpotLocation(record);
+      const mustRevalidate = record.subjectSurfaceTarget === undefined ||
+        (surfaceHint.requireStructureRoof && record.subjectSurfaceTarget !== "structure-roof");
+      const resolvedRecord = mustRevalidate
+        ? await resolveSearchSubject(
+            record.latitude,
+            record.longitude,
+            record.label,
+            undefined,
+            surfaceHint
+          )
+        : record;
+      if (viewer.isDestroyed()) return;
+      stopAllEditModes();
+      const pinned = setSubjectPinFromPosition(
         viewer,
-        pinned.latitude,
-        pinned.longitude,
-        pinned.height
+        Cartesian3.fromDegrees(resolvedRecord.longitude, resolvedRecord.latitude, resolvedRecord.height),
+        resolvedRecord.label,
+        resolvedRecord
       );
+      const center = { latitude: pinned.latitude, longitude: pinned.longitude };
+      setSubjectPoint(pinned);
+      setSubjectHistory(addSubjectHistory(pinned, record.searchType));
+      mapCenterRef.current = center;
+      setMapCenter(center);
+      if (mapDisplayMode === "3d") {
+        flyMapToTarget(
+          viewer,
+          pinned.latitude,
+          pinned.longitude,
+          pinned.height
+        );
+      }
+      setSpotSearchOpen(false);
+      setSearchMessage(`${pinned.label}を被写体として表示しました`);
+    } catch (error) {
+      console.warn("検索履歴の被写体高度を再確認できませんでした", error);
+      setSearchMessage(toUserFacingErrorMessage(error, "spot-search"));
     }
-    setSpotSearchOpen(false);
-    setSearchMessage(`${pinned.label}を被写体として表示しました`);
   }
 
   async function applyDownloadedSpotData(record: DownloadedSpotDataRecord): Promise<void> {
@@ -3491,9 +3578,17 @@ ${diagnosticMessage}
       const point = await resolveSearchSubject(
         record.latitude,
         record.longitude,
-        record.label || "保存済みスポット"
+        record.label || "保存済みスポット",
+        undefined,
+        subjectSurfaceHintForSpotLocation({
+          latitude: record.latitude,
+          longitude: record.longitude,
+          label: record.label || "保存済みスポット",
+          subjectSurfaceTarget: record.subjectSurfaceTarget,
+          structureHeightMeters: record.structureHeightMeters,
+        })
       );
-      applyStoredSubject({
+      await applyStoredSubject({
         ...point,
         id: record.subjectId,
         label: record.label || point.label,
@@ -3583,11 +3678,21 @@ ${diagnosticMessage}
     }
     setSearchMessage(`${record.label || "この地点"}の標高を確認しています…`);
     try {
-      // 更新時も0mの仮高度を作らず、地点別DEM・ジオイド処理を通した地表点を使う。
-      const point = await resolveGroundPoint(
+      // 更新時も被写体の正式な屋上解決を通す。旧実装はDEM地表点へ戻して
+      // 方位データを更新していたため、画面上の屋上ピンと保存データの被写体高が
+      // 食い違っていた。
+      const point = await resolveSearchSubject(
         record.latitude,
         record.longitude,
-        record.label || "保存済みスポット"
+        record.label || "保存済みスポット",
+        undefined,
+        subjectSurfaceHintForSpotLocation({
+          latitude: record.latitude,
+          longitude: record.longitude,
+          label: record.label || "保存済みスポット",
+          subjectSurfaceTarget: record.subjectSurfaceTarget,
+          structureHeightMeters: record.structureHeightMeters,
+        })
       );
       const subjectRecord: SubjectRecord = {
         ...point,
@@ -3698,6 +3803,8 @@ ${diagnosticMessage}
             downloadedAtIso: new Date().toISOString(), status: "partial",
             profilePoints: backfillResult.profilePoints, highPrecisionPoints: backfillResult.highPrecisionPoints,
             demTileCount: backfillResult.demTileCount, demTileBytes: backfillResult.demTileBytes,
+            subjectSurfaceTarget: downloadPoint.subjectSurfaceTarget,
+            structureHeightMeters: downloadPoint.structureHeightMeters,
           }));
           setSearchMessage(`${record.label || "この地点"}の地形プロファイルは保存しましたが、保存用DEMタイルまたは水面・周辺情報を一部取得できませんでした。保存完了にはしていません。再実行してください。`);
           return;
@@ -3714,6 +3821,8 @@ ${diagnosticMessage}
           highPrecisionPoints: backfillResult.highPrecisionPoints,
           demTileCount: backfillResult.demTileCount,
           demTileBytes: backfillResult.demTileBytes,
+          subjectSurfaceTarget: downloadPoint.subjectSurfaceTarget,
+          structureHeightMeters: downloadPoint.structureHeightMeters,
         }));
         if (!forceRefresh) {
           justSavedDownloadTokenRef.current += 1;
@@ -3793,48 +3902,30 @@ ${diagnosticMessage}
         return;
       }
     }
-    // 標準モード：GoogleタイルモードのGoogle 3Dクランプに相当する処理として、
-    // PLATEAU建物をclampToHeightMostDetailedで1回のバッチ呼び出しにより
-    // 屋根面へ合わせる（建物が無い・検証できない場合はDEM地面のまま変更
-    // しない）。
-    // 2026-08-29修正: 東京タワー等、塔の脚元にある別の低い建物（フット
-    // タウン等）がPLATEAUに収録されているために roofPoint が非nullかつ
-    // 塔本体よりずっと低い高さで「見つかってしまう」ケースがあった。
-    // 以前は roofPoint が非nullなら即採用しOSM高さ推定を試さなかったため、
-    // 塔の根元付近にピンが立つ不具合が残っていた。roofPointの有無で早期
-    // 分岐せず、OSM高さ推定も必ず取得し、得られた高さのうちより高い方を
-    // 採用する。
-    if (precisionSettings.accuracyMode !== "highest") {
+    // 旧プリセット結果だけ屋上解決を補完する。既に屋上として確定した
+    // subjectへOSMの構造物高を再加算すると、屋根+建物高の二重加算になるため、
+    // 新しい検索結果はそのまま使う。未解決結果は必ずDEM地面を基準にする
+    // resolveSearchSubjectへ戻してから確定する。
+    if (
+      precisionSettings.accuracyMode !== "highest" &&
+      appliedResult.subject.subjectSurfaceTarget !== "structure-roof"
+    ) {
       try {
-        const [roofPoint, osmHint] = await Promise.all([
-          resolvePlateauRoofGroundPoint(
-            viewer,
-            appliedResult.subject.latitude,
-            appliedResult.subject.longitude,
-            appliedResult.subject.label
-          ),
-          findOsmSubjectHeightHint(
-            appliedResult.subject.latitude,
-            appliedResult.subject.longitude
-          ).catch((error) => {
-            console.warn("被写体地点のOSM高さ推定に失敗しました", error);
-            return null;
-          }),
-        ]);
-        const osmPoint = osmHint
-          ? applyOsmSubjectHeightHint(appliedResult.subject, osmHint, appliedResult.subject.label)
-          : null;
-        const candidates = [roofPoint, osmPoint].filter(
-          (point): point is GroundPoint => point !== null
+        const surfaceHint = subjectSurfaceHintForSpotLocation(appliedResult.subject);
+        const resolvedSubject = await resolveSearchSubject(
+          appliedResult.subject.latitude,
+          appliedResult.subject.longitude,
+          appliedResult.subject.label,
+          undefined,
+          surfaceHint
         );
-        if (candidates.length > 0) {
-          const tallest = candidates.reduce((current, next) =>
-            ellipsoidalHeightMeters(next) > ellipsoidalHeightMeters(current) ? next : current
-          );
-          appliedResult = { ...appliedResult, subject: tallest };
-        }
+        appliedResult = { ...appliedResult, subject: resolvedSubject };
       } catch (error) {
         console.warn("被写体の建物屋根への合わせ込みに失敗しました", error);
+        if (subjectSurfaceHintForSpotLocation(appliedResult.subject).requireStructureRoof) {
+          setSearchMessage(toUserFacingErrorMessage(error, "spot-search"));
+          return;
+        }
       }
     }
     stopAllEditModes();
@@ -3948,11 +4039,42 @@ ${diagnosticMessage}
     setSearchMessage("現在の撮影計画をプロジェクトへ保存しました");
   }
 
-  function loadPlannerProject(project: PlannerProject): void {
+  async function loadPlannerProject(project: PlannerProject): Promise<void> {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) { setSearchMessage("マップの読込完了後にプロジェクトを読み込んでください"); return; }
+    let projectSubject = project.subject;
+    const storedSurfaceHint = subjectSurfaceHintForSpotLocation(project.subject);
+    if (
+      project.subject.subjectSurfaceTarget === undefined ||
+      (storedSurfaceHint.requireStructureRoof && project.subject.subjectSurfaceTarget !== "structure-roof")
+    ) {
+      setSearchMessage(`プロジェクト「${project.name}」の被写体高度を確認しています…`);
+      try {
+        projectSubject = await resolveSearchSubject(
+          project.subject.latitude,
+          project.subject.longitude,
+          project.subject.label,
+          undefined,
+          storedSurfaceHint
+        );
+      } catch (error) {
+        console.warn("保存済みプロジェクトの被写体高度を再確認できませんでした", error);
+        setSearchMessage(toUserFacingErrorMessage(error, "spot-search"));
+        return;
+      }
+      if (viewer.isDestroyed()) return;
+      // 一度補正した旧形式プロジェクトは次回から同じ正式高度を利用する。
+      if (projectSubject.subjectSurfaceTarget !== project.subject.subjectSurfaceTarget ||
+        projectSubject.height !== project.subject.height) {
+        setProjects(upsertProject({
+          ...project,
+          subject: projectSubject,
+          updatedAtIso: new Date().toISOString(),
+        }));
+      }
+    }
     stopAllEditModes();
-    const subject = setSubjectPinFromPosition(viewer, Cartesian3.fromDegrees(project.subject.longitude, project.subject.latitude, project.subject.height), project.subject.label, project.subject);
+    const subject = setSubjectPinFromPosition(viewer, Cartesian3.fromDegrees(projectSubject.longitude, projectSubject.latitude, projectSubject.height), projectSubject.label, projectSubject);
     const tripod = setTripodPin(viewer, Cartesian3.fromDegrees(project.tripod.longitude, project.tripod.latitude, project.tripod.height), project.tripod);
     setSubjectPoint(subject); setTripodPoint(tripod);
 
@@ -4082,6 +4204,8 @@ ${diagnosticMessage}
         latitude: project.subject.latitude,
         longitude: project.subject.longitude,
         label: project.subject.label,
+        subjectSurfaceTarget: project.subject.subjectSurfaceTarget,
+        structureHeightMeters: project.subject.structureHeightMeters,
       },
       tripod: {
         latitude: project.tripod.latitude,
@@ -4136,10 +4260,12 @@ ${diagnosticMessage}
       // 高度はこの端末のHeightResolverで必ず取り直す。送信側の値は使わない。
       // どれか1つでも失敗したら全体を中止する（部分的な取り込みはしない）。
       const [subject, tripod, resolvedForegroundHeights] = await Promise.all([
-        resolveGroundPoint(
+        resolveSearchSubject(
           sharedImportPayload.subject.latitude,
           sharedImportPayload.subject.longitude,
-          sharedImportPayload.subject.label
+          sharedImportPayload.subject.label,
+          undefined,
+          subjectSurfaceHintForSpotLocation(sharedImportPayload.subject)
         ),
         resolveGroundPoint(
           sharedImportPayload.tripod.latitude,

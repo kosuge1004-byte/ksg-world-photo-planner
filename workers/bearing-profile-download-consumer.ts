@@ -1,4 +1,4 @@
-import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
+import { runWithServerRuntime } from "../server/cloudflareRuntime.ts";
 import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import { runBearingProfileDownloadJob } from "../server/runBearingProfileDownloadJob.ts";
 import {
@@ -12,7 +12,12 @@ interface ConsumerEnv {
   BEARING_PROFILE_DOWNLOAD_JOBS: KVNamespace;
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
+  LOCAL_DEM_API_URL?: string;
+  LOCAL_DEM_ORIGIN_TOKEN?: string;
+  LOCAL_DEM_ACCESS_CLIENT_ID?: string;
+  LOCAL_DEM_ACCESS_CLIENT_SECRET?: string;
   NETWORK_CACHE?: R2Bucket;
+  R2_WRITE_BUDGET_DB?: D1Database;
 }
 
 function isQueueMessage(value: unknown): value is BearingProfileDownloadQueueMessage {
@@ -32,26 +37,38 @@ export default {
     for (const message of batch.messages) {
       // spot-search-consumerと同じ理由: リクエスト単位の予算をメッセージごとに
       // 独立させるため、configureServerRuntimeはメッセージごとに呼び直す。
-      configureServerRuntime({
+      await runWithServerRuntime({
         cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
         // DEMタイル本体・空判定はR2（NETWORK_CACHE）で永続化し、対話的な
         // ライブ三脚探索とこのバックグラウンドジョブの両方で共有する。
         // これにより、ジョブ完了後に端末がprefetchGsiDeviceTilesForSamples等で
         // 実タイルを取りに行く際、既に温まったR2キャッシュから高速に読める。
-        persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.BEARING_PROFILE_DOWNLOAD_JOBS, message as object),
+        persistentCache: persistentCacheFromR2(
+          env.NETWORK_CACHE,
+          env.BEARING_PROFILE_DOWNLOAD_JOBS,
+          message as object,
+          env.R2_WRITE_BUDGET_DB,
+        ),
         waitUntil: (promise) => context.waitUntil(promise),
-      });
+        r2WriteBudgetDb: env.R2_WRITE_BUDGET_DB,
+        localDemGateway: {
+          endpoint: env.LOCAL_DEM_API_URL,
+          originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
+          accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
+          accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+        },
+      }, async () => {
 
       if (!isQueueMessage(message.body)) {
         message.ack();
-        continue;
+        return;
       }
       const queuedJob = message.body.job;
       try {
         const storedJob = await getBearingProfileDownloadJob(kv, queuedJob.clientId, queuedJob.jobId);
         if (storedJob && (storedJob.status === "complete" || storedJob.status === "failed")) {
           message.ack();
-          continue;
+          return;
         }
         const activeJob = storedJob ?? queuedJob;
         await runBearingProfileDownloadJob(
@@ -66,7 +83,7 @@ export default {
       } catch (error) {
         if (message.attempts < 3) {
           message.retry({ delaySeconds: Math.min(60, 5 * message.attempts) });
-          continue;
+          return;
         }
         const updateJob = createBearingProfileDownloadJobUpdater(kv, queuedJob, {
           source: "queue/bearing-profile-download-consumer:terminal-failure",
@@ -81,6 +98,7 @@ export default {
         });
         message.ack();
       }
+      });
     }
   },
 } satisfies ExportedHandler<ConsumerEnv, BearingProfileDownloadQueueMessage>;

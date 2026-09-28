@@ -7,6 +7,7 @@ import { withOverallTimeout } from "../utils/withOverallTimeout";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
+import { MIN_STRUCTURE_CLEARANCE_METERS } from "../height/subjectSurfaceResolution";
 
 // 2026-09-02追記（ユーザー提案により）: 屋根合わせ（clampToHeightMostDetailed
 // による複数段階のPLATEAU建物探索）は、DEM標高のようにサーバー側R2へ
@@ -77,7 +78,7 @@ type RoofCacheRecord = {
 // 候補選定ロジック（highestOf・ringCandidatesの候補構成等）を変更した
 // 場合は、この値を必ずインクリメントする。既存キャッシュはTTL内でも
 // 無効化され、次回検索時に新しいロジックで再計算される。
-const ROOF_CACHE_ALGORITHM_VERSION = 3;
+const ROOF_CACHE_ALGORITHM_VERSION = 4;
 
 let roofCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
 
@@ -418,7 +419,10 @@ async function clampAndValidate(
     const roofAboveGroundMeters = cartographic.height - demGroundPoint.height;
     if (
       !Number.isFinite(roofAboveGroundMeters) ||
-      roofAboveGroundMeters < 0 ||
+      // DEMとほぼ同じ高さは屋根ではない。これを有効候補としてキャッシュ
+      // すると、以後90日間「正常に解決済みの地表」として再利用されるため、
+      // 明確な構造物高がある表面だけを屋上候補にする。
+      roofAboveGroundMeters < MIN_STRUCTURE_CLEARANCE_METERS ||
       roofAboveGroundMeters > MAX_PLAUSIBLE_STRUCTURE_HEIGHT_METERS
     ) {
       continue;
@@ -498,7 +502,7 @@ export async function resolvePlateauRoofGroundPoint(
     if (resolved) void writeRoofPersistentCache(cacheKey, resolved);
     return resolved;
   } catch (error) {
-    console.warn(`${label}の建物屋根探索がタイムアウトまたは失敗したため、通常のDEM地面高へフォールバックします`, error);
+    console.warn(`${label}の建物屋根探索がタイムアウトまたは失敗しました`, error);
     return null;
   }
 }

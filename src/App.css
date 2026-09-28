@@ -70,17 +70,6 @@ button { cursor: pointer; }
 }
 
 .hamburger-button span { transform: scaleX(1.05); }
-.hamburger-button b {
-  position: absolute;
-  left: 1px;
-  bottom: 2px;
-  padding: 1px 3px;
-  color: #050505;
-  border-radius: 3px;
-  background: #ffdc25;
-  font-size: 6px;
-  line-height: 1;
-}
 
 .calculation-mode-menu {
   position: absolute;
@@ -101,11 +90,9 @@ button { cursor: pointer; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, .72);
 }
 
-.calculation-mode-menu > strong { font-size: 11px; }
 .calculation-mode-menu.precision-open {
   width: min(520px, calc(100vw - 8px));
 }
-.calculation-mode-menu > .calculation-menu-section { margin-top: 3px; padding-top: 6px; border-top: 1px solid #313944; color: #8ea0b3; font-size: 8px; }
 .calculation-mode-menu button {
   display: grid;
   grid-template-columns: minmax(122px, 40%) minmax(0, 1fr);
@@ -1821,10 +1808,6 @@ button { cursor: pointer; }
   width: min(320px, calc(100vw - 12px));
   gap: 7px;
   padding: 11px;
-}
-.calculation-mode-menu > strong {
-  font-size: 16px;
-  line-height: 1.25;
 }
 .calculation-mode-menu button {
   /* 76px固定だと「光害マップの見方」等の長いラベルが16pxフォントで

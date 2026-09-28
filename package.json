@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "vite",
     "prebuild": "node scripts/prepare-cloudflare-geo-tz-assets.mjs",
+    "prepare:jpgeo2024": "node scripts/prepare-jpgeo2024-local-data.mjs",
+    "prepare:gsi-dem-r2": "node scripts/prepare-gsi-dem-r2-assets.mjs",
+    "local-dem:prepare": "powershell -ExecutionPolicy Bypass -File tools/local-dem-server/prepare-data.ps1",
+    "local-dem:start": "powershell -ExecutionPolicy Bypass -File tools/local-dem-server/start.ps1",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "npm run test:regression",
@@ -37,6 +41,8 @@
     "verify:pwa-installability": "node scripts/verify-pwa-installability.mjs",
     "verify:celestial-occlusion-stability": "node scripts/verify-celestial-occlusion-stability.mjs",
     "verify:cloudflare": "node scripts/verify-cloudflare-migration.mjs",
+    "verify:local-dem-origin": "node scripts/verify-local-dem-origin.mjs",
+    "audit:local-dem-five-sites": "node --experimental-strip-types scripts/audit-local-dem-server-five-sites.mjs",
     "cf:pages:dev": "npm run build && wrangler pages dev dist",
     "cf:pages:deploy": "npm run build && wrangler pages deploy dist",
     "cf:consumer:dev": "wrangler dev --config wrangler.spot-search.jsonc",
@@ -70,6 +76,7 @@
     "verify:coordinate-serialization": "node scripts/verify-coordinate-serialization.mjs",
     "verify:karney-postconditions": "node scripts/verify-karney-postconditions.mjs",
     "verify:r2-safety-all-paths": "node scripts/verify-r2-safety-all-paths-20260824.mjs",
+    "verify:r2-free-tier": "node --experimental-strip-types scripts/verify-r2-free-tier-policy.mjs",
     "verify:device-dem-tile-cache": "node --experimental-strip-types scripts/verify-device-dem-tile-cache-20260829.mjs",
     "verify:tripod-speed-cache": "node --experimental-strip-types scripts/verify-tripod-speed-cache-20260829.mjs",
     "verify:tripod-resilience": "node scripts/verify-tripod-candidate-performance-resilience.mjs"

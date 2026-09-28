@@ -1,4 +1,4 @@
-import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
+import { runWithServerRuntime } from "../server/cloudflareRuntime.ts";
 import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import { runSpotSearchJob } from "../server/runSpotSearchJob.ts";
 import {
@@ -12,7 +12,12 @@ interface ConsumerEnv {
   SPOT_SEARCH_JOBS: KVNamespace;
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
+  LOCAL_DEM_API_URL?: string;
+  LOCAL_DEM_ORIGIN_TOKEN?: string;
+  LOCAL_DEM_ACCESS_CLIENT_ID?: string;
+  LOCAL_DEM_ACCESS_CLIENT_SECRET?: string;
   NETWORK_CACHE?: R2Bucket;
+  R2_WRITE_BUDGET_DB?: D1Database;
 }
 
 function isQueueMessage(value: unknown): value is SpotSearchQueueMessage {
@@ -34,18 +39,30 @@ export default {
       // 独立させるため、configureServerRuntimeはメッセージごとに呼び直す
       // （バッチ全体で1回だけ呼ぶと、persistentCacheFromR2の識別子として
       // 未定義のmessageを参照してしまいコンパイルエラーになっていた）。
-      configureServerRuntime({
+      await runWithServerRuntime({
         cesiumIonToken: env.CESIUM_ION_TOKEN ?? env.VITE_CESIUM_ION_TOKEN,
         // DEMタイル本体・空判定はR2（NETWORK_CACHE）で永続化し、全ユーザー・
         // 全検索ジョブで共有する（server/r2PersistentCache.ts）。Workers KV
         // へは書き込まない方針は維持（server/gsiElevation.tsのコメント参照）。
-        persistentCache: persistentCacheFromR2(env.NETWORK_CACHE, env.SPOT_SEARCH_JOBS, message as object),
+        persistentCache: persistentCacheFromR2(
+          env.NETWORK_CACHE,
+          env.SPOT_SEARCH_JOBS,
+          message as object,
+          env.R2_WRITE_BUDGET_DB,
+        ),
         waitUntil: (promise) => context.waitUntil(promise),
-      });
+        r2WriteBudgetDb: env.R2_WRITE_BUDGET_DB,
+        localDemGateway: {
+          endpoint: env.LOCAL_DEM_API_URL,
+          originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
+          accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
+          accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+        },
+      }, async () => {
 
       if (!isQueueMessage(message.body)) {
         message.ack();
-        continue;
+        return;
       }
       const queuedJob = message.body.job;
       try {
@@ -58,7 +75,7 @@ export default {
           (storedJob.status === "complete" || storedJob.status === "awaiting-3d" ||
             storedJob.status === "failed")) {
           message.ack();
-          continue;
+          return;
         }
         const activeJob = storedJob ?? queuedJob;
         await runSpotSearchJob(
@@ -73,7 +90,7 @@ export default {
       } catch (error) {
         if (message.attempts < 3) {
           message.retry({ delaySeconds: Math.min(60, 5 * message.attempts) });
-          continue;
+          return;
         }
         const updateJob = createSpotSearchJobUpdater(kv, queuedJob, {
           source: "queue/spot-search-consumer:terminal-failure",
@@ -88,6 +105,7 @@ export default {
         });
         message.ack();
       }
+      });
     }
   },
 } satisfies ExportedHandler<ConsumerEnv, SpotSearchQueueMessage>;

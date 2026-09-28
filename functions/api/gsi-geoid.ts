@@ -1,12 +1,19 @@
 import { lookupGsiGeoidHeight } from "../../server/gsiGeoid.ts";
+import { hasLocalJpgeo2024Coverage } from "../../server/jpgeo2024Local.ts";
 import {
-  configureCloudflareServerRuntime,
+  withCloudflareServerRuntime,
   type CloudflareEnv,
 } from "../_shared/env.ts";
-import { errorMessage, jsonResponse } from "../_shared/http.ts";
+import {
+  errorMessage,
+  jsonResponse,
+  readJsonRequest,
+  requestErrorStatus,
+} from "../_shared/http.ts";
 import { getOrCreateR2Json } from "../_shared/r2Cache.ts";
 
 type GeoidPoint = { latitude: number; longitude: number };
+const MAX_REQUEST_BYTES = 128 * 1024;
 
 function parseBatch(body: unknown): { points: GeoidPoint[]; pointSpecific: boolean } | null {
   if (typeof body !== "object" || body === null || !("points" in body) || !Array.isArray(body.points)) return null;
@@ -25,7 +32,7 @@ function parseBatch(body: unknown): { points: GeoidPoint[]; pointSpecific: boole
 }
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
-  configureCloudflareServerRuntime(context);
+  return withCloudflareServerRuntime(context, async () => {
   const { request } = context;
   // 地点固有(point)モードのキャッシュキーは4桁（約11m）へ量子化する。
   // 詳細は server/gsiGeoid.ts の同名定数のコメントを参照（三脚探索の候補
@@ -44,6 +51,14 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         longitude: Number(longitude.toFixed(pointSpecific ? POINT_SPECIFIC_CACHE_KEY_DECIMALS : 2)),
         pointSpecific,
       };
+      const queryLatitude = pointSpecific ? latitude : normalized.latitude;
+      const queryLongitude = pointSpecific ? longitude : normalized.longitude;
+      if (hasLocalJpgeo2024Coverage(queryLatitude, queryLongitude)) {
+        return jsonResponse({
+          geoidHeightMeters: await lookupGsiGeoidHeight(latitude, longitude, request.signal, pointSpecific),
+          cache: "local",
+        }, 200, "public, max-age=86400");
+      }
       const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, normalized, {
         namespace: "gsi-geoid", version: "v2", ttlSeconds: null,
       }, async () => ({
@@ -58,13 +73,25 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   }
   if (request.method === "POST") {
     try {
-      const parsed = parseBatch(await request.json());
+      const parsed = parseBatch(await readJsonRequest(request, MAX_REQUEST_BYTES));
       if (!parsed) return jsonResponse({ error: "座標配列が不正です" }, 400, "no-store");
       const decimals = parsed.pointSpecific ? POINT_SPECIFIC_CACHE_KEY_DECIMALS : 2;
       const normalized = parsed.points.map((point) => ({
         latitude: Number(point.latitude.toFixed(decimals)),
         longitude: Number(point.longitude.toFixed(decimals)),
       }));
+      const localOnly = parsed.points.every((point, index) => hasLocalJpgeo2024Coverage(
+        parsed.pointSpecific ? point.latitude : normalized[index].latitude,
+        parsed.pointSpecific ? point.longitude : normalized[index].longitude,
+      ));
+      if (localOnly) {
+        return jsonResponse({
+          geoidHeightMeters: await Promise.all(parsed.points.map((point) =>
+            lookupGsiGeoidHeight(point.latitude, point.longitude, request.signal, parsed.pointSpecific)
+          )),
+          cache: "local",
+        }, 200, "public, max-age=86400");
+      }
       const result = await getOrCreateR2Json(context.env.NETWORK_CACHE, context.env.SPOT_SEARCH_JOBS, context.request, {
         points: normalized,
         pointSpecific: parsed.pointSpecific,
@@ -77,8 +104,13 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       }), context.waitUntil);
       return jsonResponse({ ...result.value, cache: result.cache }, 200, "public, max-age=86400");
     } catch (error) {
-      return jsonResponse({ error: errorMessage(error) }, 422, "no-store");
+      return jsonResponse(
+        { error: errorMessage(error) },
+        requestErrorStatus(error),
+        "no-store"
+      );
     }
   }
   return jsonResponse({ error: "GETまたはPOSTリクエストのみ利用できます" }, 405, "no-store");
+  });
 };

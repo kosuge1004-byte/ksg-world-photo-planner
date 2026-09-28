@@ -10,9 +10,14 @@
       "bucket_name": "astrosight-network-cache"
     }
   ],
-  // R2利用予算（月間書き込み/読み取り上限・保存容量上限）を数えるための
-  // 共有カウンターKV。Pages Functions側・spot-search consumer側と同じ
-  // namespaceを指す必要がある（IDが食い違うと予算が別々に管理されてしまう）。
+  "d1_databases": [
+    {
+      "binding": "R2_WRITE_BUDGET_DB",
+      "database_name": "astrosight-r2-write-budget",
+      "database_id": "a679879f-6411-437e-b7f2-1a161fce8237"
+    }
+  ],
+  // 既存ジョブKV。R2の共有予算カウンターは上のD1を使用する。
   "kv_namespaces": [
     {
       "binding": "SPOT_SEARCH_JOBS",

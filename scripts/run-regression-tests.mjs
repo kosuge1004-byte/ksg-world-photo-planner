@@ -7,8 +7,14 @@ const cases = [
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/water-only-client-resilience.test.mjs"] },
   { name: "compact water-only Overpass queries preserve pointwise classification",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/water-only-query.test.mjs"] },
+  { name: "browser direct Overpass fallback after Cloudflare egress timeout",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/site-context-browser-overpass-fallback.test.mjs"] },
   { name: "download source preservation, geoid queue, cancellation and full bearing runtime",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/download-runtime.test.mjs"] },
+  { name: "bearing profile batch endpoint precision and fallback",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/bearing-profile-batch.test.mjs"] },
+  { name: "bearing profile manager batch round-trip reduction",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/bearing-profile-batch-runtime.test.mjs"] },
   { name: "persistent site-context connection recovery and network fallback",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/site-context-connection-recovery.test.mjs"] },
   { name: "downloaded data audit fixes", arguments: ["./scripts/verify-downloaded-data-audit-fixes-20260908.mjs"] },
@@ -134,6 +140,15 @@ const cases = [
     arguments: ["./scripts/verify-static-landmark-search-20260831.mjs"],
   },
   {
+    name: "subject building roof resolution and saved-history round trip",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/subject-roof-resolution.test.mjs",
+    ],
+  },
+  {
     name: "Android, iPhone and browser compatibility contracts",
     arguments: ["./scripts/verify-platform-compatibility.mjs"],
   },
@@ -158,6 +173,15 @@ const cases = [
     arguments: ["./scripts/verify-pwa-installability.mjs"],
   },
   {
+    name: "bundled JPGEO2024 interpolation and network-free geoid API",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/gsi-geoid-local.test.mjs",
+    ],
+  },
+  {
     name: "resilient Cloudflare DEM batching",
     arguments: [
       "--import",
@@ -173,6 +197,26 @@ const cases = [
       "./scripts/register-typescript-source-loader.mjs",
       "--test",
       "./tests/regression/gsi-elevation-cache-path.test.mjs",
+    ],
+  },
+  {
+    name: "GSI GML local DEM encoding, interpolation and R2-first lookup",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/gsi-local-dem.test.mjs",
+    ],
+  },
+  {
+    name: "authenticated E-drive DEM gateway security and precision-tier ordering",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/local-dem-gateway.test.mjs",
+      "./tests/regression/http-request-limits.test.mjs",
+      "./tools/local-dem-server/local-dem-server.test.mjs",
     ],
   },
   {

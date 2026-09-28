@@ -9,6 +9,9 @@ export type DownloadedSpotDataRecord = {
   highPrecisionPoints: number;
   demTileCount?: number;
   demTileBytes?: number;
+  /** 建物・塔等を名称変更しても、再配置・更新で地表へ戻さない。 */
+  subjectSurfaceTarget?: "terrain" | "structure-roof";
+  structureHeightMeters?: number;
 };
 
 const STORAGE_KEY = "astrosight-downloaded-spot-data-v1";

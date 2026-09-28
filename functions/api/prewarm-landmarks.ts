@@ -17,22 +17,22 @@
 // トリガーは無料の外部Cronサービス（例: cron-job.org）でこのURLを
 // 1日1回叩くだけでよい。Cloudflare側の追加設定は不要。
 
-import { configureCloudflareServerRuntime, type CloudflareEnv } from "../_shared/env.ts";
+import { withCloudflareServerRuntime, type CloudflareEnv } from "../_shared/env.ts";
 import { jsonResponse, errorMessage } from "../_shared/http.ts";
-import { PREWARM_LANDMARKS, type PrewarmLandmark } from "../../server/landmarkPrewarmSeed.ts";
+import { ACTIVE_PREWARM_LANDMARKS, type PrewarmLandmark } from "../../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../../server/prewarmLandmarkCore.ts";
 
 const DEFAULT_CHUNK_SIZE = 8;
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
-  configureCloudflareServerRuntime(context);
+  return withCloudflareServerRuntime(context, async () => {
 
   const url = new URL(context.request.url);
   const category = url.searchParams.get("category") as PrewarmLandmark["category"] | null;
   const countParam = url.searchParams.get("count");
   const chunkSize = countParam ? Math.max(1, Number(countParam) || DEFAULT_CHUNK_SIZE) : DEFAULT_CHUNK_SIZE;
 
-  let pool = PREWARM_LANDMARKS;
+  let pool = ACTIVE_PREWARM_LANDMARKS;
   if (category) pool = pool.filter((landmark) => landmark.category === category);
 
   const targets = selectDailyChunk(pool, chunkSize);
@@ -48,4 +48,5 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     logs.push(`エラー: ${errorMessage(error)}`);
     return jsonResponse({ ok: false, logs, error: errorMessage(error) }, 500, "no-store");
   }
+  });
 };
