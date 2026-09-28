@@ -77,7 +77,7 @@ export function loadConfig(
     requestTimeoutMs: integerEnvironment(
       environment,
       "LOCAL_DEM_REQUEST_TIMEOUT_MS",
-      5_000,
+      12_000,
       250,
       30_000
     ),

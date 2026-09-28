@@ -20,6 +20,8 @@ import {
 } from "./gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./gsiGeoid.ts";
 import { lookupLocalJpgeo2024Height } from "./jpgeo2024Local.ts";
+import { lookupLocalPrecomputedBearingProfile } from "./localDemGateway.ts";
+import { isPrecomputedBearingProfileResponse } from "./precomputedBearingProfiles.ts";
 
 const MAX_BEARINGS_PER_REQUEST = 360;
 const MAX_ELEVATION_POINTS_PER_LOOKUP = 2_048;
@@ -32,6 +34,10 @@ const MAX_BEARINGS_PER_PROCESS_CHUNK = 8;
 type Coordinate = { latitude: number; longitude: number };
 
 export type BearingProfileBatchDependencies = {
+  lookupPrecomputed?: (
+    request: BearingProfileBatchRequest,
+    signal?: AbortSignal
+  ) => Promise<BearingProfileBatchResponseV2 | null>;
   lookupElevations: (
     points: GsiElevationRequestPoint[],
     signal?: AbortSignal,
@@ -68,6 +74,7 @@ export async function lookupBearingProfileGeoidHeights(
 }
 
 const defaultDependencies: BearingProfileBatchDependencies = {
+  lookupPrecomputed: lookupLocalPrecomputedBearingProfile,
   lookupElevations: lookupGsiElevations,
   // Every profile point uses its own JPGEO2024 bilinear value. Reusing one
   // regional representative can shift N by decimetres over a 50 km profile,
@@ -126,6 +133,11 @@ export async function computeBearingProfileBatch(
     throw new Error("全方位地形の取得条件が不正です");
   }
   if (signal?.aborted) throw signal.reason;
+
+  const precomputed = await dependencies.lookupPrecomputed?.(request, signal);
+  if (precomputed && isPrecomputedBearingProfileResponse(precomputed, request)) {
+    return precomputed;
+  }
 
   const distances = densifyDistanceIntervals(
     logarithmicDistances({

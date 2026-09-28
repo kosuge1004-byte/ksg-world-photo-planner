@@ -23,6 +23,26 @@ type CameraState = {
 const PREVIEW_TILE_WAIT_TIMEOUT_MS = 8_000;
 const PREVIEW_TILE_RENDER_INTERVAL_MS = 80;
 
+function previewAbortError(): DOMException {
+  return new DOMException("古いプレビュー生成を中止しました", "AbortError");
+}
+
+function abortablePreviewDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(previewAbortError());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(previewAbortError());
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 type LoadAwarePrimitive = {
   show?: boolean;
   tilesLoaded?: boolean;
@@ -129,22 +149,13 @@ const PREVIEW_FAST_RESOLUTION_SCALE = 0.5;
 export async function waitForPreviewTiles(
   viewer: Viewer,
   previewCanvas: HTMLCanvasElement,
-  context: CanvasRenderingContext2D
+  context: CanvasRenderingContext2D,
+  signal?: AbortSignal
 ): Promise<boolean> {
+  if (signal?.aborted) throw previewAbortError();
   const startedAt = performance.now();
   const originalResolutionScale = viewer.resolutionScale;
   viewer.resolutionScale = PREVIEW_FAST_RESOLUTION_SCALE;
-
-  const finish = (loaded: boolean): boolean => {
-    viewer.resolutionScale = originalResolutionScale;
-    if (!viewer.isDestroyed()) {
-      // 解像度を戻した状態でもう1回だけ描画し、最終フレームの画質を保つ。
-      viewer.scene.requestRender();
-      viewer.scene.render();
-      copyViewerFrameToPreview(viewer, previewCanvas, context);
-    }
-    return loaded;
-  };
 
   // Cesiumの自動描画ループはAstroSight側で停止している。したがって
   // プレビュー視点へカメラを移しただけでは、その視点に必要な3D Tiles/地形の
@@ -152,20 +163,28 @@ export async function waitForPreviewTiles(
   // renderを回し、各フレームを上側Canvasへ逐次転写する。これにより、タイルが
   // 1つでも到着した時点で自動的に画面へ現れ、焦点距離の+/-操作を再描画
   // トリガーとして使う必要がなくなる。
-  while (!viewer.isDestroyed()) {
-    viewer.scene.requestRender();
-    viewer.scene.render();
-    copyViewerFrameToPreview(viewer, previewCanvas, context);
+  try {
+    while (!viewer.isDestroyed()) {
+      if (signal?.aborted) throw previewAbortError();
+      viewer.scene.requestRender();
+      viewer.scene.render();
+      copyViewerFrameToPreview(viewer, previewCanvas, context);
 
-    if (visiblePreviewTilesLoaded(viewer)) return finish(true);
-    if (performance.now() - startedAt >= PREVIEW_TILE_WAIT_TIMEOUT_MS) return finish(false);
+      if (visiblePreviewTilesLoaded(viewer)) return true;
+      if (performance.now() - startedAt >= PREVIEW_TILE_WAIT_TIMEOUT_MS) return false;
 
-    await new Promise<void>((resolve) =>
-      window.setTimeout(resolve, PREVIEW_TILE_RENDER_INTERVAL_MS)
-    );
+      await abortablePreviewDelay(PREVIEW_TILE_RENDER_INTERVAL_MS, signal);
+    }
+    return false;
+  } finally {
+    viewer.resolutionScale = originalResolutionScale;
+    if (!viewer.isDestroyed() && !signal?.aborted) {
+      // 解像度を戻した状態でもう1回だけ描画し、最終フレームの画質を保つ。
+      viewer.scene.requestRender();
+      viewer.scene.render();
+      copyViewerFrameToPreview(viewer, previewCanvas, context);
+    }
   }
-  viewer.resolutionScale = originalResolutionScale;
-  return false;
 }
 
 function saveCamera(viewer: Viewer): CameraState {
@@ -225,8 +244,10 @@ export async function captureTripodPreview(
   settings: CameraSettings,
   calculationMode: CalculationMode,
   viewCorrection?: CameraViewCorrection,
-  restoreVisibleScene = true
+  restoreVisibleScene = true,
+  signal?: AbortSignal
 ): Promise<boolean> {
+  if (signal?.aborted) throw previewAbortError();
   if (viewer.isDestroyed()) {
     return true;
   }
@@ -273,7 +294,7 @@ export async function captureTripodPreview(
     // 移動した直後の1フレームだけでは3D Tiles/地形がまだ未取得のことがある。
     // 現在のプレビュー視点を維持したまま必要タイルの読込を明示的に進めてから
     // Canvasへ転写する。これにより初回の黒画面を自動的に解消する。
-    tilesFullyLoaded = await waitForPreviewTiles(viewer, previewCanvas, context);
+    tilesFullyLoaded = await waitForPreviewTiles(viewer, previewCanvas, context, signal);
   } finally {
     restoreTilesetDetail();
     defaultDataSource.show = defaultDataSourceWasVisible;

@@ -3,6 +3,11 @@ import {
   type LocalDemGatewayConfiguration,
 } from "./cloudflareRuntime.ts";
 import { createAbortError, createTimeoutError } from "./runtimeErrors.ts";
+import type {
+  BearingProfileBatchRequest,
+  BearingProfileBatchResponseV2,
+} from "../src/types/bearingProfileBatch.ts";
+import { isPrecomputedBearingProfileResponse } from "./precomputedBearingProfiles.ts";
 
 export type LocalDemGatewaySource =
   | "DEM1A"
@@ -19,15 +24,39 @@ export type LocalDemGatewayPoint = {
   interpolationMode: "los-safe" | "neutral";
 };
 
+export type LocalDemGatewayAutoPoint = {
+  index: number;
+  latitude: number;
+  longitude: number;
+  maximumDetail: "1m" | "5m" | "10m";
+  interpolationMode: "los-safe" | "neutral";
+};
+
+export type LocalDemGatewaySample = {
+  heightMeters: number | null;
+  source: LocalDemGatewaySource | null;
+};
+
 const MAX_POINTS_PER_REQUEST = 512;
-const REQUEST_TIMEOUT_MS = 2_000;
+// The origin normally reads prepared E-drive assets in milliseconds. A first
+// request may also need to fill a missing precision tier from GSI, so two
+// seconds was too short and unnecessarily returned work to the constrained
+// Cloudflare path. The timeout remains finite and abortable.
+const REQUEST_TIMEOUT_MS = 12_000;
 const FAILURE_COOLDOWN_MS = 30_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
+// A 259-bearing, 10 km compact profile is about 2.4 MiB and a complete
+// 360-bearing catalogue profile is about 3.3 MiB. Keep a firm ceiling above
+// both valid responses while still rejecting an unexpectedly large origin
+// body before JSON parsing.
+const MAX_PROFILE_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MIN_HEIGHT_METERS = -500;
 const MAX_HEIGHT_METERS = 10_000;
 
 let blockedEndpoint: string | null = null;
 let blockedUntil = 0;
+let blockedProfileEndpoint: string | null = null;
+let blockedProfileUntil = 0;
 
 function endpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
   try {
@@ -48,15 +77,24 @@ function endpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
   }
 }
 
-function isJapanPoint(point: LocalDemGatewayPoint): boolean {
+function precomputedProfileEndpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
+  const elevationEndpoint = endpointUrl(configuration);
+  if (!elevationEndpoint) return null;
+  return new URL("/v1/bearing-profile/precomputed", elevationEndpoint);
+}
+
+function isJapanPoint(point: { latitude: number; longitude: number }): boolean {
   return Number.isFinite(point.latitude) && Number.isFinite(point.longitude) &&
     point.latitude >= 20 && point.latitude <= 46.5 &&
     point.longitude >= 122 && point.longitude <= 154;
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+async function readBoundedJson(
+  response: Response,
+  maximumBytes = MAX_RESPONSE_BYTES
+): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
     await response.body?.cancel();
     throw new Error("ローカルDEM APIの応答が大きすぎます");
   }
@@ -70,7 +108,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > MAX_RESPONSE_BYTES) {
+      if (length > maximumBytes) {
         await reader.cancel();
         throw new Error("ローカルDEM APIの応答が大きすぎます");
       }
@@ -87,6 +125,82 @@ async function readBoundedJson(response: Response): Promise<unknown> {
     offset += chunk.byteLength;
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+}
+
+/**
+ * Return a compact, already calculated profile from the private E-drive
+ * origin. A miss or origin failure is deliberately null: the caller then runs
+ * the established calculation path with identical precision.
+ */
+export async function lookupLocalPrecomputedBearingProfile(
+  request: BearingProfileBatchRequest,
+  signal?: AbortSignal
+): Promise<BearingProfileBatchResponseV2 | null> {
+  const configuration = serverLocalDemGateway();
+  if (!configuration) return null;
+  const endpoint = precomputedProfileEndpointUrl(configuration);
+  if (!endpoint) return null;
+  const endpointKey = endpoint.toString();
+  if (blockedProfileEndpoint === endpointKey && blockedProfileUntil > Date.now()) return null;
+  if (signal?.aborted) throw createAbortError();
+
+  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createTimeoutError("計算済み地形APIタイムアウト"));
+  }, REQUEST_TIMEOUT_MS);
+  const onAbort = () => controller.abort(createAbortError());
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json; charset=utf-8",
+        "CF-Access-Client-Id": completeConfiguration.accessClientId,
+        "CF-Access-Client-Secret": completeConfiguration.accessClientSecret,
+        "X-AstroSight-Origin-Token": completeConfiguration.originToken,
+      },
+      body: JSON.stringify({
+        subjectPoint: {
+          latitude: request.subjectPoint.latitude,
+          longitude: request.subjectPoint.longitude,
+          height: 0,
+        },
+        cameraSettings: { lensCenterHeightMeters: 0 },
+        bearings: request.bearings,
+        maxDistanceMeters: request.maxDistanceMeters,
+      }),
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (response.status === 404) {
+      await response.body?.cancel();
+      return null;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`計算済み地形APIがHTTP ${response.status}を返しました`);
+    }
+    const body = await readBoundedJson(response, MAX_PROFILE_RESPONSE_BYTES);
+    if (!isPrecomputedBearingProfileResponse(body, request)) {
+      throw new Error("計算済み地形APIの応答形式が不正です");
+    }
+    blockedProfileEndpoint = null;
+    blockedProfileUntil = 0;
+    return body;
+  } catch {
+    if (signal?.aborted && !timedOut) throw createAbortError();
+    blockedProfileEndpoint = endpointKey;
+    blockedProfileUntil = Date.now() + FAILURE_COOLDOWN_MS;
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 function validatedResults(
@@ -129,6 +243,59 @@ function validatedResults(
   }
   if (seen.size !== expected.size) {
     throw new Error("ローカルDEM APIの地点数が一致しません");
+  }
+  return resolved;
+}
+
+function validatedAutoResults(
+  body: unknown,
+  points: readonly LocalDemGatewayAutoPoint[]
+): Map<number, LocalDemGatewaySample> {
+  if (
+    typeof body !== "object" || body === null ||
+    !("mode" in body) || body.mode !== "auto" ||
+    !("complete" in body) || body.complete !== true ||
+    !("results" in body) || !Array.isArray(body.results) ||
+    body.results.length !== points.length
+  ) {
+    throw new Error("ローカルDEM APIの自動応答形式が不正です");
+  }
+  const expected = new Set(points.map((point) => point.index));
+  const seen = new Set<number>();
+  const resolved = new Map<number, LocalDemGatewaySample>();
+  for (const result of body.results) {
+    if (
+      typeof result !== "object" || result === null ||
+      !("index" in result) || !Number.isInteger(result.index) ||
+      !expected.has(result.index as number) || seen.has(result.index as number) ||
+      !("heightMeters" in result) || !("source" in result)
+    ) {
+      throw new Error("ローカルDEM APIの自動地点応答が不正です");
+    }
+    const source = result.source;
+    const heightMeters = result.heightMeters;
+    if (source === null && heightMeters === null) {
+      // Authoritative NoData/water. Keeping this distinct from an unavailable
+      // gateway lets the caller continue with H=0 without public tile fan-out.
+      resolved.set(result.index as number, { heightMeters: null, source: null });
+    } else if (
+      typeof source === "string" &&
+      (source === "DEM1A" || source === "DEM5A" || source === "DEM5B" ||
+        source === "DEM5C" || source === "DEM10B") &&
+      typeof heightMeters === "number" && Number.isFinite(heightMeters) &&
+      heightMeters >= MIN_HEIGHT_METERS && heightMeters <= MAX_HEIGHT_METERS
+    ) {
+      resolved.set(result.index as number, {
+        heightMeters,
+        source: source as LocalDemGatewaySource,
+      });
+    } else {
+      throw new Error("ローカルDEM APIの自動標高値が不正です");
+    }
+    seen.add(result.index as number);
+  }
+  if (seen.size !== expected.size) {
+    throw new Error("ローカルDEM APIの自動地点数が一致しません");
   }
   return resolved;
 }
@@ -176,6 +343,98 @@ async function requestChunk(
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
   }
+}
+
+async function requestAutoChunk(
+  configuration: Required<LocalDemGatewayConfiguration>,
+  endpoint: URL,
+  points: readonly LocalDemGatewayAutoPoint[],
+  signal?: AbortSignal
+): Promise<Map<number, LocalDemGatewaySample>> {
+  if (signal?.aborted) throw createAbortError();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createTimeoutError("ローカルDEM APIタイムアウト"));
+  }, REQUEST_TIMEOUT_MS);
+  const onAbort = () => controller.abort(createAbortError());
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json; charset=utf-8",
+        "CF-Access-Client-Id": configuration.accessClientId,
+        "CF-Access-Client-Secret": configuration.accessClientSecret,
+        "X-AstroSight-Origin-Token": configuration.originToken,
+      },
+      body: JSON.stringify({ mode: "auto", points }),
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`ローカルDEM APIがHTTP ${response.status}を返しました`);
+    }
+    return validatedAutoResults(await readBoundedJson(response), points);
+  } catch (error) {
+    if (signal?.aborted && !timedOut) throw createAbortError();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * Resolve the complete GSI source-priority decision at the E-drive origin.
+ * A non-null result is authoritative and aligned to the supplied indexes. Any
+ * network, authentication, timeout or validation failure returns null so the
+ * established per-source/public-GSI path remains available.
+ */
+export async function lookupLocalDemGatewayAuto(
+  inputPoints: readonly LocalDemGatewayAutoPoint[],
+  signal?: AbortSignal
+): Promise<Map<number, LocalDemGatewaySample> | null> {
+  const configuration = serverLocalDemGateway();
+  if (!configuration) return null;
+  const endpoint = endpointUrl(configuration);
+  if (!endpoint) return null;
+  const endpointKey = endpoint.toString();
+  if (blockedEndpoint === endpointKey && blockedUntil > Date.now()) return null;
+
+  const points = inputPoints.filter((point) =>
+    Number.isInteger(point.index) && point.index >= 0 && isJapanPoint(point)
+  );
+  if (points.length === 0) return new Map();
+
+  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
+  const resolved = new Map<number, LocalDemGatewaySample>();
+  for (let offset = 0; offset < points.length; offset += MAX_POINTS_PER_REQUEST) {
+    const chunk = points.slice(offset, offset + MAX_POINTS_PER_REQUEST);
+    try {
+      const chunkResults = await requestAutoChunk(
+        completeConfiguration,
+        endpoint,
+        chunk,
+        signal
+      );
+      for (const [index, sample] of chunkResults) resolved.set(index, sample);
+      if (blockedEndpoint === endpointKey) {
+        blockedEndpoint = null;
+        blockedUntil = 0;
+      }
+    } catch {
+      if (signal?.aborted) throw createAbortError();
+      blockedEndpoint = endpointKey;
+      blockedUntil = Date.now() + FAILURE_COOLDOWN_MS;
+      return null;
+    }
+  }
+  return resolved;
 }
 
 /**
@@ -232,4 +491,6 @@ export async function lookupLocalDemGatewayForSource(
 export function resetLocalDemGatewayForTests(): void {
   blockedEndpoint = null;
   blockedUntil = 0;
+  blockedProfileEndpoint = null;
+  blockedProfileUntil = 0;
 }

@@ -1,15 +1,22 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isBearingProfileBatchRequest } from "../../server/bearingProfileBatch.ts";
+import type { GsiElevationRequestPoint, GsiElevationSample } from "../../server/gsiElevation.ts";
 import type { LocalDemLookupRequest, LocalGsiDemSource } from "../../server/gsiLocalDem.ts";
+import type { BearingProfileBatchRequest, BearingProfileBatchResponseV2 } from "../../src/types/bearingProfileBatch.ts";
 import type { LocalDemServerConfig } from "./config.ts";
 
 const ENDPOINT = "/v1/elevation/batch";
+const PRECOMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/precomputed";
 const JAPAN_BOUNDS = Object.freeze({ south: 20, north: 46.5, west: 122, east: 154 });
 const SOURCES = new Set<Exclude<LocalGsiDemSource, "DEM10A">>([
   "DEM1A", "DEM5A", "DEM5B", "DEM5C", "DEM10B",
 ]);
 const POINT_KEYS = new Set([
   "index", "latitude", "longitude", "interpolation", "interpolationMode",
+]);
+const AUTO_POINT_KEYS = new Set([
+  "index", "latitude", "longitude", "maximumDetail", "interpolationMode",
 ]);
 
 export type LocalDemSource = Exclude<LocalGsiDemSource, "DEM10A">;
@@ -18,6 +25,14 @@ export type LocalDemLookup = (
   requests: readonly LocalDemLookupRequest[],
   signal: AbortSignal
 ) => Promise<Map<number, number>>;
+export type LocalDemAutoLookup = (
+  points: readonly GsiElevationRequestPoint[],
+  signal: AbortSignal
+) => Promise<GsiElevationSample[]>;
+export type LocalBearingProfileLookup = (
+  request: BearingProfileBatchRequest,
+  signal: AbortSignal
+) => Promise<BearingProfileBatchResponseV2 | null>;
 
 class HttpError extends Error {
   readonly status: number;
@@ -175,7 +190,9 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
 function parsePayload(
   bytes: Buffer,
   maximumPoints: number
-): { source: LocalDemSource; points: LocalDemLookupRequest[] } {
+):
+  | { mode: "source"; source: LocalDemSource; points: LocalDemLookupRequest[] }
+  | { mode: "auto"; points: Array<GsiElevationRequestPoint & { index: number }> } {
   let value: unknown;
   try {
     value = JSON.parse(bytes.toString("utf8"));
@@ -183,14 +200,54 @@ function parsePayload(
     throw new HttpError(400, "request body is not valid JSON");
   }
   const record = objectRecord(value);
-  if (!record || Object.keys(record).some((key) => key !== "source" && key !== "points")) {
+  if (!record || Object.keys(record).some((key) => key !== "source" && key !== "mode" && key !== "points")) {
     throw new HttpError(400, "request body has unsupported fields");
-  }
-  if (typeof record.source !== "string" || !SOURCES.has(record.source as LocalDemSource)) {
-    throw new HttpError(400, "source is invalid");
   }
   if (!Array.isArray(record.points) || record.points.length < 1 || record.points.length > maximumPoints) {
     throw new HttpError(400, "points count is invalid");
+  }
+
+  if (record.mode === "auto") {
+    if (record.source !== undefined) throw new HttpError(400, "source is unsupported in auto mode");
+    const indexes = new Set<number>();
+    const points = record.points.map((entry): GsiElevationRequestPoint & { index: number } => {
+      const point = objectRecord(entry);
+      if (!point || Object.keys(point).some((key) => !AUTO_POINT_KEYS.has(key))) {
+        throw new HttpError(400, "point has unsupported fields");
+      }
+      if (
+        !Number.isSafeInteger(point.index) || (point.index as number) < 0 ||
+        (point.index as number) > 10_000_000 || indexes.has(point.index as number)
+      ) throw new HttpError(400, "point index is invalid");
+      const latitude = point.latitude;
+      const longitude = point.longitude;
+      if (
+        typeof latitude !== "number" || !Number.isFinite(latitude) ||
+        typeof longitude !== "number" || !Number.isFinite(longitude) ||
+        latitude < JAPAN_BOUNDS.south || latitude > JAPAN_BOUNDS.north ||
+        longitude < JAPAN_BOUNDS.west || longitude > JAPAN_BOUNDS.east
+      ) throw new HttpError(400, "point coordinate is outside supported coverage");
+      if (point.maximumDetail !== "1m" && point.maximumDetail !== "5m" && point.maximumDetail !== "10m") {
+        throw new HttpError(400, "point maximum detail is invalid");
+      }
+      if (point.interpolationMode !== "los-safe" && point.interpolationMode !== "neutral") {
+        throw new HttpError(400, "point interpolation mode is invalid");
+      }
+      indexes.add(point.index as number);
+      return {
+        index: point.index as number,
+        latitude,
+        longitude,
+        maximumDetail: point.maximumDetail,
+        interpolationMode: point.interpolationMode,
+      };
+    });
+    return { mode: "auto", points };
+  }
+
+  if (record.mode !== undefined || typeof record.source !== "string" ||
+    !SOURCES.has(record.source as LocalDemSource)) {
+    throw new HttpError(400, "source is invalid");
   }
 
   const indexes = new Set<number>();
@@ -232,12 +289,29 @@ function parsePayload(
       interpolationMode: point.interpolationMode,
     };
   });
-  return { source: record.source as LocalDemSource, points };
+  return { mode: "source", source: record.source as LocalDemSource, points };
+}
+
+function parsePrecomputedProfilePayload(bytes: Buffer): BearingProfileBatchRequest {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new HttpError(400, "request body is not valid JSON");
+  }
+  const record = objectRecord(value);
+  const allowed = new Set(["subjectPoint", "cameraSettings", "bearings", "maxDistanceMeters"]);
+  if (!record || Object.keys(record).some((key) => !allowed.has(key)) || !isBearingProfileBatchRequest(value)) {
+    throw new HttpError(400, "bearing profile request is invalid");
+  }
+  return value;
 }
 
 export function createLocalDemRequestHandler(
   config: LocalDemServerConfig,
-  lookup: LocalDemLookup
+  lookup: LocalDemLookup,
+  lookupAuto?: LocalDemAutoLookup,
+  lookupPrecomputedProfile?: LocalBearingProfileLookup
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   const gate = new RequestGate(
     config.maximumConcurrentRequests,
@@ -260,7 +334,9 @@ export function createLocalDemRequestHandler(
         writeJson(response, 200, { ok: true });
         return;
       }
-      if (requestUrl !== ENDPOINT) throw new HttpError(404, "not found");
+      if (requestUrl !== ENDPOINT && requestUrl !== PRECOMPUTED_PROFILE_ENDPOINT) {
+        throw new HttpError(404, "not found");
+      }
       if (request.method !== "POST") throw new HttpError(405, "method not allowed");
       if (!authenticated(request, config)) throw new HttpError(401, "authentication required");
       const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
@@ -270,9 +346,42 @@ export function createLocalDemRequestHandler(
       }
 
       const body = await readBody(request, config.maximumBodyBytes, controller.signal);
+      if (requestUrl === PRECOMPUTED_PROFILE_ENDPOINT) {
+        if (!lookupPrecomputedProfile) throw new HttpError(404, "precomputed profile is unavailable");
+        const profileRequest = parsePrecomputedProfilePayload(body);
+        pointCount = profileRequest.bearings.length;
+        release = await gate.acquire(controller.signal);
+        const result = await lookupPrecomputedProfile(profileRequest, controller.signal);
+        if (!result) throw new HttpError(404, "precomputed profile was not found");
+        if (controller.signal.aborted) throw new HttpError(504, "request deadline exceeded");
+        responseStatus = 200;
+        writeJson(response, 200, result);
+        return;
+      }
       const payload = parsePayload(body, config.maximumPoints);
       pointCount = payload.points.length;
       release = await gate.acquire(controller.signal);
+      if (payload.mode === "auto") {
+        if (!lookupAuto) throw new HttpError(503, "automatic elevation lookup is unavailable");
+        const samples = await lookupAuto(payload.points, controller.signal);
+        if (controller.signal.aborted) throw new HttpError(504, "request deadline exceeded");
+        if (samples.length !== payload.points.length) throw new HttpError(500, "lookup result count mismatch");
+        const results = payload.points.map((point, index) => {
+          const sample = samples[index];
+          const validSource = sample?.source === "DEM1A" || sample?.source === "DEM5A" ||
+            sample?.source === "DEM5B" || sample?.source === "DEM5C" || sample?.source === "DEM10B";
+          if (validSource && typeof sample.heightMeters === "number" && Number.isFinite(sample.heightMeters)) {
+            return { index: point.index, heightMeters: sample.heightMeters, source: sample.source };
+          }
+          if (sample?.source === null && sample.heightMeters === null) {
+            return { index: point.index, heightMeters: null, source: null };
+          }
+          throw new HttpError(500, "automatic elevation result is invalid");
+        });
+        responseStatus = 200;
+        writeJson(response, 200, { mode: "auto", complete: true, results });
+        return;
+      }
       const resolved = await lookup(payload.source, payload.points, controller.signal);
       if (controller.signal.aborted) throw new HttpError(504, "request deadline exceeded");
       const results = payload.points.map((point) => {
@@ -311,7 +420,11 @@ export function createLocalDemRequestHandler(
       console.info(JSON.stringify({
         event: "local-dem-request",
         method: request.method,
-        route: request.url === ENDPOINT ? ENDPOINT : request.url === "/health" ? "/health" : "other",
+        route: request.url === ENDPOINT
+          ? ENDPOINT
+          : request.url === PRECOMPUTED_PROFILE_ENDPOINT
+            ? PRECOMPUTED_PROFILE_ENDPOINT
+            : request.url === "/health" ? "/health" : "other",
         status: responseStatus,
         points: pointCount,
         durationMs: Date.now() - startedAt,
@@ -323,6 +436,7 @@ export function createLocalDemRequestHandler(
 export const localDemAppInternalsForTests = {
   authenticated,
   parsePayload,
+  parsePrecomputedProfilePayload,
   secretEquals,
   JAPAN_BOUNDS,
 };

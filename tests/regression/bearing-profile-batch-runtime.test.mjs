@@ -86,8 +86,8 @@ test("manager reduces all pending bearings to bounded batch requests", async () 
   assert.equal(result.requestedBearings, bearings.length);
   assert.equal(result.successfulBearings, bearings.length);
   assert.equal(result.failedBearings, 0);
-  assert.equal(batchCalls, Math.ceil(bearings.length / 64));
-  assert.ok(batchCalls <= 6, `expected at most six round trips, received ${batchCalls}`);
+  assert.equal(batchCalls, Math.ceil(bearings.length / 32));
+  assert.ok(batchCalls <= 12, `expected at most twelve round trips, received ${batchCalls}`);
   assert.equal(legacyElevationCalls, 0);
   assert.equal(legacyGeoidCalls, 0);
   assert.ok(demTileCalls > 0, "batch results must retain the explicit device DEM download");

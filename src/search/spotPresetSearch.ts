@@ -137,7 +137,8 @@ function landmarkRequiresStructureRoof(landmark: JapanLandmark): boolean {
     landmark.category === "tower" ||
     landmark.category === "castle" ||
     landmark.category === "temple" ||
-    landmark.category === "ferriswheel";
+    landmark.category === "ferriswheel" ||
+    (landmark.category === "natural" && Number.isFinite(landmark.heightMeters));
 }
 
 const landmarkByExactSearchKey = new Map<string, JapanLandmark>();

@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')
+$tsx = Join-Path $repoRoot 'node_modules\.bin\tsx.cmd'
 $entryPoint = Join-Path $PSScriptRoot 'server.ts'
 
 if (-not [System.IO.Path]::IsPathRooted($DataRoot)) {
@@ -17,6 +18,9 @@ if (-not (Test-Path -LiteralPath $DataRoot -PathType Container)) {
 if (-not $env:LOCAL_DEM_ORIGIN_TOKEN) {
   throw 'Set LOCAL_DEM_ORIGIN_TOKEN before starting the local service.'
 }
+if (-not (Test-Path -LiteralPath $tsx -PathType Leaf)) {
+  throw 'Run npm install before starting the local service.'
+}
 
 $env:LOCAL_DEM_HOST = '127.0.0.1'
 $env:LOCAL_DEM_PORT = [string]$Port
@@ -24,7 +28,7 @@ $env:LOCAL_DEM_DATA_ROOT = [System.IO.Path]::GetFullPath($DataRoot)
 
 Push-Location $repoRoot
 try {
-  & node --experimental-strip-types $entryPoint
+  & $tsx $entryPoint
   if ($LASTEXITCODE -ne 0) { throw 'The local DEM server stopped with an error.' }
 }
 finally {

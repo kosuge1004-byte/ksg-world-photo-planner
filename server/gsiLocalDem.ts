@@ -53,7 +53,8 @@ const MAX_GRID_POINTS = 2_000_000;
 // Leave enough of Workers' 128 MiB limit for those paths and temporary gunzip
 // buffers. One largest observed native grid is about 3.4 MiB, so 32 MiB still
 // keeps the base grid and all eight neighbours needed by a 4x4 interpolation.
-const MAX_MEMORY_BYTES = 32 * 1024 * 1024;
+const WORKER_MEMORY_BYTES = 32 * 1024 * 1024;
+let maximumMemoryBytes = WORKER_MEMORY_BYTES;
 const LOCAL_READ_CONCURRENCY = 2;
 const MISSING_ASSET_TTL_MS = 5 * 60_000;
 const INVALID_ASSET_TTL_MS = 30_000;
@@ -561,13 +562,25 @@ function rememberAsset(key: string, asset: LocalDemGridAsset): void {
   memoryAssets.delete(key);
   memoryAssets.set(key, { asset, bytes });
   memoryBytes += bytes;
-  while (memoryBytes > MAX_MEMORY_BYTES && memoryAssets.size > 1) {
+  while (memoryBytes > maximumMemoryBytes && memoryAssets.size > 1) {
     const oldestKey = memoryAssets.keys().next().value;
     if (typeof oldestKey !== "string") break;
     const oldest = memoryAssets.get(oldestKey);
     memoryAssets.delete(oldestKey);
     memoryBytes -= oldest?.bytes ?? 0;
   }
+}
+
+/**
+ * The Cloudflare default stays at 32 MiB. The private PC origin and the offline
+ * generator may opt into a larger LRU because they have much more memory and
+ * repeatedly revisit the same native meshes while calculating 360 bearings.
+ */
+export function configureLocalDemMemoryBudgetForPrivateOrigin(bytes: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes < WORKER_MEMORY_BYTES || bytes > 2 * 1024 * 1024 * 1024) {
+    throw new Error("local DEM memory budget is invalid");
+  }
+  maximumMemoryBytes = bytes;
 }
 
 async function localDemManifestAvailable(): Promise<boolean> {

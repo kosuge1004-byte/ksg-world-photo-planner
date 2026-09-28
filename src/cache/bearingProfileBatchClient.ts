@@ -90,6 +90,7 @@ function expandCompactResponse(
   if (resolvedBearings.size !== requestedBearings.size) return null;
   return {
     version: 1,
+    precomputed: response.precomputed === true,
     profiles,
     failedBearings: response.failedBearings,
     requestedBearingCount: response.requestedBearingCount,

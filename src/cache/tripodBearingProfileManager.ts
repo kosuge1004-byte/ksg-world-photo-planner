@@ -127,10 +127,13 @@ const OPT_IN_STORAGE_KEY = "ksg-tripod-bearing-profile-subjects-v1";
 // 方位同士は独立しているが、各方位内でもDEM APIが並列取得を行うため
 // 過剰並列にはしない。2方位だけ重ね、待ち時間を隠しつつGSI/Cloudflareを保護する。
 const BEARING_CONCURRENCY = 2;
-// 259 bearings become five HTTP requests while keeping the largest 50 km
-// response comfortably below one all-360 response. The endpoint itself accepts
-// up to 360; this is only a client memory/timeout guard.
-const BEARING_BATCH_SIZE = 64;
+// 259 bearings become nine HTTP requests. The endpoint itself accepts up to
+// 360; this smaller client batch is the free-plan subrequest safety boundary.
+// 50km uses up to 640 samples per bearing. The server processes eight bearings
+// at a time and the authenticated E-drive gateway sends at most 512 points per
+// origin request, so 32 bearings require at most 40 external subrequests in one
+// Pages invocation. This stays below the Workers Free limit of 50 with margin.
+const BEARING_BATCH_SIZE = 32;
 
 function validBatchProfile(
   value: unknown,
@@ -388,6 +391,7 @@ export async function backfillBearingProfiles(params: {
     if (!batch) break;
     if (batch.requestedBearingCount !== batchBearings.length ||
       batch.pointCount !== batchBearings.length * baseDistances.length) continue;
+    const usesPrecomputedRegisteredSpotProfile = batch.precomputed === true;
     const profileByBearing = new Map(
       batch.profiles.map((profile) => [profile.bearingDegrees, profile] as const)
     );
@@ -398,18 +402,25 @@ export async function backfillBearingProfiles(params: {
       // authoritative elevation source for every point. Preserve that download
       // contract on the batch path; otherwise the profile would exist but the
       // explicit surrounding-DEM download would report/store zero tiles.
-      prefetchGsiDeviceTilesForSamples(
-        profile.points.map((point) => ({
-          latitude: point.latitude,
-          longitude: point.longitude,
-          maximumDetail: "1m" as const,
-          interpolationMode: "neutral" as const,
-        })),
-        profile.points.map((point) => ({
-          heightMeters: point.elevationSource === null ? null : 0,
-          source: point.elevationSource,
-        }))
-      );
+      // A registered-spot profile is itself the complete authoritative 1 m
+      // calculation. Downloading every raw DEM tile again would duplicate the
+      // expensive work and was the main reason an otherwise complete profile
+      // still took minutes to save. Dynamic responses retain the established
+      // tile warming path because no reusable server-side file exists for them.
+      if (!usesPrecomputedRegisteredSpotProfile) {
+        prefetchGsiDeviceTilesForSamples(
+          profile.points.map((point) => ({
+            latitude: point.latitude,
+            longitude: point.longitude,
+            maximumDetail: "1m" as const,
+            interpolationMode: "neutral" as const,
+          })),
+          profile.points.map((point) => ({
+            heightMeters: point.elevationSource === null ? null : 0,
+            source: point.elevationSource,
+          }))
+        );
+      }
       const entry: BearingProfileEntry = {
         bearingDegrees: profile.bearingDegrees,
         computedAtIso: profile.computedAtIso,

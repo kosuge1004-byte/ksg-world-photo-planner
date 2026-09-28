@@ -36,6 +36,8 @@ export type BearingProfileBatchProfile = {
 /** Legacy/normalized response retained for clients during a rolling deploy. */
 export type BearingProfileBatchResponseV1 = {
   version: 1;
+  /** The authoritative values came from an offline-generated registered-spot file. */
+  precomputed?: boolean;
   profiles: BearingProfileBatchProfile[];
   failedBearings: BearingProfileBatchFailure[];
   requestedBearingCount: number;
@@ -58,6 +60,8 @@ export type BearingProfileBatchCompactProfile = {
  */
 export type BearingProfileBatchResponseV2 = {
   version: 2;
+  /** The authoritative values came from an offline-generated registered-spot file. */
+  precomputed?: boolean;
   distancesMeters: number[];
   profiles: BearingProfileBatchCompactProfile[];
   failedBearings: BearingProfileBatchFailure[];

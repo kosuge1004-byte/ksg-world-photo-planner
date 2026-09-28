@@ -4,7 +4,10 @@ import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.
 import { bilinearInterpolate } from "./bilinearInterpolation.ts";
 import { constrainedBicubicInterpolate, type BicubicGrid4x4 } from "./constrainedBicubicInterpolation.ts";
 import { lookupLocalDemElevationsForSource } from "./gsiLocalDem.ts";
-import { lookupLocalDemGatewayForSource } from "./localDemGateway.ts";
+import {
+  lookupLocalDemGatewayAuto,
+  lookupLocalDemGatewayForSource,
+} from "./localDemGateway.ts";
 
 export type GsiElevationSource =
   | "DEM1A"
@@ -802,6 +805,34 @@ export async function lookupGsiElevations(
   points.forEach((point, index) => {
     if (isJapaneseCoverage(point)) unresolved.add(index);
   });
+
+  // Resolve the complete precision-tier decision at the authenticated E-drive
+  // origin before starting any public GSI tile fan-out in this Worker. The
+  // origin runs the same lookupGsiElevations implementation with the prepared
+  // local GML assets and public GSI fallback, so source priority, coordinates,
+  // interpolation and NoData semantics remain identical. Chunking happens in
+  // localDemGateway at 512 points: a 32-bearing/50km Pages invocation stays
+  // below the free-plan limit of 50 external subrequests.
+  if (unresolved.size > 0) {
+    const gatewayPoints = [...unresolved].map((index) => ({
+      index,
+      latitude: points[index].latitude,
+      longitude: points[index].longitude,
+      maximumDetail: points[index].maximumDetail ?? "1m" as const,
+      interpolationMode: points[index].interpolationMode ?? "los-safe" as const,
+    }));
+    const gatewaySamples = await lookupLocalDemGatewayAuto(gatewayPoints, signal);
+    if (gatewaySamples && gatewaySamples.size === gatewayPoints.length) {
+      for (const index of unresolved) {
+        const sample = gatewaySamples.get(index);
+        if (!sample) break;
+        results[index] = sample;
+      }
+      if ([...unresolved].every((index) => gatewaySamples.has(index))) {
+        return results;
+      }
+    }
+  }
 
   // 点ごとに「タイル取得→待機」を繰り返さず、標高種別ごとに必要タイルを
   // 先に集約して一括取得する。標高種別の優先順位と各点の詳細度条件は

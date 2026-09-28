@@ -11,6 +11,10 @@ import { fetchServerSiteContexts } from "./siteContext.ts";
 import { sampleServerWorldTerrain } from "./worldTerrain.ts";
 import { prefetchGsiTerrainAroundSubject } from "./gsiElevation.ts";
 import { formatSearchDuration, type SpotSearchPerformanceMetrics } from "../src/search/searchPerformance.ts";
+import { lookupLocalPrecomputedBearingProfile } from "./localDemGateway.ts";
+import { createPrecomputedSpotSearchTerrainSampler } from "./precomputedSpotSearchTerrain.ts";
+import type { BearingProfileBatchResponseV2 } from "../src/types/bearingProfileBatch.ts";
+import { ACTIVE_PREWARM_LANDMARKS } from "./landmarkPrewarmSeed.ts";
 
 
 function diagnosticSummary(metrics?: SpotSearchPerformanceMetrics): string {
@@ -33,7 +37,7 @@ function diagnosticSummary(metrics?: SpotSearchPerformanceMetrics): string {
   ].join(" / ");
 }
 
-const sampleServerCandidateTerrain: TerrainSampler = (
+const exactServerTerrainSampler: TerrainSampler = (
   points,
   signal,
   maximumDetail
@@ -43,29 +47,64 @@ const sampleServerCandidateTerrain: TerrainSampler = (
   maximumDetail ? points.map(() => maximumDetail) : undefined
 );
 
-const serverCandidateCalculator: typeof calculateTripodCandidates = (
-  subject,
-  points,
-  lensCenterHeightMeters,
-  date,
-  calculationMode,
-  _unusedTerrainSampler,
-  signal,
-  previewAspectRatio,
-  distanceRange,
-  searchProfile
-) => calculateTripodCandidates(
-  subject,
-  points,
-  lensCenterHeightMeters,
-  date,
-  calculationMode,
-  sampleServerCandidateTerrain,
-  signal,
-  previewAspectRatio,
-  distanceRange,
-  searchProfile
-);
+function serverCandidateCalculatorWithProfile(
+  precomputedProfile: BearingProfileBatchResponseV2 | null,
+  subject: SpotSearchJob["input"]["subject"]
+): typeof calculateTripodCandidates {
+  const terrainSampler = precomputedProfile
+    ? createPrecomputedSpotSearchTerrainSampler(subject, precomputedProfile, exactServerTerrainSampler)
+    : exactServerTerrainSampler;
+  return (
+    subject,
+    points,
+    lensCenterHeightMeters,
+    date,
+    calculationMode,
+    _unusedTerrainSampler,
+    signal,
+    previewAspectRatio,
+    distanceRange,
+    searchProfile
+  ) => calculateTripodCandidates(
+    subject,
+    points,
+    lensCenterHeightMeters,
+    date,
+    calculationMode,
+    terrainSampler,
+    signal,
+    previewAspectRatio,
+    distanceRange,
+    searchProfile
+  );
+}
+
+async function lookupSpotSearchPrecomputedProfile(
+  subject: SpotSearchJob["input"]["subject"],
+  lensCenterHeightMeters: number
+): Promise<BearingProfileBatchResponseV2 | null> {
+  const registered = ACTIVE_PREWARM_LANDMARKS.some((landmark) =>
+    Math.abs(landmark.latitude - subject.latitude) <= 0.0000001 &&
+    Math.abs(landmark.longitude - subject.longitude) <= 0.0000001
+  );
+  if (!registered) return null;
+  const controller = new AbortController();
+  // The origin normally answers in tens of milliseconds. A strict speculative
+  // deadline ensures an offline E-drive can never make live search slower.
+  const timeout = setTimeout(() => controller.abort(), 1_500);
+  try {
+    return await lookupLocalPrecomputedBearingProfile({
+      subjectPoint: subject,
+      cameraSettings: { lensCenterHeightMeters },
+      bearings: Array.from({ length: 360 }, (_, bearing) => bearing),
+      maxDistanceMeters: 10_000,
+    }, controller.signal);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function serializeResults(
   results: Awaited<ReturnType<typeof searchSpotPresets>>
@@ -137,6 +176,18 @@ export async function runSpotSearchJob(
       lensCenterHeightMeters:
         input.cameraSettings?.lensCenterHeightMeters ?? input.lensCenterHeightMeters,
     };
+    const precomputedProfile = await lookupSpotSearchPrecomputedProfile(
+      input.subject,
+      cameraSettings.lensCenterHeightMeters
+    );
+    const serverCandidateCalculator = serverCandidateCalculatorWithProfile(
+      precomputedProfile,
+      input.subject
+    );
+    console.info(`[spot-search-profile:${jobId}]`, {
+      precomputedCoarseTerrain: precomputedProfile !== null,
+      profileBearings: precomputedProfile?.profiles.length ?? 0,
+    });
     const results = await searchSpotPresets({
       criteria: input.criteria,
       subject: input.subject,
@@ -156,17 +207,22 @@ export async function runSpotSearchJob(
       ),
       candidateCalculator: serverCandidateCalculator,
       siteContextFetcher: fetchServerSiteContexts,
-      terrainPrefetcher: async (prefetchSubject, azimuthBand, maximumDistanceMeters, signal) => {
-        await prefetchGsiTerrainAroundSubject(
-          prefetchSubject.latitude,
-          prefetchSubject.longitude,
-          maximumDistanceMeters,
-          24,
-          12,
-          signal,
-          azimuthBand
-        );
-      },
+      // The complete offline profile already covers the coarse azimuth band.
+      // Skip the broad GSI prefetch and let the unchanged 1 m final refinement
+      // request only the exact candidate coordinates it needs.
+      terrainPrefetcher: precomputedProfile
+        ? undefined
+        : async (prefetchSubject, azimuthBand, maximumDistanceMeters, signal) => {
+            await prefetchGsiTerrainAroundSubject(
+              prefetchSubject.latitude,
+              prefetchSubject.longitude,
+              maximumDistanceMeters,
+              24,
+              12,
+              signal,
+              azimuthBand
+            );
+          },
     });
     await progressQueue;
     await updateJob(clientId, jobId, {

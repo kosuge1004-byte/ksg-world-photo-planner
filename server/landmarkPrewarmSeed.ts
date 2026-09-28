@@ -8,7 +8,7 @@
 
 export type PrewarmLandmark = {
   name: string;
-  category: "mountain" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel";
+  category: "mountain" | "natural" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel";
   latitude: number;
   longitude: number;
   /** 建物・塔・大型像等の、接地面から頂上までの確認済み高さ(m)。 */
@@ -92,8 +92,8 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   { name: "霧島山（韓国岳）", category: "mountain", latitude: 31.9341701, longitude: 130.8615319 },
   { name: "宮之浦岳（屋久島）", category: "mountain", latitude: 30.3362505, longitude: 130.5040217 },
   { name: "美ヶ原高原（王ヶ頭）", category: "mountain", latitude: 36.225917, longitude: 138.107444 },
-  { name: "王ヶ鼻ホテル（美ヶ原）", category: "mountain", latitude: 36.225682, longitude: 138.108718 },
-  { name: "美しの塔（美ヶ原）", category: "mountain", latitude: 36.224146, longitude: 138.124295 },
+  { name: "王ヶ頭ホテル（長野県）", category: "building", latitude: 36.225682, longitude: 138.108718 },
+  { name: "美しの塔（長野県）", category: "tower", latitude: 36.224146, longitude: 138.124295, heightMeters: 6 },
   { name: "曽爾高原", category: "mountain", latitude: 34.517839, longitude: 136.160488 },
   { name: "岩木山", category: "mountain", latitude: 40.6559319, longitude: 140.3029642 },
   { name: "恵那山", category: "mountain", latitude: 35.4432801, longitude: 137.5970233 },
@@ -305,7 +305,7 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   // 太陽の塔（大阪）など、100m未満だが著名なタワーも別途検討の余地あり。
 
   // ---- 山上の寺社仏閣・仏像（高さは目安。座標はGoogle Placesで確認済み） ----
-  { name: "岩屋観音（豊橋）", category: "temple", latitude: 34.7311714, longitude: 137.4266627 },
+  { name: "岩屋観世音菩薩像（愛知県）", category: "temple", latitude: 34.7311714, longitude: 137.4266627, heightMeters: 3 },
   { name: "三徳山三佛寺 投入堂", category: "temple", latitude: 35.3965661, longitude: 133.9593861 },
   { name: "牛久大仏", category: "temple", latitude: 35.9826885, longitude: 140.2202548, heightMeters: 120 },
   { name: "仙台大観音", category: "temple", latitude: 38.3006506, longitude: 140.8236853, heightMeters: 100 },
@@ -314,6 +314,10 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   { name: "会津慈母大観音", category: "temple", latitude: 37.5534047, longitude: 139.9538613, heightMeters: 57 },
   { name: "北海道大観音", category: "temple", latitude: 43.5281276, longitude: 142.1980184, heightMeters: 88 },
   { name: "加賀大観音", category: "temple", latitude: 36.3256867, longitude: 136.3487974 },
+  { name: "上陸大師像（愛知県）", category: "temple", latitude: 34.7189964, longitude: 136.969995, heightMeters: 4 },
+  // ---- 自然景観（著名な岩・海食地形） ----
+  { name: "日出の石門（愛知県）", category: "natural", latitude: 34.577464, longitude: 137.0386707 },
+  { name: "夫婦岩（三重県）", category: "natural", latitude: 34.5092605, longitude: 136.78832, heightMeters: 9 },
   // ---- 観覧車（スポット検索の静的カタログと同一の6件） ----
   { name: "コスモクロック21", category: "ferriswheel", latitude: 35.4554, longitude: 139.637 },
   { name: "ダイヤと花の大観覧車", category: "ferriswheel", latitude: 35.64394, longitude: 139.85725 },

@@ -94,6 +94,36 @@ test("bearing batch preserves every coordinate, detail and neutral interpolation
     "the client must retain compatibility with a previously deployed v1 endpoint");
 });
 
+test("a complete precomputed profile bypasses every DEM and geoid calculation", async () => {
+  const distancesMeters = [8, request.maxDistanceMeters];
+  const precomputed = {
+    version: 2,
+    distancesMeters,
+    profiles: request.bearings.map((bearingDegrees) => ({
+      bearingDegrees,
+      ellipsoidalHeightsMeters: [101.25, 102.5],
+      elevationSources: ["DEM1A", "DEM5A"],
+      computedAtIso: "2026-09-28T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: request.bearings.length,
+    pointCount: request.bearings.length * distancesMeters.length,
+  };
+  let precomputedLookups = 0;
+  const result = await computeBearingProfileBatch(request, undefined, {
+    lookupPrecomputed: async (actualRequest) => {
+      precomputedLookups += 1;
+      assert.deepEqual(actualRequest, request);
+      return precomputed;
+    },
+    lookupElevations: async () => { throw new Error("DEM must not run"); },
+    lookupGeoidHeights: async () => { throw new Error("geoid must not run"); },
+    nowIso: () => "unreachable",
+  });
+  assert.equal(precomputedLookups, 1);
+  assert.deepEqual(result, precomputed);
+});
+
 test("production batch geoid path uses each original JPGEO2024 coordinate", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {

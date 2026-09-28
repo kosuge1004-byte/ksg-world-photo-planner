@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { createLocalDemRequestHandler } from "./app.ts";
+import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
 import { createReadOnlyDemCache } from "./readOnlyDemCache.ts";
+import {
+  PRECOMPUTED_BEARING_PROFILE_FORMAT,
+  precomputedBearingProfileIdentity,
+} from "../../server/precomputedBearingProfiles.ts";
 
 const TOKEN = "b".repeat(48);
 const ACCESS_ID = "client-id-1234567890";
@@ -50,12 +57,24 @@ function point(index = 0) {
   };
 }
 
+function autoPoint(index = 0) {
+  return {
+    index,
+    latitude: 35.6812,
+    longitude: 139.7671,
+    maximumDetail: "1m",
+    interpolationMode: "neutral",
+  };
+}
+
 function payload(overrides = {}) {
   return { source: "DEM10B", points: [point()], ...overrides };
 }
 
-async function start(lookup, overrides = {}) {
-  const handler = createLocalDemRequestHandler(config(overrides), lookup);
+async function start(lookup, overrides = {}, lookupAuto, lookupPrecomputedProfile) {
+  const handler = createLocalDemRequestHandler(
+    config(overrides), lookup, lookupAuto, lookupPrecomputedProfile
+  );
   const server = createServer((request, response) => void handler(request, response));
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -64,6 +83,18 @@ async function start(lookup, overrides = {}) {
   openServers.add(server);
   const address = server.address();
   return `http://127.0.0.1:${address.port}`;
+}
+
+function postProfile(base, value, options = {}) {
+  return fetch(`${base}/v1/bearing-profile/precomputed`, {
+    method: "POST",
+    headers: {
+      "x-astrosight-origin-token": TOKEN,
+      "content-type": "application/json",
+      ...options.headers,
+    },
+    body: JSON.stringify(value),
+  });
 }
 
 function post(base, value, options = {}) {
@@ -97,6 +128,61 @@ test("authenticated batch returns aligned results and null for missing data", as
     ],
     resolvedCount: 1,
   });
+});
+
+test("automatic batch returns final source decisions including authoritative NoData", async () => {
+  const base = await start(
+    async () => new Map(),
+    {},
+    async (points) => points.map((entry) => entry.index === 4
+      ? { heightMeters: 12.34, source: "DEM5A" }
+      : { heightMeters: null, source: null })
+  );
+  const response = await post(base, {
+    mode: "auto",
+    points: [autoPoint(4), autoPoint(9)],
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    mode: "auto",
+    complete: true,
+    results: [
+      { index: 4, heightMeters: 12.34, source: "DEM5A" },
+      { index: 9, heightMeters: null, source: null },
+    ],
+  });
+});
+
+test("precomputed profile route is authenticated and returns one complete compact response", async () => {
+  const profileRequest = {
+    subjectPoint: { latitude: 35.3606255, longitude: 138.7273634, height: 0 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: [0, 1],
+    maxDistanceMeters: 10_000,
+  };
+  const responseBody = {
+    version: 2,
+    distancesMeters: [8, 10_000],
+    profiles: profileRequest.bearings.map((bearingDegrees) => ({
+      bearingDegrees,
+      ellipsoidalHeightsMeters: [1, 2],
+      elevationSources: ["DEM1A", "DEM10B"],
+      computedAtIso: "2026-09-28T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: 2,
+    pointCount: 4,
+  };
+  const base = await start(async () => new Map(), {}, undefined, async (actual) => {
+    assert.deepEqual(actual, profileRequest);
+    return responseBody;
+  });
+  assert.equal((await postProfile(base, profileRequest, {
+    headers: { "x-astrosight-origin-token": "wrong" },
+  })).status, 401);
+  const response = await postProfile(base, profileRequest);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), responseBody);
 });
 
 test("the independent origin token is enforced", async () => {
@@ -152,6 +238,8 @@ test("fixed route, POST, content type, JSON and unknown fields are strict", asyn
   assert.equal((await post(base, { ...payload(), path: "E:\\private" })).status, 400);
   assert.equal((await post(base, payload({ points: [{ ...point(), file: "../secret" }] }))).status, 400);
   assert.equal((await post(base, payload({ source: "DEM10A" }))).status, 400);
+  assert.equal((await post(base, { mode: "auto", source: "DEM10B", points: [autoPoint()] })).status, 400);
+  assert.equal((await post(base, { mode: "auto", points: [{ ...autoPoint(), path: "E:\\private" }] })).status, 400);
 });
 
 test("body, point count, indexes and Japan coverage are bounded", async () => {
@@ -229,4 +317,71 @@ test("read-only cache accepts only fixed R2 keys and blocks traversal", async ()
     cache.put("anything", new ArrayBuffer(0)),
     /read-only/
   );
+});
+
+test("read-only precomputed store verifies manifest, checksum and selects requested bearings", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "astrosight-profile-store-"));
+  temporaryDirectories.add(root);
+  const profileRoot = path.join(root, "precomputed-bearing-profile-v1");
+  await mkdir(profileRoot, { recursive: true });
+  const subject = { name: "test", latitude: 35.3606255, longitude: 138.7273634 };
+  const maxDistanceMeters = 10_000;
+  const identity = precomputedBearingProfileIdentity({ ...subject, maxDistanceMeters });
+  const file = `${createHash("sha256").update(identity).digest("hex")}.json.gz`;
+  const response = {
+    version: 2,
+    distancesMeters: [8, maxDistanceMeters],
+    profiles: [0, 1, 2].map((bearingDegrees) => ({
+      bearingDegrees,
+      ellipsoidalHeightsMeters: [10 + bearingDegrees, 20 + bearingDegrees],
+      elevationSources: ["DEM1A", "DEM5A"],
+      computedAtIso: "2026-09-28T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: 3,
+    pointCount: 6,
+  };
+  const compressed = gzipSync(Buffer.from(JSON.stringify({
+    schemaVersion: 1,
+    format: PRECOMPUTED_BEARING_PROFILE_FORMAT,
+    subject,
+    maxDistanceMeters,
+    generatedAt: "2026-09-28T00:00:00.000Z",
+    response,
+  })));
+  await writeFile(path.join(profileRoot, file), compressed);
+  await writeFile(path.join(profileRoot, "manifest.json"), JSON.stringify({
+    schemaVersion: 1,
+    format: PRECOMPUTED_BEARING_PROFILE_FORMAT,
+    generatedAt: "2026-09-28T00:00:00.000Z",
+    entries: {
+      [identity]: {
+        ...subject,
+        maxDistanceMeters,
+        file,
+        bytes: compressed.length,
+        sha256: createHash("sha256").update(compressed).digest("hex"),
+        profileCount: 3,
+        pointCount: 6,
+      },
+    },
+  }));
+
+  const store = await createReadOnlyBearingProfileStore(root);
+  assert.ok(store);
+  assert.equal(store.entryCount, 1);
+  const selected = await store.lookup({
+    subjectPoint: { latitude: subject.latitude, longitude: subject.longitude, height: 999 },
+    cameraSettings: { lensCenterHeightMeters: 99 },
+    bearings: [2, 0],
+    maxDistanceMeters,
+  });
+  assert.deepEqual(selected.profiles.map((profile) => profile.bearingDegrees), [2, 0]);
+  assert.equal(selected.pointCount, 4);
+  assert.equal(await store.lookup({
+    subjectPoint: { latitude: subject.latitude + 0.0001, longitude: subject.longitude, height: 0 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: [0],
+    maxDistanceMeters,
+  }), null);
 });

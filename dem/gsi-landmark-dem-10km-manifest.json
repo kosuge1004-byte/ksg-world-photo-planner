@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-26T11:08:49.041Z",
+  "capturedAt": "2026-09-28T16:16:50.379Z",
   "source": "https://service.gsi.go.jp/kiban/app/api/dem/latest",
   "landmarkSource": "src/data/japanLandmarks.ts",
-  "landmarkCount": 284,
+  "landmarkCount": 287,
   "radiusMeters": 10000,
   "meshCodeLevel": "JIS X 0410 second mesh (about 10 km)",
-  "meshCount": 1283,
+  "meshCount": 1299,
   "meshCodes": [
     "392714",
     "392715",
@@ -370,10 +370,20 @@
     "513662",
     "513664",
     "513665",
+    "513666",
+    "513667",
     "513670",
     "513671",
     "513673",
     "513674",
+    "513675",
+    "513676",
+    "513677",
+    "513750",
+    "513760",
+    "513761",
+    "513770",
+    "513771",
     "513772",
     "513773",
     "513774",
@@ -464,10 +474,14 @@
     "523601",
     "523603",
     "523604",
+    "523606",
+    "523607",
     "523610",
     "523611",
     "523613",
     "523614",
+    "523616",
+    "523617",
     "523620",
     "523621",
     "523634",
@@ -493,12 +507,14 @@
     "523675",
     "523676",
     "523677",
+    "523700",
     "523702",
     "523703",
     "523704",
     "523705",
     "523706",
     "523707",
+    "523710",
     "523712",
     "523713",
     "523714",
@@ -2459,13 +2475,17 @@
       "田丸城跡"
     ],
     "513655": [
-      "田丸城跡"
+      "田丸城跡",
+      "夫婦岩（三重県）"
     ],
     "513656": [
-      "志摩スペイン村"
+      "志摩スペイン村",
+      "夫婦岩（三重県）"
     ],
     "513657": [
-      "志摩スペイン村"
+      "志摩スペイン村",
+      "日出の石門（愛知県）",
+      "夫婦岩（三重県）"
     ],
     "513660": [
       "曽爾高原"
@@ -2480,7 +2500,15 @@
       "田丸城跡"
     ],
     "513665": [
-      "田丸城跡"
+      "田丸城跡",
+      "夫婦岩（三重県）"
+    ],
+    "513666": [
+      "夫婦岩（三重県）"
+    ],
+    "513667": [
+      "日出の石門（愛知県）",
+      "夫婦岩（三重県）"
     ],
     "513670": [
       "曽爾高原"
@@ -2494,14 +2522,40 @@
     "513674": [
       "津城跡"
     ],
+    "513675": [
+      "夫婦岩（三重県）"
+    ],
+    "513676": [
+      "夫婦岩（三重県）"
+    ],
+    "513677": [
+      "上陸大師像（愛知県）",
+      "日出の石門（愛知県）"
+    ],
+    "513750": [
+      "日出の石門（愛知県）"
+    ],
+    "513760": [
+      "日出の石門（愛知県）"
+    ],
+    "513761": [
+      "日出の石門（愛知県）"
+    ],
+    "513770": [
+      "上陸大師像（愛知県）",
+      "日出の石門（愛知県）"
+    ],
+    "513771": [
+      "日出の石門（愛知県）"
+    ],
     "513772": [
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "513773": [
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "513774": [
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "513775": [
       "浜松城",
@@ -2807,6 +2861,12 @@
     "523604": [
       "津城跡"
     ],
+    "523606": [
+      "上陸大師像（愛知県）"
+    ],
+    "523607": [
+      "上陸大師像（愛知県）"
+    ],
     "523610": [
       "伊賀上野城"
     ],
@@ -2818,6 +2878,12 @@
     ],
     "523614": [
       "津城跡"
+    ],
+    "523616": [
+      "上陸大師像（愛知県）"
+    ],
+    "523617": [
+      "上陸大師像（愛知県）"
     ],
     "523620": [
       "伊賀上野城"
@@ -2975,17 +3041,21 @@
       "ツインアーチ138（138タワーパーク）",
       "Sky-Boat"
     ],
+    "523700": [
+      "上陸大師像（愛知県）",
+      "日出の石門（愛知県）"
+    ],
     "523702": [
       "吉田城",
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "523703": [
       "吉田城",
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "523704": [
       "浜松城",
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "523705": [
       "浜松城",
@@ -2999,17 +3069,20 @@
       "掛川城",
       "高天神城跡"
     ],
+    "523710": [
+      "上陸大師像（愛知県）"
+    ],
     "523712": [
       "吉田城",
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "523713": [
       "吉田城",
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "523714": [
       "吉田城",
-      "岩屋観音（豊橋）"
+      "岩屋観世音菩薩像（愛知県）"
     ],
     "523715": [
       "浜松城",
@@ -4473,7 +4546,7 @@
     ],
     "543727": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
       "松本城"
     ],
     "543733": [
@@ -4610,14 +4683,14 @@
     ],
     "543810": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
-      "美しの塔（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
+      "美しの塔（長野県）",
       "松本城"
     ],
     "543811": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
-      "美しの塔（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
+      "美しの塔（長野県）",
       "蓼科山"
     ],
     "543812": [
@@ -4634,14 +4707,14 @@
     ],
     "543820": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
-      "美しの塔（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
+      "美しの塔（長野県）",
       "松本城"
     ],
     "543821": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
-      "美しの塔（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
+      "美しの塔（長野県）",
       "蓼科山"
     ],
     "543822": [
@@ -4649,14 +4722,14 @@
     ],
     "543830": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
-      "美しの塔（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
+      "美しの塔（長野県）",
       "松本城"
     ],
     "543831": [
       "美ヶ原高原（王ヶ頭）",
-      "王ヶ鼻ホテル（美ヶ原）",
-      "美しの塔（美ヶ原）",
+      "王ヶ頭ホテル（長野県）",
+      "美しの塔（長野県）",
       "上田城"
     ],
     "543832": [
@@ -6060,39 +6133,39 @@
     ]
   },
   "summary": {
-    "files": 4405,
-    "estimatedBytes": 144344264704,
-    "estimatedGiB": 134.431,
+    "files": 4448,
+    "estimatedBytes": 144411169792,
+    "estimatedGiB": 134.493,
     "byType": [
       {
         "type": "DEM10B",
-        "files": 1264,
-        "estimatedBytes": 1928911872,
-        "estimatedGiB": 1.796
+        "files": 1277,
+        "estimatedBytes": 1933159424,
+        "estimatedGiB": 1.8
       },
       {
         "type": "DEM1A",
-        "files": 1171,
-        "estimatedBytes": 133086152704,
-        "estimatedGiB": 123.946
+        "files": 1178,
+        "estimatedBytes": 133126509568,
+        "estimatedGiB": 123.984
       },
       {
         "type": "DEM5A",
-        "files": 1256,
-        "estimatedBytes": 7893203968,
-        "estimatedGiB": 7.351
+        "files": 1269,
+        "estimatedBytes": 7914129408,
+        "estimatedGiB": 7.371
       },
       {
         "type": "DEM5B",
-        "files": 542,
-        "estimatedBytes": 1175946240,
+        "files": 550,
+        "estimatedBytes": 1176259584,
         "estimatedGiB": 1.095
       },
       {
         "type": "DEM5C",
-        "files": 105,
-        "estimatedBytes": 206433280,
-        "estimatedGiB": 0.192
+        "files": 107,
+        "estimatedBytes": 207495168,
+        "estimatedGiB": 0.193
       },
       {
         "type": "DEM10A",
@@ -22441,7 +22514,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538445",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22454,7 +22528,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685625",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22467,7 +22542,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686661",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22480,7 +22556,8 @@
       "updateDate": "2022/01/24",
       "downloadPath": "/kiban/app/api/download/file/729658",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22493,7 +22570,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538446",
       "landmarks": [
-        "志摩スペイン村"
+        "志摩スペイン村",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22506,7 +22584,8 @@
       "updateDate": "2025/06/20",
       "downloadPath": "/kiban/app/api/download/file/617562",
       "landmarks": [
-        "志摩スペイン村"
+        "志摩スペイン村",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22519,7 +22598,8 @@
       "updateDate": "2025/06/05",
       "downloadPath": "/kiban/app/api/download/file/615927",
       "landmarks": [
-        "志摩スペイン村"
+        "志摩スペイン村",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22532,7 +22612,9 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538447",
       "landmarks": [
-        "志摩スペイン村"
+        "志摩スペイン村",
+        "日出の石門（愛知県）",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22545,7 +22627,9 @@
       "updateDate": "2025/06/20",
       "downloadPath": "/kiban/app/api/download/file/617563",
       "landmarks": [
-        "志摩スペイン村"
+        "志摩スペイン村",
+        "日出の石門（愛知県）",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22558,7 +22642,9 @@
       "updateDate": "2025/06/05",
       "downloadPath": "/kiban/app/api/download/file/615928",
       "landmarks": [
-        "志摩スペイン村"
+        "志摩スペイン村",
+        "日出の石門（愛知県）",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22714,7 +22800,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538453",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22727,7 +22814,8 @@
       "updateDate": "2025/06/20",
       "downloadPath": "/kiban/app/api/download/file/617569",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22740,7 +22828,89 @@
       "updateDate": "2025/06/05",
       "downloadPath": "/kiban/app/api/download/file/615929",
       "landmarks": [
-        "田丸城跡"
+        "田丸城跡",
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 538454,
+      "typeCode": "DEM10B",
+      "meshCode": "513666",
+      "fileName": "FG-GML-513666-DEM10B-20161001.zip",
+      "sizeKiB": 183,
+      "estimatedBytes": 187392,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538454",
+      "landmarks": [
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 617570,
+      "typeCode": "DEM5A",
+      "meshCode": "513666",
+      "fileName": "FG-GML-513666-DEM5A-20250620.zip",
+      "sizeKiB": 711,
+      "estimatedBytes": 728064,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617570",
+      "landmarks": [
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 615930,
+      "typeCode": "DEM5C",
+      "meshCode": "513666",
+      "fileName": "FG-GML-513666-DEM5C-20250605.zip",
+      "sizeKiB": 531,
+      "estimatedBytes": 543744,
+      "updateDate": "2025/06/05",
+      "downloadPath": "/kiban/app/api/download/file/615930",
+      "landmarks": [
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 538455,
+      "typeCode": "DEM10B",
+      "meshCode": "513667",
+      "fileName": "FG-GML-513667-DEM10B-20161001.zip",
+      "sizeKiB": 151,
+      "estimatedBytes": 154624,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538455",
+      "landmarks": [
+        "日出の石門（愛知県）",
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 617571,
+      "typeCode": "DEM5A",
+      "meshCode": "513667",
+      "fileName": "FG-GML-513667-DEM5A-20250620.zip",
+      "sizeKiB": 507,
+      "estimatedBytes": 519168,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617571",
+      "landmarks": [
+        "日出の石門（愛知県）",
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 615931,
+      "typeCode": "DEM5C",
+      "meshCode": "513667",
+      "fileName": "FG-GML-513667-DEM5C-20250605.zip",
+      "sizeKiB": 506,
+      "estimatedBytes": 518144,
+      "updateDate": "2025/06/05",
+      "downloadPath": "/kiban/app/api/download/file/615931",
+      "landmarks": [
+        "日出の石門（愛知県）",
+        "夫婦岩（三重県）"
       ]
     },
     {
@@ -22913,6 +23083,235 @@
       ]
     },
     {
+      "id": 538461,
+      "typeCode": "DEM10B",
+      "meshCode": "513675",
+      "fileName": "FG-GML-513675-DEM10B-20161001.zip",
+      "sizeKiB": 52,
+      "estimatedBytes": 53248,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538461",
+      "landmarks": [
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 617577,
+      "typeCode": "DEM5A",
+      "meshCode": "513675",
+      "fileName": "FG-GML-513675-DEM5A-20250620.zip",
+      "sizeKiB": 113,
+      "estimatedBytes": 115712,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617577",
+      "landmarks": [
+        "夫婦岩（三重県）"
+      ]
+    },
+    {
+      "id": 538462,
+      "typeCode": "DEM10B",
+      "meshCode": "513677",
+      "fileName": "FG-GML-513677-DEM10B-20161001.zip",
+      "sizeKiB": 42,
+      "estimatedBytes": 43008,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538462",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 612480,
+      "typeCode": "DEM1A",
+      "meshCode": "513677",
+      "fileName": "FG-GML-513677-DEM1A-20250606.zip",
+      "sizeKiB": 38,
+      "estimatedBytes": 38912,
+      "updateDate": "2025/06/06",
+      "downloadPath": "/kiban/app/api/download/file/612480",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 617578,
+      "typeCode": "DEM5A",
+      "meshCode": "513677",
+      "fileName": "FG-GML-513677-DEM5A-20250620.zip",
+      "sizeKiB": 2,
+      "estimatedBytes": 2048,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617578",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 729668,
+      "typeCode": "DEM5B",
+      "meshCode": "513677",
+      "fileName": "FG-GML-513677-DEM5B-20161001.zip",
+      "sizeKiB": 2,
+      "estimatedBytes": 2048,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/729668",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 538463,
+      "typeCode": "DEM10B",
+      "meshCode": "513760",
+      "fileName": "FG-GML-513760-DEM10B-20161001.zip",
+      "sizeKiB": 64,
+      "estimatedBytes": 65536,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538463",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 617579,
+      "typeCode": "DEM5A",
+      "meshCode": "513760",
+      "fileName": "FG-GML-513760-DEM5A-20250620.zip",
+      "sizeKiB": 108,
+      "estimatedBytes": 110592,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617579",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 615076,
+      "typeCode": "DEM5B",
+      "meshCode": "513760",
+      "fileName": "FG-GML-513760-DEM5B-20250609.zip",
+      "sizeKiB": 2,
+      "estimatedBytes": 2048,
+      "updateDate": "2025/06/09",
+      "downloadPath": "/kiban/app/api/download/file/615076",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 538464,
+      "typeCode": "DEM10B",
+      "meshCode": "513770",
+      "fileName": "FG-GML-513770-DEM10B-20161001.zip",
+      "sizeKiB": 482,
+      "estimatedBytes": 493568,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538464",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 612481,
+      "typeCode": "DEM1A",
+      "meshCode": "513770",
+      "fileName": "FG-GML-513770-DEM1A-20250606.zip",
+      "sizeKiB": 798,
+      "estimatedBytes": 817152,
+      "updateDate": "2025/06/06",
+      "downloadPath": "/kiban/app/api/download/file/612481",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 617580,
+      "typeCode": "DEM5A",
+      "meshCode": "513770",
+      "fileName": "FG-GML-513770-DEM5A-20250620.zip",
+      "sizeKiB": 3257,
+      "estimatedBytes": 3335168,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617580",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 729672,
+      "typeCode": "DEM5B",
+      "meshCode": "513770",
+      "fileName": "FG-GML-513770-DEM5B-20190701.zip",
+      "sizeKiB": 27,
+      "estimatedBytes": 27648,
+      "updateDate": "2019/07/01",
+      "downloadPath": "/kiban/app/api/download/file/729672",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 538465,
+      "typeCode": "DEM10B",
+      "meshCode": "513771",
+      "fileName": "FG-GML-513771-DEM10B-20161001.zip",
+      "sizeKiB": 1014,
+      "estimatedBytes": 1038336,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538465",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 717750,
+      "typeCode": "DEM1A",
+      "meshCode": "513771",
+      "fileName": "FG-GML-513771-DEM1A-20260616.zip",
+      "sizeKiB": 1388,
+      "estimatedBytes": 1421312,
+      "updateDate": "2026/06/16",
+      "downloadPath": "/kiban/app/api/download/file/717750",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 720008,
+      "typeCode": "DEM5A",
+      "meshCode": "513771",
+      "fileName": "FG-GML-513771-DEM5A-20260616.zip",
+      "sizeKiB": 5285,
+      "estimatedBytes": 5411840,
+      "updateDate": "2026/06/16",
+      "downloadPath": "/kiban/app/api/download/file/720008",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 615077,
+      "typeCode": "DEM5B",
+      "meshCode": "513771",
+      "fileName": "FG-GML-513771-DEM5B-20250609.zip",
+      "sizeKiB": 2,
+      "estimatedBytes": 2048,
+      "updateDate": "2025/06/09",
+      "downloadPath": "/kiban/app/api/download/file/615077",
+      "landmarks": [
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
       "id": 538466,
       "typeCode": "DEM10B",
       "meshCode": "513772",
@@ -22922,7 +23321,7 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538466",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -22935,7 +23334,7 @@
       "updateDate": "2026/06/16",
       "downloadPath": "/kiban/app/api/download/file/717751",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -22948,7 +23347,7 @@
       "updateDate": "2026/06/16",
       "downloadPath": "/kiban/app/api/download/file/720009",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -22961,7 +23360,7 @@
       "updateDate": "2019/07/01",
       "downloadPath": "/kiban/app/api/download/file/729676",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -22974,7 +23373,7 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538467",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -22987,7 +23386,7 @@
       "updateDate": "2026/06/16",
       "downloadPath": "/kiban/app/api/download/file/717752",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -23000,7 +23399,7 @@
       "updateDate": "2026/06/16",
       "downloadPath": "/kiban/app/api/download/file/720010",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -23013,7 +23412,7 @@
       "updateDate": "2009/09/01",
       "downloadPath": "/kiban/app/api/download/file/729677",
       "landmarks": [
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -27173,6 +27572,84 @@
       ]
     },
     {
+      "id": 538750,
+      "typeCode": "DEM10B",
+      "meshCode": "523606",
+      "fileName": "FG-GML-523606-DEM10B-20161001.zip",
+      "sizeKiB": 79,
+      "estimatedBytes": 80896,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538750",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 617861,
+      "typeCode": "DEM5A",
+      "meshCode": "523606",
+      "fileName": "FG-GML-523606-DEM5A-20250620.zip",
+      "sizeKiB": 196,
+      "estimatedBytes": 200704,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617861",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 538751,
+      "typeCode": "DEM10B",
+      "meshCode": "523607",
+      "fileName": "FG-GML-523607-DEM10B-20161001.zip",
+      "sizeKiB": 582,
+      "estimatedBytes": 595968,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538751",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 612727,
+      "typeCode": "DEM1A",
+      "meshCode": "523607",
+      "fileName": "FG-GML-523607-DEM1A-20250613.zip",
+      "sizeKiB": 649,
+      "estimatedBytes": 664576,
+      "updateDate": "2025/06/13",
+      "downloadPath": "/kiban/app/api/download/file/612727",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 617862,
+      "typeCode": "DEM5A",
+      "meshCode": "523607",
+      "fileName": "FG-GML-523607-DEM5A-20250620.zip",
+      "sizeKiB": 2685,
+      "estimatedBytes": 2749440,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617862",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 615127,
+      "typeCode": "DEM5B",
+      "meshCode": "523607",
+      "fileName": "FG-GML-523607-DEM5B-20250609.zip",
+      "sizeKiB": 2,
+      "estimatedBytes": 2048,
+      "updateDate": "2025/06/09",
+      "downloadPath": "/kiban/app/api/download/file/615127",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
       "id": 538752,
       "typeCode": "DEM10B",
       "meshCode": "523610",
@@ -27352,6 +27829,84 @@
       "downloadPath": "/kiban/app/api/download/file/617867",
       "landmarks": [
         "津城跡"
+      ]
+    },
+    {
+      "id": 538757,
+      "typeCode": "DEM10B",
+      "meshCode": "523616",
+      "fileName": "FG-GML-523616-DEM10B-20161001.zip",
+      "sizeKiB": 292,
+      "estimatedBytes": 299008,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538757",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 617868,
+      "typeCode": "DEM5A",
+      "meshCode": "523616",
+      "fileName": "FG-GML-523616-DEM5A-20250620.zip",
+      "sizeKiB": 1231,
+      "estimatedBytes": 1260544,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617868",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 538758,
+      "typeCode": "DEM10B",
+      "meshCode": "523617",
+      "fileName": "FG-GML-523617-DEM10B-20161001.zip",
+      "sizeKiB": 631,
+      "estimatedBytes": 646144,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538758",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 612732,
+      "typeCode": "DEM1A",
+      "meshCode": "523617",
+      "fileName": "FG-GML-523617-DEM1A-20250613.zip",
+      "sizeKiB": 2094,
+      "estimatedBytes": 2144256,
+      "updateDate": "2025/06/13",
+      "downloadPath": "/kiban/app/api/download/file/612732",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 617869,
+      "typeCode": "DEM5A",
+      "meshCode": "523617",
+      "fileName": "FG-GML-523617-DEM5A-20250620.zip",
+      "sizeKiB": 3133,
+      "estimatedBytes": 3208192,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617869",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 615128,
+      "typeCode": "DEM5B",
+      "meshCode": "523617",
+      "fileName": "FG-GML-523617-DEM5B-20250609.zip",
+      "sizeKiB": 2,
+      "estimatedBytes": 2048,
+      "updateDate": "2025/06/09",
+      "downloadPath": "/kiban/app/api/download/file/615128",
+      "landmarks": [
+        "上陸大師像（愛知県）"
       ]
     },
     {
@@ -28756,6 +29311,62 @@
       ]
     },
     {
+      "id": 538807,
+      "typeCode": "DEM10B",
+      "meshCode": "523700",
+      "fileName": "FG-GML-523700-DEM10B-20161001.zip",
+      "sizeKiB": 101,
+      "estimatedBytes": 103424,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538807",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 612773,
+      "typeCode": "DEM1A",
+      "meshCode": "523700",
+      "fileName": "FG-GML-523700-DEM1A-20250613.zip",
+      "sizeKiB": 6716,
+      "estimatedBytes": 6877184,
+      "updateDate": "2025/06/13",
+      "downloadPath": "/kiban/app/api/download/file/612773",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 617918,
+      "typeCode": "DEM5A",
+      "meshCode": "523700",
+      "fileName": "FG-GML-523700-DEM5A-20250620.zip",
+      "sizeKiB": 232,
+      "estimatedBytes": 237568,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617918",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
+      "id": 729882,
+      "typeCode": "DEM5B",
+      "meshCode": "523700",
+      "fileName": "FG-GML-523700-DEM5B-20161001.zip",
+      "sizeKiB": 265,
+      "estimatedBytes": 271360,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/729882",
+      "landmarks": [
+        "上陸大師像（愛知県）",
+        "日出の石門（愛知県）"
+      ]
+    },
+    {
       "id": 538809,
       "typeCode": "DEM10B",
       "meshCode": "523702",
@@ -28766,7 +29377,7 @@
       "downloadPath": "/kiban/app/api/download/file/538809",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28780,7 +29391,7 @@
       "downloadPath": "/kiban/app/api/download/file/717775",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28794,7 +29405,7 @@
       "downloadPath": "/kiban/app/api/download/file/720033",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28808,7 +29419,7 @@
       "downloadPath": "/kiban/app/api/download/file/615135",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28822,7 +29433,7 @@
       "downloadPath": "/kiban/app/api/download/file/538810",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28836,7 +29447,7 @@
       "downloadPath": "/kiban/app/api/download/file/717776",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28850,7 +29461,7 @@
       "downloadPath": "/kiban/app/api/download/file/720034",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28864,7 +29475,7 @@
       "downloadPath": "/kiban/app/api/download/file/729884",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28878,7 +29489,7 @@
       "downloadPath": "/kiban/app/api/download/file/538811",
       "landmarks": [
         "浜松城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28892,7 +29503,7 @@
       "downloadPath": "/kiban/app/api/download/file/612777",
       "landmarks": [
         "浜松城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28906,7 +29517,7 @@
       "downloadPath": "/kiban/app/api/download/file/617922",
       "landmarks": [
         "浜松城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -28920,7 +29531,7 @@
       "downloadPath": "/kiban/app/api/download/file/615136",
       "landmarks": [
         "浜松城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29106,6 +29717,58 @@
       ]
     },
     {
+      "id": 538815,
+      "typeCode": "DEM10B",
+      "meshCode": "523710",
+      "fileName": "FG-GML-523710-DEM10B-20161001.zip",
+      "sizeKiB": 475,
+      "estimatedBytes": 486400,
+      "updateDate": "2016/10/01",
+      "downloadPath": "/kiban/app/api/download/file/538815",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 612781,
+      "typeCode": "DEM1A",
+      "meshCode": "523710",
+      "fileName": "FG-GML-523710-DEM1A-20250613.zip",
+      "sizeKiB": 27728,
+      "estimatedBytes": 28393472,
+      "updateDate": "2025/06/13",
+      "downloadPath": "/kiban/app/api/download/file/612781",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 617926,
+      "typeCode": "DEM5A",
+      "meshCode": "523710",
+      "fileName": "FG-GML-523710-DEM5A-20250620.zip",
+      "sizeKiB": 2975,
+      "estimatedBytes": 3046400,
+      "updateDate": "2025/06/20",
+      "downloadPath": "/kiban/app/api/download/file/617926",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
+      "id": 615137,
+      "typeCode": "DEM5B",
+      "meshCode": "523710",
+      "fileName": "FG-GML-523710-DEM5B-20250609.zip",
+      "sizeKiB": 4,
+      "estimatedBytes": 4096,
+      "updateDate": "2025/06/09",
+      "downloadPath": "/kiban/app/api/download/file/615137",
+      "landmarks": [
+        "上陸大師像（愛知県）"
+      ]
+    },
+    {
       "id": 538817,
       "typeCode": "DEM10B",
       "meshCode": "523712",
@@ -29116,7 +29779,7 @@
       "downloadPath": "/kiban/app/api/download/file/538817",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29130,7 +29793,7 @@
       "downloadPath": "/kiban/app/api/download/file/717777",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29144,7 +29807,7 @@
       "downloadPath": "/kiban/app/api/download/file/720035",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29158,7 +29821,7 @@
       "downloadPath": "/kiban/app/api/download/file/729890",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29172,7 +29835,7 @@
       "downloadPath": "/kiban/app/api/download/file/538818",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29186,7 +29849,7 @@
       "downloadPath": "/kiban/app/api/download/file/717778",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29200,7 +29863,7 @@
       "downloadPath": "/kiban/app/api/download/file/720036",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29214,7 +29877,7 @@
       "downloadPath": "/kiban/app/api/download/file/729891",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29228,7 +29891,7 @@
       "downloadPath": "/kiban/app/api/download/file/538819",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29242,7 +29905,7 @@
       "downloadPath": "/kiban/app/api/download/file/612784",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29256,7 +29919,7 @@
       "downloadPath": "/kiban/app/api/download/file/617930",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -29270,7 +29933,7 @@
       "downloadPath": "/kiban/app/api/download/file/615138",
       "landmarks": [
         "吉田城",
-        "岩屋観音（豊橋）"
+        "岩屋観世音菩薩像（愛知県）"
       ]
     },
     {
@@ -45617,7 +46280,7 @@
       "downloadPath": "/kiban/app/api/download/file/539479",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
         "松本城"
       ]
     },
@@ -45632,7 +46295,7 @@
       "downloadPath": "/kiban/app/api/download/file/664050",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
         "松本城"
       ]
     },
@@ -45647,7 +46310,7 @@
       "downloadPath": "/kiban/app/api/download/file/662570",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
         "松本城"
       ]
     },
@@ -45662,7 +46325,7 @@
       "downloadPath": "/kiban/app/api/download/file/615271",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
         "松本城"
       ]
     },
@@ -46950,8 +47613,8 @@
       "downloadPath": "/kiban/app/api/download/file/539528",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -46966,8 +47629,8 @@
       "downloadPath": "/kiban/app/api/download/file/685898",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -46982,8 +47645,8 @@
       "downloadPath": "/kiban/app/api/download/file/686934",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -46998,8 +47661,8 @@
       "downloadPath": "/kiban/app/api/download/file/615277",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47014,8 +47677,8 @@
       "downloadPath": "/kiban/app/api/download/file/539529",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47030,8 +47693,8 @@
       "downloadPath": "/kiban/app/api/download/file/718052",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47046,8 +47709,8 @@
       "downloadPath": "/kiban/app/api/download/file/720310",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47062,8 +47725,8 @@
       "downloadPath": "/kiban/app/api/download/file/615278",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47234,8 +47897,8 @@
       "downloadPath": "/kiban/app/api/download/file/539536",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47250,8 +47913,8 @@
       "downloadPath": "/kiban/app/api/download/file/718056",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47266,8 +47929,8 @@
       "downloadPath": "/kiban/app/api/download/file/720314",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47282,8 +47945,8 @@
       "downloadPath": "/kiban/app/api/download/file/615279",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47298,8 +47961,8 @@
       "downloadPath": "/kiban/app/api/download/file/539537",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47314,8 +47977,8 @@
       "downloadPath": "/kiban/app/api/download/file/718057",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47330,8 +47993,8 @@
       "downloadPath": "/kiban/app/api/download/file/720315",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47346,8 +48009,8 @@
       "downloadPath": "/kiban/app/api/download/file/615280",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "蓼科山"
       ]
     },
@@ -47401,8 +48064,8 @@
       "downloadPath": "/kiban/app/api/download/file/539544",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47417,8 +48080,8 @@
       "downloadPath": "/kiban/app/api/download/file/718059",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47433,8 +48096,8 @@
       "downloadPath": "/kiban/app/api/download/file/720317",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47449,8 +48112,8 @@
       "downloadPath": "/kiban/app/api/download/file/615281",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "松本城"
       ]
     },
@@ -47465,8 +48128,8 @@
       "downloadPath": "/kiban/app/api/download/file/539545",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "上田城"
       ]
     },
@@ -47481,8 +48144,8 @@
       "downloadPath": "/kiban/app/api/download/file/718060",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "上田城"
       ]
     },
@@ -47497,8 +48160,8 @@
       "downloadPath": "/kiban/app/api/download/file/720318",
       "landmarks": [
         "美ヶ原高原（王ヶ頭）",
-        "王ヶ鼻ホテル（美ヶ原）",
-        "美しの塔（美ヶ原）",
+        "王ヶ頭ホテル（長野県）",
+        "美しの塔（長野県）",
         "上田城"
       ]
     },

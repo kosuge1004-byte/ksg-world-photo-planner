@@ -2,7 +2,7 @@
 // Search coordinates are static app data, not R2/cache entries.
 // Do not hand-edit duplicated seed rows; regenerate when the prewarm seed changes.
 
-export type JapanLandmarkCategory = "mountain" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel";
+export type JapanLandmarkCategory = "mountain" | "natural" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel";
 
 export type JapanLandmark = {
   name: string;
@@ -90,8 +90,8 @@ export const JAPAN_LANDMARKS: readonly JapanLandmark[] = [
   { name: "霧島山（韓国岳）", category: "mountain", latitude: 31.9341701, longitude: 130.8615319, aliases: ["霧島山", "韓国岳"] },
   { name: "宮之浦岳（屋久島）", category: "mountain", latitude: 30.3362505, longitude: 130.5040217, aliases: ["宮之浦岳", "屋久島"] },
   { name: "美ヶ原高原（王ヶ頭）", category: "mountain", latitude: 36.225917, longitude: 138.107444, aliases: ["美ヶ原高原", "王ヶ頭"] },
-  { name: "王ヶ鼻ホテル（美ヶ原）", category: "mountain", latitude: 36.225682, longitude: 138.108718, aliases: ["王ヶ鼻ホテル", "美ヶ原"] },
-  { name: "美しの塔（美ヶ原）", category: "mountain", latitude: 36.224146, longitude: 138.124295, aliases: ["美しの塔", "美ヶ原"] },
+  { name: "王ヶ頭ホテル（長野県）", category: "building", latitude: 36.225682, longitude: 138.108718, aliases: ["王ヶ頭ホテル", "王ヶ頭ホテル 長野県", "美ヶ原 王ヶ頭ホテル"] },
+  { name: "美しの塔（長野県）", category: "tower", latitude: 36.224146, longitude: 138.124295, aliases: ["美しの塔", "美しの塔 長野県", "美ヶ原 美しの塔"], heightMeters: 6 },
   { name: "曽爾高原", category: "mountain", latitude: 34.517839, longitude: 136.160488 },
   { name: "岩木山", category: "mountain", latitude: 40.6559319, longitude: 140.3029642 },
   { name: "恵那山", category: "mountain", latitude: 35.4432801, longitude: 137.5970233 },
@@ -284,7 +284,7 @@ export const JAPAN_LANDMARKS: readonly JapanLandmark[] = [
   { name: "五稜郭タワー", category: "tower", latitude: 41.79467, longitude: 140.75402, heightMeters: 107 },
   { name: "瀬戸大橋タワー", category: "tower", latitude: 34.352194, longitude: 133.825337, heightMeters: 132 },
   { name: "ツインアーチ138（138タワーパーク）", category: "tower", latitude: 35.3577042, longitude: 136.8090602, aliases: ["ツインアーチ138", "138タワーパーク", "138タワー"], heightMeters: 138 },
-  { name: "岩屋観音（豊橋）", category: "temple", latitude: 34.7311714, longitude: 137.4266627, aliases: ["岩屋観音", "豊橋"] },
+  { name: "岩屋観世音菩薩像（愛知県）", category: "temple", latitude: 34.7311714, longitude: 137.4266627, aliases: ["岩屋観世音菩薩像", "岩屋観世音菩薩像 愛知県", "岩屋観音", "豊橋 岩屋観音"], heightMeters: 3 },
   { name: "三徳山三佛寺 投入堂", category: "temple", latitude: 35.3965661, longitude: 133.9593861 },
   { name: "牛久大仏", category: "temple", latitude: 35.9826885, longitude: 140.2202548, heightMeters: 120 },
   { name: "仙台大観音", category: "temple", latitude: 38.3006506, longitude: 140.8236853, heightMeters: 100 },
@@ -293,6 +293,9 @@ export const JAPAN_LANDMARKS: readonly JapanLandmark[] = [
   { name: "会津慈母大観音", category: "temple", latitude: 37.5534047, longitude: 139.9538613, heightMeters: 57 },
   { name: "北海道大観音", category: "temple", latitude: 43.5281276, longitude: 142.1980184, heightMeters: 88 },
   { name: "加賀大観音", category: "temple", latitude: 36.3256867, longitude: 136.3487974 },
+  { name: "上陸大師像（愛知県）", category: "temple", latitude: 34.7189964, longitude: 136.969995, aliases: ["上陸大師像", "弘法大師上陸像", "聖崎 上陸大師像"], heightMeters: 4 },
+  { name: "日出の石門（愛知県）", category: "natural", latitude: 34.577464, longitude: 137.0386707, aliases: ["日出の石門", "ひいの石門", "岸の石門", "沖の石門"] },
+  { name: "夫婦岩（三重県）", category: "natural", latitude: 34.5092605, longitude: 136.78832, aliases: ["夫婦岩", "二見夫婦岩", "二見浦 夫婦岩"], heightMeters: 9 },
   // Nationwide Ferris-wheel expansion: batch 1, coordinates independently verified from public map/official sources (2026-09-01).
   { name: "コスモクロック21", category: "ferriswheel", latitude: 35.4554, longitude: 139.637, aliases: ["よこはまコスモワールド観覧車", "横浜コスモワールド観覧車", "大観覧車コスモクロック21"] },
   { name: "ダイヤと花の大観覧車", category: "ferriswheel", latitude: 35.64394, longitude: 139.85725, aliases: ["葛西臨海公園観覧車", "葛西観覧車"] },

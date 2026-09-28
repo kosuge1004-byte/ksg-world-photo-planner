@@ -1,19 +1,30 @@
 import { createServer } from "node:http";
 import { configureServerRuntime } from "../../server/cloudflareRuntime.ts";
-import { lookupLocalDemElevationsForSource } from "../../server/gsiLocalDem.ts";
+import { lookupGsiElevations } from "../../server/gsiElevation.ts";
+import {
+  configureLocalDemMemoryBudgetForPrivateOrigin,
+  lookupLocalDemElevationsForSource,
+} from "../../server/gsiLocalDem.ts";
 import { createLocalDemRequestHandler } from "./app.ts";
 import { loadConfig } from "./config.ts";
+import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
 import { createReadOnlyDemCache } from "./readOnlyDemCache.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  configureLocalDemMemoryBudgetForPrivateOrigin(512 * 1024 * 1024);
   const persistentCache = await createReadOnlyDemCache(config.dataRoot);
   await persistentCache.validateReady();
+  const precomputedProfiles = await createReadOnlyBearingProfileStore(config.dataRoot);
   configureServerRuntime({ persistentCache });
 
   const handler = createLocalDemRequestHandler(
     config,
-    lookupLocalDemElevationsForSource
+    lookupLocalDemElevationsForSource,
+    (points, signal) => lookupGsiElevations(points, signal),
+    precomputedProfiles
+      ? (request) => precomputedProfiles.lookup(request)
+      : undefined
   );
   const server = createServer((request, response) => {
     void handler(request, response);
@@ -27,6 +38,7 @@ async function main(): Promise<void> {
       event: "local-dem-listening",
       host: "loopback",
       port: config.port,
+      precomputedProfiles: precomputedProfiles?.entryCount ?? 0,
     }));
   });
 

@@ -161,6 +161,7 @@ import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
 import { inspectOsmSubjectSurface, applyOsmSubjectHeightHint } from "./height/osmSubjectHeightFallback";
 import {
+  MIN_STRUCTURE_CLEARANCE_METERS,
   selectSubjectSurfacePoint,
   SubjectRoofResolutionError,
 } from "./height/subjectSurfaceResolution";
@@ -2895,6 +2896,7 @@ function App() {
 
     const jobId = ++previewJobRef.current;
     let cancelled = false;
+    const previewAbortController = new AbortController();
     const timers: number[] = [];
 
     type CameraSignature = { position: Cartesian3; direction: Cartesian3 };
@@ -2920,7 +2922,8 @@ function App() {
             cameraSettings,
             calculationMode,
             previewViewCorrection,
-            false
+            false,
+            previewAbortController.signal
           );
 
           if (!cancelled && jobId === previewJobRef.current) {
@@ -2928,6 +2931,7 @@ function App() {
           }
           return tilesFullyLoaded;
         } catch (error) {
+          if (isAbortError(error)) return true;
           console.error("プレビュー生成エラー:", error);
           const message = toUserFacingErrorMessage(error, "preview");
           if (!cancelled && jobId === previewJobRef.current) {
@@ -3015,6 +3019,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      previewAbortController.abort();
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [
@@ -3122,6 +3127,27 @@ function App() {
     // 二重発行しない。精度・計算値は変えず、通信失敗点だけを減らす。
     const groundPointPromise = sharedGroundPointPromise ??
       resolveGroundPoint(latitude, longitude, label);
+
+    // 内蔵カタログ等で検証済みの高さがある構造物は、正確なDEM地表へその高さを
+    // 加えれば頂上が一意に決まる。PLATEAU/OSMは同じ高さを再確認するだけで最大
+    // 6秒の外部待ちになるため、この経路では起動すらしない。地表DEMとジオイドは
+    // 従来どおり解決するので、頂上座標の精度と「地上へ置かない」保証は維持する。
+    if (
+      surfaceHint.requireStructureRoof &&
+      Number.isFinite(surfaceHint.knownStructureHeightMeters) &&
+      (surfaceHint.knownStructureHeightMeters as number) >= MIN_STRUCTURE_CLEARANCE_METERS
+    ) {
+      const groundPoint = await groundPointPromise;
+      if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
+      return selectSubjectSurfacePoint({
+        groundPoint,
+        roofPoint: null,
+        osmPoint: null,
+        requireStructureRoof: true,
+        knownStructureHeightMeters: surfaceHint.knownStructureHeightMeters,
+        label,
+      });
+    }
     const roofPointPromise: Promise<GroundPoint | null> = (async () => {
       if (!viewer || viewer.isDestroyed()) return null;
       try {

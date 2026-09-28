@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import {
@@ -37,6 +38,17 @@ function point(height, overrides = {}) {
     ...overrides,
   };
 }
+
+test("verified catalogue height bypasses live PLATEAU and OSM waits", () => {
+  const app = fs.readFileSync(new URL("../../src/App.tsx", import.meta.url), "utf8");
+  const fastPath = app.indexOf("surfaceHint.requireStructureRoof &&");
+  const liveRoofPath = app.indexOf("const roofPointPromise", fastPath);
+  assert.ok(fastPath >= 0 && liveRoofPath > fastPath);
+  const code = app.slice(fastPath, liveRoofPath);
+  assert.match(code, /await groundPointPromise/u);
+  assert.match(code, /knownStructureHeightMeters/u);
+  assert.doesNotMatch(code, /resolvePlateauRoofGroundPoint|inspectOsmSubjectSurface/u);
+});
 
 test("known building never resolves to ground when live roof sources fail", () => {
   const ground = point(40);
@@ -138,6 +150,41 @@ test("castles, temples and ferris wheels are also classified as roof subjects", 
       `${name} metadata must survive the resolution boundary`
     );
   }
+});
+
+test("the three requested Aichi and Nagano spots resolve from the static list as structure tops", async () => {
+  const cases = [
+    ["岩屋観世音菩薩像(愛知県)", "岩屋観世音菩薩像（愛知県）", 3],
+    ["王ヶ頭ホテル(長野県)", "王ヶ頭ホテル（長野県）", undefined],
+    ["美しの塔(長野県)", "美しの塔（長野県）", 6],
+  ];
+  for (const [query, expectedLabel, expectedHeight] of cases) {
+    const location = await resolveSpotLocation(query);
+    assert.equal(location.label, expectedLabel);
+    assert.equal(location.subjectSurfaceTarget, "structure-roof");
+    assert.equal(location.structureHeightMeters, expectedHeight);
+    assert.equal(subjectSurfaceHintForSpotLocation(location).requireStructureRoof, true);
+  }
+});
+
+test("the requested Aichi and Mie coastal landmarks keep verified target heights", async () => {
+  const elevatedCases = [
+    ["上陸大師像(愛知県)", "上陸大師像（愛知県）", 4],
+    ["弘法大師上陸像", "上陸大師像（愛知県）", 4],
+    ["夫婦岩(三重県)", "夫婦岩（三重県）", 9],
+  ];
+  for (const [query, expectedLabel, expectedHeight] of elevatedCases) {
+    const location = await resolveSpotLocation(query);
+    assert.equal(location.label, expectedLabel);
+    assert.equal(location.subjectSurfaceTarget, "structure-roof");
+    assert.equal(location.structureHeightMeters, expectedHeight);
+    assert.equal(subjectSurfaceHintForSpotLocation(location).requireStructureRoof, true);
+  }
+
+  const stoneGate = await resolveSpotLocation("日出の石門(愛知県)");
+  assert.equal(stoneGate.label, "日出の石門（愛知県）");
+  assert.equal(stoneGate.subjectSurfaceTarget, "terrain");
+  assert.equal(stoneGate.structureHeightMeters, undefined);
 });
 
 test("Nominatim structural POIs retain roof requirement and mapped height", async () => {
