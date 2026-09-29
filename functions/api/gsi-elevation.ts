@@ -42,13 +42,25 @@ function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
   });
 }
 
+function requestPurpose(body: unknown): "interactive" | "bulk-download" {
+  if (
+    typeof body === "object" && body !== null && "purpose" in body &&
+    body.purpose === "interactive"
+  ) {
+    return "interactive";
+  }
+  return "bulk-download";
+}
+
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
   }
   return withCloudflareServerRuntime(context, async () => {
     try {
-    const points = requestPoints(await readJsonRequest(context.request, MAX_REQUEST_BYTES));
+    const body = await readJsonRequest(context.request, MAX_REQUEST_BYTES);
+    const points = requestPoints(body);
+    const purpose = requestPurpose(body);
     if (!points) {
       return jsonResponse({ error: "座標の配列がありません" }, 400, "no-store");
     }
@@ -69,7 +81,12 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     // 外側の層を撤去し、常にlookupGsiElevationsを直接呼ぶことで、
     // 無駄な二重書き込みと、無意味なR2予算の消費をなくす。
     const tileCacheCounter = createTileCacheCounter();
-    const samples = await lookupGsiElevations(points, context.request.signal, tileCacheCounter);
+    const samples = await lookupGsiElevations(
+      points,
+      context.request.signal,
+      tileCacheCounter,
+      { useLocalGateway: purpose !== "interactive" }
+    );
     return jsonResponse(
       {
         samples,

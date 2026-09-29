@@ -234,7 +234,9 @@ function localGsiElevationApi(): Plugin {
                 latitude?: unknown;
                 longitude?: unknown;
                 maximumDetail?: unknown;
+                interpolationMode?: unknown;
               }>;
+              purpose?: unknown;
             };
             if (!Array.isArray(body.points)) throw new Error("座標配列がありません");
             const points = body.points.map((point) => {
@@ -248,10 +250,19 @@ function localGsiElevationApi(): Plugin {
                 latitude: Number(point.latitude),
                 longitude: Number(point.longitude),
                 maximumDetail,
+                interpolationMode: point.interpolationMode === "neutral" ? "neutral" as const : "los-safe" as const,
               };
             });
+            const purpose = body.purpose === "interactive" ? "interactive" : "bulk-download";
             response.statusCode = 200;
-            response.end(JSON.stringify({ samples: await lookupGsiElevations(points) }));
+            response.end(JSON.stringify({
+              samples: await lookupGsiElevations(
+                points,
+                undefined,
+                undefined,
+                { useLocalGateway: purpose !== "interactive" }
+              ),
+            }));
           } catch (error) {
             response.statusCode = 422;
             response.end(JSON.stringify({

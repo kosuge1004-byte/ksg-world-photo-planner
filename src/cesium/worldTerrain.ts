@@ -12,7 +12,7 @@ import type {
   TerrainDataSource,
 } from "../types/geospatial";
 import { publishUserNotice } from "../errors/userFeedback";
-import { fetchGsiElevationSamples } from "./gsiElevationClient";
+import { fetchGsiElevationSamples, type GsiElevationRequestPurpose } from "./gsiElevationClient";
 import { prefetchGsiDeviceTilesForSamples, resolveGsiSamplesFromDeviceTiles } from "./gsiDemTileCache";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
@@ -72,8 +72,15 @@ type PendingGsiRequest = {
 // 複合キーには「signal→(mode→requests)」のネストしたMapを使う。
 const pendingGsiRequests = new Map<
   AbortSignal | undefined,
-  Map<"los-safe" | "neutral", PendingGsiRequest[]>
+  Map<string, PendingGsiRequest[]>
 >();
+
+function pendingGsiRequestKey(
+  interpolationMode: "los-safe" | "neutral",
+  purpose: GsiElevationRequestPurpose
+): string {
+  return `${interpolationMode}:${purpose}`;
+}
 
 // 同じ被写体周辺を再検索した際にDEM通信を繰り返さない。
 // 約1m単位（緯度経度5桁）でメモリとIndexedDBへ保存する。
@@ -503,7 +510,8 @@ async function fetchGsiElevations(
   points: Cartographic[],
   maximumDetails?: Array<GsiMaximumDetail | undefined>,
   signal?: AbortSignal,
-  interpolationMode: "los-safe" | "neutral" = "los-safe"
+  interpolationMode: "los-safe" | "neutral" = "los-safe",
+  purpose: GsiElevationRequestPurpose = "bulk-download"
 ): Promise<GsiElevationApiSample[]> {
   if (Date.now() < gsiUnavailableUntil) {
     return points.map(() => ({ heightMeters: null, source: null }));
@@ -515,7 +523,7 @@ async function fetchGsiElevations(
       maximumDetail: maximumDetails?.[index],
       interpolationMode,
     }));
-    const result = await fetchGsiElevationSamples(clientPoints, signal);
+    const result = await fetchGsiElevationSamples(clientPoints, signal, fetch, purpose);
     // 通信失敗と「APIは成功したがDEM値が無い」を混同しない。
     // 2026-09-10修正: 以前は「バッチ全体でfailedPointCountが0」の場合だけ
     // authoritative no-data判定を行っていたため、1024点規模の大きなバッチの
@@ -590,11 +598,16 @@ function exactGsiPointKey(point: Cartographic, interpolationMode: "los-safe" | "
   return `${point.latitude}:${point.longitude}:${interpolationMode}`;
 }
 
-async function flushGsiRequests(signal: AbortSignal | undefined, interpolationMode: "los-safe" | "neutral"): Promise<void> {
+async function flushGsiRequests(
+  signal: AbortSignal | undefined,
+  interpolationMode: "los-safe" | "neutral",
+  purpose: GsiElevationRequestPurpose
+): Promise<void> {
   const bySignal = pendingGsiRequests.get(signal);
-  const requests = bySignal?.get(interpolationMode) ?? [];
+  const groupKey = pendingGsiRequestKey(interpolationMode, purpose);
+  const requests = bySignal?.get(groupKey) ?? [];
   if (bySignal) {
-    bySignal.delete(interpolationMode);
+    bySignal.delete(groupKey);
     if (bySignal.size === 0) pendingGsiRequests.delete(signal);
   }
   if (requests.length === 0) return;
@@ -632,7 +645,8 @@ async function flushGsiRequests(signal: AbortSignal | undefined, interpolationMo
       uniquePoints,
       hasMaximumDetails ? uniqueMaximumDetails : undefined,
       signal,
-      interpolationMode
+      interpolationMode,
+      purpose
     );
 
     requests.forEach((request, requestIndex) => {
@@ -649,7 +663,8 @@ function fetchGsiElevationsBatched(
   points: Cartographic[],
   maximumDetails?: GsiMaximumDetail[],
   signal?: AbortSignal,
-  interpolationMode: "los-safe" | "neutral" = "los-safe"
+  interpolationMode: "los-safe" | "neutral" = "los-safe",
+  purpose: GsiElevationRequestPurpose = "bulk-download"
 ): Promise<GsiElevationApiSample[]> {
   return new Promise((resolve, reject) => {
     let bySignal = pendingGsiRequests.get(signal);
@@ -657,15 +672,17 @@ function fetchGsiElevationsBatched(
       bySignal = new Map();
       pendingGsiRequests.set(signal, bySignal);
     }
-    const requests = bySignal.get(interpolationMode);
+    const groupKey = pendingGsiRequestKey(interpolationMode, purpose);
+    const requests = bySignal.get(groupKey);
     const request = { points, maximumDetails, resolve, reject };
     if (requests) {
       requests.push(request);
       return;
     }
-    bySignal.set(interpolationMode, [request]);
-    // 同一検索フレームの候補をまとめ、座標やDEM詳細度は一切間引かず通信往復だけを減らす。
-    queueMicrotask(() => void flushGsiRequests(signal, interpolationMode));
+    bySignal.set(groupKey, [request]);
+    // 同一検索フレームかつ同じ用途の候補だけをまとめる。interactiveと
+    // bulk-downloadを混ぜるとprivate gateway利用方針が変わるため分離する。
+    queueMicrotask(() => void flushGsiRequests(signal, interpolationMode, purpose));
   });
 }
 
@@ -1221,11 +1238,19 @@ async function sampleTerrainWithGsiPriority(
   if (points.length === 0) return [];
   abortIfRequested(signal);
   const result = points.map((point) => Cartographic.clone(point));
+  // ライブ三脚探索・通常操作はpublic GSI/R2の正確な経路を直接使い、
+  // private E-drive gatewayの最大12秒待ちを挟まない。明示的な高精度
+  // 一括ダウンロード（World Terrain fallback禁止）だけ従来どおりgatewayを使う。
+  // DEMソース優先順位・座標・補間・NoData判定は同じまま、待ち経路だけを分離する。
+  const gsiPurpose: GsiElevationRequestPurpose = options.allowWorldTerrainFallback === false
+    ? "bulk-download"
+    : "interactive";
   const gsiSamples = await fetchGsiElevationsBatched(
     result,
     maximumDetails,
     signal,
-    interpolationMode
+    interpolationMode,
+    gsiPurpose
   );
   const gsiEligibleIndexes = gsiSamples.map((sample, index) =>
     (

@@ -767,6 +767,15 @@ function sourceIsAllowedForPoint(
   return true;
 }
 
+export type GsiElevationLookupOptions = {
+  /**
+   * Private E-drive origin is a performance layer, not a different precision model.
+   * Live interactive searches can bypass it and use the same local-R2/public-GSI
+   * source order directly, avoiding a tunnel timeout before the authoritative path.
+   */
+  useLocalGateway?: boolean;
+};
+
 export async function lookupGsiElevations(
   points: GsiElevationRequestPoint[],
   signal?: AbortSignal,
@@ -775,7 +784,8 @@ export async function lookupGsiElevations(
    * いるかを診断できるよう、呼び出し元が用意したカウンタへ記録する
    * （createTileCacheCounter()で作成）。
    */
-  tileCacheCounter?: TileCacheCounter
+  tileCacheCounter?: TileCacheCounter,
+  options: GsiElevationLookupOptions = {}
 ): Promise<GsiElevationSample[]> {
   if (points.length > 2_048) {
     throw new Error("一度に取得できる標高点は2,048点までです");
@@ -805,6 +815,7 @@ export async function lookupGsiElevations(
   points.forEach((point, index) => {
     if (isJapaneseCoverage(point)) unresolved.add(index);
   });
+  const useLocalGateway = options.useLocalGateway !== false;
 
   // Resolve the complete precision-tier decision at the authenticated E-drive
   // origin before starting any public GSI tile fan-out in this Worker. The
@@ -813,7 +824,7 @@ export async function lookupGsiElevations(
   // interpolation and NoData semantics remain identical. Chunking happens in
   // localDemGateway at 512 points: a 32-bearing/50km Pages invocation stays
   // below the free-plan limit of 50 external subrequests.
-  if (unresolved.size > 0) {
+  if (useLocalGateway && unresolved.size > 0) {
     const gatewayPoints = [...unresolved].map((index) => ({
       index,
       latitude: points[index].latitude,
@@ -883,19 +894,21 @@ export async function lookupGsiElevations(
     // consult the authenticated E-drive origin only after an R2 GML miss and
     // before the public GSI PNG path. An unavailable/malformed origin returns no
     // values, so only those points continue to GSI; it is never treated as 0 m.
-    const gatewayHeights = await lookupLocalDemGatewayForSource(
-      source.label,
-      localRequests
-        .filter((request) => !resolved.has(request.index))
-        .map((request) => ({
-          index: request.index,
-          latitude: request.latitude,
-          longitude: request.longitude,
-          interpolation: request.interpolation,
-          interpolationMode: request.interpolationMode,
-        })),
-      signal
-    );
+    const gatewayHeights = useLocalGateway
+      ? await lookupLocalDemGatewayForSource(
+          source.label,
+          localRequests
+            .filter((request) => !resolved.has(request.index))
+            .map((request) => ({
+              index: request.index,
+              latitude: request.latitude,
+              longitude: request.longitude,
+              interpolation: request.interpolation,
+              interpolationMode: request.interpolationMode,
+            })),
+          signal
+        )
+      : new Map<number, number>();
     for (const [index, heightMeters] of gatewayHeights) {
       resolved.set(index, { heightMeters, source: source.label });
     }

@@ -39,6 +39,8 @@ export type GsiElevationClientResult = {
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+export type GsiElevationRequestPurpose = "interactive" | "bulk-download";
+
 // 1リクエストあたりの点数と同時実行数。標高APIはGSIタイルCDN＋R2キャッシュに
 // 裏付けられた通常のAPIであり、応答が不安定な国土地理院ジオイドCGIとは事情が
 // 異なるため、ここは純粋な通信I/Oの並列度を上げるだけで安全に速くできる
@@ -138,7 +140,8 @@ function diagnosticCount(value: unknown): number {
 async function requestBatch(
   points: GsiElevationClientPoint[],
   signal: AbortSignal | undefined,
-  fetcher: FetchLike
+  fetcher: FetchLike,
+  purpose: GsiElevationRequestPurpose
 ): Promise<BatchFetchResult> {
   if (signal?.aborted) throw abortError();
   const controller = new AbortController();
@@ -155,7 +158,7 @@ async function requestBatch(
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ points }),
+      body: JSON.stringify({ points, purpose }),
       signal: controller.signal,
     });
     const contentType = response.headers.get("content-type") ?? "";
@@ -222,6 +225,7 @@ type ScheduledJob = {
   points: GsiElevationClientPoint[];
   signal: AbortSignal | undefined;
   fetcher: FetchLike;
+  purpose: GsiElevationRequestPurpose;
   resolve: (result: BatchFetchResult) => void;
   reject: (error: unknown) => void;
 };
@@ -268,7 +272,7 @@ function pumpSharedQueue(): void {
     const large = !isSmall(job);
     sharedActiveRequests += 1;
     if (large) sharedActiveLargeRequests += 1;
-    void requestBatch(job.points, job.signal, job.fetcher)
+    void requestBatch(job.points, job.signal, job.fetcher, job.purpose)
       .then(job.resolve, job.reject)
       .finally(() => {
         sharedActiveRequests -= 1;
@@ -280,10 +284,11 @@ function pumpSharedQueue(): void {
 
 function createRequestScheduler(
   signal: AbortSignal | undefined,
-  fetcher: FetchLike
+  fetcher: FetchLike,
+  purpose: GsiElevationRequestPurpose
 ): ScheduledRequest {
   return (points) => new Promise<BatchFetchResult>((resolve, reject) => {
-    sharedQueue.push({ points, signal, fetcher, resolve, reject });
+    sharedQueue.push({ points, signal, fetcher, purpose, resolve, reject });
     pumpSharedQueue();
   });
 }
@@ -411,8 +416,21 @@ const MIN_PARALLEL_CHUNK_SIZE = 48;
 const PER_CALL_WORKER_RESERVE = 2;
 const MAX_PER_CALL_WORKERS = Math.max(1, MAX_CONCURRENT_REQUESTS - PER_CALL_WORKER_RESERVE);
 
-function chunkSizeForRequest(totalPoints: number): number {
+function chunkSizeForRequest(points: GsiElevationClientPoint[]): number {
+  const totalPoints = points.length;
   if (totalPoints < PARALLEL_SPLIT_MIN_POINTS) return REQUEST_BATCH_SIZE;
+
+  // 2026-09-29実機診断: 三脚粗探索353点・maximumDetail=10mが75秒かかった。
+  // 10m要求はserver側でDEM10Bだけを参照し、10km程度の線上でも必要な基底
+  // タイル数は少ない。従来の「大規模要求は6分割」をそのまま適用すると、
+  // 同じDEM10Bタイルを複数HTTP要求で重複処理し、Cloudflare往復とタイル
+  // キャッシュ判定を増やしていた。全点が明示的10mの場合だけ、既存の
+  // REQUEST_BATCH_SIZE(1024)まで1要求へまとめ、server側のbase-tile集約を
+  // 最大限使う。座標・点数・DEM10B・補間・返却順は一切変更しない。
+  if (points.every((point) => point.maximumDetail === "10m")) {
+    return REQUEST_BATCH_SIZE;
+  }
+
   // 2026-09-09実機修正: 640点を4分割（約160点/Worker）へ拡大した版は、
   // 1回のCloudflare Worker呼び出しで処理するDEMタイル数が増え、最初の
   // 方位が長時間完了せず「0 / n」のままに見える回帰を起こした。
@@ -426,7 +444,8 @@ function chunkSizeForRequest(totalPoints: number): number {
 export async function fetchGsiElevationSamples(
   points: GsiElevationClientPoint[],
   signal?: AbortSignal,
-  fetcher: FetchLike = fetch
+  fetcher: FetchLike = fetch,
+  purpose: GsiElevationRequestPurpose = "bulk-download"
 ): Promise<GsiElevationClientResult> {
   if (points.length === 0) {
     return {
@@ -441,7 +460,7 @@ export async function fetchGsiElevationSamples(
       tileCacheBypassCount: 0,
     };
   }
-  const requestChunkSize = chunkSizeForRequest(points.length);
+  const requestChunkSize = chunkSizeForRequest(points);
   const batches = Array.from(
     { length: Math.ceil(points.length / requestChunkSize) },
     (_, index) => points.slice(
@@ -450,7 +469,7 @@ export async function fetchGsiElevationSamples(
     )
   );
   const results = new Array<GsiElevationClientResult>(batches.length);
-  const request = createRequestScheduler(signal, fetcher);
+  const request = createRequestScheduler(signal, fetcher, purpose);
   let nextBatchIndex = 0;
 
   async function worker(): Promise<void> {

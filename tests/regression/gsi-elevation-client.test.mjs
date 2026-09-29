@@ -23,6 +23,37 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+test("interactive 10m rough scan keeps 353 points in one HTTP request", async () => {
+  const requestBodies = [];
+  const roughPoints = Array.from({ length: 353 }, (_, index) => ({
+    latitude: 35.70 + index * 0.00002,
+    longitude: 139.82 - index * 0.00003,
+    maximumDetail: "10m",
+    interpolationMode: "neutral",
+  }));
+  const fetcher = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    requestBodies.push(body);
+    return jsonResponse({
+      samples: body.points.map(() => ({ heightMeters: 12.3, source: "DEM10B" })),
+    });
+  };
+
+  const result = await fetchGsiElevationSamples(
+    roughPoints,
+    undefined,
+    fetcher,
+    "interactive"
+  );
+
+  assert.equal(result.failedPointCount, 0);
+  assert.equal(result.samples.length, 353);
+  assert.equal(requestBodies.length, 1, "353-point 10m scan should use one API round trip");
+  assert.equal(requestBodies[0].points.length, 353);
+  assert.equal(requestBodies[0].purpose, "interactive");
+  assert.deepEqual(requestBodies[0].points, roughPoints);
+});
+
 test("large DEM requests split until Cloudflare can complete them", async () => {
   const requestSizes = [];
   let activeRequests = 0;
