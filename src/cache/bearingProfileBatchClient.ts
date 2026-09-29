@@ -157,11 +157,41 @@ function expandCompactResponse(
  * per-bearing path. User cancellation remains an abort and is never converted
  * to fallback work.
  */
-export async function fetchBearingProfileBatch(
+/**
+ * 計算済みデータを使えなかった理由。以前はすべて null に畳み込まれ、
+ * 画面には何も出ないまま1方位ずつの直接取得（約1時間）へ落ちていた。
+ */
+export type BearingProfileBatchMiss = {
+  /** true: この地点に計算済みデータが無いだけ（任意座標の正常系）。 */
+  notPrecomputed: boolean;
+  reason: string;
+};
+
+export type BearingProfileBatchOutcome =
+  | { ok: true; response: BearingProfileBatchResponseV1 }
+  | { ok: false; miss: BearingProfileBatchMiss };
+
+async function responseErrorText(response: Response): Promise<{ code: string | null; error: string | null }> {
+  try {
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("application/json")) return { code: null, error: null };
+    const value: unknown = await response.json();
+    if (typeof value !== "object" || value === null) return { code: null, error: null };
+    const record = value as Record<string, unknown>;
+    return {
+      code: typeof record.code === "string" ? record.code : null,
+      error: typeof record.error === "string" ? record.error : null,
+    };
+  } catch {
+    return { code: null, error: null };
+  }
+}
+
+export async function fetchBearingProfileBatchDetailed(
   request: BearingProfileBatchRequest,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch
-): Promise<BearingProfileBatchResponseV1 | null> {
+): Promise<BearingProfileBatchOutcome> {
   if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(
@@ -169,6 +199,8 @@ export async function fetchBearingProfileBatch(
   ), BATCH_REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort(createAbortError("全方位地形取得を中止しました"));
   signal?.addEventListener("abort", onAbort, { once: true });
+  const miss = (reason: string, notPrecomputed = false): BearingProfileBatchOutcome =>
+    ({ ok: false, miss: { notPrecomputed, reason } });
   try {
     const response = await fetcher("/api/bearing-profile-batch", {
       method: "POST",
@@ -177,39 +209,52 @@ export async function fetchBearingProfileBatch(
       signal: controller.signal,
     });
     if (!response.ok) {
-      if (response.status === 503) {
-        try {
-          const value: unknown = await response.json();
-          if (
-            typeof value === "object" && value !== null &&
-            "code" in value && value.code === "PRECOMPUTED_PROFILE_UNAVAILABLE" &&
-            "error" in value && typeof value.error === "string"
-          ) {
-            throw new PrecomputedBearingProfileUnavailableError(value.error);
-          }
-        } catch (error) {
-          if (error instanceof PrecomputedBearingProfileUnavailableError) throw error;
-        }
+      const { code, error } = await responseErrorText(response);
+      if (response.status === 503 && code === "PRECOMPUTED_PROFILE_UNAVAILABLE" && error) {
+        throw new PrecomputedBearingProfileUnavailableError(error);
       }
-      return null;
+      if (response.status === 404 && code === "PRECOMPUTED_PROFILE_NOT_FOUND") {
+        return miss(
+          Math.round(request.maxDistanceMeters) === 10_000
+            ? "この地点には計算済み地形データがありません"
+            : `計算済み地形データは探索範囲10kmのみです（現在${(request.maxDistanceMeters / 1000).toFixed(0)}km）`,
+          true
+        );
+      }
+      return miss(`全方位地形APIがHTTP ${response.status}を返しました${error ? `（${error}）` : ""}`);
     }
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    if (!contentType.includes("application/json")) return null;
+    if (!contentType.includes("application/json")) {
+      return miss(`全方位地形APIの応答形式が不正です（${contentType || "Content-Typeなし"}）`);
+    }
     const value: unknown = await response.json();
     const normalized = validResponseEnvelope(value)
       ? value
       : selectPublishedProfileEnvelope(request, value);
-    if (!normalized) return null;
-    return normalized.version === 2
+    if (!normalized) return miss("全方位地形APIの応答内容を検証できませんでした");
+    const expanded = normalized.version === 2
       ? expandCompactResponse(request, normalized)
       : normalized;
+    if (!expanded) return miss("計算済み地形データの展開・検証に失敗しました");
+    return { ok: true, response: expanded };
   } catch (error) {
     if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
     if (error instanceof PrecomputedBearingProfileUnavailableError) throw error;
-    if (isAbortError(error) && controller.signal.reason?.name === "TimeoutError") return null;
-    return null;
+    if (isAbortError(error) && controller.signal.reason?.name === "TimeoutError") {
+      return miss(`全方位地形APIが${Math.round(BATCH_REQUEST_TIMEOUT_MS / 1000)}秒以内に応答しませんでした`);
+    }
+    return miss(`全方位地形APIへ接続できませんでした（${error instanceof Error ? error.message : String(error)}）`);
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
   }
+}
+
+export async function fetchBearingProfileBatch(
+  request: BearingProfileBatchRequest,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch
+): Promise<BearingProfileBatchResponseV1 | null> {
+  const outcome = await fetchBearingProfileBatchDetailed(request, signal, fetcher);
+  return outcome.ok ? outcome.response : null;
 }

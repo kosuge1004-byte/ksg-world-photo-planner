@@ -3,7 +3,7 @@
   "capturedAt": "2026-09-28T16:16:45.271Z",
   "source": "https://service.gsi.go.jp/kiban/app/api/dem/latest",
   "landmarkSource": "src/data/japanLandmarks.ts",
-  "landmarkCount": 287,
+  "landmarkCount": 288,
   "radiusMeters": 3000,
   "meshCodeLevel": "JIS X 0410 second mesh (about 10 km)",
   "meshCount": 505,
@@ -1049,11 +1049,13 @@
       "伊賀上野城"
     ],
     "523645": [
-      "ナガシマスパーランド"
+      "ナガシマスパーランド",
+      "スチールドラゴン2000"
     ],
     "523646": [
       "ナガシマスパーランド",
-      "レゴランド・ジャパン"
+      "レゴランド・ジャパン",
+      "スチールドラゴン2000"
     ],
     "523647": [
       "レゴランド・ジャパン"
@@ -10137,7 +10139,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538780",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10150,7 +10153,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685664",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10163,7 +10167,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686700",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10176,7 +10181,8 @@
       "updateDate": "2010/06/25",
       "downloadPath": "/kiban/app/api/download/file/729848",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10190,7 +10196,8 @@
       "downloadPath": "/kiban/app/api/download/file/538781",
       "landmarks": [
         "ナガシマスパーランド",
-        "レゴランド・ジャパン"
+        "レゴランド・ジャパン",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10204,7 +10211,8 @@
       "downloadPath": "/kiban/app/api/download/file/612752",
       "landmarks": [
         "ナガシマスパーランド",
-        "レゴランド・ジャパン"
+        "レゴランド・ジャパン",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10218,7 +10226,8 @@
       "downloadPath": "/kiban/app/api/download/file/617892",
       "landmarks": [
         "ナガシマスパーランド",
-        "レゴランド・ジャパン"
+        "レゴランド・ジャパン",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -10232,7 +10241,8 @@
       "downloadPath": "/kiban/app/api/download/file/729852",
       "landmarks": [
         "ナガシマスパーランド",
-        "レゴランド・ジャパン"
+        "レゴランド・ジャパン",
+        "スチールドラゴン2000"
       ]
     },
     {

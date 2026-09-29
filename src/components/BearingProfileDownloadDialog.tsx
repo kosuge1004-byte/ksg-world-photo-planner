@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BearingBackfillProgress } from "../cache/tripodBearingProfileManager";
 
 export type BearingProfileDialogState = {
@@ -30,8 +30,28 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
     dialogRef.current?.scrollIntoView({ block: "center", inline: "center" });
   }, [isOpen]);
 
+  // 2026-09-29: 直接取得では1方位（約350点）が終わるまで試行数が増えず、
+  // 0/257のまま止まって見えた。最後に試行数が進んでからの経過秒数を示し、
+  // 処理が続いていることを分かるようにする（進捗値そのものは変えない）。
+  const stepKey = state?.progress
+    ? `${state.progress.phase}:${state.progress.completedSteps}/${state.progress.totalSteps}`
+    : null;
+  const [stepStartedAt, setStepStartedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const startedAt = Date.now();
+    setStepStartedAt(startedAt);
+    setNow(startedAt);
+  }, [stepKey]);
+  useEffect(() => {
+    if (stepKey === null) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, [stepKey]);
+
   if (!state) return null;
   const { subjectLabel, progress } = state;
+  const elapsedSinceStepSeconds = Math.max(0, Math.floor((now - stepStartedAt) / 1000));
   const isDownloading = progress !== null;
   const percent =
     isDownloading && progress.totalSteps > 0
@@ -96,6 +116,17 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
                             ? `（成功${progress.successfulSteps}・失敗${progress.failedSteps}）`
                             : "")}
             </p>
+            {progress.phase === "terrain" && progress.totalSteps > 0 &&
+              progress.completedSteps < progress.totalSteps && elapsedSinceStepSeconds >= 5 && (
+              <p className="project-dialog-note" role="status">
+                処理中（前回の進捗から{elapsedSinceStepSeconds}秒）
+              </p>
+            )}
+            {progress.phase === "terrain" && progress.directFallbackNotice && (
+              <p className="project-dialog-note project-dialog-note-warning" role="status">
+                {progress.directFallbackNotice}
+              </p>
+            )}
             {progress.geoidTotal !== undefined && progress.geoidTotal > 0 && (
               <p className="project-dialog-note" role="status">
                 ジオイド高 {progress.geoidCompleted ?? 0} / {progress.geoidTotal}地域

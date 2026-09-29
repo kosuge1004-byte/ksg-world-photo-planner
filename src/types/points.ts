@@ -4,6 +4,7 @@ export type HeightSource =
   | "3d-picked"
   | "manual"
   | "catalogued-structure-height"
+  | "learned-structure-height"
   | "osm-surveyed-height"
   | "osm-levels-estimate"
   | "legacy";
@@ -30,6 +31,12 @@ export type GroundPoint = {
   subjectSurfaceTarget?: SubjectSurfaceTarget;
   /** カタログ等で確認済みの、接地面から構造物頂上までの高さ。 */
   structureHeightMeters?: number;
+  /**
+   * 登録スポットの頂上高度を確定できず、登録座標の地表高で仮配置した状態。
+   * 三脚候補データの保存は可能（方位プロファイルは水平位置だけで決まる）だが、
+   * 構図計算の前に再検索が必要であることを画面に示す。
+   */
+  subjectHeightProvisional?: boolean;
   label: string;
 };
 

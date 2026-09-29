@@ -89,8 +89,11 @@ const storageLimitDb = new MemoryBudgetDb();
 storageLimitDb.values.set("storage-reserved-bytes:v1", R2_STORAGE_RESERVATION_BUDGET_BYTES - 1);
 assert.equal(await reserveR2Write(kv, "x", 2, {}, storageLimitDb), false, "storage budget must be enforced");
 
-assert.equal(PREWARM_LANDMARKS.length, 287);
-assert.equal(ACTIVE_PREWARM_LANDMARKS.length, 200);
+assert.ok(PREWARM_LANDMARKS.length >= 288);
+assert.equal(
+  ACTIVE_PREWARM_LANDMARKS.length,
+  PREWARM_LANDMARKS.filter((item) => item.category !== "mountain").length + 1,
+);
 assert.deepEqual(
   ACTIVE_PREWARM_LANDMARKS.filter((item) => item.category === "mountain").map((item) => item.name),
   ["富士山"],

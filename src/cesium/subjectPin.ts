@@ -50,6 +50,7 @@ export type HeightMetadata = {
   heightSource?: GroundPoint["heightSource"];
   subjectSurfaceTarget?: GroundPoint["subjectSurfaceTarget"];
   structureHeightMeters?: number;
+  subjectHeightProvisional?: boolean;
 };
 
 function withHeightMetadata(point: GroundPoint, metadata?: HeightMetadata): GroundPoint {
@@ -70,6 +71,7 @@ function withHeightMetadata(point: GroundPoint, metadata?: HeightMetadata): Grou
     heightSource: metadata.heightSource,
     subjectSurfaceTarget: metadata.subjectSurfaceTarget,
     structureHeightMeters: metadata.structureHeightMeters,
+    ...(metadata.subjectHeightProvisional ? { subjectHeightProvisional: true } : {}),
   };
 }
 

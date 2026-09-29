@@ -14,7 +14,7 @@ import { formatSearchDuration, type SpotSearchPerformanceMetrics } from "../src/
 import { lookupPublishedPrecomputedBearingProfile } from "./publishedPrecomputedBearingProfiles.ts";
 import { createPrecomputedSpotSearchTerrainSampler } from "./precomputedSpotSearchTerrain.ts";
 import type { BearingProfileBatchResponseV2 } from "../src/types/bearingProfileBatch.ts";
-import { ACTIVE_PREWARM_LANDMARKS } from "./landmarkPrewarmSeed.ts";
+import { PRECOMPUTED_BEARING_PROFILE_TARGETS } from "./precomputedBearingProfileTargets.ts";
 
 
 function diagnosticSummary(metrics?: SpotSearchPerformanceMetrics): string {
@@ -83,7 +83,7 @@ async function lookupSpotSearchPrecomputedProfile(
   subject: SpotSearchJob["input"]["subject"],
   lensCenterHeightMeters: number
 ): Promise<BearingProfileBatchResponseV2 | null> {
-  const registered = ACTIVE_PREWARM_LANDMARKS.some((landmark) =>
+  const registered = PRECOMPUTED_BEARING_PROFILE_TARGETS.some((landmark) =>
     Math.abs(landmark.latitude - subject.latitude) <= 0.0000001 &&
     Math.abs(landmark.longitude - subject.longitude) <= 0.0000001
   );

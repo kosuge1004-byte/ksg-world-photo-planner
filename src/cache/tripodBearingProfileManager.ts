@@ -21,7 +21,7 @@ import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
 import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
 import { writePersistentSiteContexts, getPersistentSiteContextWriteFailureCount } from "./siteContextPersistentCache";
-import { fetchBearingProfileBatch } from "./bearingProfileBatchClient";
+import { fetchBearingProfileBatchDetailed } from "./bearingProfileBatchClient";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -132,6 +132,8 @@ const BEARING_CONCURRENCY = 2;
 // one client/Worker/R2 round trip. Unregistered coordinates receive an explicit
 // 404 and retain the precise direct path below.
 const BEARING_BATCH_SIZE = 360;
+// 2026-09-08の実測: 公開APIで1方位352点の直接取得に約25.4秒。
+const DIRECT_PATH_SECONDS_PER_BEARING_ESTIMATE = 25;
 
 function validBatchProfile(
   value: unknown,
@@ -204,6 +206,11 @@ export type BearingBackfillProgress = {
   highPrecisionPoints?: number;
   phase?: "preparing" | "terrain" | "water" | "osm" | "finalizing";
   terrainStage?: "profile" | "high-precision";
+  /**
+   * 計算済みデータ（R2）を使えず1方位ずつの直接取得へ切り替えた理由と目安時間。
+   * 以前は切り替えが画面に出ず、0/257のまま止まって見えていた。
+   */
+  directFallbackNotice?: string;
   geoidCompleted?: number;
   geoidTotal?: number;
   // 2026-09-10追記（実機報告：「N/Total」が本当にデータを取得できている
@@ -307,6 +314,12 @@ export async function backfillBearingProfiles(params: {
 
   const totalSteps = pendingBearings.length;
   onProgress?.({ totalSteps, completedSteps: 0, currentBearingDegrees: null, phase: "terrain" });
+  let directFallbackNotice: string | null = null;
+  function reportProgress(progress: BearingBackfillProgress): void {
+    onProgress?.(directFallbackNotice && progress.phase === "terrain"
+      ? { ...progress, directFallbackNotice }
+      : progress);
+  }
 
   const baseDistances = densifyDistanceIntervals(
     logarithmicDistances(
@@ -368,10 +381,11 @@ export async function backfillBearingProfiles(params: {
   // Values are accepted only when every distance and Karney destination matches
   // the locally generated profile, so this changes transport count, not precision.
   const remainingBearingSet = new Set(pendingBearings);
+  let batchFallbackReason: string | null = null;
   for (let start = 0; start < pendingBearings.length; start += BEARING_BATCH_SIZE) {
     if (signal?.aborted) break;
     const batchBearings = pendingBearings.slice(start, start + BEARING_BATCH_SIZE);
-    onProgress?.({
+    reportProgress({
       totalSteps,
       completedSteps: completedAttempts,
       successfulSteps: successfulBearings,
@@ -380,15 +394,22 @@ export async function backfillBearingProfiles(params: {
       phase: "terrain",
       terrainStage: "profile",
     });
-    const batch = await fetchBearingProfileBatch({
+    const outcome = await fetchBearingProfileBatchDetailed({
       subjectPoint,
       cameraSettings: { lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters },
       bearings: batchBearings,
       maxDistanceMeters: requestedMaxDistanceMeters,
     }, signal);
-    if (!batch) break;
+    if (!outcome.ok) {
+      batchFallbackReason = outcome.miss.reason;
+      break;
+    }
+    const batch = outcome.response;
     if (batch.requestedBearingCount !== batchBearings.length ||
-      batch.pointCount !== batchBearings.length * baseDistances.length) continue;
+      batch.pointCount !== batchBearings.length * baseDistances.length) {
+      batchFallbackReason = `計算済み地形データの点数が一致しません（${batch.pointCount} / ${batchBearings.length * baseDistances.length}点）`;
+      continue;
+    }
     const usesPrecomputedRegisteredSpotProfile = batch.precomputed === true;
     const profileByBearing = new Map(
       batch.profiles.map((profile) => [profile.bearingDegrees, profile] as const)
@@ -431,7 +452,7 @@ export async function backfillBearingProfiles(params: {
       };
       await acceptProfile(entry);
       remainingBearingSet.delete(bearing);
-      onProgress?.({
+      reportProgress({
         totalSteps,
         completedSteps: completedAttempts,
         successfulSteps: successfulBearings,
@@ -445,6 +466,18 @@ export async function backfillBearingProfiles(params: {
     }
   }
   const remainingBearings = pendingBearings.filter((bearing) => remainingBearingSet.has(bearing));
+  if (remainingBearings.length > 0 && !signal?.aborted) {
+    // 直接取得は1方位（約350点）ごとに国土地理院DEMとジオイドを取得するため、
+    // 実測で1方位あたり約25秒（2並列）かかる。目安を示して「止まっている」
+    // のではなく「遅い経路で動いている」ことを明示する。
+    const estimatedMinutes = Math.max(1, Math.round(
+      remainingBearings.length * DIRECT_PATH_SECONDS_PER_BEARING_ESTIMATE / BEARING_CONCURRENCY / 60
+    ));
+    directFallbackNotice =
+      `計算済みデータを使えないため、1方位ずつ直接取得しています（理由: ${batchFallbackReason ?? "計算済みデータの一部が不足"}）。` +
+      `1方位ごとに完了して数字が進みます。目安 約${estimatedMinutes}分以上。`;
+    console.warn(`[bearing-profile] 直接取得へ切り替え: ${batchFallbackReason ?? "partial"}`);
+  }
 
   // 2026-09-10追記: 「初期数方位が全失敗ならシステム障害として早期中止する」
   // 判定を実際に配線する。以前はabortReasonという変数だけが用意されていて、
@@ -463,7 +496,7 @@ export async function backfillBearingProfiles(params: {
   async function processBearing(index: number): Promise<void> {
     if (signal?.aborted || abortReason) return;
     const bearing = remainingBearings[index];
-    onProgress?.({
+    reportProgress({
       totalSteps,
       completedSteps: completedAttempts,
       successfulSteps: successfulBearings,
@@ -481,7 +514,7 @@ export async function backfillBearingProfiles(params: {
       Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
     );
 
-    onProgress?.({
+    reportProgress({
       totalSteps,
       completedSteps: completedAttempts,
       successfulSteps: successfulBearings,
@@ -508,7 +541,7 @@ export async function backfillBearingProfiles(params: {
         // outage skips per-point fan-out and is escalated directly.
         const samples = await sampleWorldTerrainNeutral(terrainPoints, signal, "1m", {
           allowWorldTerrainFallback: false,
-          onGeoidProgress: (geoidCompleted, geoidTotal) => onProgress?.({
+          onGeoidProgress: (geoidCompleted, geoidTotal) => reportProgress({
             totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings,
             failedSteps: failedBearings, currentBearingDegrees: bearing, phase: "terrain",
             terrainStage: "high-precision", geoidCompleted, geoidTotal,
@@ -553,7 +586,7 @@ export async function backfillBearingProfiles(params: {
       failedBearings += 1;
       completedAttempts += 1;
       lastFailureReason = attempt.reason;
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      reportProgress({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
       maybeAbortForSystemicFailure();
       return;
     }
@@ -562,7 +595,7 @@ export async function backfillBearingProfiles(params: {
       failedBearings += 1;
       completedAttempts += 1;
       lastFailureReason = "高精度地形の応答点数または高さが不正です";
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings,
+      reportProgress({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings,
         failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain" });
       maybeAbortForSystemicFailure();
       return;
@@ -582,7 +615,7 @@ export async function backfillBearingProfiles(params: {
         `GSI高精度DEM未取得(${contaminatedCount}/${precise.length}点がWorld Terrainへフォールバック。` +
         `通信失敗またはジオイド高未確定の可能性)`;
       console.warn(`[bearing-profile] 方位${bearing}°はGSI高精度DEMを取得できずWorld Terrainへフォールバックしたため未完了扱いにします`);
-      onProgress?.({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
+      reportProgress({ totalSteps, completedSteps: completedAttempts, successfulSteps: successfulBearings, failedSteps: failedBearings, lastFailureReason, currentBearingDegrees: bearing, phase: "terrain", terrainStage: "high-precision", profilePoints: totalProfilePoints, highPrecisionPoints: totalHighPrecisionPoints });
       maybeAbortForSystemicFailure();
       return;
     }
@@ -599,7 +632,7 @@ export async function backfillBearingProfiles(params: {
     };
     await acceptProfile(entry);
 
-    onProgress?.({
+    reportProgress({
       totalSteps,
       completedSteps: completedAttempts,
       successfulSteps: successfulBearings,
@@ -635,7 +668,7 @@ export async function backfillBearingProfiles(params: {
   if (!signal?.aborted) await flushGsiDeviceTilePrefetchQueue(signal);
 
   if (!signal?.aborted && waterPrefetchPoints.length > 0) {
-    onProgress?.({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });
+    reportProgress({ totalSteps: waterPrefetchPoints.length, completedSteps: 0, currentBearingDegrees: null, phase: "water" });
     try {
       const waterContexts = await fetchSiteContexts(waterPrefetchPoints, signal, false, "water-only");
       await writePersistentSiteContexts(waterPrefetchPoints, waterContexts, "water-only", false, subjectId);
@@ -646,7 +679,7 @@ export async function backfillBearingProfiles(params: {
   }
 
   if (!signal?.aborted) {
-    onProgress?.({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, phase: "osm" });
+    reportProgress({ totalSteps: 1, completedSteps: 0, currentBearingDegrees: null, phase: "osm" });
     try {
       const detailPoints: SiteContextPoint[] = [
         { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude },
@@ -665,7 +698,7 @@ export async function backfillBearingProfiles(params: {
     }
   }
 
-  onProgress?.({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, phase: "finalizing" });
+  reportProgress({ totalSteps: 1, completedSteps: 1, currentBearingDegrees: null, phase: "finalizing" });
   const captured = await finishCapture();
 
   return {

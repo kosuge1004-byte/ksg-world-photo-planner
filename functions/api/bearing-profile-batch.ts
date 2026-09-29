@@ -1,7 +1,7 @@
 import {
   isBearingProfileBatchRequest,
 } from "../../server/bearingProfileBatch.ts";
-import { ACTIVE_PREWARM_LANDMARKS } from "../../server/landmarkPrewarmSeed.ts";
+import { PRECOMPUTED_BEARING_PROFILE_TARGETS } from "../../server/precomputedBearingProfileTargets.ts";
 import { lookupLocalPrecomputedBearingProfile } from "../../server/localDemGateway.ts";
 import { readR2PrecomputedBearingProfileCompressed } from "../../server/publishedPrecomputedBearingProfiles.ts";
 import {
@@ -57,7 +57,8 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       // a roughly hour-long direct fallback. Registered spots must have their
       // already calculated R2 object, so report a concrete configuration error
       // immediately instead of showing 0/259 indefinitely.
-      const registered = ACTIVE_PREWARM_LANDMARKS.some((landmark) =>
+      // 計算済みデータを公開済みの地点だけ。登録直後で未計算の地点は404で直接取得へ。
+      const registered = PRECOMPUTED_BEARING_PROFILE_TARGETS.some((landmark) =>
         Math.abs(landmark.latitude - body.subjectPoint.latitude) <= 0.0000001 &&
         Math.abs(landmark.longitude - body.subjectPoint.longitude) <= 0.0000001
       );

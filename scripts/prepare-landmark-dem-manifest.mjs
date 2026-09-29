@@ -158,8 +158,9 @@ async function main() {
   const landmarkPath = path.join(root, "src", "data", "japanLandmarks.ts");
   const demDirectory = path.join(root, "dem");
   const landmarks = readLandmarks(await fs.readFile(landmarkPath, "utf8"));
-  if (landmarks.length !== 284) {
-    throw new Error(`Expected 284 spot-search landmarks, parsed ${landmarks.length}`);
+  const seedLandmarks = readLandmarks(await fs.readFile(path.join(root, "server", "landmarkPrewarmSeed.ts"), "utf8"));
+  if (landmarks.length < 288 || landmarks.length !== seedLandmarks.length) {
+    throw new Error(`Expected client and seed catalogues to match, parsed ${landmarks.length} / ${seedLandmarks.length}`);
   }
   await fs.mkdir(demDirectory, { recursive: true });
 

@@ -7,6 +7,7 @@ import {
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { requestTimeZone } from "../network/timeZoneRequest";
 import { JAPAN_LANDMARKS, type JapanLandmark } from "../data/japanLandmarks";
+import { landmarkStructureHeightMeters } from "../types/landmarkSubjectSpec";
 
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type {
@@ -133,12 +134,8 @@ function landmarkSearchKeys(landmark: JapanLandmark): string[] {
 }
 
 function landmarkRequiresStructureRoof(landmark: JapanLandmark): boolean {
-  return landmark.category === "building" ||
-    landmark.category === "tower" ||
-    landmark.category === "castle" ||
-    landmark.category === "temple" ||
-    landmark.category === "ferriswheel" ||
-    (landmark.category === "natural" && Number.isFinite(landmark.heightMeters));
+  // 2026-09-29: 分類名からの推測をやめ、カタログに明記した被写体仕様だけで決める。
+  return landmark.subjectSurface === "structure";
 }
 
 const landmarkByExactSearchKey = new Map<string, JapanLandmark>();
@@ -159,9 +156,85 @@ function resolveStaticJapanLandmark(query: string): ResolvedSpotLocation | null 
     longitude: exact.longitude,
     label: exact.name,
     subjectSurfaceTarget: structure ? "structure-roof" : "terrain",
-    structureHeightMeters: structure && Number.isFinite(exact.heightMeters)
-      ? exact.heightMeters
-      : undefined,
+    structureHeightMeters: structure ? landmarkStructureHeightMeters(exact) : undefined,
+  };
+}
+
+// 2026-09-29: 住所検索（Nominatim/GSI）・Googleマップ共有・古い履歴から
+// 登録スポットを選んだ場合、表示名は同じでも座標が登録値から数m〜数百mずれる。
+// 計算済み三脚候補データ（R2）は登録座標の完全一致でしか引けないため、
+// ずれた座標のままでは1方位ずつの直接取得（約1時間）へ落ちていた。
+// 名称が登録スポットと一致し、かつ近傍にある場合だけ登録座標へ揃える。
+// 名称が一致しない地点（任意の住所・近くの別施設）は一切動かさない。
+const REGISTERED_LANDMARK_SNAP_MAX_DISTANCE_METERS = 500;
+
+function approximateDistanceMeters(
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number }
+): number {
+  const toRadians = Math.PI / 180;
+  const lat1 = a.latitude * toRadians;
+  const lat2 = b.latitude * toRadians;
+  const dLat = lat2 - lat1;
+  const dLon = (b.longitude - a.longitude) * toRadians;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6_371_008.8 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function labelNamesLandmark(label: string, landmark: JapanLandmark): boolean {
+  const normalizedLabel = normalizedLocationQuery(label);
+  if (!normalizedLabel) return false;
+  const firstSegment = normalizedLabel.split(/[,、]/u)[0]?.trim() ?? "";
+  return landmarkSearchKeys(landmark).some((key) =>
+    normalizedLabel === key || firstSegment === key
+  );
+}
+
+/** 登録座標そのもの（7桁以内で一致）にある登録スポットを返す。 */
+export function registeredLandmarkAtExactPoint(
+  latitude: number,
+  longitude: number
+): JapanLandmark | null {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return JAPAN_LANDMARKS.find((landmark) =>
+    Math.abs(landmark.latitude - latitude) <= 0.0000001 &&
+    Math.abs(landmark.longitude - longitude) <= 0.0000001
+  ) ?? null;
+}
+
+/** 名称一致かつ近傍の登録スポットを返す（該当なしはnull）。 */
+export function findRegisteredLandmarkForLocation(
+  location: Pick<ResolvedSpotLocation, "latitude" | "longitude" | "label">
+): JapanLandmark | null {
+  if (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) ||
+    typeof location.label !== "string") return null;
+  let best: { landmark: JapanLandmark; distance: number } | null = null;
+  for (const landmark of JAPAN_LANDMARKS) {
+    if (!labelNamesLandmark(location.label, landmark)) continue;
+    const distance = approximateDistanceMeters(location, landmark);
+    if (distance > REGISTERED_LANDMARK_SNAP_MAX_DISTANCE_METERS) continue;
+    if (!best || distance < best.distance) best = { landmark, distance };
+  }
+  return best?.landmark ?? null;
+}
+
+/**
+ * 登録スポットを指す検索結果を登録座標・登録名称へ揃える。該当しなければ
+ * 入力をそのまま返す（同一オブジェクト）。
+ */
+export function snapSpotLocationToRegisteredLandmark<T extends ResolvedSpotLocation>(location: T): T {
+  const landmark = findRegisteredLandmarkForLocation(location);
+  if (!landmark) return location;
+  if (landmark.latitude === location.latitude && landmark.longitude === location.longitude &&
+    location.label === landmark.name) return location;
+  const structure = landmarkRequiresStructureRoof(landmark);
+  return {
+    ...location,
+    latitude: landmark.latitude,
+    longitude: landmark.longitude,
+    label: landmark.name,
+    subjectSurfaceTarget: structure ? "structure-roof" : "terrain",
+    structureHeightMeters: structure ? landmarkStructureHeightMeters(landmark) : undefined,
   };
 }
 
@@ -197,9 +270,7 @@ export function subjectSurfaceHintForSpotLocation(
   return landmark
     ? {
         requireStructureRoof: true,
-        knownStructureHeightMeters: Number.isFinite(landmark.heightMeters)
-          ? landmark.heightMeters
-          : undefined,
+        knownStructureHeightMeters: landmarkStructureHeightMeters(landmark),
       }
     : { requireStructureRoof: false };
 }
@@ -373,14 +444,16 @@ export async function resolveSpotLocation(
   const staticLandmark = resolveStaticJapanLandmark(normalizedQuery);
   if (staticLandmark) return staticLandmark;
   const cached = readCachedSpotLocation(normalizedQuery);
-  if (cached) return cached;
+  if (cached) return snapSpotLocationToRegisteredLandmark(cached);
 
   const existing = inFlightResolutions.get(normalizedQuery);
   if (existing) return existing;
 
-  const task = resolveSpotLocationUncached(normalizedQuery, signal).finally(() => {
-    inFlightResolutions.delete(normalizedQuery);
-  });
+  const task = resolveSpotLocationUncached(normalizedQuery, signal)
+    .then((location) => snapSpotLocationToRegisteredLandmark(location))
+    .finally(() => {
+      inFlightResolutions.delete(normalizedQuery);
+    });
   inFlightResolutions.set(normalizedQuery, task);
   return task;
 }

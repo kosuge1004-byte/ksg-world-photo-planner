@@ -136,8 +136,10 @@ test("static landmark roof classification and height survive history round trip"
   });
 });
 
-test("castles, temples and ferris wheels are also classified as roof subjects", async () => {
-  for (const name of ["岐阜城", "高野山 金剛峯寺", "コスモクロック21"]) {
+// 2026-09-29: 分類名ではなくカタログ明記の被写体仕様で判定する。天守の無い城跡や
+// 低層の伽藍（金剛峯寺）は地表扱いへ変更したため、構造物の代表を差し替えた。
+test("castles, temples and ferris wheels with a stated structure are classified as roof subjects", async () => {
+  for (const name of ["岐阜城", "羽黒山五重塔（出羽三山）", "コスモクロック21"]) {
     const location = await resolveSpotLocation(name);
     assert.equal(
       location.subjectSurfaceTarget,
@@ -263,4 +265,12 @@ test("project share round trip keeps roof intent without serializing absolute al
   assert.equal(decoded.subject.subjectSurfaceTarget, "structure-roof");
   assert.equal(decoded.subject.structureHeightMeters, 333);
   assert.equal("height" in decoded.subject, false);
+});
+
+test("castle ruins and low temple precincts stated as terrain do not require a roof", async () => {
+  for (const name of ["仙台城", "高野山 金剛峯寺", "竹田城跡"]) {
+    const location = await resolveSpotLocation(name);
+    assert.equal(location.subjectSurfaceTarget, "terrain", `${name} must target terrain`);
+    assert.equal(subjectSurfaceHintForSpotLocation(location).requireStructureRoof, false);
+  }
 });

@@ -6,7 +6,9 @@ const read = (relativePath) => readFileSync(new URL(relativePath, rootUrl), "utf
 const rowPattern = /\{\s*name:\s*"([^"]+)",\s*category:\s*"([^"]+)",\s*latitude:\s*(-?\d+(?:\.\d+)?),\s*longitude:\s*(-?\d+(?:\.\d+)?)/g;
 const landmarks = [...read("src/data/japanLandmarks.ts").matchAll(rowPattern)].map((match) => match[1]);
 
-assert.equal(landmarks.length, 284, "the authoritative spot-search catalogue must parse completely");
+const seedCount = [...read("server/landmarkPrewarmSeed.ts").matchAll(rowPattern)].length;
+assert.ok(landmarks.length >= 288, "the authoritative spot-search catalogue must parse completely");
+assert.equal(landmarks.length, seedCount, "client catalogue and server seed must list the same landmarks");
 assert.equal(new Set(landmarks).size, landmarks.length, "landmark names must be unique for manifest ownership");
 
 for (const suffix of ["center", "3km", "10km", "50km"]) {
@@ -19,4 +21,4 @@ for (const suffix of ["center", "3km", "10km", "50km"]) {
   }
 }
 
-console.log("landmark DEM coverage verification passed (284/284)");
+console.log(`landmark DEM coverage verification passed (${landmarks.length}/${landmarks.length})`);

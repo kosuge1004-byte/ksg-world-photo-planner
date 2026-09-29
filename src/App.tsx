@@ -159,6 +159,7 @@ import {
 import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
 import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
+import { LandmarkHeightAuditPanel } from "./components/LandmarkHeightAuditPanel";
 import { inspectOsmSubjectSurface, applyOsmSubjectHeightHint } from "./height/osmSubjectHeightFallback";
 import {
   MIN_STRUCTURE_CLEARANCE_METERS,
@@ -230,11 +231,18 @@ import {
 } from "./time/zonedTime";
 import {
   resolveSpotLocation,
+  snapSpotLocationToRegisteredLandmark,
   resolveSpotTimeZone,
   searchSpotPresets,
   subjectSurfaceHintForSpotLocation,
+  registeredLandmarkAtExactPoint,
   type SpotSubjectSurfaceHint,
 } from "./search/spotPresetSearch";
+import {
+  anchorToRegisteredCoordinates,
+  rememberStructureHeight,
+  resolveRegisteredStructureWithoutLiveHeight,
+} from "./height/registeredStructureHeight";
 import {
   clearActiveSpotSearchJob,
   deserializeSpotSearchResults,
@@ -3099,6 +3107,12 @@ function App() {
     }
   }
 
+  function subjectPlacedMessage(point: GroundPoint): string {
+    return point.subjectHeightProvisional
+      ? `${point.label}の頂上高度を確認できなかったため、登録位置の地表高で仮配置しました。三脚候補データの保存はできますが、構図計算の前に通信状態を確認して再検索してください。`
+      : `${point.label}を被写体として表示しました`;
+  }
+
   async function resolveSearchSubject(
     latitude: number,
     longitude: number,
@@ -3203,25 +3217,45 @@ function App() {
       knownStructureHeightMeters: surfaceHint.knownStructureHeightMeters,
       label,
     });
+    // 2026-09-29: 登録スポットは「登録座標＋高さ」で定義する。屋根/OSMは高さだけを
+    // 提供し、水平位置は登録座標に固定する（計算済み三脚候補データを常に引ける）。
+    // 高さを確定できない場合もエラーで止めず、学習済み高さ→仮配置の順で続行する。
+    const registeredLandmark = registeredLandmarkAtExactPoint(latitude, longitude);
+    const registeredAnchor = registeredLandmark
+      ? { name: registeredLandmark.name, latitude: registeredLandmark.latitude, longitude: registeredLandmark.longitude }
+      : null;
+    const finalize = (point: GroundPoint): GroundPoint => {
+      if (!registeredAnchor || point.subjectSurfaceTarget !== "structure-roof") return point;
+      rememberStructureHeight(registeredAnchor, groundPoint, point);
+      return anchorToRegisteredCoordinates(point, groundPoint);
+    };
     try {
-      return select(firstRoofPoint);
+      return finalize(select(firstRoofPoint));
     } catch (error) {
+      if (!(error instanceof SubjectRoofResolutionError)) throw error;
       // 高さ未登録の建物で初回PLATEAU読込が間に合わなかった場合だけ、
       // 描画要求後にもう一度屋根を探索する。既知高さを持つ建物・塔は通信に
       // 依存せず上で確定済みなので、この追加待ちは発生しない。
-      if (!(error instanceof SubjectRoofResolutionError) || !viewer || viewer.isDestroyed()) {
-        throw error;
+      if (viewer && !viewer.isDestroyed()) {
+        viewer.scene.requestRender();
+        const retryRoofPoint = await resolvePlateauRoofGroundPoint(
+          viewer,
+          latitude,
+          longitude,
+          label,
+          signal
+        );
+        if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
+        try {
+          return finalize(select(retryRoofPoint));
+        } catch (retryError) {
+          if (!(retryError instanceof SubjectRoofResolutionError)) throw retryError;
+        }
       }
-      viewer.scene.requestRender();
-      const retryRoofPoint = await resolvePlateauRoofGroundPoint(
-        viewer,
-        latitude,
-        longitude,
-        label,
-        signal
-      );
-      if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
-      return select(retryRoofPoint);
+      // 登録外の地点は従来どおり「地上には置かない」。
+      if (!registeredAnchor) throw error;
+      console.warn(`${label}の頂上高度をPLATEAU/OSMで確定できないため、学習済み高さまたは仮配置で続行します`);
+      return resolveRegisteredStructureWithoutLiveHeight(registeredAnchor, groundPoint, label);
     }
   }
 
@@ -3541,7 +3575,7 @@ ${diagnosticMessage}
       );
     }
     setSpotSearchOpen(false);
-    setSearchMessage(`${pinned.label}を被写体として表示しました`);
+    setSearchMessage(subjectPlacedMessage(pinned));
     const searchedRecord = updatedHistory[0];
     if (searchedRecord) {
       offerBearingProfileDownload(searchedRecord);
@@ -3555,14 +3589,23 @@ ${diagnosticMessage}
       // 修正前の履歴には屋上/地表の種別が無い。特に既知の建物・塔でDEM
       // 高度が保存されている場合、その値を再表示せず現在の屋上解決経路を
       // 通す。一度新形式で確定した履歴はそのまま再利用できる。
-      const surfaceHint = subjectSurfaceHintForSpotLocation(record);
-      const mustRevalidate = record.subjectSurfaceTarget === undefined ||
+      // 2026-09-29: 住所検索由来の古い履歴（例:「東京スカイツリー, 2, 押上一丁目…」）は
+      // 登録座標から少しずれており、計算済み三脚候補データを引けなかった。
+      // 名称一致かつ近傍の登録スポットなら登録座標へ揃えて再解決する。
+      // ダウンロード済みデータ（saved）は保存時の座標がキーなので動かさない。
+      const snappedLocation = record.searchType === "saved"
+        ? record
+        : snapSpotLocationToRegisteredLandmark(record);
+      const snappedToRegisteredLandmark = snappedLocation !== record;
+      const surfaceHint = subjectSurfaceHintForSpotLocation(snappedLocation);
+      const mustRevalidate = snappedToRegisteredLandmark ||
+        record.subjectSurfaceTarget === undefined ||
         (surfaceHint.requireStructureRoof && record.subjectSurfaceTarget !== "structure-roof");
       const resolvedRecord = mustRevalidate
         ? await resolveSearchSubject(
-            record.latitude,
-            record.longitude,
-            record.label,
+            snappedLocation.latitude,
+            snappedLocation.longitude,
+            snappedLocation.label,
             undefined,
             surfaceHint
           )
@@ -3589,7 +3632,7 @@ ${diagnosticMessage}
         );
       }
       setSpotSearchOpen(false);
-      setSearchMessage(`${pinned.label}を被写体として表示しました`);
+      setSearchMessage(subjectPlacedMessage(pinned));
     } catch (error) {
       console.warn("検索履歴の被写体高度を再確認できませんでした", error);
       setSearchMessage(toUserFacingErrorMessage(error, "spot-search"));
@@ -5213,8 +5256,15 @@ ${diagnosticMessage}
   }
 
 
+  // 開発用: #landmark-height-audit で登録スポットの高さ実測パネルを開く。
+  const landmarkHeightAuditRequested = typeof window !== "undefined" &&
+    window.location.hash === "#landmark-height-audit";
+
   return (
     <main className="app" data-ar-tracking={arTracking.location || arTracking.orientation ? "active" : "idle"}>
+      {landmarkHeightAuditRequested && (
+        <LandmarkHeightAuditPanel getViewer={() => mapViewerRef.current ?? null} />
+      )}
       <TopSettingsBar
         settings={cameraSettings}
         onChange={setCameraSettings}

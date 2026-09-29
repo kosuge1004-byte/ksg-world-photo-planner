@@ -3,7 +3,7 @@
   "capturedAt": "2026-09-28T16:16:43.392Z",
   "source": "https://service.gsi.go.jp/kiban/app/api/dem/latest",
   "landmarkSource": "src/data/japanLandmarks.ts",
-  "landmarkCount": 287,
+  "landmarkCount": 288,
   "radiusMeters": 0,
   "meshCodeLevel": "JIS X 0410 second mesh (about 10 km)",
   "meshCount": 227,
@@ -463,7 +463,8 @@
       "伊賀上野城"
     ],
     "523645": [
-      "ナガシマスパーランド"
+      "ナガシマスパーランド",
+      "スチールドラゴン2000"
     ],
     "523646": [
       "レゴランド・ジャパン"
@@ -4379,7 +4380,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538780",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -4392,7 +4394,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685664",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -4405,7 +4408,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686700",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
@@ -4418,7 +4422,8 @@
       "updateDate": "2010/06/25",
       "downloadPath": "/kiban/app/api/download/file/729848",
       "landmarks": [
-        "ナガシマスパーランド"
+        "ナガシマスパーランド",
+        "スチールドラゴン2000"
       ]
     },
     {
