@@ -7,15 +7,23 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $tsx = Join-Path $repoRoot 'node_modules\.bin\tsx.cmd'
 $entryPoint = Join-Path $PSScriptRoot 'quickTunnelSupervisor.ts'
 
 function Unprotect-Secret([string]$encrypted) {
-  $secure = ConvertTo-SecureString -String $encrypted
-  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+  $protectedBytes = [Convert]::FromBase64String($encrypted)
+  try {
+    $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect(
+      $protectedBytes,
+      $null,
+      [Security.Cryptography.DataProtectionScope]::CurrentUser
+    )
+    try { return [Text.Encoding]::UTF8.GetString($plainBytes) }
+    finally { [Array]::Clear($plainBytes, 0, $plainBytes.Length) }
+  }
+  finally { [Array]::Clear($protectedBytes, 0, $protectedBytes.Length) }
 }
 
 if (-not (Test-Path -LiteralPath $DataRoot -PathType Container)) {

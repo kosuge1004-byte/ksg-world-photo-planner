@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 
 function New-RandomToken {
@@ -16,14 +17,31 @@ function New-RandomToken {
 }
 
 function Protect-Secret([string]$value) {
-  ConvertTo-SecureString -String $value -AsPlainText -Force | ConvertFrom-SecureString
+  $plainBytes = [Text.Encoding]::UTF8.GetBytes($value)
+  try {
+    $protectedBytes = [Security.Cryptography.ProtectedData]::Protect(
+      $plainBytes,
+      $null,
+      [Security.Cryptography.DataProtectionScope]::CurrentUser
+    )
+    try { return [Convert]::ToBase64String($protectedBytes) }
+    finally { [Array]::Clear($protectedBytes, 0, $protectedBytes.Length) }
+  }
+  finally { [Array]::Clear($plainBytes, 0, $plainBytes.Length) }
 }
 
 function Unprotect-Secret([string]$encrypted) {
-  $secure = ConvertTo-SecureString -String $encrypted
-  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+  $protectedBytes = [Convert]::FromBase64String($encrypted)
+  try {
+    $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect(
+      $protectedBytes,
+      $null,
+      [Security.Cryptography.DataProtectionScope]::CurrentUser
+    )
+    try { return [Text.Encoding]::UTF8.GetString($plainBytes) }
+    finally { [Array]::Clear($plainBytes, 0, $plainBytes.Length) }
+  }
+  finally { [Array]::Clear($protectedBytes, 0, $protectedBytes.Length) }
 }
 
 $secretDirectory = Split-Path -Parent $SecretFile
@@ -69,3 +87,4 @@ finally {
 
 Write-Output "Encrypted local secrets: $SecretFile"
 Write-Output 'Cloudflare secret values were configured without printing them.'
+Write-Output 'Create or retry a Pages production deployment now so the new secrets are bound to it.'

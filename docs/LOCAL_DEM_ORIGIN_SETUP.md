@@ -34,9 +34,11 @@ npm.cmd run local-dem:precompute-landmarks
 
 両処理は完了済みファイルを検査して再利用する。公式ZIPは展開元として読むだけで変更しない。計算済み地形断面は日時・焦点距離・構図に依存しないため、同じスポットの太陽・月・天の川検索に再利用できる。
 
-## 2. 修正版をCloudflareへデプロイ
+## 2. Cloudflareデプロイ前の確認
 
-先に、この手順と `functions/api/local-dem-register.ts` を含むアプリをGitHub経由でデプロイする。Pagesには既存の `SPOT_SEARCH_JOBS` KV、各Workerには同じKVのbindingが必要である。`NETWORK_CACHE` R2と無料枠ガードは削除・停止しない。
+この手順と `functions/api/local-dem-register.ts` を含むアプリをGitHub経由でデプロイする。Pagesには既存の `SPOT_SEARCH_JOBS` KV、各Workerには同じKVのbindingが必要である。`NETWORK_CACHE` R2と無料枠ガードは削除・停止しない。
+
+Pagesのsecretは設定後に作られた本番デプロイへ反映させる。手順4でsecretを設定してから本番デプロイを作成する。先にデプロイ済みだった場合は、同じソースをもう一度デプロイまたは再試行する。
 
 ## 3. cloudflaredのインストール
 
@@ -62,6 +64,8 @@ npm.cmd run local-dem:configure-domainless
 | `LOCAL_DEM_REGISTRATION_TOKEN` | Pages、PCのみ | 変動するQuick Tunnel URLの登録を認証 |
 
 PC側の値は `%LOCALAPPDATA%\AstroSight\local-dem-secrets.json` にWindows DPAPIで暗号化して保存する。値を画面、ログ、リポジトリ、配布ZIPへ出力しない。Pages登録APIはCORSを許可せず、正しい登録トークンと `https://<1ラベル>.trycloudflare.com/` だけを受理する。登録されたパスはサーバー側で固定の `/v1/elevation/batch` に置き換える。
+
+このコマンドの完了後に、GitHub経由でPagesの本番デプロイを作成または再試行する。
 
 ## 5. 起動確認と自動起動
 
