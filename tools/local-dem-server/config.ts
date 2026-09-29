@@ -8,6 +8,7 @@ export type LocalDemServerConfig = {
   maximumBodyBytes: number;
   maximumPoints: number;
   requestTimeoutMs: number;
+  profileRequestTimeoutMs: number;
   maximumConcurrentRequests: number;
   maximumQueuedRequests: number;
 };
@@ -80,6 +81,15 @@ export function loadConfig(
       12_000,
       250,
       30_000
+    ),
+    // Exact all-bearing calculation is allowed a longer but still finite
+    // deadline. It remains far below the former ~54 minute device fallback.
+    profileRequestTimeoutMs: integerEnvironment(
+      environment,
+      "LOCAL_DEM_PROFILE_TIMEOUT_MS",
+      30_000,
+      1_000,
+      45_000
     ),
     maximumConcurrentRequests: integerEnvironment(
       environment,

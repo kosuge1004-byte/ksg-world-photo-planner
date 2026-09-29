@@ -11,8 +11,8 @@ import { MIN_STRUCTURE_CLEARANCE_METERS, selectSubjectSurfacePoint } from "./sub
  *    持つ東京スカイツリー等と同じ規則）。屋根/OSMは高さだけを提供する。
  * 2. 学習済み高さ: 一度でも屋根/OSMで頂上高を確定できた登録スポットは、地表からの
  *    構造物高さを端末に保存し、次回PLATEAU/OSMが取れない時の代替に使う。
- * 3. 最終手段: それでも高さが無い場合はエラーで止めず、登録座標の地表高で
- *    「高さ未確定」の仮配置にする（呼び出し側が警告を表示する）。
+ * 3. 高さを確定できない場合は地上へ代替配置せず、再試行可能なエラーにする。
+ *    構造物の被写体ピンが地表高で確定される経路を作らない。
  */
 
 const LEARNED_HEIGHT_STORAGE_KEY = "ksg-registered-structure-height-v1";
@@ -131,21 +131,9 @@ export function anchorToRegisteredCoordinates(
 }
 
 /**
- * 高さを確定できなかった登録スポットの仮配置。subjectSurfaceTargetを付けない
- * ため、履歴から選び直すと自動的に屋上の再解決が走る。
- */
-export function provisionalRegisteredStructurePoint(groundPointAtAnchor: GroundPoint): GroundPoint {
-  return {
-    ...groundPointAtAnchor,
-    subjectSurfaceTarget: undefined,
-    structureHeightMeters: undefined,
-    subjectHeightProvisional: true,
-  };
-}
-
-/**
  * PLATEAU・OSMの両方で頂上高度を確定できなかった登録スポットの最終解決。
- * 学習済み高さがあればそれを使い、無ければ仮配置にする（例外を投げない）。
+ * 学習済み高さがあればそれを使う。無い場合はSubjectRoofResolutionErrorを
+ * 送出し、地上ピンを正常値として保存・表示しない。
  */
 export function resolveRegisteredStructureWithoutLiveHeight(
   anchor: RegisteredStructureAnchor,
@@ -166,5 +154,11 @@ export function resolveRegisteredStructureWithoutLiveHeight(
       heightSource: "learned-structure-height",
     };
   }
-  return provisionalRegisteredStructurePoint(groundPointAtAnchor);
+  return selectSubjectSurfacePoint({
+    groundPoint: groundPointAtAnchor,
+    roofPoint: null,
+    osmPoint: null,
+    requireStructureRoof: true,
+    label,
+  });
 }

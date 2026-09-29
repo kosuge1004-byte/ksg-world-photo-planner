@@ -17,7 +17,7 @@ assert.match(geoid, /const queryLatitude = pointSpecific \? latitude : cacheLati
 assert.match(geoid, /const queryLongitude = pointSpecific \? longitude : cacheLongitude/);
 
 const elevationApi = read("functions/api/gsi-elevation.ts");
-assert.match(elevationApi, /lookupGsiElevations\(points,/);
+assert.match(elevationApi, /lookupGsiElevations\(\s*points,/);
 // 2026-08-28追記: 「複数座標をまとめた外側のバッチキャッシュ」
 // (cacheKeyInput、toFixed(5)で丸めていた)は撤去した。代わりに使う
 // 「DEMタイル単位の永続キャッシュ」は、タイル座標(x, y)自体が既に

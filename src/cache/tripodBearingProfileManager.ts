@@ -21,7 +21,11 @@ import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
 import { fetchSiteContexts, type SiteContextPoint } from "../search/siteContext";
 import { writePersistentSiteContexts, getPersistentSiteContextWriteFailureCount } from "./siteContextPersistentCache";
-import { fetchBearingProfileBatchDetailed } from "./bearingProfileBatchClient";
+import {
+  fetchBearingProfileBatchDetailed,
+  PrecomputedBearingProfileUnavailableError,
+} from "./bearingProfileBatchClient";
+import { findPrecomputedBearingProfileTarget } from "../data/precomputedBearingProfileTargets";
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
@@ -131,7 +135,13 @@ const BEARING_CONCURRENCY = 2;
 // Ask for all pending bearings at once so a normal 259-bearing download uses
 // one client/Worker/R2 round trip. Unregistered coordinates receive an explicit
 // 404 and retain the precise direct path below.
-const BEARING_BATCH_SIZE = 360;
+// Immutable registered-spot files are intentionally fetched in one request.
+// An arbitrary exact coordinate is calculated at the E-drive origin in small
+// bounded chunks: real E-drive/GSI measurements show that 32 fresh bearings
+// can approach the 30 second origin deadline, while 24 leaves transport margin
+// and commits each completed chunk before the next one starts.
+const PRECOMPUTED_BEARING_BATCH_SIZE = 360;
+const EDRIVE_EXACT_BEARING_BATCH_SIZE = 24;
 // 2026-09-08の実測: 公開APIで1方位352点の直接取得に約25.4秒。
 const DIRECT_PATH_SECONDS_PER_BEARING_ESTIMATE = 25;
 
@@ -382,9 +392,18 @@ export async function backfillBearingProfiles(params: {
   // the locally generated profile, so this changes transport count, not precision.
   const remainingBearingSet = new Set(pendingBearings);
   let batchFallbackReason: string | null = null;
-  for (let start = 0; start < pendingBearings.length; start += BEARING_BATCH_SIZE) {
+  const requiredPrecomputedTarget = requestedMaxDistanceMeters === 10_000
+    ? findPrecomputedBearingProfileTarget(subjectPoint.latitude, subjectPoint.longitude)
+    : null;
+  const bearingBatchSize = requiredPrecomputedTarget
+    ? PRECOMPUTED_BEARING_BATCH_SIZE
+    : Math.max(1, Math.min(
+        EDRIVE_EXACT_BEARING_BATCH_SIZE,
+        Math.floor(240_000 / requestedMaxDistanceMeters)
+      ));
+  for (let start = 0; start < pendingBearings.length; start += bearingBatchSize) {
     if (signal?.aborted) break;
-    const batchBearings = pendingBearings.slice(start, start + BEARING_BATCH_SIZE);
+    const batchBearings = pendingBearings.slice(start, start + bearingBatchSize);
     reportProgress({
       totalSteps,
       completedSteps: completedAttempts,
@@ -401,6 +420,14 @@ export async function backfillBearingProfiles(params: {
       maxDistanceMeters: requestedMaxDistanceMeters,
     }, signal);
     if (!outcome.ok) {
+      // 公開済みであるべき登録スポットを約54分の直接取得へ黙って落とさない。
+      // HTML誤応答、Functions未配置、R2未配置のいずれも設定異常として即時に
+      // 表示し、再デプロイ後に数秒の一括取得を再試行できるようにする。
+      if (requiredPrecomputedTarget) {
+        throw new PrecomputedBearingProfileUnavailableError(
+          `${requiredPrecomputedTarget.name}の計算済み地形データへ接続できません。${outcome.miss.reason}`
+        );
+      }
       batchFallbackReason = outcome.miss.reason;
       break;
     }
@@ -410,7 +437,8 @@ export async function backfillBearingProfiles(params: {
       batchFallbackReason = `計算済み地形データの点数が一致しません（${batch.pointCount} / ${batchBearings.length * baseDistances.length}点）`;
       continue;
     }
-    const usesPrecomputedRegisteredSpotProfile = batch.precomputed === true;
+    const usesCompleteServerTerrainProfile =
+      batch.precomputed === true || batch.terrainProfileComplete === true;
     const profileByBearing = new Map(
       batch.profiles.map((profile) => [profile.bearingDegrees, profile] as const)
     );
@@ -426,7 +454,7 @@ export async function backfillBearingProfiles(params: {
       // expensive work and was the main reason an otherwise complete profile
       // still took minutes to save. Dynamic responses retain the established
       // tile warming path because no reusable server-side file exists for them.
-      if (!usesPrecomputedRegisteredSpotProfile) {
+      if (!usesCompleteServerTerrainProfile) {
         prefetchGsiDeviceTilesForSamples(
           profile.points.map((point) => ({
             latitude: point.latitude,
@@ -466,6 +494,17 @@ export async function backfillBearingProfiles(params: {
     }
   }
   const remainingBearings = pendingBearings.filter((bearing) => remainingBearingSet.has(bearing));
+  if (remainingBearings.length > 0 && !signal?.aborted) {
+    // R2で解決できない正確な座標は、Pages APIが最後の砦であるEドライブ
+    // 原点へ一括計算を依頼する。そこでも完全な応答を得られなかった場合、
+    // 端末から1方位ずつ公開GSIへ送る旧経路（最悪約54分）へは戻さない。
+    // 不完全な値を保存せず、Eドライブ/Tunnel復旧後に同じ正確な座標で
+    // 再実行できる明示的エラーにする。
+    throw new PrecomputedBearingProfileUnavailableError(
+      `R2およびEドライブから完全な地形データを取得できませんでした（${batchFallbackReason ?? `${remainingBearings.length}方位が未解決`}）。` +
+      "PC・Eドライブ・Cloudflare Tunnelの状態を確認して再実行してください。"
+    );
+  }
   if (remainingBearings.length > 0 && !signal?.aborted) {
     // 直接取得は1方位（約350点）ごとに国土地理院DEMとジオイドを取得するため、
     // 実測で1方位あたり約25秒（2並列）かかる。目安を示して「止まっている」

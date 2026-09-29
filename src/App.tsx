@@ -3135,9 +3135,7 @@ function App() {
   }
 
   function subjectPlacedMessage(point: GroundPoint): string {
-    return point.subjectHeightProvisional
-      ? `${point.label}の頂上高度を確認できなかったため、登録位置の地表高で仮配置しました。三脚候補データの保存はできますが、構図計算の前に通信状態を確認して再検索してください。`
-      : `${point.label}を被写体として表示しました`;
+    return `${point.label}を被写体として表示しました`;
   }
 
   async function resolveSearchSubject(
@@ -3246,7 +3244,7 @@ function App() {
     });
     // 2026-09-29: 登録スポットは「登録座標＋高さ」で定義する。屋根/OSMは高さだけを
     // 提供し、水平位置は登録座標に固定する（計算済み三脚候補データを常に引ける）。
-    // 高さを確定できない場合もエラーで止めず、学習済み高さ→仮配置の順で続行する。
+    // 高さを確定できない場合は学習済み高さだけを代替に使い、地表へは置かない。
     const registeredLandmark = registeredLandmarkAtExactPoint(latitude, longitude);
     const registeredAnchor = registeredLandmark
       ? { name: registeredLandmark.name, latitude: registeredLandmark.latitude, longitude: registeredLandmark.longitude }
@@ -3281,7 +3279,7 @@ function App() {
       }
       // 登録外の地点は従来どおり「地上には置かない」。
       if (!registeredAnchor) throw error;
-      console.warn(`${label}の頂上高度をPLATEAU/OSMで確定できないため、学習済み高さまたは仮配置で続行します`);
+      console.warn(`${label}の頂上高度をPLATEAU/OSMで確定できないため、学習済み高さを確認します`);
       return resolveRegisteredStructureWithoutLiveHeight(registeredAnchor, groundPoint, label);
     }
   }
@@ -3936,6 +3934,24 @@ ${diagnosticMessage}
           ? error.message
           : "三脚候補データの保存中にエラーが発生しました";
         setSearchMessage(`${record.label || "この地点"}: ${message}`);
+        showUserNotice({
+          key: `bearing-profile-download:${record.id}`,
+          tone: "error",
+          message: `${record.label || "この地点"}: ${message}`,
+          actionLabel: "再試行",
+          onAction: () => {
+            if (bearingProfileAbortRef.current) return;
+            bearingProfilePendingRef.current = {
+              record,
+              subjectPoint: downloadPoint,
+              forceRefresh,
+            };
+            setBearingProfileDialog({
+              subjectLabel: record.label || "この地点",
+              progress: null,
+            });
+          },
+        });
       }
     } finally {
       if (bearingProfileAbortRef.current === controller) {

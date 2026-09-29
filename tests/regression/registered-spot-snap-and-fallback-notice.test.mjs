@@ -6,6 +6,11 @@ import {
   snapSpotLocationToRegisteredLandmark,
 } from "../../src/search/spotPresetSearch.ts";
 import { fetchBearingProfileBatchDetailed } from "../../src/cache/bearingProfileBatchClient.ts";
+import {
+  PRECOMPUTED_BEARING_PROFILE_TARGETS,
+  findPrecomputedBearingProfileTarget,
+} from "../../src/data/precomputedBearingProfileTargets.ts";
+import { apiEndpoint } from "../../src/network/apiEndpoint.ts";
 
 const SKYTREE = { latitude: 35.7100627, longitude: 139.8107004 };
 
@@ -34,6 +39,22 @@ test("unrelated names or distant points are never moved", () => {
 test("exact registered location is returned unchanged", () => {
   const exact = { ...SKYTREE, label: "東京スカイツリー", subjectSurfaceTarget: "structure-roof", structureHeightMeters: 634 };
   assert.equal(snapSpotLocationToRegisteredLandmark(exact), exact);
+});
+
+test("precomputed targets include every non-mountain landmark and Steel Dragon 2000", () => {
+  assert.equal(PRECOMPUTED_BEARING_PROFILE_TARGETS.length, 201);
+  assert.equal(
+    findPrecomputedBearingProfileTarget(35.0326866, 136.7332893)?.name,
+    "スチールドラゴン2000"
+  );
+});
+
+test("Capacitor API requests use Cloudflare instead of the bundled index.html origin", () => {
+  assert.equal(
+    apiEndpoint("/api/bearing-profile-batch", true),
+    "https://astrosight.pages.dev/api/bearing-profile-batch"
+  );
+  assert.equal(apiEndpoint("/api/bearing-profile-batch", false), "/api/bearing-profile-batch");
 });
 
 const batchRequest = {
@@ -68,6 +89,14 @@ test("batch miss reasons are reported instead of collapsing to null", async () =
     throw new TypeError("Failed to fetch");
   });
   assert.match(network.miss.reason, /接続できませんでした/);
+
+  const html = await fetchBearingProfileBatchDetailed(batchRequest, undefined, async () =>
+    new Response("<!doctype html><title>AstroSight</title>", {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    }));
+  assert.equal(html.ok, false);
+  assert.match(html.miss.reason, /応答形式が不正/);
 });
 
 test("registered-spot R2 unavailability still surfaces as an error", async () => {

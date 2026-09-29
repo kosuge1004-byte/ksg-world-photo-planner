@@ -150,6 +150,7 @@ export function selectPrecomputedBearingProfiles(
   return {
     version: 2,
     precomputed: true,
+    terrainProfileComplete: true,
     distancesMeters: stored.distancesMeters,
     profiles: profiles as BearingProfileBatchResponseV2["profiles"],
     failedBearings: [],

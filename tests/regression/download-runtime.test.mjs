@@ -3,6 +3,7 @@ import test from "node:test";
 import { indexedDB, IDBObjectStore } from "fake-indexeddb";
 import { Cartographic } from "cesium";
 import { AbortableSemaphore, CancellableRequestPool, withAbortableTimeout } from "../../src/utils/abortableSemaphore.ts";
+import { computeBearingProfileBatch } from "../../server/bearingProfileBatch.ts";
 
 globalThis.indexedDB = indexedDB;
 globalThis.window ??= { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
@@ -38,6 +39,15 @@ globalThis.fetch = async (input, init = {}) => {
     activeGeoids -= 1;
     if (init.signal?.aborted) throw init.signal.reason;
     return json({ geoidHeightMeters: 38, cache: "hit" });
+  }
+  if (url === "/api/bearing-profile-batch") {
+    const request = JSON.parse(init.body);
+    return json(await computeBearingProfileBatch(request, init.signal, {
+      lookupPrecomputed: async () => null,
+      lookupElevations: async (points) => points.map(() => ({ heightMeters: 100, source: "DEM5A" })),
+      lookupGeoidHeights: async (points) => points.map(() => 38),
+      nowIso: () => "2026-09-30T00:00:00.000Z",
+    }));
   }
   if (url.startsWith("/api/gsi-dem-tile")) {
     if (new URL(url, "http://localhost").searchParams.get("source") !== "DEM5A") return new Response(null, { status: 404 });
@@ -155,7 +165,7 @@ test("water downloads within 3000 points use one bounded batch and preserve orde
   assert.deepEqual(contextRequests.slice(start).flatMap((request) => request.points), points);
 });
 
-test("real bearing manager saves all required bearings and reuses them on the next run", async () => {
+test("real bearing manager saves every exact server-batch bearing and reuses them on the next run", async () => {
   const params = {
     subjectId: "download-runtime", subjectPoint: { latitude: 35.36, longitude: 136.81, height: 100, geoidHeightMeters: 38 },
     cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 }, maxDistanceMeters: 1_000,
@@ -168,7 +178,7 @@ test("real bearing manager saves all required bearings and reuses them on the ne
   assert.equal(result.failedBearings, 0);
   assert.equal(result.storageWriteFailures, 0);
   assert.ok(result.profilePoints > bearings.length);
-  assert.ok(progress.some((value) => value.geoidTotal > 0));
+  assert.ok(progress.some((value) => value.terrainStage === "profile"));
   assert.ok(contextRequests.some((request) => request.purpose === "water-only"));
   const { getBearingProfilesMany } = await import("../../src/cache/tripodBearingProfileCache.ts");
   const profiles = await getBearingProfilesMany(params.subjectId, 1.6, bearings);

@@ -2,6 +2,7 @@
 param(
   [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip$')]
   [string]$ArchiveName = ("AstroSight-source-{0}.zip" -f (Get-Date -Format 'yyyyMMdd')),
+  [string]$OutputDirectory = '',
   [switch]$Force,
   [switch]$ListOnly
 )
@@ -65,14 +66,20 @@ $fixedEntryTimestamp = [DateTimeOffset]::new(
   [TimeZoneInfo]::Local.GetUtcOffset($fixedEntryWallClock)
 )
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-$desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
-
-if ([string]::IsNullOrWhiteSpace($desktop) -or -not [System.IO.Directory]::Exists($desktop)) {
-  throw 'Windows のデスクトップフォルダーを特定できません。'
+$destination = $OutputDirectory
+if ([string]::IsNullOrWhiteSpace($destination)) {
+  $destination = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+  if ([string]::IsNullOrWhiteSpace($destination)) {
+    throw 'Windows のデスクトップフォルダーを特定できません。'
+  }
+} elseif (-not [System.IO.Path]::IsPathRooted($destination)) {
+  $destination = Join-Path $repoRoot $destination
 }
-
-$desktop = [System.IO.Path]::GetFullPath($desktop).TrimEnd('\', '/')
-$outputPath = Join-Path $desktop $ArchiveName
+$destination = [System.IO.Path]::GetFullPath($destination).TrimEnd('\', '/')
+if (-not [System.IO.Directory]::Exists($destination)) {
+  [System.IO.Directory]::CreateDirectory($destination) | Out-Null
+}
+$outputPath = Join-Path $destination $ArchiveName
 $shaPath = $outputPath + '.sha256'
 $integrityPath = $outputPath + '.integrity.json'
 
@@ -537,15 +544,15 @@ if ($ListOnly) {
 $artifacts = @($outputPath, $shaPath, $integrityPath)
 foreach ($artifact in $artifacts) {
   $parent = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($artifact)).TrimEnd('\', '/')
-  if (-not $parent.Equals($desktop, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Release artifacts must stay directly on the Desktop: $artifact"
+  if (-not $parent.Equals($destination, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Release artifacts must stay directly in the selected output directory: $artifact"
   }
   if ([System.IO.File]::Exists($artifact) -and -not $Force) {
     throw "Release artifact already exists. Use -Force to replace it: $artifact"
   }
 }
 
-$temporaryPath = Join-Path $desktop (".{0}.{1}.partial" -f $ArchiveName, [Guid]::NewGuid().ToString('N'))
+$temporaryPath = Join-Path $destination (".{0}.{1}.partial" -f $ArchiveName, [Guid]::NewGuid().ToString('N'))
 try {
   New-DeterministicZip $temporaryPath $records
   $verification = Test-ReleaseZip $temporaryPath $records

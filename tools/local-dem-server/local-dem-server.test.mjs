@@ -9,6 +9,7 @@ import { gzipSync } from "node:zlib";
 import { createLocalDemRequestHandler } from "./app.ts";
 import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
 import { createReadOnlyDemCache } from "./readOnlyDemCache.ts";
+import { createLocalDemPersistentCache } from "./localDemPersistentCache.ts";
 import {
   PRECOMPUTED_BEARING_PROFILE_FORMAT,
   precomputedBearingProfileIdentity,
@@ -41,6 +42,7 @@ function config(overrides = {}) {
     maximumBodyBytes: 4_096,
     maximumPoints: 3,
     requestTimeoutMs: 500,
+    profileRequestTimeoutMs: 500,
     maximumConcurrentRequests: 1,
     maximumQueuedRequests: 1,
     ...overrides,
@@ -71,9 +73,9 @@ function payload(overrides = {}) {
   return { source: "DEM10B", points: [point()], ...overrides };
 }
 
-async function start(lookup, overrides = {}, lookupAuto, lookupPrecomputedProfile) {
+async function start(lookup, overrides = {}, lookupAuto, lookupPrecomputedProfile, computeProfile) {
   const handler = createLocalDemRequestHandler(
-    config(overrides), lookup, lookupAuto, lookupPrecomputedProfile
+    config(overrides), lookup, lookupAuto, lookupPrecomputedProfile, computeProfile
   );
   const server = createServer((request, response) => void handler(request, response));
   await new Promise((resolve, reject) => {
@@ -87,6 +89,18 @@ async function start(lookup, overrides = {}, lookupAuto, lookupPrecomputedProfil
 
 function postProfile(base, value, options = {}) {
   return fetch(`${base}/v1/bearing-profile/precomputed`, {
+    method: "POST",
+    headers: {
+      "x-astrosight-origin-token": TOKEN,
+      "content-type": "application/json",
+      ...options.headers,
+    },
+    body: JSON.stringify(value),
+  });
+}
+
+function postComputedProfile(base, value, options = {}) {
+  return fetch(`${base}/v1/bearing-profile/compute`, {
     method: "POST",
     headers: {
       "x-astrosight-origin-token": TOKEN,
@@ -183,6 +197,59 @@ test("precomputed profile route is authenticated and returns one complete compac
   const response = await postProfile(base, profileRequest);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), responseBody);
+});
+
+test("computed profile route returns an exact complete profile for an arbitrary coordinate", async () => {
+  const profileRequest = {
+    subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: [0, 1],
+    maxDistanceMeters: 10_000,
+  };
+  const responseBody = {
+    version: 2,
+    distancesMeters: [8, 10_000],
+    profiles: profileRequest.bearings.map((bearingDegrees) => ({
+      bearingDegrees,
+      ellipsoidalHeightsMeters: [101, 102],
+      elevationSources: ["DEM1A", "DEM10B"],
+      computedAtIso: "2026-09-30T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: 2,
+    pointCount: 4,
+  };
+  const base = await start(async () => new Map(), {}, undefined, undefined, async (actual) => {
+    assert.deepEqual(actual, profileRequest);
+    return responseBody;
+  });
+  assert.equal((await postComputedProfile(base, profileRequest, {
+    headers: { "x-astrosight-origin-token": "wrong" },
+  })).status, 401);
+  const response = await postComputedProfile(base, profileRequest);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ...responseBody,
+    terrainProfileComplete: true,
+  });
+});
+
+test("computed profile route rejects incomplete calculations", async () => {
+  const profileRequest = {
+    subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: [0],
+    maxDistanceMeters: 10_000,
+  };
+  const base = await start(async () => new Map(), {}, undefined, undefined, async () => ({
+    version: 2,
+    distancesMeters: [8, 10_000],
+    profiles: [],
+    failedBearings: [{ bearingDegrees: 0, reason: "missing" }],
+    requestedBearingCount: 1,
+    pointCount: 2,
+  }));
+  assert.equal((await postComputedProfile(base, profileRequest)).status, 503);
 });
 
 test("the independent origin token is enforced", async () => {
@@ -316,6 +383,29 @@ test("read-only cache accepts only fixed R2 keys and blocks traversal", async ()
   await assert.rejects(
     cache.put("anything", new ArrayBuffer(0)),
     /read-only/
+  );
+});
+
+test("local persistent cache writes only fixed decoded-tile keys", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "astrosight-local-dem-write-through-"));
+  temporaryDirectories.add(root);
+  const assetRoot = path.join(root, "gsi-local-dem-v1");
+  await mkdir(assetRoot, { recursive: true });
+  await writeFile(path.join(assetRoot, "manifest.json"), JSON.stringify({
+    schemaVersion: 1,
+    format: "astrosight-gsi-local-dem-v1",
+  }));
+  const cache = await createLocalDemPersistentCache(root);
+  await cache.validateReady();
+  const key = "gsi-decoded-dem-v2/dem5a_png/15/29000/12800.bin";
+  const payload = new Uint8Array([0]).buffer;
+  await cache.put(key, payload);
+  assert.deepEqual(new Uint8Array(await cache.get(key, { type: "arrayBuffer" })), new Uint8Array([0]));
+  assert.equal((await cache.getWithStatus(key, { type: "arrayBuffer" })).status, "hit");
+  await assert.rejects(cache.put("../outside.bin", payload), /invalid decoded DEM tile key/);
+  await assert.rejects(
+    cache.put("gsi-local-dem-v1/manifest.json", payload),
+    /invalid decoded DEM tile key/
   );
 });
 

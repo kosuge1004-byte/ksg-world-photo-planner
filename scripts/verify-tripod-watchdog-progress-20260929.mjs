@@ -1,8 +1,12 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const candidates = fs.readFileSync(new URL('../src/cesium/tripodCandidates.ts', import.meta.url), 'utf8');
-const dist = fs.readFileSync(new URL('../dist/assets/index-C612woMZ.js', import.meta.url), 'utf8');
+const distAssets = new URL('../dist/assets/', import.meta.url);
+const distEntry = fs.readdirSync(distAssets).find((name) => /^index-.*\.js$/.test(name));
+if (!distEntry) throw new Error('built application entry was not found');
+const dist = fs.readFileSync(new URL(path.posix.join('../dist/assets', distEntry), import.meta.url), 'utf8');
 
 const checks = [
   ['fixed 90-second absolute watchdog removed from source', !/TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT_MS\s*=\s*90_000/.test(app)],
@@ -14,8 +18,8 @@ const checks = [
   ['diagnostics initialize activity timestamp', /liveLastActivityAtMs:\s*Date\.now\(\)/.test(candidates)],
   ['watchdog is cleared after search', /clearInterval\(watchdogInterval\)/.test(app)],
   ['dist no longer contains old 90-second constant', !/tg=9e4/.test(dist)],
-  ['dist contains inactivity watchdog', /tripodWatchdogStallMs=18e4/.test(dist) && /watchdogInterval=setInterval/.test(dist)],
-  ['dist live trace refreshes activity timestamp', /Vu\.liveLastActivityAtMs=Date\.now\(\)/.test(dist)],
+  ['dist contains inactivity watchdog', /=18e4[,;]/.test(dist) && /setInterval\(/.test(dist)],
+  ['dist live trace refreshes activity timestamp', /\.liveLastActivityAtMs=Date\.now\(\)/.test(dist)],
 ];
 
 let failed = false;

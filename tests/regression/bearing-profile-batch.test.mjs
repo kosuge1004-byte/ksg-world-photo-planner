@@ -17,6 +17,7 @@ import {
 } from "../../server/precomputedBearingProfiles.ts";
 import { lookupR2PrecomputedBearingProfile } from "../../server/publishedPrecomputedBearingProfiles.ts";
 import { onRequest as bearingProfileBatchEndpoint } from "../../functions/api/bearing-profile-batch.ts";
+import { onRequest as apiMiddleware } from "../../functions/_middleware.ts";
 
 const request = {
   subjectPoint: { latitude: 35.36, longitude: 136.81, height: 100 },
@@ -383,10 +384,133 @@ test("Pages batch endpoint fails registered-profile misses quickly instead of co
     waitUntil() {},
   });
   assert.equal(response.status, 503);
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
   assert.deepEqual(await response.json(), {
     code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
     error: "登録スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
   });
+});
+
+test("Pages batch endpoint uses the E-drive exact calculator as the final origin", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const body = {
+    ...request,
+    subjectPoint: {
+      latitude: 35.7101127,
+      longitude: 139.8107504,
+      height: 12,
+    },
+    bearings: [0],
+    maxDistanceMeters: 1_000,
+  };
+  const exact = await computeBearingProfileBatch(body, undefined, {
+    lookupPrecomputed: async () => null,
+    lookupElevations: async (points) => points.map(() => ({
+      heightMeters: 100,
+      source: "DEM5A",
+    })),
+    lookupGeoidHeights: async (points) => points.map(() => 38),
+    nowIso: () => "2026-09-30T00:00:00.000Z",
+  });
+  exact.terrainProfileComplete = true;
+  const requestedRoutes = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    requestedRoutes.push(url.pathname);
+    if (url.pathname === "/v1/bearing-profile/precomputed") {
+      return Response.json({ error: "not found" }, { status: 404 });
+    }
+    if (url.pathname === "/v1/bearing-profile/compute") {
+      return Response.json(exact);
+    }
+    throw new Error(`unexpected origin request: ${url.pathname}`);
+  };
+  const response = await bearingProfileBatchEndpoint({
+    request: new Request("https://example.test/api/bearing-profile-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    env: {
+      LOCAL_DEM_API_URL: "https://dem-origin.example.test/v1/elevation/batch",
+      LOCAL_DEM_ORIGIN_TOKEN: "o".repeat(48),
+      LOCAL_DEM_ACCESS_CLIENT_ID: "test-client-id",
+      LOCAL_DEM_ACCESS_CLIENT_SECRET: "s".repeat(48),
+    },
+    waitUntil() {},
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(requestedRoutes, [
+    "/v1/bearing-profile/precomputed",
+    "/v1/bearing-profile/compute",
+  ]);
+  const result = await response.json();
+  assert.equal(result.terrainProfileComplete, true);
+  assert.equal(result.requestedBearingCount, 1);
+  assert.equal(result.failedBearings.length, 0);
+});
+
+test("Pages batch endpoint stops arbitrary-coordinate downloads when E-drive is unavailable", async () => {
+  const body = {
+    ...request,
+    subjectPoint: {
+      latitude: 35.7101127,
+      longitude: 139.8107504,
+      height: 12,
+    },
+    bearings: [0],
+    maxDistanceMeters: 1_000,
+  };
+  const response = await bearingProfileBatchEndpoint({
+    request: new Request("https://example.test/api/bearing-profile-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    env: {},
+    waitUntil() {},
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
+    error: "この地点の正確な地形データをEドライブで計算できません。PC・Eドライブ・Cloudflare Tunnelの状態を確認して再実行してください。",
+  });
+});
+
+test("Pages batch endpoint accepts Capacitor CORS preflight without terrain work", async () => {
+  const response = await bearingProfileBatchEndpoint({
+    request: new Request("https://example.test/api/bearing-profile-batch", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://localhost",
+        "Access-Control-Request-Method": "POST",
+      },
+    }),
+    env: {},
+    waitUntil() {},
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assert.match(response.headers.get("access-control-allow-methods"), /POST/);
+});
+
+test("Pages API middleware allows only the installed app origins", async () => {
+  const nativeResponse = await apiMiddleware({
+    request: new Request("https://astrosight.pages.dev/api/gsi-elevation", {
+      headers: { Origin: "https://localhost" },
+    }),
+    next: async () => Response.json({ ok: true }),
+  });
+  assert.equal(nativeResponse.headers.get("access-control-allow-origin"), "https://localhost");
+
+  const foreignResponse = await apiMiddleware({
+    request: new Request("https://astrosight.pages.dev/api/gsi-elevation", {
+      headers: { Origin: "https://example.invalid" },
+    }),
+    next: async () => Response.json({ ok: true }),
+  });
+  assert.equal(foreignResponse.headers.get("access-control-allow-origin"), null);
 });
 
 test("Pages batch endpoint streams the R2 gzip without Worker-side inflation", async () => {
@@ -426,48 +550,63 @@ test("Pages batch endpoint streams the R2 gzip without Worker-side inflation", a
   };
   const compressed = gzipSync(Buffer.from(JSON.stringify(stored), "utf8"));
   const budget = new Map();
-  const response = await bearingProfileBatchEndpoint({
-    request: new Request("https://example.test/api/bearing-profile-batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-    env: {
-      NETWORK_CACHE: {
-        async get() {
-          return {
-            async arrayBuffer() {
-              return compressed.buffer.slice(
-                compressed.byteOffset,
-                compressed.byteOffset + compressed.byteLength
-              );
-            },
-          };
+  const NativeResponse = globalThis.Response;
+  let response;
+  let capturedEncodeBody = null;
+  globalThis.Response = class extends NativeResponse {
+    constructor(responseBody, init) {
+      capturedEncodeBody = init?.encodeBody ?? null;
+      super(responseBody, init);
+    }
+  };
+  try {
+    response = await bearingProfileBatchEndpoint({
+      request: new Request("https://example.test/api/bearing-profile-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      env: {
+        NETWORK_CACHE: {
+          async get() {
+            return {
+              async arrayBuffer() {
+                return compressed.buffer.slice(
+                  compressed.byteOffset,
+                  compressed.byteOffset + compressed.byteLength
+                );
+              },
+            };
+          },
+          async put() {},
         },
-        async put() {},
-      },
-      SPOT_SEARCH_JOBS: { async get() { return null; }, async put() {} },
-      R2_WRITE_BUDGET_DB: {
-        prepare() {
-          return {
-            bind(key, increment, limit) {
-              return {
-                async first() {
-                  const next = (budget.get(key) ?? 0) + increment;
-                  if (next > limit) return null;
-                  budget.set(key, next);
-                  return { writes: next };
-                },
-              };
-            },
-          };
+        SPOT_SEARCH_JOBS: { async get() { return null; }, async put() {} },
+        R2_WRITE_BUDGET_DB: {
+          prepare() {
+            return {
+              bind(key, increment, limit) {
+                return {
+                  async first() {
+                    const next = (budget.get(key) ?? 0) + increment;
+                    if (next > limit) return null;
+                    budget.set(key, next);
+                    return { writes: next };
+                  },
+                };
+              },
+            };
+          },
         },
       },
-    },
-    waitUntil() {},
-  });
+      waitUntil() {},
+    });
+  } finally {
+    globalThis.Response = NativeResponse;
+  }
   assert.equal(response.status, 200);
+  assert.equal(capturedEncodeBody, "manual");
   assert.equal(response.headers.get("content-encoding"), "gzip");
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
   const streamed = Buffer.from(await response.arrayBuffer());
   assert.deepEqual(streamed, compressed);
 });

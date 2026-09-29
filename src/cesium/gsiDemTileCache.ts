@@ -1,6 +1,7 @@
 import type { GsiElevationApiSample } from "../types/geospatial";
 import { withAbortableTimeout } from "../utils/abortableSemaphore";
 import type { GsiElevationClientPoint } from "./gsiElevationClient";
+import { apiEndpoint } from "../network/apiEndpoint";
 
 /**
  * Device-side decoded GSI DEM tile cache.
@@ -1031,7 +1032,7 @@ async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number)
   const promise = (async () => {
     const params = new URLSearchParams({ source: source.label, x: String(x), y: String(y) });
     await withAbortableTimeout(async (signal) => {
-    const response = await fetch(`/api/gsi-dem-tile?${params.toString()}`, {
+    const response = await fetch(apiEndpoint(`/api/gsi-dem-tile?${params.toString()}`), {
       headers: { Accept: "application/octet-stream" },
       signal,
     });

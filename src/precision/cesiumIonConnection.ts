@@ -15,6 +15,8 @@
  * 兼ね合いで、トークンはあえて端末内保存のみとし、他端末とは同期しない。
  */
 
+import { apiEndpoint } from "../network/apiEndpoint";
+
 const STORAGE_KEY = "ksg-cesium-ion-connection";
 const PKCE_VERIFIER_STORAGE_KEY = "ksg-cesium-ion-pkce-verifier";
 const OAUTH_STATE_STORAGE_KEY = "ksg-cesium-ion-oauth-state";
@@ -117,7 +119,7 @@ export async function completeCesiumIonConnection(
     throw new Error("認証情報の有効期限が切れました。もう一度接続をお試しください。");
   }
 
-  const response = await fetch("/api/cesium-oauth-callback", {
+  const response = await fetch(apiEndpoint("/api/cesium-oauth-callback"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ grantType: "authorization_code", code, codeVerifier }),
@@ -180,7 +182,7 @@ export async function getValidCesiumIonAccessToken(): Promise<string | null> {
   }
 
   try {
-    const response = await fetch("/api/cesium-oauth-callback", {
+    const response = await fetch(apiEndpoint("/api/cesium-oauth-callback"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ grantType: "refresh_token", refreshToken: connection.refreshToken }),
@@ -312,4 +314,3 @@ export function setCesiumIonMonthlyUsageCountFromOfficialUsage(count: number): n
 export function isCesiumIonRootTilesetRequestAllowed(): boolean {
   return loadUsageRecord().count < CESIUM_ION_USAGE_STOP_THRESHOLD;
 }
-

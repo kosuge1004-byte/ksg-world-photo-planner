@@ -26,13 +26,16 @@ globalThis.fetch = async (input) => {
 try {
   // A static landmark no longer enters the API path. Use an uncatalogued query.
   const result = await resolveSpotLocation('検証用撮影スポット');
-  if (Math.abs(result.latitude - 35.3884) > 1e-9 || Math.abs(result.longitude - 136.9392) > 1e-9) {
+  // The network fallback identifies 犬山城, then the registered-spot snap
+  // deliberately replaces approximate Nominatim coordinates with the exact
+  // catalogue coordinates used by its precomputed R2 terrain profile.
+  if (Math.abs(result.latitude - 35.3883604) > 1e-9 || Math.abs(result.longitude - 136.9391766) > 1e-9) {
     throw new Error(`unexpected coordinates: ${JSON.stringify(result)}`);
   }
   if (!calls.includes('/api/geocode') || !calls.some((url) => url.startsWith('https://nominatim.openstreetmap.org/search?'))) {
     throw new Error(`fallback path was not exercised: ${JSON.stringify(calls)}`);
   }
-  console.log('PASS: /api/geocode JSON error falls back to direct Nominatim search');
+  console.log('PASS: /api/geocode JSON error falls back to Nominatim and snaps a registered spot to its exact coordinates');
 } finally {
   globalThis.fetch = originalFetch;
 }

@@ -409,6 +409,26 @@ export type SpotPresetSearchOptions = {
   ) => Promise<void>;
 };
 
+export type TerrainLineOfSightDecision =
+  | { accepted: true; status: "visible" | "unverified" }
+  | { accepted: false; status: "possibly-obstructed" };
+
+/**
+ * DEMで遮蔽が確定した候補だけを除外する。通信失敗・境界不確実など未検証の
+ * 候補は残すため、精度を落とす推測除外は行わない。
+ */
+export function classifyTerrainLineOfSight(
+  lineOfSight: CelestialOcclusion
+): TerrainLineOfSightDecision {
+  if (lineOfSight.verified && !lineOfSight.visible) {
+    return { accepted: false, status: "possibly-obstructed" };
+  }
+  return {
+    accepted: true,
+    status: lineOfSight.verified ? "visible" : "unverified",
+  };
+}
+
 function abortIfRequested(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw createAbortError("スポット検索を中止しました");
@@ -1139,14 +1159,18 @@ export async function searchSpotPresets({
             entry.candidate.distanceMeters,
             signal
           ));
-          if (lineOfSight.verified && lineOfSight.visible) {
+          const decision = classifyTerrainLineOfSight(lineOfSight);
+          if (!decision.accepted) {
+            // DEM地形による遮蔽が確定した候補は検索結果へ入れない。
+            // 建物・樹木メッシュはこの判定経路では使用していない。
+            return null;
+          }
+          if (decision.status === "visible") {
             performanceTracker.increment("lineOfSightVisible");
           } else {
             performanceTracker.increment("lineOfSightUnverifiedAccepted");
           }
-          // 3D見通し判定はデータ欠損や地物精度の影響を受けるため、
-          // 候補の削除条件にはせず、全候補をクライアント側の状態表示へ渡す。
-          return entry;
+          return { entry, candidate3dStatus: decision.status };
         } catch (error) {
           if (signal?.aborted ||
             (isAbortError(error))) {
@@ -1155,12 +1179,13 @@ export async function searchSpotPresets({
           performanceTracker.increment("lineOfSightFailures");
           performanceTracker.increment("lineOfSightUnverifiedAccepted");
           console.warn("スポット検索中に見通しを確認できなかったため、地形未確認候補として残します", error);
-          return entry;
+          return { entry, candidate3dStatus: "unverified" as const };
         }
       }));
 
-      for (const entry of visibility) {
-        if (!entry || results.length >= criteria.displayCount) continue;
+      for (const visibleEntry of visibility) {
+        if (!visibleEntry || results.length >= criteria.displayCount) continue;
+        const { entry, candidate3dStatus } = visibleEntry;
         const { sample, candidate, siteContext, cameraHorizontal } = entry;
         results.push({
           id: `${criteria.celestialId}-${sample.date.getTime()}-${candidate.latitude}-${candidate.longitude}`,
@@ -1179,8 +1204,7 @@ export async function searchSpotPresets({
           celestialLabel: BODY_LABELS[criteria.celestialId],
           cameraAzimuthDegrees: cameraHorizontal.azimuthDegrees,
           cameraAltitudeDegrees: cameraHorizontal.altitudeDegrees,
-          // サーバー側のDEM確認後も、端末側Photorealistic 3D確認までは候補を残す。
-          candidate3dStatus: "unverified",
+          candidate3dStatus,
           nearbyLandmarks: siteContext?.nearbyLandmarks ?? [],
           nearbyBuildings: siteContext?.nearbyBuildings ?? [],
           nearbyStructures: siteContext?.nearbyStructures ?? [],

@@ -73,12 +73,13 @@ test("unverified allowlist only shrinks: every listed name still exists and is s
   }
 });
 
-test("registered spots without published precomputed data fall back (404) instead of failing (503)", async () => {
+test("every non-mountain registered spot is a required precomputed target", async () => {
   const { PRECOMPUTED_BEARING_PROFILE_TARGETS } = await import("../../server/precomputedBearingProfileTargets.ts");
   const endpoint = fs.readFileSync(new URL("../../functions/api/bearing-profile-batch.ts", import.meta.url), "utf8");
-  assert.match(endpoint, /PRECOMPUTED_BEARING_PROFILE_TARGETS\.some/u);
+  assert.match(endpoint, /findPrecomputedBearingProfileTarget/u);
   assert.doesNotMatch(endpoint, /ACTIVE_PREWARM_LANDMARKS/u);
   const published = new Set(PRECOMPUTED_BEARING_PROFILE_TARGETS.map((target) => target.name));
-  assert.equal(published.has("スチールドラゴン2000"), false);
+  assert.equal(published.size, 201);
+  assert.equal(published.has("スチールドラゴン2000"), true);
   assert.ok(JAPAN_LANDMARKS.some((landmark) => landmark.name === "スチールドラゴン2000"));
 });

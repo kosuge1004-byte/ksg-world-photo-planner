@@ -8,6 +8,7 @@ import {
 import { computeBearingProfileBatch } from "../../server/bearingProfileBatch.ts";
 import { lookupGsiElevations } from "../../server/gsiElevation.ts";
 import {
+  computeLocalBearingProfile,
   lookupLocalDemGatewayAuto,
   lookupLocalDemGatewayForSource,
   resetLocalDemGatewayForTests,
@@ -227,6 +228,69 @@ test("a real-size 259-bearing precomputed response stays on the one-request path
   assert.equal(response.profiles.length, 259);
   assert.equal(response.pointCount, 91_168);
   assert.equal(response.failedBearings.length, 0);
+});
+
+test("an arbitrary coordinate uses one authenticated exact-profile origin request", async () => {
+  configureServerRuntime({ localDemGateway: gatewayConfiguration });
+  const exactRequest = {
+    subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: [0, 1],
+    maxDistanceMeters: 10_000,
+  };
+  const responseBody = {
+    version: 2,
+    terrainProfileComplete: true,
+    distancesMeters: [8, 10_000],
+    profiles: exactRequest.bearings.map((bearingDegrees) => ({
+      bearingDegrees,
+      ellipsoidalHeightsMeters: [101, 102],
+      elevationSources: ["DEM1A", "DEM10B"],
+      computedAtIso: "2026-09-30T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: 2,
+    pointCount: 4,
+  };
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    calls += 1;
+    assert.equal(String(input), "https://dem-origin.example.test/v1/bearing-profile/compute");
+    const headers = new Headers(init.headers);
+    assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
+    assert.equal(headers.get("cf-access-client-id"), gatewayConfiguration.accessClientId);
+    assert.equal(headers.get("cf-access-client-secret"), gatewayConfiguration.accessClientSecret);
+    assert.deepEqual(JSON.parse(init.body), exactRequest);
+    return Response.json(responseBody);
+  };
+  assert.deepEqual(await computeLocalBearingProfile(exactRequest), responseBody);
+  assert.equal(calls, 1);
+});
+
+test("exact-profile origin rejects partial data and opens its short circuit", async () => {
+  configureServerRuntime({ localDemGateway: gatewayConfiguration });
+  const exactRequest = {
+    subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: [0],
+    maxDistanceMeters: 10_000,
+  };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({
+      version: 2,
+      terrainProfileComplete: true,
+      distancesMeters: [8, 10_000],
+      profiles: [],
+      failedBearings: [{ bearingDegrees: 0, reason: "missing" }],
+      requestedBearingCount: 1,
+      pointCount: 2,
+    });
+  };
+  assert.equal(await computeLocalBearingProfile(exactRequest), null);
+  assert.equal(await computeLocalBearingProfile(exactRequest), null);
+  assert.equal(calls, 1, "the failed origin is not hammered during the cooldown");
 });
 
 test("caller cancellation is propagated instead of converted into a fallback", async () => {

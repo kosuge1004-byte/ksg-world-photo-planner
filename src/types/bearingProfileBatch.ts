@@ -38,6 +38,13 @@ export type BearingProfileBatchResponseV1 = {
   version: 1;
   /** The authoritative values came from an offline-generated registered-spot file. */
   precomputed?: boolean;
+  /**
+   * The response itself is the complete authoritative terrain profile and can
+   * be persisted without downloading the same raw DEM tiles again. This is
+   * true for both immutable R2 profiles and exact profiles calculated by the
+   * private E-drive origin.
+   */
+  terrainProfileComplete?: boolean;
   profiles: BearingProfileBatchProfile[];
   failedBearings: BearingProfileBatchFailure[];
   requestedBearingCount: number;
@@ -62,6 +69,8 @@ export type BearingProfileBatchResponseV2 = {
   version: 2;
   /** The authoritative values came from an offline-generated registered-spot file. */
   precomputed?: boolean;
+  /** See BearingProfileBatchResponseV1.terrainProfileComplete. */
+  terrainProfileComplete?: boolean;
   distancesMeters: number[];
   profiles: BearingProfileBatchCompactProfile[];
   failedBearings: BearingProfileBatchFailure[];

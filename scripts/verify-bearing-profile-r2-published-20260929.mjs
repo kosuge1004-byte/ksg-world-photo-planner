@@ -14,13 +14,15 @@ assert.doesNotMatch(route, /computeBearingProfileBatch/,
 assert.match(route, /readR2PrecomputedBearingProfileCompressed/);
 assert.match(route, /"Content-Encoding": "gzip"/,
   "R2 gzip must be streamed without Worker-side inflation");
+assert.match(route, /encodeBody:\s*"manual"/,
+  "pre-compressed R2 bytes must disable automatic Worker recompression");
 assert.match(route, /PRECOMPUTED_PROFILE_UNAVAILABLE/,
   "registered-profile deployment errors must be visible");
 assert.match(client, /selectPublishedProfileEnvelope/,
   "the browser must validate the full published R2 envelope");
 assert.match(client, /PrecomputedBearingProfileUnavailableError/,
   "a registered R2 miss must not silently enter the hour-long fallback");
-assert.match(manager, /const BEARING_BATCH_SIZE = 360/,
+assert.match(manager, /const PRECOMPUTED_BEARING_BATCH_SIZE = 360/,
   "all registered-spot bearings must use one HTTP/R2 request");
 assert.match(published, /precomputedBearingProfileObjectKey/);
 assert.match(published, /MAX_COMPRESSED_PROFILE_BYTES = 16 \* 1024 \* 1024/);

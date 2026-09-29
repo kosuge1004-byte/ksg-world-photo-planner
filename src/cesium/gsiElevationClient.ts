@@ -1,5 +1,6 @@
 import { createAbortError, createTimeoutError } from "../utils/runtimeErrors";
 import type { GsiElevationApiSample } from "../types/geospatial";
+import { apiEndpoint } from "../network/apiEndpoint";
 
 export type GsiElevationClientPoint = {
   latitude: number;
@@ -152,7 +153,7 @@ async function requestBatch(
   const onAbort = () => controller.abort(abortError());
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const response = await fetcher("/api/gsi-elevation", {
+    const response = await fetcher(apiEndpoint("/api/gsi-elevation"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

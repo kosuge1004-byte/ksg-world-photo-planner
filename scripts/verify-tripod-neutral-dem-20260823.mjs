@@ -20,7 +20,7 @@ const checks = [
   // （むしろ分けない方が、los-safe/neutral間でも同じタイルを共有できて
   // 効率的）。APIがinterpolationModeをlookupGsiElevationsへ正しく
   // 渡していることを確認する。
-  ['API forwards interpolation mode to lookupGsiElevations (2026-08-28)', /lookupGsiElevations\(points,/.test(api)],
+  ['API forwards interpolation mode to lookupGsiElevations (2026-08-28)', /lookupGsiElevations\(\s*points,/.test(api)],
   ['client transmits interpolation mode', /interpolationMode\?: "los-safe" \| "neutral"/.test(client)],
   // 2026-08-28追記: sampleWorldTerrainNeutralは、以前は独自に
   // fetchGsiElevationSamplesを直接呼んでいたが、端末側の永続キャッシュ

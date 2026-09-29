@@ -11,6 +11,7 @@ const [
   app,
   readOnlyCache,
   readOnlyProfiles,
+  persistentCache,
   gateway,
   runtime,
   env,
@@ -24,6 +25,7 @@ const [
   read("tools/local-dem-server/app.ts"),
   read("tools/local-dem-server/readOnlyDemCache.ts"),
   read("tools/local-dem-server/readOnlyBearingProfileStore.ts"),
+  read("tools/local-dem-server/localDemPersistentCache.ts"),
   read("server/localDemGateway.ts"),
   read("server/cloudflareRuntime.ts"),
   read("functions/_shared/env.ts"),
@@ -40,6 +42,7 @@ assert.match(start, /LOCAL_DEM_HOST\s*=\s*['"]127\.0\.0\.1['"]/);
 
 assert.match(app, /const ENDPOINT = ["']\/v1\/elevation\/batch["']/);
 assert.match(app, /PRECOMPUTED_PROFILE_ENDPOINT = ["']\/v1\/bearing-profile\/precomputed["']/);
+assert.match(app, /COMPUTED_PROFILE_ENDPOINT = ["']\/v1\/bearing-profile\/compute["']/);
 assert.match(app, /x-astrosight-origin-token/);
 assert.match(app, /timingSafeEqual/);
 assert.match(app, /maximumBodyBytes/);
@@ -53,6 +56,10 @@ assert.doesNotMatch(readOnlyCache, /O_WRONLY|O_RDWR|writeFile|unlink|rm\(/);
 assert.match(readOnlyProfiles, /constants\.O_RDONLY/);
 assert.match(readOnlyProfiles, /checksum mismatch/);
 assert.doesNotMatch(readOnlyProfiles, /O_WRONLY|O_RDWR|writeFile|unlink|rm\(/);
+assert.match(persistentCache, /gsi-decoded-dem-v2/);
+assert.match(persistentCache, /DECODED_TILE_KEY/);
+assert.match(persistentCache, /createReadOnlyDemCache/);
+assert.doesNotMatch(persistentCache, /request\.url|IncomingMessage|ServerResponse/);
 
 assert.match(gateway, /url\.protocol !== ["']https:["']/);
 assert.match(gateway, /url\.pathname !== ["']\/v1\/elevation\/batch["']/);
@@ -68,11 +75,13 @@ assert.match(gateway, /MAX_RESPONSE_BYTES = 256 \* 1024/);
 assert.match(gateway, /FAILURE_COOLDOWN_MS/);
 assert.match(gateway, /export async function lookupLocalDemGatewayAuto/);
 assert.match(gateway, /export async function lookupLocalPrecomputedBearingProfile/);
+assert.match(gateway, /export async function computeLocalBearingProfile/);
 assert.match(app, /record\.mode === ["']auto["']/);
 assert.match(app, /complete:\s*true/);
 assert.match(elevation, /lookupLocalDemGatewayAuto\(gatewayPoints, signal\)/);
-assert.match(bearingManager, /const BEARING_BATCH_SIZE = 360/);
-assert.match(bearingManager, /usesPrecomputedRegisteredSpotProfile/);
+assert.match(bearingManager, /const PRECOMPUTED_BEARING_BATCH_SIZE = 360/);
+assert.match(bearingManager, /const EDRIVE_EXACT_BEARING_BATCH_SIZE = 24/);
+assert.match(bearingManager, /usesCompleteServerTerrainProfile/);
 
 assert.match(runtime, /new AsyncLocalStorage<RuntimeConfiguration>/);
 assert.match(runtime, /gateway\?\.endpoint && gateway\.originToken &&\s*gateway\.accessClientId && gateway\.accessClientSecret/);

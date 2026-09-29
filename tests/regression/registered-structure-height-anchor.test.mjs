@@ -10,7 +10,6 @@ globalThis.localStorage = {
 
 const {
   anchorToRegisteredCoordinates,
-  provisionalRegisteredStructurePoint,
   readLearnedStructureHeight,
   rememberStructureHeight,
   resolveRegisteredStructureWithoutLiveHeight,
@@ -47,11 +46,11 @@ test("roof peak found tens of metres away keeps its height but not its horizonta
   assert.equal(anchored.subjectSurfaceTarget, "structure-roof");
 });
 
-test("without live or learned height a registered structure is placed provisionally, not rejected", () => {
-  const point = resolveRegisteredStructureWithoutLiveHeight(anchor, ground, "姫路城");
-  assert.equal(point.subjectHeightProvisional, true);
-  assert.equal(point.latitude, himeji.latitude);
-  assert.equal(point.ellipsoidalHeightMeters, 85);
+test("without live or learned height a registered structure is never placed on the ground", () => {
+  assert.throws(
+    () => resolveRegisteredStructureWithoutLiveHeight(anchor, ground, "姫路城"),
+    { name: "SubjectRoofResolutionError" }
+  );
 });
 
 test("a resolved structure height is learned and reused; implausible heights are ignored", () => {
@@ -63,16 +62,8 @@ test("a resolved structure height is learned and reused; implausible heights are
   assert.equal(readLearnedStructureHeight(other), null);
 });
 
-test("provisional placement stays on registered coordinates and forces re-resolution later", () => {
-  const provisional = provisionalRegisteredStructurePoint({ ...ground, subjectSurfaceTarget: "structure-roof" });
-  assert.equal(provisional.latitude, himeji.latitude);
-  assert.equal(provisional.subjectHeightProvisional, true);
-  assert.equal(provisional.subjectSurfaceTarget, undefined);
-});
-
 test("a learned height is used when PLATEAU/OSM are unavailable later", () => {
   const point = resolveRegisteredStructureWithoutLiveHeight(anchor, ground, "姫路城");
-  assert.equal(point.subjectHeightProvisional, undefined);
   assert.equal(point.heightSource, "learned-structure-height");
   assert.equal(point.subjectSurfaceTarget, "structure-roof");
   assert.equal(point.ellipsoidalHeightMeters, 131);

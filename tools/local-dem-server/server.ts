@@ -2,18 +2,22 @@ import { createServer } from "node:http";
 import { configureServerRuntime } from "../../server/cloudflareRuntime.ts";
 import { lookupGsiElevations } from "../../server/gsiElevation.ts";
 import {
+  computeBearingProfileBatch,
+  lookupBearingProfileGeoidHeights,
+} from "../../server/bearingProfileBatch.ts";
+import {
   configureLocalDemMemoryBudgetForPrivateOrigin,
   lookupLocalDemElevationsForSource,
 } from "../../server/gsiLocalDem.ts";
 import { createLocalDemRequestHandler } from "./app.ts";
 import { loadConfig } from "./config.ts";
 import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
-import { createReadOnlyDemCache } from "./readOnlyDemCache.ts";
+import { createLocalDemPersistentCache } from "./localDemPersistentCache.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   configureLocalDemMemoryBudgetForPrivateOrigin(512 * 1024 * 1024);
-  const persistentCache = await createReadOnlyDemCache(config.dataRoot);
+  const persistentCache = await createLocalDemPersistentCache(config.dataRoot);
   await persistentCache.validateReady();
   const precomputedProfiles = await createReadOnlyBearingProfileStore(config.dataRoot);
   configureServerRuntime({ persistentCache });
@@ -24,7 +28,18 @@ async function main(): Promise<void> {
     (points, signal) => lookupGsiElevations(points, signal),
     precomputedProfiles
       ? (request) => precomputedProfiles.lookup(request)
-      : undefined
+      : undefined,
+    (request, signal) => computeBearingProfileBatch(request, signal, {
+      // The precomputed route is tried before this exact on-demand route.
+      // Keeping this calculation independent prevents a second file lookup and
+      // guarantees that the requested coordinates, including metre-scale
+      // offsets from catalogue points, are sampled as supplied.
+      lookupPrecomputed: async () => null,
+      lookupElevations: (points, requestSignal) =>
+        lookupGsiElevations(points, requestSignal, undefined, { useLocalGateway: false }),
+      lookupGeoidHeights: lookupBearingProfileGeoidHeights,
+      nowIso: () => new Date().toISOString(),
+    })
   );
   const server = createServer((request, response) => {
     void handler(request, response);

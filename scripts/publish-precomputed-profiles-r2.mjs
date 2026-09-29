@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import {
   PRECOMPUTED_BEARING_PROFILE_DIRECTORY,
@@ -13,7 +13,9 @@ import {
 
 const DEFAULT_DATA_ROOT = "E:\\AstroSight-GSI-data-20260926\\dem\\r2-ready";
 const DEFAULT_BUCKET = "astrosight-network-cache";
-const MAX_FILES = 200;
+// 山岳は富士山だけ、山岳以外は登録全件。追加時にも無料枠内で安全に
+// 公開できるよう、現在件数ぴったりではなく小さな上限を設ける。
+const MAX_FILES = 250;
 const MAX_TOTAL_BYTES = 500 * 1024 * 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 
@@ -73,21 +75,43 @@ if (!execute) {
   process.exit(0);
 }
 
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-for (const [index, [, entry]] of entries.entries()) {
+const wranglerBin = path.resolve("node_modules", "wrangler", "bin", "wrangler.js");
+const uploadOne = (entry, index) => new Promise((resolve, reject) => {
   const source = path.join(profileRoot, entry.file);
   const objectPath = `${bucket}/${PRECOMPUTED_BEARING_PROFILE_R2_PREFIX}${entry.file}`;
-  console.log(`[${index + 1}/${entries.length}] ${entry.name}`);
-  const result = spawnSync(npx, [
-    "wrangler", "r2", "object", "put", objectPath,
+  const child = spawn(process.execPath, [
+    wranglerBin, "r2", "object", "put", objectPath,
     "--file", source,
     "--content-type", "application/json",
     "--content-encoding", "gzip",
     "--remote",
     "--force",
-  ], { stdio: "inherit", cwd: path.resolve(".") });
-  if (result.status !== 0) {
-    throw new Error(`${entry.name} のR2アップロードに失敗しました`);
+  ], { stdio: ["ignore", "pipe", "pipe"], cwd: path.resolve(".") });
+  const output = [];
+  child.stdout.on("data", (chunk) => output.push(chunk));
+  child.stderr.on("data", (chunk) => output.push(chunk));
+  child.once("error", reject);
+  child.once("close", (code) => {
+    if (code !== 0) {
+      reject(new Error(
+        `${entry.name} のR2アップロードに失敗しました (exit ${code})\n${
+          Buffer.concat(output).toString("utf8").slice(-4_000)
+        }`
+      ));
+      return;
+    }
+    console.log(`[${index + 1}/${entries.length}] ${entry.name}: uploaded`);
+    resolve();
+  });
+});
+
+let cursor = 0;
+const workerCount = Math.min(4, entries.length);
+await Promise.all(Array.from({ length: workerCount }, async () => {
+  while (cursor < entries.length) {
+    const index = cursor;
+    cursor += 1;
+    await uploadOne(entries[index][1], index);
   }
-}
+}));
 console.log(`${entries.length}件の計算済み地形データをR2へ公開しました。`);

@@ -1,6 +1,7 @@
 export type NetworkDiagnosticKind = "request" | "cache-hit" | "cache-miss" | "deduplicated" | "error";
 
 import { isAbortError } from "../utils/runtimeErrors";
+import { apiEndpoint } from "./apiEndpoint";
 
 export type NetworkDiagnosticEvent = {
   time: number;
@@ -147,14 +148,21 @@ export async function diagnosticFetch(
   init?: RequestInit,
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS
 ): Promise<Response> {
-  const endpoint = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const effectiveInput = typeof input === "string" && input.startsWith("/api/")
+    ? apiEndpoint(input)
+    : input;
+  const endpoint = typeof effectiveInput === "string"
+    ? effectiveInput
+    : effectiveInput instanceof URL
+      ? effectiveInput.toString()
+      : effectiveInput.url;
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const startedAt = performance.now();
     try {
-      const response = await fetch(input, {
+      const response = await fetch(effectiveInput, {
         ...init,
         signal: combinedSignal(timeoutMs, init?.signal),
       });

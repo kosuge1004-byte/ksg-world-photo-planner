@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isBearingProfileBatchRequest } from "../../server/bearingProfileBatch.ts";
+import { isPrecomputedBearingProfileResponse } from "../../server/precomputedBearingProfiles.ts";
 import type { GsiElevationRequestPoint, GsiElevationSample } from "../../server/gsiElevation.ts";
 import type { LocalDemLookupRequest, LocalGsiDemSource } from "../../server/gsiLocalDem.ts";
 import type { BearingProfileBatchRequest, BearingProfileBatchResponseV2 } from "../../src/types/bearingProfileBatch.ts";
@@ -8,6 +9,7 @@ import type { LocalDemServerConfig } from "./config.ts";
 
 const ENDPOINT = "/v1/elevation/batch";
 const PRECOMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/precomputed";
+const COMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/compute";
 const JAPAN_BOUNDS = Object.freeze({ south: 20, north: 46.5, west: 122, east: 154 });
 const SOURCES = new Set<Exclude<LocalGsiDemSource, "DEM10A">>([
   "DEM1A", "DEM5A", "DEM5B", "DEM5C", "DEM10B",
@@ -33,6 +35,10 @@ export type LocalBearingProfileLookup = (
   request: BearingProfileBatchRequest,
   signal: AbortSignal
 ) => Promise<BearingProfileBatchResponseV2 | null>;
+export type LocalBearingProfileCompute = (
+  request: BearingProfileBatchRequest,
+  signal: AbortSignal
+) => Promise<BearingProfileBatchResponseV2>;
 
 class HttpError extends Error {
   readonly status: number;
@@ -311,7 +317,8 @@ export function createLocalDemRequestHandler(
   config: LocalDemServerConfig,
   lookup: LocalDemLookup,
   lookupAuto?: LocalDemAutoLookup,
-  lookupPrecomputedProfile?: LocalBearingProfileLookup
+  lookupPrecomputedProfile?: LocalBearingProfileLookup,
+  computeProfile?: LocalBearingProfileCompute
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   const gate = new RequestGate(
     config.maximumConcurrentRequests,
@@ -320,21 +327,27 @@ export function createLocalDemRequestHandler(
 
   return async (request, response) => {
     const startedAt = Date.now();
+    const requestUrl = request.url ?? "";
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+    const timer = setTimeout(
+      () => controller.abort(),
+      requestUrl === COMPUTED_PROFILE_ENDPOINT
+        ? config.profileRequestTimeoutMs
+        : config.requestTimeoutMs
+    );
     timer.unref();
     request.once("aborted", () => controller.abort());
     let release: (() => void) | undefined;
     let pointCount = 0;
     let responseStatus = 500;
     try {
-      const requestUrl = request.url ?? "";
       if (requestUrl === "/health" && request.method === "GET") {
         responseStatus = 200;
         writeJson(response, 200, { ok: true });
         return;
       }
-      if (requestUrl !== ENDPOINT && requestUrl !== PRECOMPUTED_PROFILE_ENDPOINT) {
+      if (requestUrl !== ENDPOINT && requestUrl !== PRECOMPUTED_PROFILE_ENDPOINT &&
+        requestUrl !== COMPUTED_PROFILE_ENDPOINT) {
         throw new HttpError(404, "not found");
       }
       if (request.method !== "POST") throw new HttpError(405, "method not allowed");
@@ -356,6 +369,30 @@ export function createLocalDemRequestHandler(
         if (controller.signal.aborted) throw new HttpError(504, "request deadline exceeded");
         responseStatus = 200;
         writeJson(response, 200, result);
+        return;
+      }
+      if (requestUrl === COMPUTED_PROFILE_ENDPOINT) {
+        if (!computeProfile) throw new HttpError(503, "exact profile calculation is unavailable");
+        const profileRequest = parsePrecomputedProfilePayload(body);
+        const maximumBearings = Math.max(
+          1,
+          Math.min(24, Math.floor(240_000 / profileRequest.maxDistanceMeters))
+        );
+        if (profileRequest.bearings.length > maximumBearings) {
+          throw new HttpError(400, "exact profile bearing batch is too large");
+        }
+        pointCount = profileRequest.bearings.length;
+        release = await gate.acquire(controller.signal);
+        const result = await computeProfile(profileRequest, controller.signal);
+        if (controller.signal.aborted) throw new HttpError(504, "request deadline exceeded");
+        if (!isPrecomputedBearingProfileResponse(result, profileRequest)) {
+          throw new HttpError(503, "exact profile calculation is incomplete");
+        }
+        responseStatus = 200;
+        writeJson(response, 200, {
+          ...result,
+          terrainProfileComplete: true,
+        });
         return;
       }
       const payload = parsePayload(body, config.maximumPoints);
@@ -424,6 +461,8 @@ export function createLocalDemRequestHandler(
           ? ENDPOINT
           : request.url === PRECOMPUTED_PROFILE_ENDPOINT
             ? PRECOMPUTED_PROFILE_ENDPOINT
+            : request.url === COMPUTED_PROFILE_ENDPOINT
+              ? COMPUTED_PROFILE_ENDPOINT
             : request.url === "/health" ? "/health" : "other",
         status: responseStatus,
         points: pointCount,

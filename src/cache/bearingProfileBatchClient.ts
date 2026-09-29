@@ -7,6 +7,7 @@ import type {
 } from "../types/bearingProfileBatch";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { createAbortError, createTimeoutError, isAbortError } from "../utils/runtimeErrors";
+import { apiEndpoint } from "../network/apiEndpoint";
 
 const BATCH_REQUEST_TIMEOUT_MS = 45_000;
 const MAX_BEARINGS_PER_REQUEST = 360;
@@ -144,6 +145,7 @@ function expandCompactResponse(
   return {
     version: 1,
     precomputed: response.precomputed === true,
+    terrainProfileComplete: response.terrainProfileComplete === true || response.precomputed === true,
     profiles,
     failedBearings: response.failedBearings,
     requestedBearingCount: response.requestedBearingCount,
@@ -202,7 +204,7 @@ export async function fetchBearingProfileBatchDetailed(
   const miss = (reason: string, notPrecomputed = false): BearingProfileBatchOutcome =>
     ({ ok: false, miss: { notPrecomputed, reason } });
   try {
-    const response = await fetcher("/api/bearing-profile-batch", {
+    const response = await fetcher(apiEndpoint("/api/bearing-profile-batch"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(request),
@@ -211,6 +213,9 @@ export async function fetchBearingProfileBatchDetailed(
     if (!response.ok) {
       const { code, error } = await responseErrorText(response);
       if (response.status === 503 && code === "PRECOMPUTED_PROFILE_UNAVAILABLE" && error) {
+        throw new PrecomputedBearingProfileUnavailableError(error);
+      }
+      if (response.status === 503 && code === "LOCAL_DEM_PROFILE_UNAVAILABLE" && error) {
         throw new PrecomputedBearingProfileUnavailableError(error);
       }
       if (response.status === 404 && code === "PRECOMPUTED_PROFILE_NOT_FOUND") {

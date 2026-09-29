@@ -1,0 +1,143 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { indexedDB } from "fake-indexeddb";
+
+import { computeBearingProfileBatch } from "../../server/bearingProfileBatch.ts";
+import { getBearingProfilesMany } from "../../src/cache/tripodBearingProfileCache.ts";
+
+globalThis.indexedDB = indexedDB;
+globalThis.window ??= {
+  setTimeout: globalThis.setTimeout,
+  clearTimeout: globalThis.clearTimeout,
+};
+globalThis.localStorage = {
+  getItem: () => null,
+  setItem() {},
+  removeItem() {},
+};
+
+const siteContext = {
+  walkingAccessible: true,
+  onMappedWay: true,
+  restrictedAccess: false,
+  onMotorRoad: false,
+  onWaterSurface: false,
+  waterSurfaceKind: "none",
+  nearbyLandmarks: [],
+  nearbyBuildings: [],
+  nearbyStructures: [],
+};
+
+let batchCalls = 0;
+let maximumBearingsPerCall = 0;
+let legacyElevationCalls = 0;
+let demTileCalls = 0;
+let failAtBatchCall = null;
+globalThis.fetch = async (input, init = {}) => {
+  const url = String(input);
+  if (url === "/api/bearing-profile-batch") {
+    batchCalls += 1;
+    if (batchCalls === failAtBatchCall) {
+      return Response.json({
+        code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
+        error: "Eドライブ一時停止",
+      }, { status: 503 });
+    }
+    const request = JSON.parse(init.body);
+    maximumBearingsPerCall = Math.max(maximumBearingsPerCall, request.bearings.length);
+    const response = await computeBearingProfileBatch(request, init.signal, {
+      lookupPrecomputed: async () => null,
+      lookupElevations: async (points) => points.map(() => ({
+        heightMeters: 100,
+        source: "DEM5A",
+      })),
+      lookupGeoidHeights: async (points) => points.map(() => 38),
+      nowIso: () => "2026-09-30T00:00:00.000Z",
+    });
+    response.terrainProfileComplete = true;
+    return Response.json(response);
+  }
+  if (url.startsWith("/api/gsi-elevation")) {
+    legacyElevationCalls += 1;
+    throw new Error("exact E-drive profile must not use the legacy device path");
+  }
+  if (url.startsWith("/api/gsi-dem-tile")) {
+    demTileCalls += 1;
+    throw new Error("complete E-drive profile must not redownload raw tiles on the device");
+  }
+  if (url.startsWith("/api/osm-site-context")) {
+    const request = JSON.parse(init.body);
+    return Response.json({ contexts: request.points.map(() => ({ ...siteContext })) });
+  }
+  throw new Error(`Unexpected request: ${url}`);
+};
+
+const manager = await import("../../src/cache/tripodBearingProfileManager.ts");
+
+test("arbitrary exact coordinates use bounded E-drive batches and never the 54-minute path", async () => {
+  const subjectPoint = {
+    latitude: 35.7101127,
+    longitude: 139.8107504,
+    height: 12,
+    geoidHeightMeters: 38,
+    label: "押上の任意地点",
+  };
+  const bearings = manager.requiredCelestialTripodBearings(subjectPoint.latitude);
+  const result = await manager.backfillBearingProfiles({
+    subjectId: "edrive-exact-runtime",
+    subjectPoint,
+    cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
+    maxDistanceMeters: 10_000,
+  });
+
+  assert.equal(result.requestedBearings, bearings.length);
+  assert.equal(result.successfulBearings, bearings.length);
+  assert.equal(result.failedBearings, 0);
+  assert.equal(batchCalls, Math.ceil(bearings.length / 24));
+  assert.equal(maximumBearingsPerCall, 24);
+  assert.equal(legacyElevationCalls, 0);
+  assert.equal(demTileCalls, 0);
+});
+
+test("a retry resumes after the last committed E-drive chunk", async () => {
+  batchCalls = 0;
+  maximumBearingsPerCall = 0;
+  failAtBatchCall = 2;
+  const subjectPoint = {
+    latitude: 35.7111127,
+    longitude: 139.8117504,
+    height: 12,
+    geoidHeightMeters: 38,
+    label: "押上の別地点",
+  };
+  const bearings = manager.requiredCelestialTripodBearings(subjectPoint.latitude);
+  await assert.rejects(manager.backfillBearingProfiles({
+    subjectId: "edrive-resume-runtime",
+    subjectPoint,
+    cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
+    maxDistanceMeters: 10_000,
+  }), { name: "PrecomputedBearingProfileUnavailableError" });
+  assert.equal(batchCalls, 2);
+  assert.equal(legacyElevationCalls, 0);
+
+  batchCalls = 0;
+  failAtBatchCall = null;
+  const resumed = await manager.backfillBearingProfiles({
+    subjectId: "edrive-resume-runtime",
+    subjectPoint,
+    cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
+    maxDistanceMeters: 10_000,
+  });
+  assert.equal(resumed.requestedBearings, bearings.length - 24);
+  assert.equal(resumed.successfulBearings, bearings.length - 24);
+  assert.equal(resumed.failedBearings, 0);
+  assert.equal(batchCalls, Math.ceil((bearings.length - 24) / 24));
+  const completedProfiles = await getBearingProfilesMany(
+    "edrive-resume-runtime",
+    1.6,
+    bearings,
+  );
+  assert.equal(completedProfiles.filter(Boolean).length, bearings.length);
+  assert.equal(legacyElevationCalls, 0);
+  assert.equal(demTileCalls, 0);
+});

@@ -43,6 +43,11 @@ const MAX_POINTS_PER_REQUEST = 512;
 // seconds was too short and unnecessarily returned work to the constrained
 // Cloudflare path. The timeout remains finite and abortable.
 const REQUEST_TIMEOUT_MS = 12_000;
+// The PC origin performs the complete exact-coordinate calculation in one
+// request. Its own deadline is 30 seconds; allow a small transport margin while
+// still guaranteeing that the browser never waits for the former hour-long
+// device fallback.
+const COMPUTED_PROFILE_REQUEST_TIMEOUT_MS = 35_000;
 const FAILURE_COOLDOWN_MS = 30_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 // A 259-bearing, 10 km compact profile is about 2.4 MiB and a complete
@@ -57,6 +62,8 @@ let blockedEndpoint: string | null = null;
 let blockedUntil = 0;
 let blockedProfileEndpoint: string | null = null;
 let blockedProfileUntil = 0;
+let blockedComputedProfileEndpoint: string | null = null;
+let blockedComputedProfileUntil = 0;
 
 function endpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
   try {
@@ -81,6 +88,12 @@ function precomputedProfileEndpointUrl(configuration: LocalDemGatewayConfigurati
   const elevationEndpoint = endpointUrl(configuration);
   if (!elevationEndpoint) return null;
   return new URL("/v1/bearing-profile/precomputed", elevationEndpoint);
+}
+
+function computedProfileEndpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
+  const elevationEndpoint = endpointUrl(configuration);
+  if (!elevationEndpoint) return null;
+  return new URL("/v1/bearing-profile/compute", elevationEndpoint);
 }
 
 function isJapanPoint(point: { latitude: number; longitude: number }): boolean {
@@ -196,6 +209,85 @@ export async function lookupLocalPrecomputedBearingProfile(
     if (signal?.aborted && !timedOut) throw createAbortError();
     blockedProfileEndpoint = endpointKey;
     blockedProfileUntil = Date.now() + FAILURE_COOLDOWN_MS;
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * Last-resort exact profile calculation at the private E-drive origin. The
+ * origin evaluates every requested coordinate from the prepared GSI data; it
+ * never shifts or reuses a neighbouring profile. Any timeout, authentication
+ * failure, malformed response or partial result is returned as null so the
+ * Pages endpoint can fail quickly instead of starting the ~54 minute device
+ * path.
+ */
+export async function computeLocalBearingProfile(
+  request: BearingProfileBatchRequest,
+  signal?: AbortSignal
+): Promise<BearingProfileBatchResponseV2 | null> {
+  const configuration = serverLocalDemGateway();
+  if (!configuration) return null;
+  const endpoint = computedProfileEndpointUrl(configuration);
+  if (!endpoint) return null;
+  const endpointKey = endpoint.toString();
+  if (blockedComputedProfileEndpoint === endpointKey &&
+    blockedComputedProfileUntil > Date.now()) return null;
+  if (signal?.aborted) throw createAbortError();
+
+  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createTimeoutError("Eドライブ全方位計算タイムアウト"));
+  }, COMPUTED_PROFILE_REQUEST_TIMEOUT_MS);
+  const onAbort = () => controller.abort(createAbortError());
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json; charset=utf-8",
+        "CF-Access-Client-Id": completeConfiguration.accessClientId,
+        "CF-Access-Client-Secret": completeConfiguration.accessClientSecret,
+        "X-AstroSight-Origin-Token": completeConfiguration.originToken,
+      },
+      body: JSON.stringify({
+        subjectPoint: {
+          latitude: request.subjectPoint.latitude,
+          longitude: request.subjectPoint.longitude,
+          height: request.subjectPoint.height,
+        },
+        cameraSettings: {
+          lensCenterHeightMeters: request.cameraSettings.lensCenterHeightMeters,
+        },
+        bearings: request.bearings,
+        maxDistanceMeters: request.maxDistanceMeters,
+      }),
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Eドライブ全方位APIがHTTP ${response.status}を返しました`);
+    }
+    const body = await readBoundedJson(response, MAX_PROFILE_RESPONSE_BYTES);
+    if (!isPrecomputedBearingProfileResponse(body, request) ||
+      body.terrainProfileComplete !== true) {
+      throw new Error("Eドライブ全方位APIの応答形式が不正です");
+    }
+    blockedComputedProfileEndpoint = null;
+    blockedComputedProfileUntil = 0;
+    return body;
+  } catch {
+    if (signal?.aborted && !timedOut) throw createAbortError();
+    blockedComputedProfileEndpoint = endpointKey;
+    blockedComputedProfileUntil = Date.now() + FAILURE_COOLDOWN_MS;
     return null;
   } finally {
     clearTimeout(timeout);
@@ -493,4 +585,6 @@ export function resetLocalDemGatewayForTests(): void {
   blockedUntil = 0;
   blockedProfileEndpoint = null;
   blockedProfileUntil = 0;
+  blockedComputedProfileEndpoint = null;
+  blockedComputedProfileUntil = 0;
 }

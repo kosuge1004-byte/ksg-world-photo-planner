@@ -71,9 +71,9 @@ const manager = await import("../../src/cache/tripodBearingProfileManager.ts");
 
 test("manager downloads every registered-spot bearing in one published-profile request", async () => {
   const subjectPoint = {
-    latitude: 35.36,
-    longitude: 136.81,
-    height: 100,
+    latitude: 35.7100627,
+    longitude: 139.8107004,
+    height: 672,
     geoidHeightMeters: 38,
   };
   const bearings = manager.requiredCelestialTripodBearings(subjectPoint.latitude);
@@ -81,7 +81,7 @@ test("manager downloads every registered-spot bearing in one published-profile r
     subjectId: "batch-runtime",
     subjectPoint,
     cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
-    maxDistanceMeters: 1_000,
+    maxDistanceMeters: 10_000,
   });
 
   assert.equal(result.requestedBearings, bearings.length);
