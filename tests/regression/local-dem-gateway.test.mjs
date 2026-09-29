@@ -13,6 +13,11 @@ import {
   lookupLocalDemGatewayForSource,
   resetLocalDemGatewayForTests,
 } from "../../server/localDemGateway.ts";
+import {
+  createRegisteredLocalDemEndpoint,
+  encodeRegisteredLocalDemEndpoint,
+  LOCAL_DEM_ENDPOINT_TTL_SECONDS,
+} from "../../server/localDemEndpointRegistry.ts";
 
 const gatewayConfiguration = {
   endpoint: "https://dem-origin.example.test/v1/elevation/batch",
@@ -79,12 +84,77 @@ test("gateway sends fixed authentication headers and validates aligned results",
   assert.deepEqual([...result], [[9, 44.25]]);
 });
 
-test("gateway is disabled unless URL and all three credentials are configured", async () => {
+test("named gateway is disabled when the Access credential pair is incomplete", async () => {
   configureServerRuntime({
     localDemGateway: { ...gatewayConfiguration, accessClientSecret: undefined },
   });
   globalThis.fetch = async () => {
     throw new Error("disabled gateway must not issue a request");
+  };
+  assert.equal((await lookupLocalDemGatewayForSource("DEM10B", [request()])).size, 0);
+});
+
+test("domainless gateway resolves a short-lived Quick Tunnel URL without Access headers", async () => {
+  const registered = createRegisteredLocalDemEndpoint(
+    "https://quiet-river-123.trycloudflare.com"
+  );
+  assert.ok(registered);
+  let registryReads = 0;
+  configureServerRuntime({
+    localDemGateway: {
+      originToken: gatewayConfiguration.originToken,
+      endpointRegistry: {
+        async get(key, options) {
+          registryReads += 1;
+          assert.equal(key, "local-dem-origin/v1/active");
+          assert.deepEqual(options, { type: "arrayBuffer" });
+          return encodeRegisteredLocalDemEndpoint(registered);
+        },
+      },
+    },
+  });
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    calls += 1;
+    assert.equal(
+      String(input),
+      "https://quiet-river-123.trycloudflare.com/v1/elevation/batch"
+    );
+    const headers = new Headers(init.headers);
+    assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
+    assert.equal(headers.get("cf-access-client-id"), null);
+    assert.equal(headers.get("cf-access-client-secret"), null);
+    return Response.json({
+      source: "DEM10B",
+      results: [{ index: 0, heightMeters: 21.75 }],
+      resolvedCount: 1,
+    });
+  };
+
+  const result = await lookupLocalDemGatewayForSource("DEM10B", [request()]);
+  assert.equal(registryReads, 1);
+  assert.equal(calls, 1);
+  assert.equal(result.get(0), 21.75);
+});
+
+test("expired Quick Tunnel registration is ignored without making a request", async () => {
+  const expired = createRegisteredLocalDemEndpoint(
+    "https://expired-origin.trycloudflare.com",
+    Date.now() - LOCAL_DEM_ENDPOINT_TTL_SECONDS * 1_000 - 1
+  );
+  assert.ok(expired);
+  configureServerRuntime({
+    localDemGateway: {
+      originToken: gatewayConfiguration.originToken,
+      endpointRegistry: {
+        async get() {
+          return encodeRegisteredLocalDemEndpoint(expired);
+        },
+      },
+    },
+  });
+  globalThis.fetch = async () => {
+    throw new Error("expired registration must not issue a request");
   };
   assert.equal((await lookupLocalDemGatewayForSource("DEM10B", [request()])).size, 0);
 });

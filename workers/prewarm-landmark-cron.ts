@@ -15,6 +15,7 @@ import { ACTIVE_PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import { prewarmMany, selectDailyChunk } from "../server/prewarmLandmarkCore.ts";
 import { persistentCacheFromR2 } from "../server/r2PersistentCache.ts";
 import type { R2SafetyKv } from "../server/r2SafetyBudget.ts";
+import type { LocalDemEndpointRegistry } from "../server/localDemEndpointRegistry.ts";
 
 // 1回の実行あたりの処理件数。
 //
@@ -86,6 +87,7 @@ export default {
         originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
         accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
         accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+        endpointRegistry: env.SPOT_SEARCH_JOBS as unknown as LocalDemEndpointRegistry | undefined,
       },
     }, async () => {
 
@@ -122,6 +124,7 @@ export default {
         originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
         accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
         accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+        endpointRegistry: env.SPOT_SEARCH_JOBS as unknown as LocalDemEndpointRegistry | undefined,
       },
     }, async () => {
 

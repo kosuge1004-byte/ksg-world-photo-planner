@@ -18,6 +18,13 @@ const [
   elevation,
   bearingManager,
   tunnelTemplate,
+  endpointRegistry,
+  registrationEndpoint,
+  quickTunnelSupervisor,
+  configureDomainless,
+  installCloudflared,
+  startDomainless,
+  installAutostart,
   ignore,
 ] = await Promise.all([
   read("tools/local-dem-server/config.ts"),
@@ -32,6 +39,13 @@ const [
   read("server/gsiElevation.ts"),
   read("src/cache/tripodBearingProfileManager.ts"),
   read("tools/local-dem-server/cloudflared-config.yml.example"),
+  read("server/localDemEndpointRegistry.ts"),
+  read("functions/api/local-dem-register.ts"),
+  read("tools/local-dem-server/quickTunnelSupervisor.ts"),
+  read("tools/local-dem-server/configure-domainless-secrets.ps1"),
+  read("tools/local-dem-server/install-cloudflared-user.ps1"),
+  read("tools/local-dem-server/start-quick-tunnel.ps1"),
+  read("tools/local-dem-server/install-domainless-autostart.ps1"),
   read(".gitignore"),
 ]);
 
@@ -84,7 +98,8 @@ assert.match(bearingManager, /const EDRIVE_EXACT_BEARING_BATCH_SIZE = 24/);
 assert.match(bearingManager, /usesCompleteServerTerrainProfile/);
 
 assert.match(runtime, /new AsyncLocalStorage<RuntimeConfiguration>/);
-assert.match(runtime, /gateway\?\.endpoint && gateway\.originToken &&\s*gateway\.accessClientId && gateway\.accessClientSecret/);
+assert.match(runtime, /!gateway\.endpoint && !gateway\.endpointRegistry/);
+assert.match(runtime, /Boolean\(gateway\.accessClientId\) !== Boolean\(gateway\.accessClientSecret\)/);
 for (const name of [
   "LOCAL_DEM_API_URL",
   "LOCAL_DEM_ORIGIN_TOKEN",
@@ -93,7 +108,38 @@ for (const name of [
 ]) {
   assert.match(env, new RegExp(name));
 }
+assert.match(env, /LOCAL_DEM_REGISTRATION_TOKEN/);
+assert.match(env, /endpointRegistry:\s*context\.env\.SPOT_SEARCH_JOBS/);
 assert.match(env, /runWithServerRuntime\(cloudflareServerRuntimeConfiguration\(context\), task\)/);
+
+assert.match(endpointRegistry, /LOCAL_DEM_ENDPOINT_REGISTRY_KEY = ["']local-dem-origin\/v1\/active["']/);
+assert.match(endpointRegistry, /LOCAL_DEM_ENDPOINT_TTL_SECONDS = 15 \* 60/);
+assert.match(endpointRegistry, /LOCAL_DEM_ENDPOINT_HEARTBEAT_SECONDS = 5 \* 60/);
+assert.match(endpointRegistry, /\.trycloudflare\\\.com/);
+assert.match(endpointRegistry, /url\.pathname = ["']\/v1\/elevation\/batch["']/);
+assert.match(registrationEndpoint, /X-AstroSight-Registration-Token/i);
+assert.match(registrationEndpoint, /constantTimeEqual/);
+assert.match(registrationEndpoint, /expirationTtl:\s*LOCAL_DEM_ENDPOINT_TTL_SECONDS/);
+assert.match(registrationEndpoint, /endpointKv\.put\(/);
+assert.doesNotMatch(registrationEndpoint, /Access-Control-Allow-Origin/i);
+
+assert.match(quickTunnelSupervisor, /registrationUrl\.hostname !== ["']astrosight\.pages\.dev["']/);
+assert.match(quickTunnelSupervisor, /--no-autoupdate/);
+assert.match(quickTunnelSupervisor, /trycloudflare\\\.com/);
+assert.match(quickTunnelSupervisor, /30_000/);
+assert.match(quickTunnelSupervisor, /LOCAL_DEM_ENDPOINT_HEARTBEAT_SECONDS/);
+assert.match(configureDomainless, /ConvertFrom-SecureString/);
+assert.match(configureDomainless, /LOCAL_DEM_REGISTRATION_TOKEN/);
+assert.doesNotMatch(configureDomainless, /Write-Output.*originToken|Write-Output.*registrationToken/i);
+assert.match(installCloudflared, /cloudflare\/cloudflared\/releases\/download/);
+assert.match(installCloudflared, /Security\.Cryptography\.SHA256/);
+assert.match(installCloudflared, /f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2/);
+assert.match(installCloudflared, /LOCALAPPDATA.*AstroSight\\bin/);
+assert.match(startDomainless, /LOCAL_DEM_HOST = ["']127\.0\.0\.1["']/);
+assert.match(startDomainless, /LOCAL_DEM_CLOUDFLARED_PATH/);
+assert.match(startDomainless, /AstroSight\\bin\\cloudflared\.exe/);
+assert.match(installAutostart, /RunLevel Limited/);
+assert.match(installAutostart, /WindowStyle Hidden/);
 
 const tierStart = elevation.indexOf("async function resolveSourceTier");
 const tierEnd = elevation.indexOf("function applyResolved", tierStart);

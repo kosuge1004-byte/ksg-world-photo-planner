@@ -5,7 +5,7 @@
 ## 動作
 
 1. 登録スポットの10 km・360方位はCloudflare R2の計算済みファイルを1回で取得する。
-2. R2に完全一致しない座標は、Cloudflare Pagesから認証済みCloudflare Tunnelを通してEドライブの読み取り専用DEMサービスへ送る。
+2. R2に完全一致しない座標は、Cloudflare Pagesから認証済みCloudflare Tunnelを通してEドライブの読み取り専用DEMサービスへ送る。独自ドメインがない現在の構成では、5分ごとに更新し15分で失効するQuick Tunnel URLを共有KVから読む。
 3. Eドライブは指定された正確な座標を最大24方位ずつ計算する。50 kmなど距離が長い場合は1回の方位数をさらに減らす。
 4. 完了した各方位は直ちに端末へ保存する。途中失敗後の再試行は未完了方位だけを処理する。
 5. R2とEドライブの両方で完全な結果を得られない場合、端末の旧1方位ずつ取得経路へは移らずエラーと再試行ボタンを表示する。
@@ -35,4 +35,4 @@
 
 ## 本番有効化条件
 
-コードだけではスマートフォンからPCへ接続できない。`docs/LOCAL_DEM_ORIGIN_SETUP.md`に従いCloudflare Tunnel、Access Service Token、Pages/Workersの4 secretを設定し、修正版をデプロイする必要がある。GitHub pushとCloudflare Pagesデプロイは実施していない。
+コードだけではスマートフォンからPCへ接続できない。独自ドメインがない場合は `docs/LOCAL_DEM_ORIGIN_SETUP.md` に従いcloudflaredを導入し、オリジン用とURL登録用の2 secretを設定する。固定ホスト名を用意できる場合だけNamed Tunnel、Access Service Token、4 secret構成を使う。GitHub pushとCloudflare Pagesデプロイは実施しない。

@@ -123,7 +123,7 @@ npm.cmd ci
 npm.cmd run lint
 npm.cmd test
 npm.cmd run build
-npx.cmd wrangler pages functions build --outdir .wrangler-pages-bundle
+npx.cmd wrangler pages functions build --outdir .wrangler-pages-bundle --compatibility-date 2026-08-01 --compatibility-flag nodejs_compat
 npx.cmd wrangler deploy --dry-run --config wrangler.spot-search.jsonc --outdir .wrangler-consumer-bundle
 ```
 

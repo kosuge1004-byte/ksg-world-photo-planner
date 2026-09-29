@@ -233,6 +233,7 @@ const cases = [
       "./scripts/register-typescript-source-loader.mjs",
       "--test",
       "./tests/regression/local-dem-gateway.test.mjs",
+      "./tests/regression/local-dem-registration.test.mjs",
       "./tests/regression/http-request-limits.test.mjs",
       "./tools/local-dem-server/local-dem-server.test.mjs",
     ],

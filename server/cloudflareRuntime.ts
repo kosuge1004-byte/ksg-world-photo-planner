@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { R2MonthlyBudgetDb } from "./r2SafetyBudget.ts";
+import type { LocalDemEndpointRegistry } from "./localDemEndpointRegistry.ts";
 
 export type RuntimeKvNamespace = {
   get(
@@ -33,6 +34,7 @@ export type LocalDemGatewayConfiguration = {
   originToken?: string;
   accessClientId?: string;
   accessClientSecret?: string;
+  endpointRegistry?: LocalDemEndpointRegistry;
 };
 
 export type RuntimeConfiguration = {
@@ -59,6 +61,9 @@ function normalizeRuntimeConfiguration(
       originToken: next.localDemGateway?.originToken?.trim() || undefined,
       accessClientId: next.localDemGateway?.accessClientId?.trim() || undefined,
       accessClientSecret: next.localDemGateway?.accessClientSecret?.trim() || undefined,
+      ...(next.localDemGateway?.endpointRegistry
+        ? { endpointRegistry: next.localDemGateway.endpointRegistry }
+        : {}),
     },
   };
 }
@@ -99,10 +104,16 @@ export function serverR2WriteBudgetDb(): R2MonthlyBudgetDb | undefined {
 
 export function serverLocalDemGateway(): LocalDemGatewayConfiguration | undefined {
   const gateway = currentConfiguration().localDemGateway;
-  return gateway?.endpoint && gateway.originToken &&
-      gateway.accessClientId && gateway.accessClientSecret
-    ? gateway
-    : undefined;
+  if (!gateway?.originToken || (!gateway.endpoint && !gateway.endpointRegistry)) {
+    return undefined;
+  }
+  // Access credentials are an inseparable pair. A named tunnel requires both;
+  // a domainless Quick Tunnel deliberately uses neither and relies on the
+  // independent origin token plus the short-lived registered hostname.
+  if (Boolean(gateway.accessClientId) !== Boolean(gateway.accessClientSecret)) {
+    return undefined;
+  }
+  return gateway;
 }
 
 export function keepServerTaskAlive(promise: Promise<unknown>): void {

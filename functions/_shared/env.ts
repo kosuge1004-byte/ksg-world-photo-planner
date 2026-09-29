@@ -11,6 +11,7 @@ import type {
   BearingProfileDownloadJobKv,
   BearingProfileDownloadQueueMessage,
 } from "../../server/bearingProfileDownloadJobs.ts";
+import type { LocalDemEndpointRegistry } from "../../server/localDemEndpointRegistry.ts";
 
 export interface CloudflareEnv {
   ASSETS: Fetcher;
@@ -33,6 +34,8 @@ export interface CloudflareEnv {
   /** Cloudflare Access service-token credentials; configure both as secrets. */
   LOCAL_DEM_ACCESS_CLIENT_ID?: string;
   LOCAL_DEM_ACCESS_CLIENT_SECRET?: string;
+  /** Authenticates a domainless Quick Tunnel heartbeat; Pages only. */
+  LOCAL_DEM_REGISTRATION_TOKEN?: string;
   NETWORK_CACHE?: R2Bucket;
   /**
    * 2026-08-27追記: R2月間書き込み総数を数えるためのD1データベース。
@@ -72,6 +75,7 @@ function cloudflareServerRuntimeConfiguration(
       originToken: context.env.LOCAL_DEM_ORIGIN_TOKEN,
       accessClientId: context.env.LOCAL_DEM_ACCESS_CLIENT_ID,
       accessClientSecret: context.env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+      endpointRegistry: context.env.SPOT_SEARCH_JOBS as unknown as LocalDemEndpointRegistry,
     },
   };
 }

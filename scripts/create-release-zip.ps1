@@ -249,8 +249,13 @@ function Assert-RequiredContents($records) {
     'src/App.tsx',
     'server/gsiElevation.ts',
     'functions/api/gsi-elevation.ts',
+    'functions/api/local-dem-register.ts',
     'workers/spot-search-consumer.ts',
     'tools/local-dem-server/server.ts',
+    'tools/local-dem-server/quickTunnelSupervisor.ts',
+    'tools/local-dem-server/install-cloudflared-user.ps1',
+    'tools/local-dem-server/start-quick-tunnel.ps1',
+    'tools/local-dem-server/configure-domainless-secrets.ps1',
     'scripts/create-release-zip.ps1'
   )
   foreach ($required in $requiredFiles) {
@@ -334,7 +339,7 @@ function Find-SecretsInText([string]$relativePath, [string]$text) {
     if ([regex]::IsMatch($text, $literalRules[$name])) { $findings.Add($name) }
   }
 
-  $secretNamePattern = '(?i)LOCAL_DEM_ORIGIN_TOKEN|LOCAL_DEM_ACCESS_CLIENT_SECRET|CF_ACCESS_CLIENT_SECRET|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|TUNNEL_TOKEN|tunnelSecret|api[_-]?secret|client[_-]?secret'
+  $secretNamePattern = '(?i)LOCAL_DEM_ORIGIN_TOKEN|LOCAL_DEM_REGISTRATION_TOKEN|LOCAL_DEM_ACCESS_CLIENT_SECRET|CF_ACCESS_CLIENT_SECRET|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|TUNNEL_TOKEN|tunnelSecret|api[_-]?secret|client[_-]?secret'
   $quotedValuePattern = "[=:][ \t]*[`"'](?<value>[^`"'\r\n]{16,})[`"']"
   foreach ($line in ($text -split "`r?`n")) {
     $nameMatch = [regex]::Match($line, $secretNamePattern)

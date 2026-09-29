@@ -1,119 +1,103 @@
 # EドライブDEMをAstroSightから安全に使う手順
 
-## 構成
+## このPCの構成（独自ドメインなし・無料）
 
-国土地理院から取得済みのZIPは `E:\AstroSight-GSI-data-20260926\dem\official-archive` に原本のまま保存する。前処理済みデータは `E:\AstroSight-GSI-data-20260926\dem\r2-ready` に作る。アプリはドライブやWindows共有を直接公開しない。
+登録済み201スポットはCloudflare R2にある計算済み地形断面を最優先で使う。完全一致しない新規座標だけが、Cloudflare Quick Tunnelを通してこのPCのEドライブを最後の正確な計算経路として使う。
 
 ```text
-Pages / Workers
-  -> HTTPS + Cloudflare Access service token
-  -> Cloudflare Tunnel
+スマートフォン
+  -> AstroSight Pages / Workers
+  -> 15分で失効するQuick Tunnel URLをKVから取得
+  -> X-AstroSight-Origin-Tokenで認証
   -> 127.0.0.1:8789 の読み取り専用API
-  -> E:\...\dem\r2-ready\gsi-local-dem-v1\...
-  -> E:\...\dem\r2-ready\precomputed-bearing-profile-v1\...
+  -> E:\AstroSight-GSI-data-20260926\dem\r2-ready
 ```
 
-ローカルAPIは、準備済みEドライブデータと不足部分の国土地理院公開DEMを使い、`DEM1A -> DEM5A -> DEM5B -> DEM5C -> DEM10B` の最終判定まで完了してからCloudflareへ返す。これにより、Workerが地点ごとの公開タイル取得を繰り返して無料プランの外部サブリクエスト上限へ達することを防ぐ。全方位ダウンロードではR2計算済みファイルを最優先とし、該当しない正確な座標だけをEドライブで最大24方位ずつ計算する。Eドライブにも接続できない場合は、端末から1方位ずつ取得する旧約54分経路へ戻らず明示的に停止する。
+独自ドメインをCloudflareへ登録する必要はない。Quick Tunnelの公開URLはPCまたはcloudflaredの再起動ごとに変わるため、PCからPagesの固定登録APIへ5分間隔で通知する。KVレコードは15分で自動失効し、停止した古いURLは使われ続けない。1日あたり約288回の同一キー更新で、設定した間隔ではKV無料枠内に収まる。
 
-登録済みスポットは、富士山と山以外の全スポット（城・建物・塔・寺社・テーマパーク・観覧車）の360方位を10kmまで事前計算できる。計算結果には各距離点の1m優先DEM、JPGEO2024の地点別ジオイド補正、NoData判定を含む。日時・焦点距離・構図に依存しない地形断面なので、同じスポットの太陽・月・天の川の全検索で再利用する。
+Quick TunnelはCloudflareが試験・開発用途として提供する接続で、稼働保証はない。そのためR2上の登録済みスポットを主経路のまま維持し、新規座標の最後の砦だけに使う。PC、Eドライブ、Tunnelのいずれかが停止している場合は短時間でエラーを返し、旧約54分経路へ移らない。
 
-この構成は85 GB級の原本をCloudflareへアップロードしない。既存R2は停止せず、`server/r2SafetyBudget.ts` の無料枠ガードを維持する。TunnelやAccessで有料プランを選ぶ処理は含まれない。Cloudflare側で料金または支払い方法を要求する画面が出た場合は契約せず、無料プランの範囲を確認してから進める。
+## データ配置と精度
 
-## 1. 変換
+- 国土地理院のZIP原本: `E:\AstroSight-GSI-data-20260926\dem\official-archive`
+- 前処理済みDEM: `E:\AstroSight-GSI-data-20260926\dem\r2-ready\gsi-local-dem-v1`
+- 登録スポット計算済み断面: `E:\AstroSight-GSI-data-20260926\dem\r2-ready\precomputed-bearing-profile-v1`
 
-PowerShellでリポジトリのルートから実行する。
+原本と前処理済みDEMはアプリZIPやGitHub、R2へ含めない。正確な新規座標では、登録スポットの結果を平行移動して流用せず、同じ公式GMLまたは共有済み国土地理院PNGタイルを使ってその緯度・経度を再計算する。DEM優先順位、Constrained Bicubic/Bilinear補間、JPGEO2024地点別補正、NoData判定は従来と同じである。
+
+## 1. データ変換と登録スポットの事前計算
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/local-dem-server/prepare-data.ps1
-```
-
-ZIP原本は展開・変更されない。中断後に同じコマンドを実行すると、journalとSHA-256を検査して完了済みアセットを再利用する。完了条件は次のファイルが存在し、変換コマンドが終了コード0を返すことである。
-
-```text
-E:\AstroSight-GSI-data-20260926\dem\r2-ready\gsi-local-dem-v1\manifest.json
-```
-
-## 2. ローカルAPI
-
-### 登録スポット200件の事前計算
-
-DEM変換後、ローカルAPIを開始する前に一度実行する。完了済みファイルはSHA-256で検査して再利用するため、中断後は同じコマンドで再開できる。
-
-```powershell
 npm.cmd run local-dem:precompute-landmarks
 ```
 
-出力先:
+両処理は完了済みファイルを検査して再利用する。公式ZIPは展開元として読むだけで変更しない。計算済み地形断面は日時・焦点距離・構図に依存しないため、同じスポットの太陽・月・天の川検索に再利用できる。
 
-```text
-E:\AstroSight-GSI-data-20260926\dem\r2-ready\precomputed-bearing-profile-v1\
-```
+## 2. 修正版をCloudflareへデプロイ
 
-既定は10km・360方位・201スポットである。計算済みファイルを追加・更新した場合はローカルAPIを再起動してmanifestを読み直す。生成物はEドライブに置き、GitHubやアプリZIPには含めない。
+先に、この手順と `functions/api/local-dem-register.ts` を含むアプリをGitHub経由でデプロイする。Pagesには既存の `SPOT_SEARCH_JOBS` KV、各Workerには同じKVのbindingが必要である。`NETWORK_CACHE` R2と無料枠ガードは削除・停止しない。
 
-32 byte以上のランダムなオリジントークンを作り、Windowsの安全な秘密管理先へ保存する。値をリポジトリ、ZIP、ログへ書かない。
+## 3. cloudflaredのインストール
 
-```powershell
-$env:LOCAL_DEM_ORIGIN_TOKEN = powershell -ExecutionPolicy Bypass -File tools/local-dem-server/new-token.ps1
-powershell -ExecutionPolicy Bypass -File tools/local-dem-server/start.ps1
-```
-
-サービスは `127.0.0.1` だけで待ち受ける。LAN用の `0.0.0.0`、SMB共有、RDP、ルーターのポート開放は使わない。公開APIは固定の `POST /v1/elevation/batch`、`POST /v1/bearing-profile/precomputed`、`POST /v1/bearing-profile/compute` だけで、ファイル名・パス・一覧・任意の書き込み・削除を受け付けない。標高APIは1回512地点以下、計算済みAPIはmanifestに完全一致する登録地点だけを返す。正確座標計算APIは10kmで最大24方位とし、距離が長い場合はさらに方位数を減らす。本文容量、30秒の計算期限、同時実行数にも上限がある。
-
-準備済み公式GMLは引き続き読み取り専用である。不足する公開GSI PNGをローカルAPI自身が取得した場合だけ、固定キーのデコード済みタイルを `gsi-decoded-dem-v2` 以下へ原子的に保存する。外部リクエストから保存先やキーを指定することはできない。同じ地域の2回目以降はこの共有キャッシュを使い、新しい座標で同じ補間計算を行うため精度は変わらない。
-
-ローカル確認:
+管理者権限を要求しないユーザー専用配置を使う。
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8789/health
+npm.cmd run local-dem:install-cloudflared
 ```
 
-応答は `{"ok":true}` だけで、Eドライブのパスやデータ一覧を返さない。
+公式Cloudflare GitHub Releaseから固定バージョンを取得し、公式掲載のSHA-256と完全一致した実行ファイルだけを `%LOCALAPPDATA%\AstroSight\bin` に置く。システム全体のPATHやWindowsサービスは変更しない。
 
-## 3. Cloudflare TunnelとAccess
+有料プラン、ドメイン購入、ルーターのポート開放は不要である。LAN向けの `0.0.0.0`、SMB共有、RDPも使わない。
 
-`tools/local-dem-server/cloudflared-config.yml.example` をリポジトリ外へコピーし、Tunnel UUID、Windowsユーザー名、専用ホスト名を設定する。最後の `http_status:404` は必ず残す。
-
-Cloudflare Zero Trustでその専用ホスト名をSelf-hosted applicationにし、Service AuthポリシーでAstroSight専用Service Tokenだけを許可する。ブラウザーの一般ユーザー認証をDEM APIの許可条件にしない。Service TokenのClient IDとClient Secretは一度しか表示されないため、Cloudflareのsecretとして保存する。
-
-Tunnelは次のローカルサービスだけへ接続する。
-
-```text
-http://127.0.0.1:8789
-```
-
-オリジントークンはAccess用Client Secretとは別の値にする。Cloudflare Accessが外側でService Tokenを検証し、ローカルAPIが内側で `X-AstroSight-Origin-Token` を定時間比較する。
-
-## 4. Pagesと3つのWorkerに設定するsecret
-
-次の4項目をCloudflare DashboardまたはWranglerのsecret機能で設定する。値は設定ファイルへ直書きしない。
-
-| 名前 | 値 |
-|---|---|
-| `LOCAL_DEM_API_URL` | `https://<専用ホスト名>/v1/elevation/batch` |
-| `LOCAL_DEM_ORIGIN_TOKEN` | 手順2と同じオリジントークン |
-| `LOCAL_DEM_ACCESS_CLIENT_ID` | Access Service TokenのClient ID |
-| `LOCAL_DEM_ACCESS_CLIENT_SECRET` | Access Service TokenのClient Secret |
-
-設定対象:
-
-- Pagesプロジェクト `astrosight`
-- `wrangler.spot-search.jsonc`
-- `wrangler.bearing-profile-download.jsonc`
-- `wrangler.prewarm.jsonc`
-
-4項目が1つでも欠ける環境ではEドライブ経路を無効として従来経路を使う。途中まで設定された資格情報を送信しない。
-
-## 5. 検査
+## 4. 2つのsecretを作成・設定
 
 ```powershell
-node --test --experimental-strip-types tests/regression/local-dem-gateway.test.mjs tools/local-dem-server/local-dem-server.test.mjs
+npm.cmd run local-dem:configure-domainless
+```
+
+| secret | 配置 | 用途 |
+|---|---|---|
+| `LOCAL_DEM_ORIGIN_TOKEN` | Pages、3 Worker、PC | EドライブAPIへの要求を認証 |
+| `LOCAL_DEM_REGISTRATION_TOKEN` | Pages、PCのみ | 変動するQuick Tunnel URLの登録を認証 |
+
+PC側の値は `%LOCALAPPDATA%\AstroSight\local-dem-secrets.json` にWindows DPAPIで暗号化して保存する。値を画面、ログ、リポジトリ、配布ZIPへ出力しない。Pages登録APIはCORSを許可せず、正しい登録トークンと `https://<1ラベル>.trycloudflare.com/` だけを受理する。登録されたパスはサーバー側で固定の `/v1/elevation/batch` に置き換える。
+
+## 5. 起動確認と自動起動
+
+```powershell
+npm.cmd run local-dem:start-domainless
+```
+
+別のPowerShellから `Invoke-RestMethod http://127.0.0.1:8789/health` を実行すると、応答は `{"ok":true}` だけになる。Eドライブのパス、ファイル名、データ一覧は返さない。
+
+```powershell
+npm.cmd run local-dem:install-autostart
+Start-ScheduledTask -TaskName 'AstroSight Local DEM Gateway'
+```
+
+タスクは現在のWindowsユーザー権限で非表示起動し、管理者権限では実行しない。PCがスリープ中、ログオフ中、電源OFF、Eドライブ切断中は新規座標のEドライブ計算を利用できない。
+
+## 公開される範囲
+
+- `POST /v1/elevation/batch`
+- `POST /v1/bearing-profile/precomputed`
+- `POST /v1/bearing-profile/compute`
+- 内容を持たない `GET /health`
+
+ファイルパス、フォルダー一覧、任意ファイルの読取り・書込み・削除APIはない。ローカルAPIは本文容量、地点数、日本域、同時実行数、計算時間を検査し、オリジントークンを定時間比較する。不足する公開GSI PNGだけは固定形式の派生キャッシュとしてEドライブへ原子的に保存できるが、外部要求から保存先やキーは指定できない。
+
+## 独自ドメインを後から用意する場合
+
+固定ホスト名のNamed TunnelとCloudflare Access Service Tokenへ切替できる。その場合は `LOCAL_DEM_API_URL`、`LOCAL_DEM_ORIGIN_TOKEN`、`LOCAL_DEM_ACCESS_CLIENT_ID`、`LOCAL_DEM_ACCESS_CLIENT_SECRET` の4 secretをPagesと3 Workerへ設定する。Accessの2値は必ず対で設定する。この固定経路がある場合はKVのQuick Tunnel URLより優先される。
+
+## 検査
+
+```powershell
+node --import ./scripts/register-typescript-source-loader.mjs --test tests/regression/local-dem-gateway.test.mjs tests/regression/local-dem-registration.test.mjs tools/local-dem-server/local-dem-server.test.mjs
 node scripts/verify-local-dem-origin.mjs
-npx tsc -b --pretty false
+node scripts/verify-workers-kv-writes.mjs
+npx.cmd tsc -b --pretty false
 ```
 
-本番接続前に、東京・大阪・札幌・福岡・那覇の5地点をローカルAPIへ送り、値が有限であること、同じ準備済みアセットを読むサーバー計算と一致することを確認する。全DEM種別を確認した後のNoDataだけが `source: null, heightMeters: null` として返り、Cloudflare側で従来どおり地形高0 mの水面・欠測処理へ渡る。
-
-## 停止時の動作
-
-ライブ検索の地点別標高は、PC停止、Eドライブ切断、Tunnel停止、タイムアウト時に従来のR2・公開GSIへ戻る。全方位ダウンロードはR2計算済みファイルの次にEドライブを最後の正確データ経路として使い、そこでも完全な結果を得られなければ短時間で停止する。完了済み24方位単位は端末に残るため、復旧後の再試行は未完了方位から再開する。Eドライブの失敗を海面や地上高として採用せず、旧約54分経路も開始しない。
+本番接続後は、登録済みスポットがR2から即時取得できること、新規座標がEドライブで完全計算されること、PC停止後は短時間で明示エラーになることを確認する。海面・NoDataを推測値へ置換せず、1点でも不完全な全方位データを完成扱いにしない。

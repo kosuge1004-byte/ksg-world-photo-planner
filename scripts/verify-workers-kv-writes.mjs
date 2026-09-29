@@ -10,6 +10,9 @@ const allowedPutCountsByFile = new Map([
   // 2026-09-08追記: 三脚候補周辺データダウンロードのサーバー側ジョブ用KV書き込み。
   // spotSearchJobs.tsと同じ設計（1箇所のsetXxxJob関数だけがkv.putを呼ぶ）。
   ["server/bearingProfileDownloadJobs.ts", 1],
+  // One authenticated Quick Tunnel heartbeat record. The key is fixed and the
+  // value expires after 15 minutes, so it cannot become a general KV writer.
+  ["functions/api/local-dem-register.ts", 1],
 ]);
 const ignoredDirectories = new Set(["node_modules", "dist", ".git"]);
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);

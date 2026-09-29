@@ -7,6 +7,7 @@ import {
   type SpotSearchJobKv,
   type SpotSearchQueueMessage,
 } from "../server/spotSearchJobs.ts";
+import type { LocalDemEndpointRegistry } from "../server/localDemEndpointRegistry.ts";
 
 interface ConsumerEnv {
   SPOT_SEARCH_JOBS: KVNamespace;
@@ -57,6 +58,7 @@ export default {
           originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
           accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
           accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+          endpointRegistry: env.SPOT_SEARCH_JOBS as unknown as LocalDemEndpointRegistry,
         },
       }, async () => {
 

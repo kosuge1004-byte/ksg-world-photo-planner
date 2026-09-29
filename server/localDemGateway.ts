@@ -8,6 +8,10 @@ import type {
   BearingProfileBatchResponseV2,
 } from "../src/types/bearingProfileBatch.ts";
 import { isPrecomputedBearingProfileResponse } from "./precomputedBearingProfiles.ts";
+import {
+  isQuickTunnelElevationEndpoint,
+  readRegisteredLocalDemEndpoint,
+} from "./localDemEndpointRegistry.ts";
 
 export type LocalDemGatewaySource =
   | "DEM1A"
@@ -65,6 +69,38 @@ let blockedProfileUntil = 0;
 let blockedComputedProfileEndpoint: string | null = null;
 let blockedComputedProfileUntil = 0;
 
+type ResolvedLocalDemGatewayConfiguration = LocalDemGatewayConfiguration & {
+  endpoint: string;
+  originToken: string;
+};
+
+async function resolvedGatewayConfiguration(): Promise<ResolvedLocalDemGatewayConfiguration | null> {
+  const configuration = serverLocalDemGateway();
+  if (!configuration?.originToken) return null;
+  if (!configuration.endpoint && configuration.endpointRegistry) {
+    configuration.endpoint = await readRegisteredLocalDemEndpoint(
+      configuration.endpointRegistry
+    ) ?? undefined;
+  }
+  if (!configuration.endpoint) return null;
+  return configuration as ResolvedLocalDemGatewayConfiguration;
+}
+
+function gatewayHeaders(
+  configuration: ResolvedLocalDemGatewayConfiguration
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json; charset=utf-8",
+    "X-AstroSight-Origin-Token": configuration.originToken,
+  };
+  if (configuration.accessClientId && configuration.accessClientSecret) {
+    headers["CF-Access-Client-Id"] = configuration.accessClientId;
+    headers["CF-Access-Client-Secret"] = configuration.accessClientSecret;
+  }
+  return headers;
+}
+
 function endpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
   try {
     const url = new URL(configuration.endpoint ?? "");
@@ -76,6 +112,10 @@ function endpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
       url.hash ||
       url.pathname !== "/v1/elevation/batch"
     ) {
+      return null;
+    }
+    if (!configuration.accessClientId && !configuration.accessClientSecret &&
+      !isQuickTunnelElevationEndpoint(url.toString())) {
       return null;
     }
     return url;
@@ -149,7 +189,7 @@ export async function lookupLocalPrecomputedBearingProfile(
   request: BearingProfileBatchRequest,
   signal?: AbortSignal
 ): Promise<BearingProfileBatchResponseV2 | null> {
-  const configuration = serverLocalDemGateway();
+  const configuration = await resolvedGatewayConfiguration();
   if (!configuration) return null;
   const endpoint = precomputedProfileEndpointUrl(configuration);
   if (!endpoint) return null;
@@ -157,7 +197,6 @@ export async function lookupLocalPrecomputedBearingProfile(
   if (blockedProfileEndpoint === endpointKey && blockedProfileUntil > Date.now()) return null;
   if (signal?.aborted) throw createAbortError();
 
-  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -169,13 +208,7 @@ export async function lookupLocalPrecomputedBearingProfile(
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json; charset=utf-8",
-        "CF-Access-Client-Id": completeConfiguration.accessClientId,
-        "CF-Access-Client-Secret": completeConfiguration.accessClientSecret,
-        "X-AstroSight-Origin-Token": completeConfiguration.originToken,
-      },
+      headers: gatewayHeaders(configuration),
       body: JSON.stringify({
         subjectPoint: {
           latitude: request.subjectPoint.latitude,
@@ -228,7 +261,7 @@ export async function computeLocalBearingProfile(
   request: BearingProfileBatchRequest,
   signal?: AbortSignal
 ): Promise<BearingProfileBatchResponseV2 | null> {
-  const configuration = serverLocalDemGateway();
+  const configuration = await resolvedGatewayConfiguration();
   if (!configuration) return null;
   const endpoint = computedProfileEndpointUrl(configuration);
   if (!endpoint) return null;
@@ -237,7 +270,6 @@ export async function computeLocalBearingProfile(
     blockedComputedProfileUntil > Date.now()) return null;
   if (signal?.aborted) throw createAbortError();
 
-  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -249,13 +281,7 @@ export async function computeLocalBearingProfile(
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json; charset=utf-8",
-        "CF-Access-Client-Id": completeConfiguration.accessClientId,
-        "CF-Access-Client-Secret": completeConfiguration.accessClientSecret,
-        "X-AstroSight-Origin-Token": completeConfiguration.originToken,
-      },
+      headers: gatewayHeaders(configuration),
       body: JSON.stringify({
         subjectPoint: {
           latitude: request.subjectPoint.latitude,
@@ -393,7 +419,7 @@ function validatedAutoResults(
 }
 
 async function requestChunk(
-  configuration: Required<LocalDemGatewayConfiguration>,
+  configuration: ResolvedLocalDemGatewayConfiguration,
   endpoint: URL,
   source: LocalDemGatewaySource,
   points: readonly LocalDemGatewayPoint[],
@@ -411,13 +437,7 @@ async function requestChunk(
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json; charset=utf-8",
-        "CF-Access-Client-Id": configuration.accessClientId,
-        "CF-Access-Client-Secret": configuration.accessClientSecret,
-        "X-AstroSight-Origin-Token": configuration.originToken,
-      },
+      headers: gatewayHeaders(configuration),
       body: JSON.stringify({ source, points }),
       cache: "no-store",
       redirect: "error",
@@ -438,7 +458,7 @@ async function requestChunk(
 }
 
 async function requestAutoChunk(
-  configuration: Required<LocalDemGatewayConfiguration>,
+  configuration: ResolvedLocalDemGatewayConfiguration,
   endpoint: URL,
   points: readonly LocalDemGatewayAutoPoint[],
   signal?: AbortSignal
@@ -455,13 +475,7 @@ async function requestAutoChunk(
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json; charset=utf-8",
-        "CF-Access-Client-Id": configuration.accessClientId,
-        "CF-Access-Client-Secret": configuration.accessClientSecret,
-        "X-AstroSight-Origin-Token": configuration.originToken,
-      },
+      headers: gatewayHeaders(configuration),
       body: JSON.stringify({ mode: "auto", points }),
       cache: "no-store",
       redirect: "error",
@@ -491,7 +505,7 @@ export async function lookupLocalDemGatewayAuto(
   inputPoints: readonly LocalDemGatewayAutoPoint[],
   signal?: AbortSignal
 ): Promise<Map<number, LocalDemGatewaySample> | null> {
-  const configuration = serverLocalDemGateway();
+  const configuration = await resolvedGatewayConfiguration();
   if (!configuration) return null;
   const endpoint = endpointUrl(configuration);
   if (!endpoint) return null;
@@ -503,13 +517,12 @@ export async function lookupLocalDemGatewayAuto(
   );
   if (points.length === 0) return new Map();
 
-  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
   const resolved = new Map<number, LocalDemGatewaySample>();
   for (let offset = 0; offset < points.length; offset += MAX_POINTS_PER_REQUEST) {
     const chunk = points.slice(offset, offset + MAX_POINTS_PER_REQUEST);
     try {
       const chunkResults = await requestAutoChunk(
-        completeConfiguration,
+        configuration,
         endpoint,
         chunk,
         signal
@@ -540,7 +553,7 @@ export async function lookupLocalDemGatewayForSource(
   inputPoints: readonly LocalDemGatewayPoint[],
   signal?: AbortSignal
 ): Promise<Map<number, number>> {
-  const configuration = serverLocalDemGateway();
+  const configuration = await resolvedGatewayConfiguration();
   if (!configuration) return new Map();
   const endpoint = endpointUrl(configuration);
   if (!endpoint) return new Map();
@@ -552,13 +565,12 @@ export async function lookupLocalDemGatewayForSource(
   );
   if (points.length === 0) return new Map();
 
-  const completeConfiguration = configuration as Required<LocalDemGatewayConfiguration>;
   const resolved = new Map<number, number>();
   for (let offset = 0; offset < points.length; offset += MAX_POINTS_PER_REQUEST) {
     const chunk = points.slice(offset, offset + MAX_POINTS_PER_REQUEST);
     try {
       const chunkResults = await requestChunk(
-        completeConfiguration,
+        configuration,
         endpoint,
         source,
         chunk,

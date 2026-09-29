@@ -7,9 +7,11 @@ import {
   type BearingProfileDownloadJobKv,
   type BearingProfileDownloadQueueMessage,
 } from "../server/bearingProfileDownloadJobs.ts";
+import type { LocalDemEndpointRegistry } from "../server/localDemEndpointRegistry.ts";
 
 interface ConsumerEnv {
   BEARING_PROFILE_DOWNLOAD_JOBS: KVNamespace;
+  SPOT_SEARCH_JOBS?: KVNamespace;
   CESIUM_ION_TOKEN?: string;
   VITE_CESIUM_ION_TOKEN?: string;
   LOCAL_DEM_API_URL?: string;
@@ -56,6 +58,7 @@ export default {
           originToken: env.LOCAL_DEM_ORIGIN_TOKEN,
           accessClientId: env.LOCAL_DEM_ACCESS_CLIENT_ID,
           accessClientSecret: env.LOCAL_DEM_ACCESS_CLIENT_SECRET,
+          endpointRegistry: env.SPOT_SEARCH_JOBS as unknown as LocalDemEndpointRegistry | undefined,
         },
       }, async () => {
 
