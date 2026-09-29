@@ -13,7 +13,6 @@ import { classifyTerrainOcclusion } from "../src/celestial/terrainOcclusionPolic
 import { scanAdaptiveTerrainProfile } from "../src/geodesy/adaptiveTerrainProfile.ts";
 import type { GroundPoint } from "../src/types/points.ts";
 import { sampleServerLineOfSightTerrain } from "./worldTerrain.ts";
-import { lookupSurfaceObstructionHorizon } from "./surfaceObstructionLineOfSight.ts";
 import { LruPromiseCache } from "./lruPromiseCache.ts";
 
 const TERRAIN_DISTANCE_LIMIT_METERS = 160_000;
@@ -169,40 +168,17 @@ export function createServerLineOfSightEvaluator(
       )
     );
 
-    // Phase6-1: DEM LOSとOSM建物・植生LOSは相互依存しないため並列取得する。
-    // 従来はDEM完了後にOSMを開始しており、ネットワーク待ち時間が加算されていた。
-    const pendingSurfaceHorizon = lookupSurfaceObstructionHorizon(
-      {
-        latitude: tripod.latitude,
-        longitude: tripod.longitude,
-        groundElevationMeters: tripod.height,
-        lensCenterHeightMeters,
-      },
-      horizontal.azimuthDegrees,
-      maximumDistanceMeters,
-      signal
-    );
-    const [horizon, surfaceHorizon] = await Promise.all([
-      awaitWithAbort(pendingTerrainHorizon, signal),
-      pendingSurfaceHorizon,
-    ]);
-
-    // Phase2〜3: OSM由来の建物・樹木高さ（DEM+DSM統合）による遮蔽も
-    // DEM地形と同じ土俵で評価し、どちらか高い方（より遮蔽的な方）を採用する。
-    const surfaceIsHigher =
-      surfaceHorizon.maximumElevationDegrees > horizon.maximumElevationDegrees;
-    const combinedElevationDegrees = surfaceIsHigher
-      ? surfaceHorizon.maximumElevationDegrees
-      : horizon.maximumElevationDegrees;
-    const combinedDistanceMeters = surfaceIsHigher
-      ? surfaceHorizon.distanceMeters ?? horizon.distanceMeters
-      : horizon.distanceMeters;
+    // 遮蔽判定はDEM地形のみを使用する。
+    // OSM由来の建物・樹木LOSは検索結果に利用していないため、
+    // 実行経路から外し、不要なOverpass通信・地物解析・追加標高取得を発生させない。
+    // surfaceObstructionLineOfSight.ts 自体は将来利用の可能性に備えて残す。
+    const horizon = await awaitWithAbort(pendingTerrainHorizon, signal);
 
     const terrainDecision = classifyTerrainOcclusion(
       horizontal.altitudeDegrees,
-      combinedElevationDegrees,
+      horizon.maximumElevationDegrees,
       undefined,
-      combinedDistanceMeters
+      horizon.distanceMeters
     );
     const terrainObstructed = terrainDecision.status === "obstructed";
     return {
@@ -211,12 +187,10 @@ export function createServerLineOfSightEvaluator(
       verified: true,
       terrainObstructed,
       photorealisticMeshObstructed: false,
-      reason: terrainObstructed
-        ? (surfaceIsHigher ? "building-or-surface" : "terrain")
-        : "visible",
-      obstructionElevationDegrees: combinedElevationDegrees,
+      reason: terrainObstructed ? "terrain" : "visible",
+      obstructionElevationDegrees: horizon.maximumElevationDegrees,
       obstructionDistanceMeters: terrainObstructed
-        ? combinedDistanceMeters
+        ? horizon.distanceMeters
         : undefined,
     };
   };
