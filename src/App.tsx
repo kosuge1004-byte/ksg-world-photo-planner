@@ -297,13 +297,35 @@ function normalizeCelestialVisibility(value: CelestialVisibility): CelestialVisi
 }
 
 const TRIPOD_CACHE_PREPARATION_TIMEOUT_MS = 2_000;
-// 2026-09-04追記: 三脚候補探索全体の最終防衛線タイムアウト。個々の通信
-// （fetch・IndexedDB等）には既にそれぞれタイムアウトがあるが、それらの
-// 網をすり抜けて「計算中…」のまま何分も進まなくなる不具合が実機で
-// 報告されたため、探索全体としての上限を別途設ける。個々のタイムアウトの
-// 合計より十分大きく（気象8秒×3回×通信断への耐性等を考慮しても収まる）、
-// かつユーザーを待たせすぎない値として90秒とする。
-const TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT_MS = 90_000;
+// 2026-09-29修正（実機診断で原因確定）:
+// 固定90秒の「探索開始からの絶対上限」は廃止する。実機ログでは
+// terrain #1（353点/10m）が75.1秒で正常完了した直後にterrain #2（31点/1m）へ
+// 進んでいたにもかかわらず、開始から90秒という固定上限のため第2段階へ
+// 約14.9秒しか与えられず、正常進行中の探索をWatchdog自身が中断していた。
+// 今後は「総所要時間」ではなく「最後に進捗が観測されてからの無進捗時間」を
+// 監視する。terrain:start / terrain:end 等のliveTraceEvents、または地形往復完了が
+// 更新されるたびに猶予がリセットされるため、遅くても進んでいる探索は止めない。
+// 一方、内部通信には個別タイムアウトがあるため、それらを超えてなお180秒間
+// 一切進捗が無い場合だけ最終防衛線として中断する。
+const TRIPOD_CANDIDATE_WATCHDOG_STALL_TIMEOUT_MS = 180_000;
+const TRIPOD_CANDIDATE_WATCHDOG_POLL_MS = 5_000;
+
+function getTripodCandidateLastActivityAtMs(watchdogStartedAtMs: number): number {
+  const diagnostics = getLastTripodSearchDiagnostics();
+  if (!diagnostics || diagnostics.startedAtMs < watchdogStartedAtMs - 1_000) {
+    return watchdogStartedAtMs;
+  }
+
+  let lastActivityAtMs = Math.max(
+    watchdogStartedAtMs,
+    diagnostics.startedAtMs,
+    diagnostics.liveLastActivityAtMs
+  );
+  if (typeof diagnostics.liveLastRoundTripFinishedAtMs === "number") {
+    lastActivityAtMs = Math.max(lastActivityAtMs, diagnostics.liveLastRoundTripFinishedAtMs);
+  }
+  return lastActivityAtMs;
+}
 
 async function waitForOptionalTripodCache<T>(
   operation: Promise<T>,
@@ -2139,21 +2161,26 @@ function App() {
             if (previewViewer) setPreviewWireframeMode(previewViewer, true);
           }
           operationStarted = true;
-          // 2026-09-04追記（実機不具合報告より）: 個々のfetch・IndexedDB
-          // 操作にはそれぞれタイムアウトを設けているが、「探索全体として
-          // 何分経っても通信が1回も発生しない」という、個別タイムアウトの
-          // 網をすり抜ける詰まり方（未知の待機箇所・想定外の相互ロック等）
-          // が実機で報告された。個々の原因を特定できていなくても、
-          // ユーザーが「計算中…」のまま延々待たされ続けることだけは
-          // 避けたいため、探索全体に対する最終防衛線として上限時間を設け、
-          // 超過時は明示的に中断してエラー表示・再試行を可能にする。
-          let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+          // 2026-09-29修正: 「探索開始から90秒」の固定タイマーではなく、
+          // liveTrace/地形往復の最終更新時刻を監視する無進捗Watchdogにする。
+          // 正常に次工程へ進んでいる限り、探索総時間が90秒を超えても中断しない。
+          const watchdogStartedAtMs = Date.now();
+          let watchdogInterval: ReturnType<typeof setInterval> | undefined;
+          let watchdogRejected = false;
           const watchdogPromise = new Promise<never>((_, reject) => {
-            watchdogTimer = setTimeout(() => {
+            watchdogInterval = setInterval(() => {
+              if (watchdogRejected) return;
+              const lastActivityAtMs = getTripodCandidateLastActivityAtMs(watchdogStartedAtMs);
+              const stalledMs = Date.now() - lastActivityAtMs;
+              if (stalledMs < TRIPOD_CANDIDATE_WATCHDOG_STALL_TIMEOUT_MS) return;
+
+              watchdogRejected = true;
               watchdogTimedOut.current = true;
               controller.abort();
-              reject(new Error("TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT"));
-            }, TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT_MS);
+              reject(new Error(
+                `TRIPOD_CANDIDATE_WATCHDOG_TIMEOUT: no progress for ${Math.round(stalledMs)}ms`
+              ));
+            }, TRIPOD_CANDIDATE_WATCHDOG_POLL_MS);
           });
           let candidates: Awaited<ReturnType<typeof calculateTripodCandidates>>;
           try {
@@ -2206,7 +2233,7 @@ function App() {
               watchdogPromise,
             ]);
           } finally {
-            if (watchdogTimer !== undefined) clearTimeout(watchdogTimer);
+            if (watchdogInterval !== undefined) clearInterval(watchdogInterval);
           }
           if (!cancelled) {
             const displayedCandidates = candidates;
@@ -2248,7 +2275,7 @@ function App() {
               key: "tripod-candidate-calculation",
               tone: "error",
               message: isWatchdogTimeout
-                ? "三脚候補の計算が想定よりも大幅に時間がかかったため中断しました。通信状態をご確認のうえ再試行してください。"
+                ? "三脚候補の計算で3分間進捗を確認できなかったため中断しました。通信状態をご確認のうえ再試行してください。"
                 : isTerrainDataUnavailable
                 ? `地形データを取得できず、三脚候補を計算できませんでした（${error.message}）。通信状態を確認して再試行してください。`
                 : "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",

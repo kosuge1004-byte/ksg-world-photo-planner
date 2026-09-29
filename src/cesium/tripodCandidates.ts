@@ -153,6 +153,11 @@ export type TripodSearchDiagnostics = {
   liveRoundTripCount: number;
   liveLastRoundTripFinishedAtMs: number | null;
   /**
+   * 2026-09-29追記: Watchdogが「総経過時間」ではなく「無進捗時間」を
+   * 判定するための絶対時刻。trace()が発生するたびに更新する。
+   */
+  liveLastActivityAtMs: number;
+  /**
    * 2026-08-28追記: サーバー側のR2キャッシュ（DEMタイル単位、実際に
    * 効果のある層）が活用されているかを確認できるようにする。「地形取得
    * ◯点」という座標の総数とは別に、「そのうちタイル参照何回分で、
@@ -523,6 +528,7 @@ const LIVE_TRACE_EVENTS_MAX = 400;
  */
 function recordLiveTraceEvent(celestialLabel: string, elapsedMs: number, stage: string, detail: string): void {
   if (!lastSearchDiagnostics) return;
+  lastSearchDiagnostics.liveLastActivityAtMs = Date.now();
   lastSearchDiagnostics.liveTraceEvents.push({ celestialLabel, elapsedMs, stage, detail });
   if (lastSearchDiagnostics.liveTraceEvents.length > LIVE_TRACE_EVENTS_MAX) {
     lastSearchDiagnostics.liveTraceEvents.splice(
@@ -2534,6 +2540,7 @@ export async function calculateTripodCandidates(
     finishedAtMs: null,
     liveRoundTripCount: 0,
     liveLastRoundTripFinishedAtMs: null,
+    liveLastActivityAtMs: Date.now(),
     liveTraceEvents: [],
     cacheHitBatchCount: 0,
     cacheMissBatchCount: 0,
