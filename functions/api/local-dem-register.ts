@@ -50,7 +50,10 @@ async function verifyQuickTunnel(
         [ORIGIN_TOKEN_HEADER]: originToken,
       },
       cache: "no-store",
-      redirect: "error",
+      // Cloudflare Workers rejects the error redirect mode before sending the
+      // request. "manual" keeps redirects unfollowed; the non-2xx check below
+      // then rejects every redirect without exposing the origin token to it.
+      redirect: "manual",
       signal: controller.signal,
     });
     await result.body?.cancel();

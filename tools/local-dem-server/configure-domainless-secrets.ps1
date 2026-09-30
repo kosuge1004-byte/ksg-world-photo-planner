@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$SecretFile = (Join-Path $env:LOCALAPPDATA 'AstroSight\local-dem-secrets.json'),
+  [string]$SecretFile = 'E:\AstroSight-GSI-data-20260926\runtime\local-dem-secrets.json',
   [string]$PagesProject = 'astrosight',
   [switch]$ResetSecrets
 )
@@ -45,6 +45,25 @@ function Unprotect-Secret([string]$encrypted) {
   finally { [Array]::Clear($protectedBytes, 0, $protectedBytes.Length) }
 }
 
+function Protect-SecretFileAcl([string]$path) {
+  $acl = New-Object Security.AccessControl.FileSecurity
+  $acl.SetAccessRuleProtection($true, $false)
+  $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().User
+  $system = New-Object Security.Principal.SecurityIdentifier(
+    [Security.Principal.WellKnownSidType]::LocalSystemSid,
+    $null
+  )
+  foreach ($identity in @($currentUser, $system)) {
+    $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+      $identity,
+      [Security.AccessControl.FileSystemRights]::FullControl,
+      [Security.AccessControl.AccessControlType]::Allow
+    )
+    $acl.AddAccessRule($rule)
+  }
+  Set-Acl -LiteralPath $path -AclObject $acl
+}
+
 $secretDirectory = Split-Path -Parent $SecretFile
 if (-not (Test-Path -LiteralPath $secretDirectory -PathType Container)) {
   New-Item -ItemType Directory -Path $secretDirectory -Force | Out-Null
@@ -68,6 +87,7 @@ if ((Test-Path -LiteralPath $SecretFile -PathType Leaf) -and -not $ResetSecrets)
     registrationToken = Protect-Secret $registrationToken
   } | ConvertTo-Json | Set-Content -LiteralPath $SecretFile -Encoding UTF8
 }
+Protect-SecretFileAcl $SecretFile
 
 Push-Location $repoRoot
 try {

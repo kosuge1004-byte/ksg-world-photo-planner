@@ -124,6 +124,8 @@ assert.match(registrationEndpoint, /expirationTtl:\s*LOCAL_DEM_ENDPOINT_TTL_SECO
 assert.match(registrationEndpoint, /endpointKv\.put\(/);
 assert.match(registrationEndpoint, /verifyQuickTunnel\(registration\.endpoint, originToken\)/);
 assert.match(registrationEndpoint, /gatewayVerified:\s*true/);
+assert.match(registrationEndpoint, /redirect:\s*["']manual["']/);
+assert.doesNotMatch(registrationEndpoint, /redirect:\s*["']error["']/);
 assert.doesNotMatch(registrationEndpoint, /Access-Control-Allow-Origin/i);
 
 assert.match(quickTunnelSupervisor, /registrationUrl\.hostname !== ["']astrosight\.pages\.dev["']/);
@@ -136,14 +138,18 @@ assert.match(configureDomainless, /ProtectedData\]::Protect/);
 assert.match(configureDomainless, /DataProtectionScope\]::CurrentUser/);
 assert.match(configureDomainless, /LOCAL_DEM_REGISTRATION_TOKEN/);
 assert.match(configureDomainless, /\[switch\]\$ResetSecrets/);
+assert.match(configureDomainless, /SetAccessRuleProtection\(\$true, \$false\)/);
+assert.match(configureDomainless, /WellKnownSidType\]::LocalSystemSid/);
 assert.doesNotMatch(configureDomainless, /Write-Output.*originToken|Write-Output.*registrationToken/i);
 assert.match(installCloudflared, /cloudflare\/cloudflared\/releases\/download/);
 assert.match(installCloudflared, /Security\.Cryptography\.SHA256/);
 assert.match(installCloudflared, /f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2/);
-assert.match(installCloudflared, /LOCALAPPDATA.*AstroSight\\bin/);
+assert.match(installCloudflared, /AstroSight-GSI-data-20260926\\runtime/);
 assert.match(startDomainless, /LOCAL_DEM_HOST = ["']127\.0\.0\.1["']/);
 assert.match(startDomainless, /LOCAL_DEM_CLOUDFLARED_PATH/);
+assert.match(startDomainless, /AstroSight-GSI-data-20260926\\runtime/);
 assert.match(startDomainless, /AstroSight\\bin\\cloudflared\.exe/);
+assert.doesNotMatch(gateway, /redirect:\s*["']error["']/);
 assert.match(installAutostart, /RunLevel Limited/);
 assert.match(installAutostart, /WindowStyle Hidden/);
 assert.match(installAutostart, /Start-ScheduledTask/);

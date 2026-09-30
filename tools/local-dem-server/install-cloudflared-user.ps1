@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'AstroSight\bin')
+  [string]$InstallDirectory = 'E:\AstroSight-GSI-data-20260926\runtime'
 )
 
 $ErrorActionPreference = 'Stop'

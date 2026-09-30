@@ -40,6 +40,8 @@ npm.cmd run local-dem:precompute-landmarks
 
 Pagesのsecretは設定後に作られた本番デプロイへ反映させる。手順4でsecretを設定してから本番デプロイを作成する。先にデプロイ済みだった場合は、同じソースをもう一度デプロイまたは再試行する。
 
+Cloudflare Workersの外向き `fetch()` は `redirect: "error"` を受け付けない。Eドライブ登録・計算経路では `redirect: "manual"` を使い、3xxを非成功レスポンスとして拒否する。これにより認証ヘッダーを転送先へ送らず、Workers上でも通信開始前の例外を起こさない。
+
 ## 3. cloudflaredのインストール
 
 管理者権限を要求しないユーザー専用配置を使う。
@@ -48,7 +50,7 @@ Pagesのsecretは設定後に作られた本番デプロイへ反映させる。
 npm.cmd run local-dem:install-cloudflared
 ```
 
-公式Cloudflare GitHub Releaseから固定バージョンを取得し、公式掲載のSHA-256と完全一致した実行ファイルだけを `%LOCALAPPDATA%\AstroSight\bin` に置く。システム全体のPATHやWindowsサービスは変更しない。
+公式Cloudflare GitHub Releaseから固定バージョンを取得し、公式掲載のSHA-256と完全一致した実行ファイルだけを `E:\AstroSight-GSI-data-20260926\runtime` に置く。システム全体のPATHやWindowsサービスは変更しない。
 
 有料プラン、ドメイン購入、ルーターのポート開放は不要である。LAN向けの `0.0.0.0`、SMB共有、RDPも使わない。
 
@@ -63,7 +65,7 @@ npm.cmd run local-dem:configure-domainless
 | `LOCAL_DEM_ORIGIN_TOKEN` | Pages、3 Worker、PC | EドライブAPIへの要求を認証 |
 | `LOCAL_DEM_REGISTRATION_TOKEN` | Pages、PCのみ | 変動するQuick Tunnel URLの登録を認証 |
 
-PC側の値は `%LOCALAPPDATA%\AstroSight\local-dem-secrets.json` にWindows DPAPIで暗号化して保存する。値を画面、ログ、リポジトリ、配布ZIPへ出力しない。Pages登録APIはCORSを許可せず、正しい登録トークンと `https://<1ラベル>.trycloudflare.com/` だけを受理する。さらにPagesからPCの認証付き `/v1/health` へ往復でき、オリジントークンも一致した場合だけ、サーバー側で固定した `/v1/elevation/batch` をKVへ登録する。
+PC側の値は `E:\AstroSight-GSI-data-20260926\runtime\local-dem-secrets.json` にWindows DPAPIで暗号化し、現在のWindowsユーザーとSYSTEMだけが読めるACLで保存する。値を画面、ログ、リポジトリ、配布ZIPへ出力しない。Pages登録APIはCORSを許可せず、正しい登録トークンと `https://<1ラベル>.trycloudflare.com/` だけを受理する。さらにPagesからPCの認証付き `/v1/health` へ往復でき、オリジントークンも一致した場合だけ、サーバー側で固定した `/v1/elevation/batch` をKVへ登録する。
 
 このコマンドの完了後に、GitHub経由でPagesの本番デプロイを作成または再試行する。
 

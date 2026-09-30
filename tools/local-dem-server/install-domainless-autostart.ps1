@@ -1,18 +1,22 @@
 [CmdletBinding()]
 param(
-  [string]$TaskName = 'AstroSight Local DEM Gateway'
+  [string]$TaskName = 'AstroSight Local DEM Gateway',
+  [string]$RuntimeDirectory = 'E:\AstroSight-GSI-data-20260926\runtime'
 )
 
 $ErrorActionPreference = 'Stop'
 $startScript = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'start-quick-tunnel.ps1')).Path
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$secretFile = Join-Path $env:LOCALAPPDATA 'AstroSight\local-dem-secrets.json'
+$secretFile = Join-Path $RuntimeDirectory 'local-dem-secrets.json'
 $logFile = Join-Path $env:LOCALAPPDATA 'AstroSight\local-dem-gateway.log'
 if (-not (Test-Path -LiteralPath $secretFile -PathType Leaf)) {
   throw 'Run configure-domainless-secrets.ps1 first.'
 }
+$runtimeCloudflared = Join-Path $RuntimeDirectory 'cloudflared.exe'
 $cloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
-$cloudflaredPath = if ($cloudflaredCommand) {
+$cloudflaredPath = if (Test-Path -LiteralPath $runtimeCloudflared -PathType Leaf) {
+  $runtimeCloudflared
+} elseif ($cloudflaredCommand) {
   $cloudflaredCommand.Source
 } else {
   Join-Path $env:LOCALAPPDATA 'AstroSight\bin\cloudflared.exe'
@@ -21,7 +25,13 @@ if (-not (Test-Path -LiteralPath $cloudflaredPath -PathType Leaf)) {
   throw 'Run install-cloudflared-user.ps1 first.'
 }
 
-$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startScript`""
+$arguments = (
+  '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass ' +
+  "-File `"$startScript`" " +
+  "-SecretFile `"$secretFile`" " +
+  "-CloudflaredExecutable `"$cloudflaredPath`" " +
+  "-LogFile `"$logFile`""
+)
 $action = New-ScheduledTaskAction `
   -Execute 'powershell.exe' `
   -Argument $arguments `

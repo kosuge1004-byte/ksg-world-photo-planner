@@ -59,6 +59,7 @@ test("gateway sends fixed authentication headers and validates aligned results",
   globalThis.fetch = async (input, init) => {
     calls += 1;
     assert.equal(String(input), gatewayConfiguration.endpoint);
+    assert.equal(init.redirect, "manual");
     const headers = new Headers(init.headers);
     assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
     assert.equal(headers.get("cf-access-client-id"), gatewayConfiguration.accessClientId);
@@ -120,6 +121,7 @@ test("domainless gateway resolves a short-lived Quick Tunnel URL without Access 
       String(input),
       "https://quiet-river-123.trycloudflare.com/v1/elevation/batch"
     );
+    assert.equal(init.redirect, "manual");
     const headers = new Headers(init.headers);
     assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
     assert.equal(headers.get("cf-access-client-id"), null);
@@ -181,6 +183,7 @@ test("the E-drive origin resolves the same precision tier before public GSI", as
       throw new Error("public GSI must not run after an E-drive hit");
     }
     const body = JSON.parse(init?.body ?? "{}");
+    assert.equal(init.redirect, "manual");
     assert.equal(body.mode, "auto");
     return Response.json({
       mode: "auto",
@@ -201,6 +204,7 @@ test("automatic gateway chunks large lookups and preserves authoritative NoData"
   configureServerRuntime({ localDemGateway: gatewayConfiguration });
   const calls = [];
   globalThis.fetch = async (_input, init) => {
+    assert.equal(init.redirect, "manual");
     const body = JSON.parse(init.body);
     calls.push(body.points.length);
     return Response.json({
@@ -278,9 +282,10 @@ test("a real-size 259-bearing precomputed response stays on the one-request path
   assert.ok(Buffer.byteLength(encoded) > 2 * 1024 * 1024, "fixture must cover the former 2 MiB rejection");
   assert.ok(Buffer.byteLength(encoded) < 8 * 1024 * 1024);
   let calls = 0;
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init) => {
     calls += 1;
     assert.equal(String(input), "https://dem-origin.example.test/v1/bearing-profile/precomputed");
+    assert.equal(init.redirect, "manual");
     return new Response(encoded, {
       status: 200,
       headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(encoded)) },
@@ -326,6 +331,7 @@ test("an arbitrary coordinate uses one authenticated exact-profile origin reques
   globalThis.fetch = async (input, init) => {
     calls += 1;
     assert.equal(String(input), "https://dem-origin.example.test/v1/bearing-profile/compute");
+    assert.equal(init.redirect, "manual");
     const headers = new Headers(init.headers);
     assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
     assert.equal(headers.get("cf-access-client-id"), gatewayConfiguration.accessClientId);

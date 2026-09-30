@@ -276,6 +276,7 @@ test("Google Maps resolver enriches a Maps Feature ID with a Places API Place ID
       }
       assert.equal(value, "https://places.googleapis.com/v1/places:searchText");
       assert.equal(init?.method, "POST");
+      assert.equal(init?.redirect, "manual");
       assert.equal(init?.headers["X-Goog-Api-Key"], "test-api-key");
       return Response.json({
         places: [{

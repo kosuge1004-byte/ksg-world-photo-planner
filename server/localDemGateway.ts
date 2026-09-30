@@ -220,7 +220,7 @@ export async function lookupLocalPrecomputedBearingProfile(
         maxDistanceMeters: request.maxDistanceMeters,
       }),
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: controller.signal,
     });
     if (response.status === 404) {
@@ -295,7 +295,7 @@ export async function computeLocalBearingProfile(
         maxDistanceMeters: request.maxDistanceMeters,
       }),
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -440,7 +440,7 @@ async function requestChunk(
       headers: gatewayHeaders(configuration),
       body: JSON.stringify({ source, points }),
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -478,7 +478,7 @@ async function requestAutoChunk(
       headers: gatewayHeaders(configuration),
       body: JSON.stringify({ mode: "auto", points }),
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: controller.signal,
     });
     if (!response.ok) {

@@ -381,7 +381,7 @@ async function googlePlacesLookup(
   if (metadata.placeIdType === "places-api" && metadata.placeId) {
     response = await fetcher(
       `https://places.googleapis.com/v1/places/${encodeURIComponent(metadata.placeId)}?languageCode=ja`,
-      { method: "GET", headers, signal, redirect: "error" }
+      { method: "GET", headers, signal, redirect: "manual" }
     );
   } else if (metadata.placeQuery) {
     response = await fetcher("https://places.googleapis.com/v1/places:searchText", {
@@ -398,7 +398,7 @@ async function googlePlacesLookup(
         pageSize: 1,
       }),
       signal,
-      redirect: "error",
+      redirect: "manual",
     });
   } else {
     return null;

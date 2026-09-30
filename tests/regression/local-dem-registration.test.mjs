@@ -92,6 +92,7 @@ test("valid registration writes one fixed expiring KV record", async () => {
   globalThis.fetch = async (input, init) => {
     assert.equal(String(input), "https://valid-origin-123.trycloudflare.com/v1/health");
     assert.equal(init.method, "GET");
+    assert.equal(init.redirect, "manual");
     assert.equal(init.headers["X-AstroSight-Origin-Token"], originToken);
     return new Response(JSON.stringify({ ok: true }), { status: 200 });
   };

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip$')]
   [string]$ArchiveName = ("AstroSight-source-{0}.zip" -f (Get-Date -Format 'yyyyMMdd')),
