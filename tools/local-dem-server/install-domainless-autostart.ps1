@@ -5,7 +5,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $startScript = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'start-quick-tunnel.ps1')).Path
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $secretFile = Join-Path $env:LOCALAPPDATA 'AstroSight\local-dem-secrets.json'
+$logFile = Join-Path $env:LOCALAPPDATA 'AstroSight\local-dem-gateway.log'
 if (-not (Test-Path -LiteralPath $secretFile -PathType Leaf)) {
   throw 'Run configure-domainless-secrets.ps1 first.'
 }
@@ -20,7 +22,10 @@ if (-not (Test-Path -LiteralPath $cloudflaredPath -PathType Leaf)) {
 }
 
 $arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startScript`""
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
+$action = New-ScheduledTaskAction `
+  -Execute 'powershell.exe' `
+  -Argument $arguments `
+  -WorkingDirectory $repoRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
@@ -40,5 +45,37 @@ Register-ScheduledTask `
   -Description 'Starts the loopback AstroSight DEM service and domainless Cloudflare Quick Tunnel.' `
   -Force | Out-Null
 
-Write-Output "Scheduled task installed: $TaskName"
+if (Test-Path -LiteralPath $logFile -PathType Leaf) {
+  Move-Item -LiteralPath $logFile -Destination "$logFile.previous" -Force
+}
+Start-ScheduledTask -TaskName $TaskName
+
+$deadline = [DateTimeOffset]::Now.AddSeconds(90)
+$localReady = $false
+$gatewayRegistered = $false
+do {
+  Start-Sleep -Seconds 2
+  try {
+    $health = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8789/health' -TimeoutSec 2
+    $localReady = $health.ok -eq $true
+  }
+  catch { $localReady = $false }
+  if (Test-Path -LiteralPath $logFile -PathType Leaf) {
+    $gatewayRegistered = Select-String `
+      -LiteralPath $logFile `
+      -SimpleMatch 'Quick Tunnel heartbeat registered' `
+      -Quiet
+  }
+} while ((-not $localReady -or -not $gatewayRegistered) -and [DateTimeOffset]::Now -lt $deadline)
+
+$task = Get-ScheduledTask -TaskName $TaskName
+$taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName
+if ($task.State -ne 'Running' -or -not $localReady -or -not $gatewayRegistered) {
+  Write-Output "Task state: $($task.State); last result: $($taskInfo.LastTaskResult)"
+  Write-Output "Operational log: $logFile"
+  throw 'The scheduled local DEM gateway did not pass its startup and edge round-trip checks.'
+}
+
+Write-Output "Scheduled task installed and running: $TaskName"
+Write-Output "Operational log: $logFile"
 Write-Output 'It runs only after this Windows user logs on and does not open a LAN port.'

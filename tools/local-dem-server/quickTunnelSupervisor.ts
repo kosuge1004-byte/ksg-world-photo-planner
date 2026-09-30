@@ -60,10 +60,21 @@ async function registerQuickTunnel(url: string): Promise<void> {
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error(`Quick Tunnel registration failed with HTTP ${response.status}`);
+    let code = "";
+    try {
+      const body = await response.json() as { code?: unknown };
+      if (typeof body.code === "string" && /^[A-Z0-9_]{1,64}$/u.test(body.code)) {
+        code = ` (${body.code})`;
+      }
+    } catch {
+      await response.body?.cancel();
+    }
+    throw new Error(`Quick Tunnel registration failed with HTTP ${response.status}${code}`);
   }
-  await response.body?.cancel();
+  const body = await response.json() as { gatewayVerified?: unknown };
+  if (body.gatewayVerified !== true) {
+    throw new Error("Quick Tunnel registration response did not verify the gateway");
+  }
   console.log(`[local-dem] Quick Tunnel heartbeat registered (${registrationUrl.hostname})`);
 }
 

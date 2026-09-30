@@ -16,6 +16,8 @@ import type { CloudflareEnv } from "../_shared/env.ts";
 
 const MAX_REQUEST_BYTES = 1_024;
 const TOKEN_HEADER = "X-AstroSight-Registration-Token";
+const ORIGIN_TOKEN_HEADER = "X-AstroSight-Origin-Token";
+const GATEWAY_VERIFY_TIMEOUT_MS = 8_000;
 
 function constantTimeEqual(left: string, right: string): boolean {
   const encoder = new TextEncoder();
@@ -31,6 +33,41 @@ function constantTimeEqual(left: string, right: string): boolean {
 
 function response(value: unknown, status = 200): Response {
   return jsonResponse(value, status, "no-store");
+}
+
+async function verifyQuickTunnel(
+  elevationEndpoint: string,
+  originToken: string
+): Promise<{ ok: true } | { ok: false; code: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GATEWAY_VERIFY_TIMEOUT_MS);
+  try {
+    const healthUrl = new URL("/v1/health", elevationEndpoint);
+    const result = await fetch(healthUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        [ORIGIN_TOKEN_HEADER]: originToken,
+      },
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    await result.body?.cancel();
+    if (!result.ok) {
+      return { ok: false, code: `ORIGIN_HTTP_${result.status}` };
+    }
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      code: controller.signal.aborted
+        ? "ORIGIN_VERIFY_TIMEOUT"
+        : "ORIGIN_UNREACHABLE",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
@@ -54,6 +91,24 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     if (!registration) {
       return response({ error: "Quick Tunnel URLが不正です" }, 400);
     }
+    const originToken = context.env.LOCAL_DEM_ORIGIN_TOKEN?.trim() ?? "";
+    if (originToken.length < 32) {
+      return response({
+        error: "Eドライブ認証secretが未設定です",
+        code: "ORIGIN_TOKEN_UNAVAILABLE",
+      }, 503);
+    }
+    // Do not publish a hostname merely because cloudflared printed it. First
+    // prove the complete edge-to-origin path and the independent origin token.
+    // A failed probe leaves the previous KV record to expire naturally and the
+    // PC supervisor retries after 30 seconds.
+    const verification = await verifyQuickTunnel(registration.endpoint, originToken);
+    if (!verification.ok) {
+      return response({
+        error: "Quick Tunnelの往復検査に失敗しました",
+        code: verification.code,
+      }, 503);
+    }
     const endpointKv = context.env.SPOT_SEARCH_JOBS as unknown as LocalDemEndpointRegistry;
     await endpointKv.put(
       LOCAL_DEM_ENDPOINT_REGISTRY_KEY,
@@ -62,6 +117,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     );
     return response({
       ok: true,
+      gatewayVerified: true,
       expiresAt: registration.expiresAt,
       heartbeatSeconds: LOCAL_DEM_ENDPOINT_HEARTBEAT_SECONDS,
     });

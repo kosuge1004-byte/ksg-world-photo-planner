@@ -8,6 +8,7 @@ import type { BearingProfileBatchRequest, BearingProfileBatchResponseV2 } from "
 import type { LocalDemServerConfig } from "./config.ts";
 
 const ENDPOINT = "/v1/elevation/batch";
+const AUTHENTICATED_HEALTH_ENDPOINT = "/v1/health";
 const PRECOMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/precomputed";
 const COMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/compute";
 const JAPAN_BOUNDS = Object.freeze({ south: 20, north: 46.5, west: 122, east: 154 });
@@ -346,6 +347,18 @@ export function createLocalDemRequestHandler(
         writeJson(response, 200, { ok: true });
         return;
       }
+      // The public health route is used only from loopback while starting the
+      // service. This authenticated route lets the Pages registration handler
+      // prove the complete Pages -> Quick Tunnel -> PC path and token match
+      // before publishing a short-lived endpoint in KV.
+      if (requestUrl === AUTHENTICATED_HEALTH_ENDPOINT && request.method === "GET") {
+        if (!authenticated(request, config)) {
+          throw new HttpError(401, "authentication required");
+        }
+        responseStatus = 200;
+        writeJson(response, 200, { ok: true });
+        return;
+      }
       if (requestUrl !== ENDPOINT && requestUrl !== PRECOMPUTED_PROFILE_ENDPOINT &&
         requestUrl !== COMPUTED_PROFILE_ENDPOINT) {
         throw new HttpError(404, "not found");
@@ -463,6 +476,8 @@ export function createLocalDemRequestHandler(
             ? PRECOMPUTED_PROFILE_ENDPOINT
             : request.url === COMPUTED_PROFILE_ENDPOINT
               ? COMPUTED_PROFILE_ENDPOINT
+              : request.url === AUTHENTICATED_HEALTH_ENDPOINT
+                ? AUTHENTICATED_HEALTH_ENDPOINT
             : request.url === "/health" ? "/health" : "other",
         status: responseStatus,
         points: pointCount,

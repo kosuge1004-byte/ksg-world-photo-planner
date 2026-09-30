@@ -10,6 +10,7 @@ import {
 } from "../../server/localDemEndpointRegistry.ts";
 
 const registrationToken = "registration-token-for-tests-" + "x".repeat(40);
+const originToken = "origin-token-for-tests-" + "y".repeat(48);
 
 class MemoryEndpointKv {
   value = null;
@@ -27,11 +28,12 @@ class MemoryEndpointKv {
   }
 }
 
-function context(request, endpointKv, token = registrationToken) {
+function context(request, endpointKv, token = registrationToken, origin = originToken) {
   return {
     request,
     env: {
       LOCAL_DEM_REGISTRATION_TOKEN: token,
+      LOCAL_DEM_ORIGIN_TOKEN: origin,
       SPOT_SEARCH_JOBS: endpointKv,
     },
     params: {},
@@ -86,15 +88,28 @@ test("registration endpoint accepts only a root Quick Tunnel HTTPS URL", async (
 
 test("valid registration writes one fixed expiring KV record", async () => {
   const kv = new MemoryEndpointKv();
-  const response = await registerLocalDem(context(
-    request({ url: "https://valid-origin-123.trycloudflare.com" }),
-    kv
-  ));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://valid-origin-123.trycloudflare.com/v1/health");
+    assert.equal(init.method, "GET");
+    assert.equal(init.headers["X-AstroSight-Origin-Token"], originToken);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  let response;
+  try {
+    response = await registerLocalDem(context(
+      request({ url: "https://valid-origin-123.trycloudflare.com" }),
+      kv
+    ));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("access-control-allow-origin"), null);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), {
     ok: true,
+    gatewayVerified: true,
     expiresAt: (await readRegistration(kv)).expiresAt,
     heartbeatSeconds: LOCAL_DEM_ENDPOINT_HEARTBEAT_SECONDS,
   });
@@ -107,6 +122,37 @@ test("valid registration writes one fixed expiring KV record", async () => {
     await readRegisteredLocalDemEndpoint(kv),
     "https://valid-origin-123.trycloudflare.com/v1/elevation/batch"
   );
+});
+
+test("registration never publishes an endpoint that fails the edge round-trip", async () => {
+  const kv = new MemoryEndpointKv();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 502 });
+  let response;
+  try {
+    response = await registerLocalDem(context(
+      request({ url: "https://unreachable-origin.trycloudflare.com" }),
+      kv
+    ));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "ORIGIN_HTTP_502");
+  assert.equal(kv.writes.length, 0);
+});
+
+test("registration requires the separately configured origin secret", async () => {
+  const kv = new MemoryEndpointKv();
+  const response = await registerLocalDem(context(
+    request({ url: "https://valid-origin-123.trycloudflare.com" }),
+    kv,
+    registrationToken,
+    ""
+  ));
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "ORIGIN_TOKEN_UNAVAILABLE");
+  assert.equal(kv.writes.length, 0);
 });
 
 async function readRegistration(kv) {

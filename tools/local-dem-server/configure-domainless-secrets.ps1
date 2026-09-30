@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$SecretFile = (Join-Path $env:LOCALAPPDATA 'AstroSight\local-dem-secrets.json'),
-  [string]$PagesProject = 'astrosight'
+  [string]$PagesProject = 'astrosight',
+  [switch]$ResetSecrets
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,10 +50,15 @@ if (-not (Test-Path -LiteralPath $secretDirectory -PathType Container)) {
   New-Item -ItemType Directory -Path $secretDirectory -Force | Out-Null
 }
 
-if (Test-Path -LiteralPath $SecretFile -PathType Leaf) {
-  $saved = Get-Content -LiteralPath $SecretFile -Raw -Encoding UTF8 | ConvertFrom-Json
-  $originToken = Unprotect-Secret ([string]$saved.originToken)
-  $registrationToken = Unprotect-Secret ([string]$saved.registrationToken)
+if ((Test-Path -LiteralPath $SecretFile -PathType Leaf) -and -not $ResetSecrets) {
+  try {
+    $saved = Get-Content -LiteralPath $SecretFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $originToken = Unprotect-Secret ([string]$saved.originToken)
+    $registrationToken = Unprotect-Secret ([string]$saved.registrationToken)
+  }
+  catch {
+    throw 'The encrypted secret file cannot be opened by this Windows user. Run this command again with -ResetSecrets to rotate both values safely.'
+  }
 } else {
   $originToken = New-RandomToken
   $registrationToken = New-RandomToken

@@ -55,6 +55,7 @@ assert.match(config, /LOCAL_DEM_ORIGIN_TOKEN["'],\s*32/);
 assert.match(start, /LOCAL_DEM_HOST\s*=\s*['"]127\.0\.0\.1['"]/);
 
 assert.match(app, /const ENDPOINT = ["']\/v1\/elevation\/batch["']/);
+assert.match(app, /AUTHENTICATED_HEALTH_ENDPOINT = ["']\/v1\/health["']/);
 assert.match(app, /PRECOMPUTED_PROFILE_ENDPOINT = ["']\/v1\/bearing-profile\/precomputed["']/);
 assert.match(app, /COMPUTED_PROFILE_ENDPOINT = ["']\/v1\/bearing-profile\/compute["']/);
 assert.match(app, /x-astrosight-origin-token/);
@@ -121,6 +122,8 @@ assert.match(registrationEndpoint, /X-AstroSight-Registration-Token/i);
 assert.match(registrationEndpoint, /constantTimeEqual/);
 assert.match(registrationEndpoint, /expirationTtl:\s*LOCAL_DEM_ENDPOINT_TTL_SECONDS/);
 assert.match(registrationEndpoint, /endpointKv\.put\(/);
+assert.match(registrationEndpoint, /verifyQuickTunnel\(registration\.endpoint, originToken\)/);
+assert.match(registrationEndpoint, /gatewayVerified:\s*true/);
 assert.doesNotMatch(registrationEndpoint, /Access-Control-Allow-Origin/i);
 
 assert.match(quickTunnelSupervisor, /registrationUrl\.hostname !== ["']astrosight\.pages\.dev["']/);
@@ -128,9 +131,11 @@ assert.match(quickTunnelSupervisor, /--no-autoupdate/);
 assert.match(quickTunnelSupervisor, /trycloudflare\\\.com/);
 assert.match(quickTunnelSupervisor, /30_000/);
 assert.match(quickTunnelSupervisor, /LOCAL_DEM_ENDPOINT_HEARTBEAT_SECONDS/);
+assert.match(quickTunnelSupervisor, /body\.gatewayVerified !== true/);
 assert.match(configureDomainless, /ProtectedData\]::Protect/);
 assert.match(configureDomainless, /DataProtectionScope\]::CurrentUser/);
 assert.match(configureDomainless, /LOCAL_DEM_REGISTRATION_TOKEN/);
+assert.match(configureDomainless, /\[switch\]\$ResetSecrets/);
 assert.doesNotMatch(configureDomainless, /Write-Output.*originToken|Write-Output.*registrationToken/i);
 assert.match(installCloudflared, /cloudflare\/cloudflared\/releases\/download/);
 assert.match(installCloudflared, /Security\.Cryptography\.SHA256/);
@@ -141,6 +146,9 @@ assert.match(startDomainless, /LOCAL_DEM_CLOUDFLARED_PATH/);
 assert.match(startDomainless, /AstroSight\\bin\\cloudflared\.exe/);
 assert.match(installAutostart, /RunLevel Limited/);
 assert.match(installAutostart, /WindowStyle Hidden/);
+assert.match(installAutostart, /Start-ScheduledTask/);
+assert.match(installAutostart, /Quick Tunnel heartbeat registered/);
+assert.match(startDomainless, /local-dem-gateway\.log/);
 
 const tierStart = elevation.indexOf("async function resolveSourceTier");
 const tierEnd = elevation.indexOf("function applyResolved", tierStart);

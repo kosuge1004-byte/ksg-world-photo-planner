@@ -24,6 +24,7 @@ ios/App/Pods/
 # Cloudflare Wrangler
 .wrangler/
 .wrangler*/
+.cf-xdg/
 .cloudflared/
 cert.pem
 *tunnel-credentials*.json

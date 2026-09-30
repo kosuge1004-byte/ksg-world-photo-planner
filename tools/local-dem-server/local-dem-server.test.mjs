@@ -354,6 +354,17 @@ test("health contains no path, version, source inventory, or secret", async () =
   assert.deepEqual(await response.json(), { ok: true });
 });
 
+test("edge health requires the origin token and returns no origin details", async () => {
+  const base = await start(async () => new Map());
+  const unauthorized = await fetch(`${base}/v1/health`);
+  assert.equal(unauthorized.status, 401);
+  const response = await fetch(`${base}/v1/health`, {
+    headers: { "x-astrosight-origin-token": TOKEN },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
 test("read-only cache accepts only fixed R2 keys and blocks traversal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "astrosight-local-dem-"));
   temporaryDirectories.add(root);

@@ -63,9 +63,15 @@ npm.cmd run local-dem:configure-domainless
 | `LOCAL_DEM_ORIGIN_TOKEN` | Pages、3 Worker、PC | EドライブAPIへの要求を認証 |
 | `LOCAL_DEM_REGISTRATION_TOKEN` | Pages、PCのみ | 変動するQuick Tunnel URLの登録を認証 |
 
-PC側の値は `%LOCALAPPDATA%\AstroSight\local-dem-secrets.json` にWindows DPAPIで暗号化して保存する。値を画面、ログ、リポジトリ、配布ZIPへ出力しない。Pages登録APIはCORSを許可せず、正しい登録トークンと `https://<1ラベル>.trycloudflare.com/` だけを受理する。登録されたパスはサーバー側で固定の `/v1/elevation/batch` に置き換える。
+PC側の値は `%LOCALAPPDATA%\AstroSight\local-dem-secrets.json` にWindows DPAPIで暗号化して保存する。値を画面、ログ、リポジトリ、配布ZIPへ出力しない。Pages登録APIはCORSを許可せず、正しい登録トークンと `https://<1ラベル>.trycloudflare.com/` だけを受理する。さらにPagesからPCの認証付き `/v1/health` へ往復でき、オリジントークンも一致した場合だけ、サーバー側で固定した `/v1/elevation/batch` をKVへ登録する。
 
 このコマンドの完了後に、GitHub経由でPagesの本番デプロイを作成または再試行する。
+
+暗号化ファイルを作成したWindowsユーザーと自動起動ユーザーが異なる場合など、DPAPIを復号できないときは、同じWindowsユーザーで次を実行して2値を安全にローテーションする。新しい値をCloudflareへ設定する処理まで含むため、その後にPagesをもう一度本番デプロイする。
+
+```powershell
+npm.cmd run local-dem:configure-domainless -- -ResetSecrets
+```
 
 ## 5. 起動確認と自動起動
 
@@ -77,10 +83,11 @@ npm.cmd run local-dem:start-domainless
 
 ```powershell
 npm.cmd run local-dem:install-autostart
-Start-ScheduledTask -TaskName 'AstroSight Local DEM Gateway'
 ```
 
-タスクは現在のWindowsユーザー権限で非表示起動し、管理者権限では実行しない。PCがスリープ中、ログオフ中、電源OFF、Eドライブ切断中は新規座標のEドライブ計算を利用できない。
+インストールコマンド自身がタスクを直ちに起動し、ローカルヘルスとPagesからの往復登録が成功するまで検査する。90秒以内に両方を確認できなければ成功扱いにせず終了する。タスクは現在のWindowsユーザー権限で非表示起動し、管理者権限では実行しない。稼働ログはトークンやローカルパスを含めず `%LOCALAPPDATA%\AstroSight\local-dem-gateway.log` に残す。PCがスリープ中、ログオフ中、電源OFF、Eドライブ切断中は新規座標のEドライブ計算を利用できない。
+
+登録済みスポットはPC停止中もR2から取得できる。新規座標で `LOCAL_DEM_PROFILE_UNAVAILABLE` が返る場合は、まずこのタスクが `Running` であることと、ログの最新部分に `Quick Tunnel heartbeat registered` があることを確認する。前面のPowerShellやCodexの実行セッションだけで起動したプロセスは、その画面やセッションが終了すると停止するため常用しない。
 
 ## 公開される範囲
 
@@ -88,6 +95,7 @@ Start-ScheduledTask -TaskName 'AstroSight Local DEM Gateway'
 - `POST /v1/bearing-profile/precomputed`
 - `POST /v1/bearing-profile/compute`
 - 内容を持たない `GET /health`
+- オリジントークンを要求する内容を持たない `GET /v1/health`
 
 ファイルパス、フォルダー一覧、任意ファイルの読取り・書込み・削除APIはない。ローカルAPIは本文容量、地点数、日本域、同時実行数、計算時間を検査し、オリジントークンを定時間比較する。不足する公開GSI PNGだけは固定形式の派生キャッシュとしてEドライブへ原子的に保存できるが、外部要求から保存先やキーは指定できない。
 

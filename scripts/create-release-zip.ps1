@@ -254,6 +254,7 @@ function Assert-RequiredContents($records) {
     'tools/local-dem-server/server.ts',
     'tools/local-dem-server/quickTunnelSupervisor.ts',
     'tools/local-dem-server/install-cloudflared-user.ps1',
+    'tools/local-dem-server/install-domainless-autostart.ps1',
     'tools/local-dem-server/start-quick-tunnel.ps1',
     'tools/local-dem-server/configure-domainless-secrets.ps1',
     'scripts/create-release-zip.ps1'
