@@ -1,9 +1,10 @@
 import { createAbortError, createTimeoutError, isAbortError } from "./runtimeErrors.ts";
 import { inflateSync } from "node:zlib";
-import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.ts";
+import { decodeGsiDemPngSync } from "./gsiDemPng.ts";
+import { keepServerTaskAlive, serverPersistentCache, serverRequestScope } from "./cloudflareRuntime.ts";
 import { bilinearInterpolate } from "./bilinearInterpolation.ts";
 import { constrainedBicubicInterpolate, type BicubicGrid4x4 } from "./constrainedBicubicInterpolation.ts";
-import { lookupLocalDemElevationsForSource } from "./gsiLocalDem.ts";
+import { localDemManifestAvailable, lookupLocalDemElevationsForSource } from "./gsiLocalDem.ts";
 import {
   lookupLocalDemGatewayAuto,
   lookupLocalDemGatewayForSource,
@@ -39,13 +40,6 @@ type ElevationTileSource = {
   zoom: number;
 };
 
-type DecodedPng = {
-  width: number;
-  height: number;
-  bytesPerPixel: number;
-  pixels: Uint8Array;
-};
-
 export type DecodedElevationTile = {
   width: number;
   height: number;
@@ -61,7 +55,6 @@ const GSI_TILE_SOURCES: ElevationTileSource[] = [
   { id: "dem_png", label: "DEM10B", zoom: 14 },
 ];
 
-const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 // A decoded 256x256 Int32 tile is 256 KiB. A count-only limit of 512 could
 // therefore retain about 128 MiB before Map/Promise overhead, exceeding the
 // whole Worker isolate limit. Keep a byte budget and a separate small-entry
@@ -71,13 +64,42 @@ const MAX_TILE_CACHE_ENTRIES = 256;
 const MAX_BASE_TILES_PER_PROCESSING_CHUNK = 8;
 export const NO_DATA_HEIGHT_CENTIMETERS = -2_147_483_648;
 const MAX_CONCURRENT_GSI_TILE_REQUESTS = 6;
+// 2026-09-30修正（実機障害の根本原因）:
+// 以前は「取得中のPromise」をisolate全体のMapに入れて別リクエストと共有し、
+// 取得本数の上限（セマフォ）もisolate全体で共有していた。Cloudflare Workers
+// では、あるリクエストが開始したfetch/R2読み取りとその後続処理は、その
+// リクエストがクライアント側で中断（12秒タイムアウト等）された時点で打ち
+// 切られる。共有Promiseはresolveもrejectもされず、セマフォの枠も返らない
+// ため、以後同じisolateへ来た全リクエストが点数に関係なく無応答になって
+// いた（診断: R2ヒット/ミス0回のまま140秒無応答）。
+//
+// - リクエスト間で共有するのは「完了済みのデコード結果（値）」だけにする。
+// - 取得中Promiseと同時取得数の上限は、リクエスト単位のスコープに閉じる。
+// - リクエストをまたぐ永続共有はR2（writePersistentTile）が担う。
+// 取得するタイル・デコード・補間・ソース優先順位は一切変更しない。
 type MemoryTileCacheEntry = {
-  promise: Promise<DecodedElevationTile | null>;
-  settled: boolean;
+  tile: DecodedElevationTile | null;
   bytes: number;
 };
 const tileCache = new Map<string, MemoryTileCacheEntry>();
 let tileCacheBytes = 0;
+
+type RequestTileScope = {
+  inFlight: Map<string, Promise<DecodedElevationTile | null>>;
+  activeRequests: number;
+  waiters: Array<() => void>;
+};
+const requestTileScopes = new WeakMap<object, RequestTileScope>();
+
+function currentRequestTileScope(): RequestTileScope {
+  const owner = serverRequestScope();
+  let scope = requestTileScopes.get(owner);
+  if (!scope) {
+    scope = { inFlight: new Map(), activeRequests: 0, waiters: [] };
+    requestTileScopes.set(owner, scope);
+  }
+  return scope;
+}
 
 function deleteMemoryTile(key: string): void {
   const entry = tileCache.get(key);
@@ -91,17 +113,18 @@ function trimMemoryTiles(): void {
     tileCacheBytes > MAX_TILE_CACHE_BYTES ||
     tileCache.size > MAX_TILE_CACHE_ENTRIES
   ) {
-    let removed = false;
-    for (const [key, entry] of tileCache) {
-      // Keep in-flight lookups shareable. The request limiter and processing
-      // chunks bound their number; trim as soon as they settle.
-      if (!entry.settled) continue;
-      deleteMemoryTile(key);
-      removed = true;
-      break;
-    }
-    if (!removed) break;
+    const oldest = tileCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    deleteMemoryTile(oldest);
   }
+}
+
+function rememberSettledTile(key: string, tile: DecodedElevationTile | null): void {
+  deleteMemoryTile(key);
+  const bytes = tile ? tile.heightsCentimeters.byteLength + 128 : 64;
+  tileCache.set(key, { tile, bytes });
+  tileCacheBytes += bytes;
+  trimMemoryTiles();
 }
 
 /** Regression diagnostics; production code must not depend on isolate cache state. */
@@ -149,19 +172,19 @@ export type TileCacheCounter = {
 export function createTileCacheCounter(): TileCacheCounter {
   return { hit: 0, miss: 0, memoryHit: 0, shared: 0, bypass: 0 };
 }
-let activeTileRequests = 0;
-const tileRequestWaiters: Array<() => void> = [];
-
-async function withTileRequestLimit<T>(task: () => Promise<T>): Promise<T> {
-  if (activeTileRequests >= MAX_CONCURRENT_GSI_TILE_REQUESTS) {
-    await new Promise<void>((resolve) => tileRequestWaiters.push(resolve));
+async function withTileRequestLimit<T>(
+  scope: RequestTileScope,
+  task: () => Promise<T>
+): Promise<T> {
+  if (scope.activeRequests >= MAX_CONCURRENT_GSI_TILE_REQUESTS) {
+    await new Promise<void>((resolve) => scope.waiters.push(resolve));
   }
-  activeTileRequests += 1;
+  scope.activeRequests += 1;
   try {
     return await task();
   } finally {
-    activeTileRequests -= 1;
-    tileRequestWaiters.shift()?.();
+    scope.activeRequests -= 1;
+    scope.waiters.shift()?.();
   }
 }
 
@@ -174,138 +197,9 @@ function isJapaneseCoverage(point: GsiElevationRequestPoint): boolean {
   );
 }
 
-function readChunkName(bytes: Uint8Array, offset: number): string {
-  return String.fromCharCode(
-    bytes[offset],
-    bytes[offset + 1],
-    bytes[offset + 2],
-    bytes[offset + 3]
-  );
-}
-
-function paethPredictor(left: number, above: number, upperLeft: number): number {
-  const prediction = left + above - upperLeft;
-  const leftDistance = Math.abs(prediction - left);
-  const aboveDistance = Math.abs(prediction - above);
-  const upperLeftDistance = Math.abs(prediction - upperLeft);
-  if (leftDistance <= aboveDistance && leftDistance <= upperLeftDistance) {
-    return left;
-  }
-  return aboveDistance <= upperLeftDistance ? above : upperLeft;
-}
-
-function decodePng(bytes: Uint8Array): DecodedPng {
-  if (PNG_SIGNATURE.some((value, index) => bytes[index] !== value)) {
-    throw new Error("国土地理院標高タイルがPNG形式ではありません");
-  }
-
-  let width = 0;
-  let height = 0;
-  let bytesPerPixel = 0;
-  const idatParts: Uint8Array[] = [];
-  let offset = PNG_SIGNATURE.length;
-  while (offset + 12 <= bytes.length) {
-    const length = new DataView(
-      bytes.buffer,
-      bytes.byteOffset + offset,
-      4
-    ).getUint32(0, false);
-    const name = readChunkName(bytes, offset + 4);
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + length;
-    if (dataEnd + 4 > bytes.length) {
-      throw new Error("国土地理院標高タイルのPNGデータが途中で終了しています");
-    }
-    if (name === "IHDR") {
-      const header = new DataView(
-        bytes.buffer,
-        bytes.byteOffset + dataStart,
-        length
-      );
-      width = header.getUint32(0, false);
-      height = header.getUint32(4, false);
-      const bitDepth = header.getUint8(8);
-      const colorType = header.getUint8(9);
-      if (bitDepth !== 8 || (colorType !== 2 && colorType !== 6)) {
-        throw new Error(`未対応の標高PNG形式です（bit=${bitDepth}, color=${colorType}）`);
-      }
-      bytesPerPixel = colorType === 2 ? 3 : 4;
-    } else if (name === "IDAT") {
-      idatParts.push(bytes.slice(dataStart, dataEnd));
-    } else if (name === "IEND") {
-      break;
-    }
-    offset = dataEnd + 4;
-  }
-
-  if (width <= 0 || height <= 0 || bytesPerPixel === 0 || idatParts.length === 0) {
-    throw new Error("国土地理院標高タイルのPNGヘッダーを解析できません");
-  }
-  const compressedLength = idatParts.reduce((sum, part) => sum + part.length, 0);
-  const compressed = new Uint8Array(compressedLength);
-  let compressedOffset = 0;
-  for (const part of idatParts) {
-    compressed.set(part, compressedOffset);
-    compressedOffset += part.length;
-  }
-  const inflated = inflateSync(compressed);
-  const rowBytes = width * bytesPerPixel;
-  if (inflated.length < (rowBytes + 1) * height) {
-    throw new Error("国土地理院標高タイルの展開後データが不足しています");
-  }
-  const pixels = new Uint8Array(rowBytes * height);
-  let sourceOffset = 0;
-  for (let y = 0; y < height; y += 1) {
-    const filter = inflated[sourceOffset];
-    sourceOffset += 1;
-    const rowOffset = y * rowBytes;
-    for (let x = 0; x < rowBytes; x += 1) {
-      const raw = inflated[sourceOffset + x];
-      const left = x >= bytesPerPixel ? pixels[rowOffset + x - bytesPerPixel] : 0;
-      const above = y > 0 ? pixels[rowOffset - rowBytes + x] : 0;
-      const upperLeft = y > 0 && x >= bytesPerPixel
-        ? pixels[rowOffset - rowBytes + x - bytesPerPixel]
-        : 0;
-      const reconstructed = filter === 0
-        ? raw
-        : filter === 1
-          ? raw + left
-          : filter === 2
-            ? raw + above
-            : filter === 3
-              ? raw + Math.floor((left + above) / 2)
-              : filter === 4
-                ? raw + paethPredictor(left, above, upperLeft)
-                : Number.NaN;
-      if (!Number.isFinite(reconstructed)) {
-        throw new Error(`未対応のPNGフィルターです（${filter}）`);
-      }
-      pixels[rowOffset + x] = reconstructed & 0xff;
-    }
-    sourceOffset += rowBytes;
-  }
-  return { width, height, bytesPerPixel, pixels };
-}
-
-
 function decodeElevationTile(bytes: Uint8Array): DecodedElevationTile {
-  const png = decodePng(bytes);
-  const pixelCount = png.width * png.height;
-  const heightsCentimeters = new Int32Array(pixelCount);
-  const noDataValue = NO_DATA_HEIGHT_CENTIMETERS;
-  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
-    const offset = pixelIndex * png.bytesPerPixel;
-    const encoded =
-      png.pixels[offset] * 65_536 +
-      png.pixels[offset + 1] * 256 +
-      png.pixels[offset + 2];
-    heightsCentimeters[pixelIndex] = encoded === 2 ** 23
-      ? noDataValue
-      : encoded < 2 ** 23
-        ? encoded
-        : encoded - 2 ** 24;
-  }
-  return { width: png.width, height: png.height, heightsCentimeters };
+  // 2026-09-30: 端末の直接取得経路と同一のデコーダを共有する（server/gsiDemPng.ts）。
+  return decodeGsiDemPngSync(bytes, (compressed) => inflateSync(compressed));
 }
 
 export function tileCoordinates(
@@ -507,17 +401,19 @@ async function fetchDecodedTile(
   if (cached) {
     tileCache.delete(key);
     tileCache.set(key, cached);
-    if (counter) {
-      if (cached.settled) counter.memoryHit++;
-      else counter.shared++;
-    }
-    return awaitWithAbort(cached.promise, signal);
+    if (counter) counter.memoryHit++;
+    return cached.tile;
   }
 
-  // 同一タイルの通信・PNG展開Promiseを要求間で共有する。
-  // 個々の検索中断で共有処理そのものを停止させると、別検索まで巻き込むため、
-  // 基礎Promiseは中断信号から独立させ、各呼び出し側の待機だけを中断可能にする。
-  const promise = withTileRequestLimit(async () => {
+  // 同一リクエスト内の重複取得だけを共有する（リクエストをまたがない）。
+  const scope = currentRequestTileScope();
+  const inFlight = scope.inFlight.get(key);
+  if (inFlight) {
+    if (counter) counter.shared++;
+    return awaitWithAbort(inFlight, signal);
+  }
+
+  const promise = withTileRequestLimit(scope, async () => {
     const persistentRead = await readPersistentTile(source, x, y);
     if (counter) {
       if (persistentRead.status === "hit") counter.hit++;
@@ -543,36 +439,22 @@ async function fetchDecodedTile(
     const decoded = decodeElevationTile(new Uint8Array(await response.arrayBuffer()));
     writePersistentTile(source, x, y, serializeDecodedElevationTile(decoded));
     return decoded;
-  }).catch((error: unknown) => {
-    // 中断や一時的な通信失敗をキャッシュせず、次の判定で再取得できるようにする。
-    deleteMemoryTile(key);
+  }).then((tile) => {
+    rememberSettledTile(key, tile);
+    return tile;
+  }, (error: unknown) => {
     if (!isAbortError(error)) {
       console.warn(`国土地理院標高タイル ${key} を利用できません`, error);
     }
     // 404/R2のemptyだけが「このDEMソースにデータが無い」という確定結果。
     // タイムアウト、5xx、PNG破損等をnullへ潰すと、呼び出し側は海面・正規の
-    // NoDataと区別できず、点単位リトライを行えない。1mの4x4補間では一時的に
-    // 取得できなかった隣接タイルをNoDataと誤認してBilinearへ落ち、精度まで
-    // 静かに変わるため、通信・復号エラーは必ず上位へ伝播させる。
+    // NoDataと区別できず、点単位リトライを行えない。通信・復号エラーは必ず
+    // 上位へ伝播させる（失敗はキャッシュしない）。
     throw error;
+  }).finally(() => {
+    scope.inFlight.delete(key);
   });
-
-  const entry: MemoryTileCacheEntry = { promise, settled: false, bytes: 0 };
-  tileCache.set(key, entry);
-  void promise.then(
-    (tile) => {
-      if (tileCache.get(key) !== entry) return;
-      entry.settled = true;
-      entry.bytes = tile ? tile.heightsCentimeters.byteLength + 128 : 64;
-      tileCacheBytes += entry.bytes;
-      trimMemoryTiles();
-    },
-    () => {
-      // The catch above deletes rejected lookups. Keep this callback solely to
-      // consume the branch explicitly and avoid a floating rejection handler.
-    }
-  );
-  trimMemoryTiles();
+  scope.inFlight.set(key, promise);
   return awaitWithAbort(promise, signal);
 }
 
@@ -824,7 +706,11 @@ export async function lookupGsiElevations(
   // interpolation and NoData semantics remain identical. Chunking happens in
   // localDemGateway at 512 points: a 32-bearing/50km Pages invocation stays
   // below the free-plan limit of 50 external subrequests.
-  if (useLocalGateway && unresolved.size > 0) {
+  // 2026-09-30: 取得先の優先順位は全経路で R2 → Eドライブ → 国土地理院。
+  // R2にGML由来グリッドが配置されている場合は、Eドライブの一括解決を先に
+  // 行わず、下のDEM種別ごとの処理（R2 GML → Eドライブ → 公開PNG）に任せる。
+  // R2にGMLが無い通常構成では、Eドライブ一括解決が先頭で結果は同じ。
+  if (useLocalGateway && unresolved.size > 0 && !(await localDemManifestAvailable())) {
     const gatewayPoints = [...unresolved].map((index) => ({
       index,
       latitude: points[index].latitude,

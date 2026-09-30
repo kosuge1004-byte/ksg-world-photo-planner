@@ -99,10 +99,11 @@ test("batch miss reasons are reported instead of collapsing to null", async () =
   assert.match(html.miss.reason, /応答形式が不正/);
 });
 
-test("registered-spot R2 unavailability still surfaces as an error", async () => {
-  await assert.rejects(
-    fetchBearingProfileBatchDetailed(batchRequest, undefined, async () =>
-      jsonResponse(503, { code: "PRECOMPUTED_PROFILE_UNAVAILABLE", error: "R2未配置" })),
-    { name: "PrecomputedBearingProfileUnavailableError" }
-  );
+// 2026-09-30: 契約変更。登録スポットのR2未配置も、理由付きのmissとして返し、
+// ダウンロードは1方位経路で続行する（例外で終わらせない）。
+test("registered-spot R2 unavailability is surfaced as a reasoned miss", async () => {
+  const outcome = await fetchBearingProfileBatchDetailed(batchRequest, undefined, async () =>
+    jsonResponse(503, { code: "PRECOMPUTED_PROFILE_UNAVAILABLE", error: "R2未配置" }));
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.miss.reason, "R2未配置");
 });

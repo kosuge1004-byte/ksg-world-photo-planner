@@ -65,6 +65,9 @@ globalThis.fetch = async (input, init = {}) => {
 };
 
 const terrain = await import("../../src/cesium/worldTerrain.ts");
+// This file verifies the geoid API queue/cancellation contract with synthetic
+// values. Device-local JPGEO2024 is covered by device-direct-terrain.test.mjs.
+terrain.__setLocalGeoidEnabledForTesting(false);
 const manager = await import("../../src/cache/tripodBearingProfileManager.ts");
 const { fetchSiteContexts } = await import("../../src/search/siteContext.ts");
 const strict = { allowWorldTerrainFallback: false };

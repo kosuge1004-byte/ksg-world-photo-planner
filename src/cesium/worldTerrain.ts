@@ -13,7 +13,7 @@ import type {
 } from "../types/geospatial";
 import { publishUserNotice } from "../errors/userFeedback";
 import { fetchGsiElevationSamples, type GsiElevationRequestPurpose } from "./gsiElevationClient";
-import { prefetchGsiDeviceTilesForSamples, resolveGsiSamplesFromDeviceTiles } from "./gsiDemTileCache";
+import { prefetchGsiDeviceTilesForSamples, resolveGsiSamplesFromDeviceTiles, resolveGsiSamplesWithDirectTiles } from "./gsiDemTileCache";
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import { shareInFlightRequest } from "../network/sharedRequests";
 import { AbortableSemaphore, CancellableRequestPool, withAbortableTimeout } from "../utils/abortableSemaphore";
@@ -513,64 +513,98 @@ async function fetchGsiElevations(
   interpolationMode: "los-safe" | "neutral" = "los-safe",
   purpose: GsiElevationRequestPurpose = "bulk-download"
 ): Promise<GsiElevationApiSample[]> {
-  if (Date.now() < gsiUnavailableUntil) {
-    return points.map(() => ({ heightMeters: null, source: null }));
-  }
-  try {
-    const clientPoints = points.map((point, index) => ({
-      latitude: CesiumMath.toDegrees(point.latitude),
-      longitude: CesiumMath.toDegrees(point.longitude),
-      maximumDetail: maximumDetails?.[index],
-      interpolationMode,
-    }));
-    const result = await fetchGsiElevationSamples(clientPoints, signal, fetch, purpose);
-    // 通信失敗と「APIは成功したがDEM値が無い」を混同しない。
-    // 2026-09-10修正: 以前は「バッチ全体でfailedPointCountが0」の場合だけ
-    // authoritative no-data判定を行っていたため、1024点規模の大きなバッチの
-    // 中で無関係な1点だけが通信失敗しただけでも、他の数百点（正常応答で
-    // 確定していた海面0m等のNoData点を含む）までauthoritative判定を諦め、
-    // World Terrainへ道連れにしていた。failedIndexesで点単位に失敗を
-    // 特定できるようになったため、通信が実際に成功した点だけを対象に、
-    // その中でsource/heightともnullの地点をauthoritative no-dataとして
-    // 記録する（通信が失敗した点は引き続き絶対に0m化しない）。
-    const failedIndexSet = new Set(result.failedIndexes);
-    result.samples.forEach((sample, index) => {
-      if (failedIndexSet.has(index)) return;
+  const clientPoints = points.map((point, index) => ({
+    latitude: CesiumMath.toDegrees(point.latitude),
+    longitude: CesiumMath.toDegrees(point.longitude),
+    maximumDetail: maximumDetails?.[index],
+    interpolationMode,
+  }));
+  const samples: Array<GsiElevationApiSample | null> = points.map(() => null);
+
+  // 2026-09-30: 取得先の優先順位（全経路共通）
+  //   1. 端末内（ダウンロード済みデータ・過去に取得したタイル）… 通常の呼び出し元
+  //      sampleTerrainCached() で解決済み。ここに来るのは端末に無い地点だけ。
+  //      （Googleタイルモードの最高精度 sampleWorldTerrainHighestPrecision だけは
+  //      従来どおり端末キャッシュを通さず、R2/Eドライブの最詳細DEMを直接求める。）
+  //   2. R2 → 3. Eドライブ → 4. 国土地理院 … Pages API（サーバー側で解決）
+  //   5. 国土地理院への端末からの直接取得 … サーバーが応答しない・取得できなかった地点だけ
+  //   6. World Terrain（許可された経路のみ）
+  async function resolveDirect(indexes: number[]): Promise<void> {
+    if (indexes.length === 0) return;
+    let direct: Array<GsiElevationApiSample | null>;
+    try {
+      direct = await resolveGsiSamplesWithDirectTiles(indexes.map((index) => clientPoints[index]), signal);
+    } catch (error) {
+      if (signal?.aborted || isAbortError(error)) throw error;
+      console.warn("国土地理院DEMの直接取得に失敗しました", error);
+      return;
+    }
+    direct.forEach((sample, localIndex) => {
+      if (sample === null) return;
+      const index = indexes[localIndex];
+      samples[index] = sample;
       if (sample.source === null && sample.heightMeters === null) {
         authoritativeGsiNoDataBySample.add(points[index]);
       }
     });
-    // Warm decoded tiles only after the authoritative API result is available.
-    // This never delays the current search and makes later nearby searches local-first.
-    prefetchGsiDeviceTilesForSamples(clientPoints, result.samples);
-    if (result.failedPointCount > 0) {
-      const allFailed = result.failedPointCount === points.length;
-      if (allFailed) gsiUnavailableUntil = Date.now() + 15_000;
-      console.warn(
-        `国土地理院DEMの${result.failedPointCount}地点を取得できないためWorld Terrainを使用します`,
-        result.lastError
-      );
-      publishUserNotice({
-        key: "gsi-dem-fallback",
-        tone: "warning",
-        message: allFailed
-          ? "国土地理院の詳細地形データを取得できないため、別の地形データで計算を続けています。"
-          : `国土地理院の詳細地形データを一部取得できなかったため、${result.failedPointCount}地点だけ別の地形データで補完しています。`,
+  }
+
+  // Pages Functions経路（サーバー側で R2 → Eドライブ → 国土地理院）。
+  async function resolveViaServer(indexes: number[]): Promise<{ failed: number[]; lastError: unknown }> {
+    if (indexes.length === 0) return { failed: [], lastError: null };
+    if (Date.now() < gsiUnavailableUntil) return { failed: indexes, lastError: new Error("GSI API一時停止中") };
+    try {
+      const subset = indexes.map((index) => clientPoints[index]);
+      const result = await fetchGsiElevationSamples(subset, signal, fetch, purpose);
+      // 通信失敗と「APIは成功したがDEM値が無い」を混同しない（点単位）。
+      const failedIndexSet = new Set(result.failedIndexes);
+      result.samples.forEach((sample, localIndex) => {
+        if (failedIndexSet.has(localIndex)) return;
+        const index = indexes[localIndex];
+        samples[index] = sample;
+        if (sample.source === null && sample.heightMeters === null) {
+          authoritativeGsiNoDataBySample.add(points[index]);
+        }
       });
+      const succeededPoints = subset.filter((_, localIndex) => !failedIndexSet.has(localIndex));
+      const succeededSamples = result.samples.filter((_, localIndex) => !failedIndexSet.has(localIndex));
+      // Warm decoded tiles only after the authoritative API result is available.
+      prefetchGsiDeviceTilesForSamples(succeededPoints, succeededSamples);
+      if (result.failedPointCount === subset.length && subset.length > 0) {
+        gsiUnavailableUntil = Date.now() + 15_000;
+      }
+      return {
+        failed: result.failedIndexes.map((localIndex) => indexes[localIndex]),
+        lastError: result.lastError,
+      };
+    } catch (error) {
+      if (signal?.aborted || isAbortError(error)) throw error;
+      gsiUnavailableUntil = Date.now() + 15_000;
+      return { failed: indexes, lastError: error };
     }
-    return result.samples;
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    // 予期しないクライアント障害時だけ短時間の連続要求を避ける。
-    gsiUnavailableUntil = Date.now() + 15_000;
-    console.warn("国土地理院DEMを取得できないためWorld Terrainを使用します", error);
+  }
+
+  const allIndexes = points.map((_, index) => index);
+  const server = await resolveViaServer(allIndexes);
+  const lastError = server.lastError;
+  await resolveDirect(server.failed);
+
+  const unresolvedCount = samples.filter((sample) => sample === null).length;
+  if (unresolvedCount > 0) {
+    const allFailed = unresolvedCount === points.length;
+    console.warn(
+      `国土地理院DEMの${unresolvedCount}地点を取得できないためWorld Terrainを使用します`,
+      lastError
+    );
     publishUserNotice({
       key: "gsi-dem-fallback",
       tone: "warning",
-      message: "国土地理院の詳細地形データを取得できないため、別の地形データで計算を続けています。",
+      message: allFailed
+        ? "国土地理院の詳細地形データを取得できないため、別の地形データで計算を続けています。"
+        : `国土地理院の詳細地形データを一部取得できなかったため、${unresolvedCount}地点だけ別の地形データで補完しています。`,
     });
-    return points.map(() => ({ heightMeters: null, source: null }));
   }
+  return samples.map((sample) => sample ?? { heightMeters: null, source: null });
 }
 
 const GSI_DETAIL_PRIORITY: Record<GsiMaximumDetail, number> = {
@@ -772,6 +806,44 @@ const pointGeoidRequestSlots = new AbortableSemaphore(4);
 const GEOID_UPSTREAM_INTERVAL_MS = 3_500;
 let lastUncachedGeoidRequestAt = 0;
 
+// 2026-09-30: 国内のジオイド高は、サーバー（/api/gsi-geoid）が行っているのと
+// 同じ同梱JPGEO2024（server/jpgeo2024Local.ts）を端末で直接引く。サーバーは
+// 国内座標ではこの関数を呼ぶだけでCGIへ行かないため、値は完全に同一。
+// モジュール（約2.8MB）は初回に一度だけ遅延読込し、読めない場合だけ従来の
+// API経路へ戻る。
+type LocalJpgeoModule = typeof import("../../server/jpgeo2024Local.ts");
+let localJpgeoModulePromise: Promise<LocalJpgeoModule | null> | null = null;
+function loadLocalJpgeo(): Promise<LocalJpgeoModule | null> {
+  localJpgeoModulePromise ??= import("../../server/jpgeo2024Local.ts").catch((error: unknown) => {
+    console.warn("端末内JPGEO2024を読み込めないためジオイドAPIを使用します", error);
+    localJpgeoModulePromise = null;
+    return null;
+  });
+  return localJpgeoModulePromise;
+}
+
+let localGeoidEnabled = true;
+/** テスト専用: ジオイドAPIのキュー・取消挙動を検証する回帰テストで端末内計算を止める。 */
+export function __setLocalGeoidEnabledForTesting(enabled: boolean): void {
+  localGeoidEnabled = enabled;
+}
+
+/** server/gsiGeoid.ts lookupGsiGeoidHeight と同じ座標丸め規則で端末内計算する。 */
+async function localGeoidHeight(latitude: number, longitude: number, pointSpecific: boolean): Promise<number | null> {
+  if (!localGeoidEnabled) return null;
+  const module = await loadLocalJpgeo();
+  if (!module) return null;
+  const queryLatitude = pointSpecific ? latitude : Number(latitude.toFixed(2));
+  const queryLongitude = pointSpecific ? longitude : Number(longitude.toFixed(2));
+  try {
+    const height = module.lookupLocalJpgeo2024Height(queryLatitude, queryLongitude);
+    return typeof height === "number" && Number.isFinite(height) ? height : null;
+  } catch (error) {
+    console.warn("端末内JPGEO2024の計算に失敗しました", error);
+    return null;
+  }
+}
+
 async function fetchGsiGeoidHeightOnce(
   latitude: number,
   longitude: number,
@@ -779,6 +851,8 @@ async function fetchGsiGeoidHeightOnce(
   pointSpecific = false,
   timeoutMs = GEOID_FETCH_TIMEOUT_MS
 ): Promise<number> {
+  const local = await localGeoidHeight(latitude, longitude, pointSpecific);
+  if (local !== null) return local;
   // 国土地理院ジオイドCGIは応答が不安定なことがあり、タイムアウトが
   // 無いとハングして無期限に待ち続けてしまう（実際に発生していた
   // 「数分待っても描画されない」不具合の主因の1つ）。
@@ -1082,6 +1156,10 @@ export async function sampleWorldTerrainHighestPrecision(
     category: "gsi-geoid",
     signal,
     factory: async () => {
+      const localValues = await Promise.all(
+        geoidPoints.map((point) => localGeoidHeight(point.latitude, point.longitude, true))
+      );
+      if (localValues.every((value): value is number => value !== null)) return localValues;
       const response = await diagnosticFetch("gsi-geoid", "/api/gsi-geoid", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },

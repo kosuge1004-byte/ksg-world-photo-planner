@@ -2,6 +2,7 @@ import type { GsiElevationApiSample } from "../types/geospatial";
 import { withAbortableTimeout } from "../utils/abortableSemaphore";
 import type { GsiElevationClientPoint } from "./gsiElevationClient";
 import { apiEndpoint } from "../network/apiEndpoint";
+import { fetchGsiDemTileDirect } from "./gsiDirectDemTile";
 
 /**
  * Device-side decoded GSI DEM tile cache.
@@ -618,12 +619,17 @@ async function writeTile(
   source: SourceDefinition,
   x: number,
   y: number,
-  lookup: TileLookup
+  lookup: TileLookup,
+  keepMemoryOnPersistFailure = false
 ): Promise<void> {
   const key = tileKey(source, x, y);
   writeMemory(key, lookup);
   const database = await openDatabase();
-  if (!database) { memoryCache.delete(key); persistentTileWriteFailures += 1; return; }
+  if (!database) {
+    if (!keepMemoryOnPersistFailure) memoryCache.delete(key);
+    persistentTileWriteFailures += 1;
+    return;
+  }
   const now = Date.now();
   const record: StoredTile = lookup.kind === "empty"
     ? { key, width: 0, height: 0, empty: true, heightsBuffer: null, updatedAt: now, accessedAt: now }
@@ -644,7 +650,7 @@ async function writeTile(
     transaction.onabort = () => resolve(false);
   }), false);
   if (!persisted) {
-    memoryCache.delete(key);
+    if (!keepMemoryOnPersistFailure) memoryCache.delete(key);
     persistentTileWriteFailures += 1;
     return;
   }
@@ -1030,33 +1036,45 @@ async function fetchAndStoreTile(source: SourceDefinition, x: number, y: number)
   const existing = inFlightPrefetch.get(key);
   if (existing) return existing;
   const promise = (async () => {
-    const params = new URLSearchParams({ source: source.label, x: String(x), y: String(y) });
-    await withAbortableTimeout(async (signal) => {
-    const response = await fetch(apiEndpoint(`/api/gsi-dem-tile?${params.toString()}`), {
-      headers: { Accept: "application/octet-stream" },
-      signal,
-    });
-    if (response.status === 404) {
-      await writeTile(source, x, y, { kind: "empty" });
+    // 2026-09-30: 取得先はサーバー（R2 → 国土地理院）を先に使い、サーバーが
+    // 応答しない・失敗した場合だけ国土地理院から端末が直接取得する。どちらも
+    // 同じデコーダ（server/gsiDemPng.ts）による同じPNG由来のcm整数配列。
+    try {
+      const params = new URLSearchParams({ source: source.label, x: String(x), y: String(y) });
+      await withAbortableTimeout(async (signal) => {
+      const response = await fetch(apiEndpoint(`/api/gsi-dem-tile?${params.toString()}`), {
+        headers: { Accept: "application/octet-stream" },
+        signal,
+      });
+      if (response.status === 404) {
+        await writeTile(source, x, y, { kind: "empty" });
+        return;
+      }
+      if (!response.ok) throw new Error(`DEMタイル取得エラー ${response.status}`);
+      const width = Number(response.headers.get("x-astrosight-dem-width"));
+      const height = Number(response.headers.get("x-astrosight-dem-height"));
+      const bytes = await response.arrayBuffer();
+      if (
+        !Number.isInteger(width) || !Number.isInteger(height) ||
+        width <= 0 || height <= 0 || width * height > 1_048_576 ||
+        bytes.byteLength !== width * height * Int32Array.BYTES_PER_ELEMENT
+      ) throw new Error("DEMタイル応答の寸法またはデータ長が不正です");
+      // Endpoint writes little-endian int32. Rebuild explicitly; do not assume host endian.
+      const view = new DataView(bytes);
+      const heights = new Int32Array(width * height);
+      for (let index = 0; index < heights.length; index += 1) {
+        heights[index] = view.getInt32(index * 4, true);
+      }
+      await writeTile(source, x, y, { kind: "data", tile: { width, height, heightsCentimeters: heights } });
+      }, 20_000, "DEMタイル保存用の取得がタイムアウトしました");
       return;
+    } catch {
+      // 端末からの直接取得へフォールバック
     }
-    if (!response.ok) throw new Error(`DEMタイル取得エラー ${response.status}`);
-    const width = Number(response.headers.get("x-astrosight-dem-width"));
-    const height = Number(response.headers.get("x-astrosight-dem-height"));
-    const bytes = await response.arrayBuffer();
-    if (
-      !Number.isInteger(width) || !Number.isInteger(height) ||
-      width <= 0 || height <= 0 || width * height > 1_048_576 ||
-      bytes.byteLength !== width * height * Int32Array.BYTES_PER_ELEMENT
-    ) throw new Error("DEMタイル応答の寸法またはデータ長が不正です");
-    // Endpoint writes little-endian int32. Rebuild explicitly; do not assume host endian.
-    const view = new DataView(bytes);
-    const heights = new Int32Array(width * height);
-    for (let index = 0; index < heights.length; index += 1) {
-      heights[index] = view.getInt32(index * 4, true);
-    }
-    await writeTile(source, x, y, { kind: "data", tile: { width, height, heightsCentimeters: heights } });
-    }, 20_000, "DEMタイル保存用の取得がタイムアウトしました");
+    const direct = await fetchGsiDemTileDirect(source, x, y);
+    await writeTile(source, x, y, direct.kind === "empty"
+      ? { kind: "empty" }
+      : { kind: "data", tile: direct.tile });
   })().catch(() => {
     tileDownloadFailures += 1;
     // Best-effort warm-up only. Never alter current search result on failure.
@@ -1090,6 +1108,159 @@ export function prefetchGsiDeviceTilesForSamples(
     queuedPrefetch.set(key, request);
   }
   pumpPrefetchQueue();
+}
+
+
+// ---------------------------------------------------------------------------
+// 2026-09-30: 端末完結の地形解決（サーバー非依存）
+// ---------------------------------------------------------------------------
+//
+// resolveGsiSamplesFromDeviceTiles() は「必要タイルが端末に全部そろって
+// いる地点だけ」を計算し、1枚でも欠けた地点はnull（=サーバーへ）にしていた。
+// ここでは欠けたタイルを国土地理院から直接取得して同じ端末キャッシュへ
+// 保存し、同じ関数で計算し直す。計算式・DEM優先順位・NoData判定は
+// resolveGsiSamplesFromDeviceTiles() そのものなので変わらない。
+// 取得したタイルはIndexedDBにも保存されるため、一度探索した場所は
+// ダウンロード済みと同じく次回から通信なしで計算できる。
+
+const DIRECT_FETCH_CONCURRENCY = 6;
+const DIRECT_RESOLVE_MAX_ROUNDS = SOURCES.length + 2;
+const inFlightDirectTiles = new Map<string, Promise<boolean>>();
+
+function fetchDirectTileIntoCache(
+  request: { source: SourceDefinition; x: number; y: number },
+  signal?: AbortSignal
+): Promise<boolean> {
+  const key = tileKey(request.source, request.x, request.y);
+  const existing = inFlightDirectTiles.get(key);
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      const result = await fetchGsiDemTileDirect(request.source, request.x, request.y, signal);
+      // 探索中はIndexedDB保存の失敗でメモリ上の値まで捨てない（計算は継続できる）。
+      await writeTile(
+        request.source,
+        request.x,
+        request.y,
+        result.kind === "empty" ? { kind: "empty" } : { kind: "data", tile: result.tile },
+        true
+      );
+      return true;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return false;
+    }
+  })().finally(() => {
+    inFlightDirectTiles.delete(key);
+  });
+  inFlightDirectTiles.set(key, promise);
+  return promise;
+}
+
+/** resolveGsiSamplesFromDeviceTiles() と同じ順序で、次に必要な欠落タイルを列挙する。 */
+async function nextMissingTilesForPoint(
+  point: GsiElevationClientPoint
+): Promise<Array<{ source: SourceDefinition; x: number; y: number }>> {
+  for (const source of SOURCES) {
+    if (!sourceAllowed(source, point.maximumDetail)) continue;
+    const coordinate = tileCoordinates(point.latitude, point.longitude, source.zoom);
+    const baseRequest = { source, x: coordinate.x, y: coordinate.y };
+    const base = (await readTilesBatch([baseRequest])).get(tileKey(source, coordinate.x, coordinate.y)) ?? null;
+    if (base === null) return [baseRequest];
+    if (base.kind === "empty") continue;
+    if (point.maximumDetail === "1m") {
+      const neighborRequests = neighborOffsets(coordinate.pixelX, coordinate.pixelY).map((offset) => ({
+        source,
+        x: coordinate.x + offset.x,
+        y: coordinate.y + offset.y,
+      }));
+      const neighbors = await readTilesBatch(neighborRequests);
+      const missing = neighborRequests.filter((request) =>
+        (neighbors.get(tileKey(request.source, request.x, request.y)) ?? null) === null
+      );
+      if (missing.length > 0) return missing;
+      const tiles = new Map<string, DecodedTile | null>();
+      for (const request of neighborRequests) {
+        const lookup = neighbors.get(tileKey(request.source, request.x, request.y))!;
+        tiles.set(`${request.x}/${request.y}`, lookup.kind === "data" ? lookup.tile : null);
+      }
+      const height = interpolateNeighborhood(
+        tiles, coordinate.x, coordinate.y, coordinate.pixelX, coordinate.pixelY,
+        coordinate.fracX, coordinate.fracY, point.interpolationMode ?? "los-safe"
+      );
+      if (height !== null) return [];
+      continue;
+    }
+    const height = interpolateBilinear(base.tile, coordinate.pixelX, coordinate.pixelY, coordinate.fracX, coordinate.fracY);
+    if (height !== null) return [];
+  }
+  return [];
+}
+
+/**
+ * 端末キャッシュ＋国土地理院への直接取得だけで標高を解決する。
+ * 戻り値のnullは「その地点の必要タイルを直接取得できなかった」ことを表し、
+ * 呼び出し側はその地点だけ従来のサーバー経路（最後はWorld Terrain）へ回す。
+ * { heightMeters: null, source: null } は全DEMソースが404だった確定NoData。
+ */
+export async function resolveGsiSamplesWithDirectTiles(
+  points: GsiElevationClientPoint[],
+  signal?: AbortSignal
+): Promise<Array<GsiElevationApiSample | null>> {
+  const failed = new Set<number>();
+  let results = await resolveGsiSamplesFromDeviceTiles(points);
+  for (let round = 0; round < DIRECT_RESOLVE_MAX_ROUNDS; round += 1) {
+    if (signal?.aborted) throw signal.reason ?? new Error("標高取得を中止しました");
+    const pending = results
+      .map((result, index) => (result === null && !failed.has(index) ? index : -1))
+      .filter((index) => index >= 0);
+    if (pending.length === 0) break;
+
+    const neededByKey = new Map<string, { source: SourceDefinition; x: number; y: number }>();
+    const neededKeysByPoint = new Map<number, string[]>();
+    for (const index of pending) {
+      const missing = await nextMissingTilesForPoint(points[index]);
+      if (missing.length === 0) {
+        // 必要タイルは既にそろっているのに未解決＝メモリ退避等。次の計算で解決する。
+        neededKeysByPoint.set(index, []);
+        continue;
+      }
+      const keys = missing.map((request) => {
+        const key = tileKey(request.source, request.x, request.y);
+        neededByKey.set(key, request);
+        return key;
+      });
+      neededKeysByPoint.set(index, keys);
+    }
+    if (neededByKey.size === 0) {
+      results = await resolveGsiSamplesFromDeviceTiles(points);
+      const stillPending = results.some((result, index) => result === null && !failed.has(index));
+      if (stillPending) {
+        results.forEach((result, index) => { if (result === null) failed.add(index); });
+      }
+      break;
+    }
+
+    const requests = [...neededByKey.entries()];
+    const outcomes = new Map<string, boolean>();
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < requests.length) {
+        const [key, request] = requests[cursor];
+        cursor += 1;
+        outcomes.set(key, await fetchDirectTileIntoCache(request, signal));
+      }
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(DIRECT_FETCH_CONCURRENCY, requests.length) },
+      () => worker()
+    ));
+    for (const [index, keys] of neededKeysByPoint) {
+      if (keys.some((key) => outcomes.get(key) === false)) failed.add(index);
+    }
+    results = await resolveGsiSamplesFromDeviceTiles(points);
+  }
+  return results.map((result, index) => (failed.has(index) ? null : result));
 }
 
 export const __testGsiDemTileCacheInternals = { tileCoordinates, interpolateNeighborhood, interpolateBilinear };

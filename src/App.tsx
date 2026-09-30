@@ -3797,7 +3797,9 @@ ${diagnosticMessage}
         lastUsedAt: new Date().toISOString(),
       };
       if (bearingProfileAbortRef.current) return;
-      bearingProfilePendingRef.current = { record: subjectRecord, subjectPoint: point, forceRefresh: true };
+      // 2026-09-30: 「一部不足」の更新は保存済み方位を捨てず、不足分（未保存方位・
+      // 水面・周辺情報）だけを取得する。保存完了済みの明示的な更新だけ全再取得する。
+      bearingProfilePendingRef.current = { record: subjectRecord, subjectPoint: point, forceRefresh: record.status === "complete" };
       setBearingProfileDialog({
         subjectLabel: record.label || "この地点",
         progress: null,
@@ -3890,7 +3892,12 @@ ${diagnosticMessage}
           setSearchMessage(`${record.label || "この地点"}の高精度データが一部取得できませんでした（成功 ${backfillResult.successfulBearings} / ${backfillResult.requestedBearings}方位、失敗 ${backfillResult.failedBearings}方位）。保存完了にはしていません。再実行してください。`);
           return;
         }
-        if (backfillResult.ancillaryFailures > 0 || backfillResult.demTileFailures > 0) {
+        if (backfillResult.demTileFailures > 0) {
+          // 2026-09-30: 三脚候補に必要なのは方位プロファイルであり、それは全方位
+          // そろっている（上の判定を通過済み）。保存用DEMタイルの欠けで保存済み
+          // プロファイルまで使わない状態にしない。欠けたタイルは探索時にも
+          // R2 → Eドライブ → 国土地理院の順で取得され端末へ保存される。
+          enableBearingProfile(record.id, record.label || "この地点");
           setDownloadedSpotData(upsertDownloadedSpotData({
             subjectId: record.id, label: record.label || "この地点",
             latitude: downloadPoint.latitude, longitude: downloadPoint.longitude,
@@ -3900,7 +3907,11 @@ ${diagnosticMessage}
             subjectSurfaceTarget: downloadPoint.subjectSurfaceTarget,
             structureHeightMeters: downloadPoint.structureHeightMeters,
           }));
-          setSearchMessage(`${record.label || "この地点"}の地形プロファイルは保存しましたが、保存用DEMタイルまたは水面・周辺情報を一部取得できませんでした。保存完了にはしていません。再実行してください。`);
+          setSearchMessage(
+            `${record.label || "この地点"}の地形プロファイルを保存し、三脚候補の計算に使用します。` +
+            `ただし保存用DEMタイル${backfillResult.demTileFailures}枚を取得できませんでした。` +
+            "不足分は探索時にも取得されます。「更新」で事前に再取得することもできます。"
+          );
           return;
         }
         enableBearingProfile(record.id, record.label || "この地点");

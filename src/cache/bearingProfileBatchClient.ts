@@ -8,6 +8,10 @@ import type {
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { createAbortError, createTimeoutError, isAbortError } from "../utils/runtimeErrors";
 import { apiEndpoint } from "../network/apiEndpoint";
+import {
+  PRECOMPUTED_BEARING_PROFILE_DIRECTORY,
+  precomputedBearingProfileFileName,
+} from "../../server/precomputedBearingProfiles.ts";
 
 const BATCH_REQUEST_TIMEOUT_MS = 45_000;
 const MAX_BEARINGS_PER_REQUEST = 360;
@@ -212,11 +216,12 @@ export async function fetchBearingProfileBatchDetailed(
     });
     if (!response.ok) {
       const { code, error } = await responseErrorText(response);
-      if (response.status === 503 && code === "PRECOMPUTED_PROFILE_UNAVAILABLE" && error) {
-        throw new PrecomputedBearingProfileUnavailableError(error);
-      }
-      if (response.status === 503 && code === "LOCAL_DEM_PROFILE_UNAVAILABLE" && error) {
-        throw new PrecomputedBearingProfileUnavailableError(error);
+      // 2026-09-30: R2・Eドライブのどちらでも得られない場合も例外で
+      // ダウンロードを終わらせず、理由付きのmissとして返す。呼び出し側は
+      // 1方位経路（端末内 → R2 → Eドライブ → 国土地理院）で続行する。
+      if (response.status === 503 &&
+        (code === "PRECOMPUTED_PROFILE_UNAVAILABLE" || code === "LOCAL_DEM_PROFILE_UNAVAILABLE") && error) {
+        return miss(error);
       }
       if (response.status === 404 && code === "PRECOMPUTED_PROFILE_NOT_FOUND") {
         return miss(
@@ -262,4 +267,105 @@ export async function fetchBearingProfileBatch(
 ): Promise<BearingProfileBatchResponseV1 | null> {
   const outcome = await fetchBearingProfileBatchDetailed(request, signal, fetcher);
   return outcome.ok ? outcome.response : null;
+}
+
+// ---------------------------------------------------------------------------
+// 2026-09-30: 登録スポットの計算済みファイルを静的配信から直接取得する
+// ---------------------------------------------------------------------------
+// 計算済みファイルは事前に作った静的データなので、Pages Functionsを通さず
+// Cloudflare Pagesの静的ファイル（/precomputed-bearing-profile-v1/<sha256>.json.gz）
+// として配る。Functionsの障害・CPU時間・リクエスト数上限の影響を受けない。
+// ファイル名・内容はR2の公開済みファイルと同一（scripts/stage-precomputed-
+// profiles-for-pages.mjs がマニフェストとSHA-256を照合して配置する）。
+
+const STATIC_PROFILE_TIMEOUT_MS = 45_000;
+const MAX_STATIC_PROFILE_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
+
+async function gunzipBounded(bytes: ArrayBuffer): Promise<Uint8Array> {
+  const body = new Response(bytes).body;
+  if (!body) throw new Error("計算済み地形ファイルを読み込めません");
+  const reader = body.pipeThrough(new DecompressionStream("gzip")).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_STATIC_PROFILE_UNCOMPRESSED_BYTES) {
+        throw new Error("計算済み地形ファイルの展開サイズが上限を超えました");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+export async function precomputedBearingProfileStaticPath(
+  request: Pick<BearingProfileBatchRequest, "subjectPoint" | "maxDistanceMeters">
+): Promise<string> {
+  const file = await precomputedBearingProfileFileName({
+    latitude: request.subjectPoint.latitude,
+    longitude: request.subjectPoint.longitude,
+    maxDistanceMeters: request.maxDistanceMeters,
+  });
+  return `/${PRECOMPUTED_BEARING_PROFILE_DIRECTORY}/${file}`;
+}
+
+export async function fetchStaticPrecomputedBearingProfile(
+  request: BearingProfileBatchRequest,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch
+): Promise<BearingProfileBatchOutcome> {
+  if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(
+    createTimeoutError("計算済み地形ファイルの取得がタイムアウトしました")
+  ), STATIC_PROFILE_TIMEOUT_MS);
+  const onAbort = () => controller.abort(createAbortError("全方位地形取得を中止しました"));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const miss = (reason: string, notPrecomputed = false): BearingProfileBatchOutcome =>
+    ({ ok: false, miss: { notPrecomputed, reason } });
+  try {
+    const response = await fetcher(apiEndpoint(await precomputedBearingProfileStaticPath(request)), {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return miss(`計算済み地形ファイルの静的配信がHTTP ${response.status}を返しました`, response.status === 404);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let text: string;
+    if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(await gunzipBounded(bytes.buffer as ArrayBuffer));
+    } else {
+      // 配信側がContent-Encodingで展開済みの場合。SPAのindex.html等はここで弾く。
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      if (!text.trimStart().startsWith("{")) {
+        return miss("計算済み地形ファイルが静的配信に配置されていません", true);
+      }
+    }
+    const normalized = selectPublishedProfileEnvelope(request, JSON.parse(text));
+    if (!normalized) return miss("計算済み地形ファイルの内容を検証できませんでした");
+    const expanded = expandCompactResponse(request, normalized);
+    if (!expanded) return miss("計算済み地形データの展開・検証に失敗しました");
+    return { ok: true, response: expanded };
+  } catch (error) {
+    if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
+    if (isAbortError(error) && controller.signal.reason?.name === "TimeoutError") {
+      return miss(`計算済み地形ファイルを${Math.round(STATIC_PROFILE_TIMEOUT_MS / 1000)}秒以内に取得できませんでした`);
+    }
+    return miss(`計算済み地形ファイルを取得できませんでした（${error instanceof Error ? error.message : String(error)}）`);
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
 }

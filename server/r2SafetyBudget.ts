@@ -60,6 +60,20 @@ async function ensureBudgetTable(db: R2MonthlyBudgetDb): Promise<boolean> {
 }
 
 export const R2_MAX_CACHE_OBJECT_BYTES = 512 * 1024;
+/**
+ * 2026-09-30: Eドライブで計算した方位プロファイルのR2書き戻し専用の上限。
+ * 1地点259方位×約352点のJSONは約1.5MBで、512KBでは保存できない。Workerで
+ * gzip圧縮すると無料プランのCPU時間を消費するため、このプレフィックスだけ
+ * 上限を上げる。全体の容量予約（4GB）と月間書込予算は共通で適用される。
+ */
+export const EDRIVE_PROFILE_WRITE_BACK_PREFIX = "edrive-bearing-profile-v1/";
+export const R2_MAX_EDRIVE_PROFILE_OBJECT_BYTES = 4 * 1024 * 1024;
+
+function maxObjectBytesForKey(objectKey: string): number {
+  return objectKey.startsWith(EDRIVE_PROFILE_WRITE_BACK_PREFIX)
+    ? R2_MAX_EDRIVE_PROFILE_OBJECT_BYTES
+    : R2_MAX_CACHE_OBJECT_BYTES;
+}
 export const R2_MAX_WRITES_PER_REQUEST = 64;
 export const R2_MAX_READS_PER_REQUEST = 256;
 export const R2_MONTHLY_WRITE_BUDGET = 100_000;
@@ -166,8 +180,9 @@ export async function reserveR2Write(
   id?: object,
   budgetDb?: R2MonthlyBudgetDb
 ): Promise<boolean> {
-  void objectKey; // 2026-08-26: 個別オブジェクトのサイズ追跡（KV経由）を廃止したため未使用。シグネチャは呼び出し元との互換のため維持。
-  if (!kv || !budgetDb || !Number.isFinite(newBytes) || newBytes < 0 || newBytes > R2_MAX_CACHE_OBJECT_BYTES) return false;
+  // 2026-08-26: 個別オブジェクトのサイズ追跡（KV経由）は廃止済み。2026-09-30からは
+  // キーのプレフィックスでオブジェクト上限だけを切り替える。
+  if (!kv || !budgetDb || !Number.isFinite(newBytes) || newBytes < 0 || newBytes > maxObjectBytesForKey(objectKey)) return false;
   const c = counts(id);
   if (c.writes >= R2_MAX_WRITES_PER_REQUEST) return false;
 

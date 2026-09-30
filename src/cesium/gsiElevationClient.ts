@@ -57,7 +57,12 @@ export type GsiElevationRequestPurpose = "interactive" | "bulk-download";
 // DEMソース優先順位・再試行条件は一切変更せず、HTTP分割境界だけを変更する。
 // これにより精度を変えず、初期探索のHTTP往復とサーバー側の重複タイル処理を削減する。
 const REQUEST_BATCH_SIZE = 1024;
-const REQUEST_TIMEOUT_MS = 12_000;
+// 2026-09-30: 12秒→25秒。ライブ操作もサーバー側でEドライブを使うようになり、
+// Eドライブ側の上限（server/localDemGateway.ts REQUEST_TIMEOUT_MS=12秒）と同じ
+// 12秒では、Eドライブが遅いときにサーバーが公開GSIへ切り替える前にクライアントが
+// 打ち切っていた。サーバーが完全に無応答の場合も25秒で遮断し端末直接取得へ進む
+// （以前の数分待ちは再帰分割の撤廃で解消済み）。
+const REQUEST_TIMEOUT_MS = 25_000;
 // 2026-09-09修正: 実機の直接ダウンロードで10並列がWorker/GSI側の
 // タイル取得と多重化し、30秒級の滞留を再発させた。アプリ全体のHTTP並列
 // 上限を6へ下げ、Cloudflare側の外向き接続上限と同じオーダーに揃える。
@@ -108,6 +113,39 @@ export function getGsiElevationCacheStats(): {
     shared: globalCacheSharedCount,
     bypass: globalCacheBypassCount,
   };
+}
+
+// 2026-09-30: サーバー経路の「全体障害」を検知したら短時間は投げない。
+// 以前は無応答でも1要求ごとに12秒待ち→半分へ分割→再送を5〜8段繰り返し、
+// 352点の要求が全滅と判定されるまで数分かかっていた（その間は端末側の
+// 代替経路にも進めない）。無応答（クライアント側タイムアウト）・通信失敗・
+// API未到達（200でJSON以外）は分割しても直らないため、分割せず即座に全点
+// 失敗として返し、呼び出し側（worldTerrain.ts）が端末完結経路で補う。
+// サーバーが応答した5xx（524等、要求サイズ起因がありうる）や点単位の不整合は
+// 従来どおり分割再送する。
+const SERVER_BREAKER_OPEN_MS = 60_000;
+let serverBreakerOpenUntil = 0;
+
+function serverUnavailableError(message: string): Error {
+  const error = new Error(message);
+  error.name = "ServerUnavailableError";
+  return error;
+}
+
+function isWholeServerFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "ServerUnavailableError" ||
+    error.name === "TimeoutError" ||
+    error.name === "TypeError";
+}
+
+/** テスト専用 */
+export function __resetGsiElevationServerBreakerForTesting(): void {
+  serverBreakerOpenUntil = 0;
+}
+
+export function isGsiElevationServerBreakerOpen(): boolean {
+  return Date.now() < serverBreakerOpenUntil;
 }
 
 function emptySamples(count: number): GsiElevationApiSample[] {
@@ -164,7 +202,10 @@ async function requestBatch(
     });
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("application/json")) {
-      throw new Error(`国土地理院標高APIがJSON以外を返しました（${response.status}）`);
+      // 200でHTML等が返るのはAPIへ到達していない（誤ルーティング）ため全体障害。
+      // 5xxのHTML（502/524等）は要求サイズ起因のことがあり、従来どおり分割で回復を試みる。
+      const message = `国土地理院標高APIがJSON以外を返しました（${response.status}）`;
+      throw response.ok ? serverUnavailableError(message) : new Error(message);
     }
     const data = (await response.json()) as {
       samples?: unknown;
@@ -349,6 +390,16 @@ async function requestBatchWithRecovery(
     if (signal?.aborted) {
       throw abortError();
     }
+    if (isWholeServerFailure(error)) {
+      serverBreakerOpenUntil = Date.now() + SERVER_BREAKER_OPEN_MS;
+      return {
+        samples: emptySamples(points.length),
+        failedPointCount: points.length,
+        failedIndexes: points.map((_, index) => index),
+        lastError: error,
+        ...emptyCacheCounts,
+      };
+    }
     if (points.length <= MIN_RECOVERY_SPLIT_SIZE) {
       try {
         await waitForSinglePointRetry(signal);
@@ -461,6 +512,19 @@ export async function fetchGsiElevationSamples(
       tileCacheBypassCount: 0,
     };
   }
+  if (isGsiElevationServerBreakerOpen()) {
+    return {
+      samples: emptySamples(points.length),
+      failedPointCount: points.length,
+      failedIndexes: points.map((_, index) => index),
+      lastError: serverUnavailableError("国土地理院標高APIは直前に応答しなかったため一時的に使用していません"),
+      tileCacheHitCount: 0,
+      tileCacheMissCount: 0,
+      tileMemoryHitCount: 0,
+      tileCacheSharedCount: 0,
+      tileCacheBypassCount: 0,
+    };
+  }
   const requestChunkSize = chunkSizeForRequest(points);
   const batches = Array.from(
     { length: Math.ceil(points.length / requestChunkSize) },
@@ -527,6 +591,7 @@ export async function fetchGsiElevationSamples(
   for (
     let retry = 0;
     retry < MAX_INDIVIDUAL_POINT_RETRIES &&
+    !isGsiElevationServerBreakerOpen() &&
     failedIndexes.length > 0 &&
     failedIndexes.length <= MAX_INDIVIDUAL_RETRY_POINTS;
     retry += 1

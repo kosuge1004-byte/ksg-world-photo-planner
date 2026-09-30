@@ -71,11 +71,14 @@ for (const [source, key, label] of [
 requireAbsence(occlusion, "terrain-occlusion-failed", "showUserNotice", "terrain occlusion failure notice was reintroduced");
 requireAbsence(app, "celestial-occlusion", "showUserNotice", "celestial occlusion notice was reintroduced");
 
-requireText(
-  terrain,
-  "return points.map(() => ({ heightMeters: null, source: null }))",
-  "DEM fallback behavior changed"
-);
+// 2026-09-30: 取得できなかった点は点単位で { null, null } とし、呼び出し側が
+// World Terrainへ回す（端末直接取得・サーバーの両方で失敗した点だけ）。
+if (
+  !terrain.includes("return points.map(() => ({ heightMeters: null, source: null }))") &&
+  !terrain.includes("return samples.map((sample) => sample ?? { heightMeters: null, source: null })")
+) {
+  throw new Error("DEM fallback behavior changed");
+}
 requireText(
   occlusion,
   "...demOnlyResult",

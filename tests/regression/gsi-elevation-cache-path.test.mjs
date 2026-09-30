@@ -140,19 +140,23 @@ test("elevation API distinguishes R2, memory, shared and bypass cache paths", as
     assert.equal(bypass.body.tileCacheMiss, 0);
     assert.equal(upstreamFetches, 2, "R2 bypass must preserve the GSI fallback");
 
+    // 2026-09-30: 契約変更。以前は同時に来た別リクエストが取得中Promiseを共有して
+    // いたが、Cloudflare Workersでは所有リクエストが中断されるとそのPromiseが永久に
+    // 解決されず、isolate全体の標高APIが無応答になった（実機障害の根本原因）。
+    // 取得中の共有はリクエスト内に限り、リクエスト間では完了済みの値だけを共有する。
     const sharedCache = new MemoryR2(20);
     const beforeSharedFetches = upstreamFetches;
     const [owner, follower] = await Promise.all([
       call(35.6, 136.6, sharedCache),
       call(35.6, 136.6, sharedCache),
     ]);
-    assert.equal(owner.body.tileCacheMiss + follower.body.tileCacheMiss, 1);
-    assert.equal(owner.body.tileCacheShared + follower.body.tileCacheShared, 1);
-    assert.equal(
-      upstreamFetches - beforeSharedFetches,
-      1,
-      "concurrent callers must share one R2/GSI tile lookup"
-    );
+    assert.equal(owner.body.tileCacheShared + follower.body.tileCacheShared, 0,
+      "in-flight lookups must never be shared across Cloudflare requests");
+    assert.equal(owner.body.tileCacheMiss + follower.body.tileCacheMiss, 2);
+    assert.equal(upstreamFetches - beforeSharedFetches, 2);
+    const afterSettled = await call(35.6, 136.6, sharedCache);
+    assert.equal(afterSettled.body.tileMemoryHit, 1, "a settled tile is reused across requests");
+    assert.equal(upstreamFetches - beforeSharedFetches, 2, "settled reuse must not refetch");
   } finally {
     globalThis.fetch = originalFetch;
   }

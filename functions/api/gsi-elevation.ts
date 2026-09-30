@@ -42,16 +42,6 @@ function requestPoints(body: unknown): GsiElevationRequestPoint[] | null {
   });
 }
 
-function requestPurpose(body: unknown): "interactive" | "bulk-download" {
-  if (
-    typeof body === "object" && body !== null && "purpose" in body &&
-    body.purpose === "interactive"
-  ) {
-    return "interactive";
-  }
-  return "bulk-download";
-}
-
 export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
   if (context.request.method !== "POST") {
     return jsonResponse({ error: "POSTリクエストのみ利用できます" }, 405, "no-store");
@@ -60,7 +50,6 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     try {
     const body = await readJsonRequest(context.request, MAX_REQUEST_BYTES);
     const points = requestPoints(body);
-    const purpose = requestPurpose(body);
     if (!points) {
       return jsonResponse({ error: "座標の配列がありません" }, 400, "no-store");
     }
@@ -85,7 +74,11 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       points,
       context.request.signal,
       tileCacheCounter,
-      { useLocalGateway: purpose !== "interactive" }
+      // 2026-09-30: ライブ操作（interactive）もEドライブを使う。R2に無いデータを
+      // 国土地理院ではなくEドライブから供給するのがEドライブをサーバー化した目的。
+      // Eドライブ停止時は localDemGateway の有限タイムアウトと30秒の遮断で
+      // 公開GSIへ進む。クライアントが送るpurposeは互換のため受け付けるが使わない。
+      { useLocalGateway: true }
     );
     return jsonResponse(
       {

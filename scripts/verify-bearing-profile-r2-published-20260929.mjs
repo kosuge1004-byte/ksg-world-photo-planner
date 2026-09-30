@@ -20,8 +20,12 @@ assert.match(route, /PRECOMPUTED_PROFILE_UNAVAILABLE/,
   "registered-profile deployment errors must be visible");
 assert.match(client, /selectPublishedProfileEnvelope/,
   "the browser must validate the full published R2 envelope");
-assert.match(client, /PrecomputedBearingProfileUnavailableError/,
-  "a registered R2 miss must not silently enter the hour-long fallback");
+// 2026-09-30: 登録スポットは静的配信 → API（R2 → Eドライブ）で取得し、どちらでも
+// 得られなければ理由を表示して1方位経路で続行する（旧: 例外で終了）。
+assert.match(client, /fetchStaticPrecomputedBearingProfile/,
+  "registered spots must read the static precomputed file before the Functions API");
+assert.match(manager, /の計算済み地形データを取得できないため、1方位ずつ取得します/,
+  "a registered miss must be shown to the user on the per-bearing path");
 assert.match(manager, /const PRECOMPUTED_BEARING_BATCH_SIZE = 360/,
   "all registered-spot bearings must use one HTTP/R2 request");
 assert.match(published, /precomputedBearingProfileObjectKey/);

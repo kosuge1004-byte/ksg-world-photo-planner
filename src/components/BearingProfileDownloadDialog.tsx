@@ -98,11 +98,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
             <p className="project-dialog-note">
               {progress.phase === "preparing"
                 ? "端末の保存容量を確認しています…"
-                : progress.phase === "water"
-                ? `水面・河川情報 ${progress.completedSteps} / ${progress.totalSteps}`
-                : progress.phase === "osm"
-                  ? "道路・立入・建物情報を保存しています…"
-                  : progress.phase === "finalizing"
+                : progress.phase === "finalizing"
                     ? "端末への保存を確定しています…"
                     : progress.totalSteps === 0
                       ? "既に最新の状態です。"

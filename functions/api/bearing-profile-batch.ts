@@ -8,6 +8,10 @@ import {
 } from "../../server/localDemGateway.ts";
 import { readR2PrecomputedBearingProfileCompressed } from "../../server/publishedPrecomputedBearingProfiles.ts";
 import {
+  readEdriveProfileWriteBack,
+  scheduleEdriveProfileWriteBack,
+} from "../../server/edriveProfileWriteBack.ts";
+import {
   withCloudflareServerRuntime,
   type CloudflareEnv,
 } from "../_shared/env.ts";
@@ -19,6 +23,18 @@ import {
 } from "../_shared/http.ts";
 
 const MAX_REQUEST_BYTES = 256 * 1024;
+
+/** 検証済みのJSON（文字列またはR2のバイト列）を再解析せずに返す。 */
+function rawJsonResponse(body: string | ArrayBuffer): Response {
+  return addCorsHeaders(new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  }));
+}
 
 function addCorsHeaders(response: Response): Response {
   response.headers.set("Access-Control-Allow-Origin", "*");
@@ -69,21 +85,26 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
           },
         });
       }
-      // A configured private E-drive remains an optional fallback. Its route
-      // already returns a compact validated subset, so no gzip streaming is
-      // involved here.
-      const local = await lookupLocalPrecomputedBearingProfile(
+      const registered = findPrecomputedBearingProfileTarget(
+        body.subjectPoint.latitude,
+        body.subjectPoint.longitude
+      );
+      // 2026-09-30: 取得順 R2（公開済み計算ファイル） → R2（Eドライブ計算結果の
+      // 書き戻し） → Eドライブ（計算済み） → Eドライブ（その座標を計算）。
+      // 書き戻しは登録スポット以外だけ（登録スポットは公開済みファイルが正）。
+      if (!registered) {
+        const writtenBack = await readEdriveProfileWriteBack(body);
+        if (writtenBack) return rawJsonResponse(writtenBack);
+      }
+      const fromEdrive = await lookupLocalPrecomputedBearingProfile(
         body,
         context.request.signal
-      );
-      if (local) return apiJson(local, 200, "no-store");
-
-      // Last resort: calculate the exact requested origin at the private,
-      // read-only E-drive service. This remains a single authenticated
-      // Cloudflare subrequest and does not approximate from a neighbouring
-      // registered spot. The origin enforces a 30 second deadline.
-      const computed = await computeLocalBearingProfile(body, context.request.signal);
-      if (computed) return apiJson(computed, 200, "no-store");
+      ) ?? await computeLocalBearingProfile(body, context.request.signal);
+      if (fromEdrive) {
+        const jsonText = JSON.stringify(fromEdrive);
+        if (!registered) scheduleEdriveProfileWriteBack(body, fromEdrive, jsonText);
+        return rawJsonResponse(jsonText);
+      }
 
       // A live Pages invocation cannot calculate even one 10 km bearing: its
       // 352 exact DEM samples exceed the Worker subrequest allowance. Running
@@ -92,10 +113,6 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       // already calculated R2 object, so report a concrete configuration error
       // immediately instead of showing 0/259 indefinitely.
       // 計算済みデータを公開済みの地点だけ。登録直後で未計算の地点は404で直接取得へ。
-      const registered = findPrecomputedBearingProfileTarget(
-        body.subjectPoint.latitude,
-        body.subjectPoint.longitude
-      );
       if (registered) {
         return apiJson({
           code: "PRECOMPUTED_PROFILE_UNAVAILABLE",

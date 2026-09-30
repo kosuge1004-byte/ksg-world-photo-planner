@@ -385,3 +385,56 @@ test("runtime rejects an R2 object whose bbox belongs to a different mesh", asyn
   assert.equal((await lookupLocalDemElevationsForSource("DEM5A", request)).size, 0);
   assert.equal(assetReads, 1, "a known-invalid R2 object should be suppressed briefly");
 });
+
+// 2026-09-30: 取得先の優先順位 R2 → Eドライブ → 国土地理院。R2にGML由来グリッドが
+// あれば、Eドライブ（一括・DEM種別ごとの両方）にも公開GSIにも問い合わせない。
+test("R2 GML is used before the E-drive origin", async (t) => {
+  resetLocalDemRuntimeCacheForTests();
+  const asset = planeAsset();
+  const query = coordinateForGrid(asset, 3.25, 3.5);
+  const manifest = new TextEncoder().encode(JSON.stringify({
+    schemaVersion: 1,
+    format: "astrosight-gsi-local-dem-v1",
+  }));
+  const encoded = gzipSync(new Uint8Array(encodeLocalDemAsset(asset)));
+  const objects = new Map([
+    [LOCAL_DEM_MANIFEST_KEY, localDemBytesToArrayBuffer(manifest)],
+    [localDemAssetKey("DEM5A", "53341400"), localDemBytesToArrayBuffer(encoded)],
+  ]);
+  const persistentCache = {
+    async get(key) { return objects.get(key) ?? null; },
+    async getWithStatus(key) {
+      const value = objects.get(key) ?? null;
+      return { status: value ? "hit" : "miss", value };
+    },
+    async put() {},
+  };
+  configureServerRuntime({
+    persistentCache,
+    localDemGateway: {
+      endpoint: "https://dem-origin.example.test/v1/elevation/batch",
+      originToken: "origin-token-for-tests-00000000000000000000",
+      accessClientId: "client-id-for-tests.access",
+      accessClientSecret: "client-secret-for-tests-000000000000000000000000",
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    throw new Error("neither the E-drive origin nor public GSI may run for an R2-covered point");
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    configureServerRuntime({});
+    resetLocalDemRuntimeCacheForTests();
+  });
+  const [sample] = await lookupGsiElevations([{
+    ...query,
+    maximumDetail: "5m",
+    interpolationMode: "neutral",
+  }], undefined, undefined, { useLocalGateway: true });
+  assert.equal(sample.source, "DEM5A");
+  assert.ok(Math.abs(sample.heightMeters - 38.25) < 1e-9);
+  assert.deepEqual(calls, []);
+});

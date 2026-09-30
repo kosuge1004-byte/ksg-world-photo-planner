@@ -402,3 +402,43 @@ test("concurrent requests keep their DEM credentials isolated", async () => {
   assert.deepEqual(secondVisible, second);
   assert.equal(serverLocalDemGateway(), undefined, "request credentials must not leak to the default context");
 });
+
+// 2026-09-30: 方針変更。ライブ操作（purpose: "interactive"）もEドライブを使う。
+// 優先順位は全経路で R2 → Eドライブ → 国土地理院。
+test("a live interactive request through the Pages handler reaches the E-drive origin", async () => {
+  const { onRequest } = await import("../../functions/api/gsi-elevation.ts");
+  const originCalls = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) !== gatewayConfiguration.endpoint) {
+      throw new Error(`public GSI must not run after an E-drive hit: ${String(input)}`);
+    }
+    const body = JSON.parse(init.body);
+    originCalls.push(body.mode);
+    return Response.json({
+      mode: "auto",
+      complete: true,
+      results: body.points.map((point) => ({ index: point.index, heightMeters: 12.5, source: "DEM10B" })),
+    });
+  };
+  const response = await onRequest({
+    request: new Request("https://astrosight.pages.dev/api/gsi-elevation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        purpose: "interactive",
+        points: [{ latitude: 35.71, longitude: 139.81, maximumDetail: "10m", interpolationMode: "neutral" }],
+      }),
+    }),
+    env: {
+      LOCAL_DEM_API_URL: gatewayConfiguration.endpoint,
+      LOCAL_DEM_ORIGIN_TOKEN: gatewayConfiguration.originToken,
+      LOCAL_DEM_ACCESS_CLIENT_ID: gatewayConfiguration.accessClientId,
+      LOCAL_DEM_ACCESS_CLIENT_SECRET: gatewayConfiguration.accessClientSecret,
+    },
+    waitUntil() {},
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.samples, [{ heightMeters: 12.5, source: "DEM10B" }]);
+  assert.deepEqual(originCalls, ["auto"], "interactive traffic must use the E-drive origin");
+});

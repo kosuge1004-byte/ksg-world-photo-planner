@@ -2,6 +2,7 @@ import type { DownloadedSpotDataRecord } from "./downloadedSpotData";
 import { withAbortableTimeout } from "../utils/abortableSemaphore";
 import { getBearingProfileStorageStats } from "./tripodBearingProfileCache";
 import { requiredCelestialTripodBearings } from "./tripodBearingProfileManager";
+import { findPrecomputedBearingProfileTarget } from "../data/precomputedBearingProfileTargets";
 import { getPersistentSiteContextStatsForSpot, getPersistentSiteContextTotalStorageStats } from "./siteContextPersistentCache";
 import { getGsiDeviceTileStorageStatsForDownloadedSpot, getGsiDownloadedSpotsTotalStorageStats } from "../cesium/gsiDemTileCache";
 
@@ -41,8 +42,19 @@ export async function inspectDownloadedSpotStorage(records: readonly DownloadedS
       getPersistentSiteContextStatsForSpot(record.subjectId),
     ]);
     let state: DownloadedSpotStorageState = "complete";
-    if (dem.expiredTiles > 0 || site.expiredCount > 0) state = "needs-update";
-    else if (record.status !== "complete" || profile.entryCount < requiredCelestialTripodBearings(record.latitude).length || dem.referencedTiles === 0 || dem.liveTiles === 0 || site.referencedCount === 0 || site.liveCount === 0) state = "partial";
+    // 2026-09-30: 水面・道路・建物情報（site）はダウンロード対象から外したため、
+    // 状態判定に使わない（旧データの容量表示・削除管理のためstatsには残す）。
+    // 2026-09-30: 登録スポットの計算済みファイル経路は、方位プロファイルそのものが
+    // 完全な1m計算結果であり、保存用DEMタイルを意図的に取得しない。DEMタイルの
+    // 有無を登録スポットの完了条件にすると、別用途でタイルが保存されていない
+    // 端末では永久に「一部不足」になっていた。
+    const demRequired = !findPrecomputedBearingProfileTarget(record.latitude, record.longitude);
+    if (dem.expiredTiles > 0) state = "needs-update";
+    else if (
+      record.status !== "complete" ||
+      profile.entryCount < requiredCelestialTripodBearings(record.latitude).length ||
+      (demRequired && (dem.referencedTiles === 0 || dem.liveTiles === 0))
+    ) state = "partial";
     const stats: DownloadedSpotStorageStats = {
       subjectId: record.subjectId,
       state,

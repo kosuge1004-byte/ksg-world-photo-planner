@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+# 2026-09-30: Pages配信用（dist＋計算済み方位プロファイル）。アプリ同梱のdistとは分ける。
+dist-pages/
 dist-ssr/
 *.local
 

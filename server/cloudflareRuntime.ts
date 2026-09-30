@@ -90,6 +90,18 @@ export function runWithServerRuntime<T>(
   return requestRuntime.run(normalizeRuntimeConfiguration(next), task);
 }
 
+const nonRequestScope = {};
+
+/**
+ * 2026-09-30: リクエスト単位の状態（取得中Promise・同時取得数）を閉じ込める
+ * ための識別オブジェクト。Cloudflareでは runWithServerRuntime ごとに別物に
+ * なり、CLI/テストでは単一の既定スコープになる。キャンセルされた別リクエストの
+ * 未完了Promiseを他のリクエストが待つことを構造的に防ぐ。
+ */
+export function serverRequestScope(): object {
+  return requestRuntime.getStore() ?? nonRequestScope;
+}
+
 export function serverCesiumIonToken(): string | undefined {
   return currentConfiguration().cesiumIonToken;
 }

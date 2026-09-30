@@ -23,11 +23,13 @@ const checks = [
     world.includes("pendingGsiRequestKey(interpolationMode, purpose)") &&
       world.includes("flushGsiRequests(signal, interpolationMode, purpose)")
   ],
+  // 2026-09-30: 方針変更。ライブ操作もEドライブを使い、全経路で
+  // 端末内 → R2 → Eドライブ → 国土地理院 の順にする。
   [
-    "interactive API bypasses private E-drive gateway only",
-    api.includes('{ useLocalGateway: purpose !== "interactive" }') &&
+    "every API request uses R2 before the E-drive gateway",
+    api.includes("{ useLocalGateway: true }") &&
       server.includes("const useLocalGateway = options.useLocalGateway !== false") &&
-      server.includes("if (useLocalGateway && unresolved.size > 0)")
+      server.includes("if (useLocalGateway && unresolved.size > 0 && !(await localDemManifestAvailable()))")
   ],
   [
     "bulk download keeps the private gateway path",

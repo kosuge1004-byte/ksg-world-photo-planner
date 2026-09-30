@@ -7,3 +7,11 @@
 
 /manifest.webmanifest
   Cache-Control: no-cache
+
+# 2026-09-30: 登録スポットの計算済み方位プロファイル（静的配信）。
+# ネイティブ版（https://localhost / capacitor://localhost）から読めるようCORSを許可。
+# ファイル名は座標から決まり、作り直しで内容が変わりうるため、毎回ETagで再検証する。
+/precomputed-bearing-profile-v1/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff

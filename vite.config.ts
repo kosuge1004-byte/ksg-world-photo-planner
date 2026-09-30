@@ -253,14 +253,13 @@ function localGsiElevationApi(): Plugin {
                 interpolationMode: point.interpolationMode === "neutral" ? "neutral" as const : "los-safe" as const,
               };
             });
-            const purpose = body.purpose === "interactive" ? "interactive" : "bulk-download";
             response.statusCode = 200;
             response.end(JSON.stringify({
               samples: await lookupGsiElevations(
                 points,
                 undefined,
                 undefined,
-                { useLocalGateway: purpose !== "interactive" }
+                { useLocalGateway: true }
               ),
             }));
           } catch (error) {

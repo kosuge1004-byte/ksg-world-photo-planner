@@ -3,7 +3,6 @@ const site = fs.readFileSync('src/search/siteContext.ts','utf8');
 const cache = fs.readFileSync('src/cache/siteContextPersistentCache.ts','utf8');
 const mgr = fs.readFileSync('src/cache/tripodBearingProfileManager.ts','utf8');
 const app = fs.readFileSync('src/App.tsx','utf8');
-const jobRunner = fs.readFileSync('server/runBearingProfileDownloadJob.ts','utf8');
 const jobTypes = fs.readFileSync('src/types/backgroundBearingProfile.ts','utf8');
 const checks = [
  ['persistent cache read before network', site.includes('readPersistentSiteContexts(points, purpose, includeDetails)')],
@@ -14,10 +13,10 @@ const checks = [
  // src/types/backgroundBearingProfile.tsで共有する契約に変わった。
  ['coordinate-only point contract', jobTypes.includes('SerializedSiteContextPoint = {') && jobTypes.includes('latitude: number;') && jobTypes.includes('longitude: number;')],
  ['IndexedDB is runtime-guarded for non-browser builds', cache.includes('globalThis as unknown as { indexedDB?: IdbFactory }')],
- // 水面・河川情報とOSM周辺情報の取得は、サーバー側ジョブ(runBearingProfile
- // DownloadJob.ts)へ移動した。端末側は完了結果を書き込むだけになった。
- ['water-only prefetched by server job', jobRunner.includes('waterPrefetchPoints') && jobRunner.includes('fetchServerSiteContexts(waterPrefetchPoints') && mgr.includes('"water-only"')],
- ['full OSM near subject prefetched by server job', jobRunner.includes('fullSiteContextPoints') && mgr.includes('"full"')],
+ // 2026-09-30: 周辺データダウンロード（tripodBearingProfileManager.ts）は
+ // 水面・河川情報とOSM周辺情報を保存しなくなった。ライブ探索の地理条件キャッシュ
+ // （上の読み書き）と、旧データの参照管理・削除は従来どおり。
+ ['download manager no longer fetches site contexts', !mgr.includes('fetchSiteContexts') && !mgr.includes('writePersistentSiteContexts')],
  ['spot refs stored', cache.includes('REF_STORE') && cache.includes('subjectId, keys')],
  ['shared safe delete', cache.includes('referencedElsewhere') || cache.includes('const other = new Set')],
  ['delete integrated', app.includes('deletePersistentSiteContextsForSpot(subjectId)')],

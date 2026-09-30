@@ -8,14 +8,17 @@ const dialog=read('src/components/BearingProfileDownloadDialog.tsx');
 const runner=read('scripts/run-regression-tests.mjs');
 const checks=[
  ['DEM refs union existing + new', dem.includes('new Set(previous?.tileKeys ?? [])') && dem.includes('tileKeys.forEach((key) => merged.add(key))')],
- ['refresh explicitly forceRefresh', /forceRefresh: true/.test(app) && /forceRefresh,\s*onProgress/.test(app)],
+ // 2026-09-30: 保存完了済みの更新は全再取得、「一部不足」の更新は保存済み方位を残して不足分だけ取得する。
+  ['refresh explicitly forceRefresh', /forceRefresh: record\.status === "complete"/.test(app) && /forceRefresh,\s*onProgress/.test(app)],
  ['force refresh rebuilds all bearings', /if \(forceRefresh\) return true/.test(mgr)],
  ['complete requires live DEM', /dem\.referencedTiles === 0[\s\S]*dem\.liveTiles === 0/.test(stats)],
  // 2026-09-09追記: サーバー側ジョブ化を差し戻し、水面・河川情報とOSM周辺
  // 情報の取得はクライアント側（tripodBearingProfileManager.ts）が
  // 直接行う元の設計に戻った。
- ['progress has water phase', /phase: "water"/.test(mgr) && /水面・河川情報/.test(dialog)],
- ['progress has OSM phase', /phase: "osm"/.test(mgr) && /道路・立入・建物情報/.test(dialog)],
+ // 2026-09-30: 水面・河川情報とOSM周辺情報の保存はダウンロードから外した
+ // （端末キャッシュは約1m一致でしか読まれず、保存値が実際に参照されていなかった）。
+ ['download no longer stores water/OSM site data', !/phase: "water"/.test(mgr) && !/phase: "osm"/.test(mgr) && !/fetchSiteContexts/.test(mgr)],
+ ['site data does not decide the partial state', !/site\.liveCount === 0/.test(stats) && !/site\.expiredCount > 0/.test(stats)],
  ['progress has finalizing phase', /phase: "finalizing"/.test(mgr) && /保存を確定/.test(dialog)],
  ['preflight storage estimate', /navigator\.storage\?\.estimate/.test(app) && /estimatedRequired/.test(app)],
  ['tile write failures detected', /persistentTileWriteFailures \+= 1/.test(dem) && /storageWriteFailures/.test(mgr)],

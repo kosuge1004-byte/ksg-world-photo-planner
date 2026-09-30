@@ -341,17 +341,15 @@ test("batch client falls back on an unavailable endpoint and preserves user abor
   );
   assert.equal(unavailable, null);
 
-  await assert.rejects(
-    fetchBearingProfileBatch(
-      request,
-      undefined,
-      async () => Response.json({
-        code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
-        error: "登録スポットの計算済み地形データを読み出せません。",
-      }, { status: 503 })
-    ),
-    { name: "PrecomputedBearingProfileUnavailableError" }
-  );
+  // 2026-09-30: 503も例外ではなくmiss（呼び出し側は1方位経路で続行する）。
+  assert.equal(await fetchBearingProfileBatch(
+    request,
+    undefined,
+    async () => Response.json({
+      code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
+      error: "登録スポットの計算済み地形データを読み出せません。",
+    }, { status: 503 })
+  ), null);
 
   const controller = new AbortController();
   controller.abort();
@@ -609,4 +607,155 @@ test("Pages batch endpoint streams the R2 gzip without Worker-side inflation", a
   assert.equal(response.headers.get("access-control-allow-origin"), "*");
   const streamed = Buffer.from(await response.arrayBuffer());
   assert.deepEqual(streamed, compressed);
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-30: Eドライブの計算結果をR2へ書き戻し、次回はR2で返す。
+// ---------------------------------------------------------------------------
+class WriteBackKv {
+  async get() { return null; }
+  async put() {}
+}
+class WriteBackBudgetDb {
+  values = new Map();
+  prepare() {
+    return {
+      bind: (key, increment, limit) => ({
+        first: async () => {
+          const current = this.values.get(key) ?? 0;
+          if (current + increment > limit) return null;
+          this.values.set(key, current + increment);
+          return { writes: current + increment };
+        },
+      }),
+    };
+  }
+}
+class WriteBackR2 {
+  values = new Map();
+  puts = [];
+  async get(key) {
+    const value = this.values.get(key);
+    return value === undefined ? null : { arrayBuffer: async () => value.slice(0) };
+  }
+  async put(key, value) {
+    this.puts.push(key);
+    const bytes = value instanceof ArrayBuffer ? value : new Uint8Array(value).buffer;
+    this.values.set(key, bytes.slice(0));
+  }
+}
+
+async function callBatch(body, bucket, originFetch, { resetOrigin = true } = {}) {
+  const { resetLocalDemGatewayForTests } = await import("../../server/localDemGateway.ts");
+  if (resetOrigin) resetLocalDemGatewayForTests();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = originFetch;
+  const pending = [];
+  try {
+    const response = await bearingProfileBatchEndpoint({
+      request: new Request("https://example.test/api/bearing-profile-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      env: {
+        NETWORK_CACHE: bucket,
+        SPOT_SEARCH_JOBS: new WriteBackKv(),
+        R2_WRITE_BUDGET_DB: new WriteBackBudgetDb(),
+        LOCAL_DEM_API_URL: "https://dem-origin.example.test/v1/elevation/batch",
+        LOCAL_DEM_ORIGIN_TOKEN: "o".repeat(48),
+        LOCAL_DEM_ACCESS_CLIENT_ID: "test-client-id",
+        LOCAL_DEM_ACCESS_CLIENT_SECRET: "s".repeat(48),
+      },
+      waitUntil(promise) { pending.push(promise); },
+    });
+    await Promise.all(pending);
+    return response;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("E-drive results are written back to R2 and served from R2 while the PC is off", async () => {
+  const body = {
+    ...request,
+    subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
+    bearings: [0, 90, 180],
+    maxDistanceMeters: 1_000,
+  };
+  const exact = await computeBearingProfileBatch(body, undefined, {
+    lookupPrecomputed: async () => null,
+    lookupElevations: async (points) => points.map(() => ({ heightMeters: 100, source: "DEM5A" })),
+    lookupGeoidHeights: async (points) => points.map(() => 38),
+    nowIso: () => "2026-09-30T00:00:00.000Z",
+  });
+  exact.terrainProfileComplete = true;
+  const bucket = new WriteBackR2();
+  const originRoutes = [];
+  const first = await callBatch(body, bucket, async (input) => {
+    const url = new URL(String(input));
+    originRoutes.push(url.pathname);
+    if (url.pathname === "/v1/bearing-profile/precomputed") return Response.json({ error: "nf" }, { status: 404 });
+    if (url.pathname === "/v1/bearing-profile/compute") return Response.json(exact);
+    throw new Error(`unexpected: ${url.pathname}`);
+  });
+  assert.equal(first.status, 200);
+  const firstJson = await first.json();
+  assert.equal(bucket.puts.length, 1, "a complete E-drive result is written back once");
+  assert.match(bucket.puts[0], /^edrive-bearing-profile-v1\/[0-9a-f]{64}\.json$/);
+
+  // PC停止（Eドライブへの問い合わせは全て失敗）。R2の書き戻し分で返る。
+  const second = await callBatch(body, bucket, async (input) => {
+    throw new TypeError(`E-drive is offline: ${String(input)}`);
+  });
+  assert.equal(second.status, 200);
+  assert.deepEqual(await second.json(), firstJson);
+  assert.equal(bucket.puts.length, 1);
+
+  // 要求方位の集合が異なる要求とは共有しない（部分集合の取り違え防止）。
+  const other = await callBatch({ ...body, bearings: [0, 90] }, bucket, async () => {
+    throw new TypeError("E-drive is offline");
+  });
+  assert.equal(other.status, 503);
+  const expanded = await fetchBearingProfileBatch(body, undefined, async () =>
+    new Response(JSON.stringify(firstJson), { headers: { "Content-Type": "application/json" } })
+  );
+  assert.equal(expanded.profiles.length, 3, "the written-back payload passes full client validation");
+});
+
+test("registered spots are never overwritten by an E-drive write-back", async () => {
+  const { PRECOMPUTED_BEARING_PROFILE_TARGETS } = await import("../../src/data/precomputedBearingProfileTargets.ts");
+  const target = PRECOMPUTED_BEARING_PROFILE_TARGETS.find((entry) => entry.name === "東京スカイツリー");
+  const body = {
+    ...request,
+    subjectPoint: { latitude: target.latitude, longitude: target.longitude, height: 12 },
+    bearings: [0],
+    maxDistanceMeters: 1_000,
+  };
+  const exact = await computeBearingProfileBatch(body, undefined, {
+    lookupPrecomputed: async () => null,
+    lookupElevations: async (points) => points.map(() => ({ heightMeters: 100, source: "DEM5A" })),
+    lookupGeoidHeights: async (points) => points.map(() => 38),
+    nowIso: () => "2026-09-30T00:00:00.000Z",
+  });
+  exact.terrainProfileComplete = true;
+  const bucket = new WriteBackR2();
+  const response = await callBatch(body, bucket, async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/bearing-profile/precomputed") return Response.json({ error: "nf" }, { status: 404 });
+    return Response.json(exact);
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(bucket.puts.length, 0);
+});
+
+test("503 from R2/E-drive is a reasoned miss, not a download-ending error", async () => {
+  const { fetchBearingProfileBatchDetailed } = await import("../../src/cache/bearingProfileBatchClient.ts");
+  for (const code of ["PRECOMPUTED_PROFILE_UNAVAILABLE", "LOCAL_DEM_PROFILE_UNAVAILABLE"]) {
+    const outcome = await fetchBearingProfileBatchDetailed(request, undefined, async () =>
+      Response.json({ code, error: `理由:${code}` }, { status: 503 })
+    );
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.miss.reason, `理由:${code}`);
+  }
 });

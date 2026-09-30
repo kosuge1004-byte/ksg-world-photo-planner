@@ -111,12 +111,28 @@ test("a retry resumes after the last committed E-drive chunk", async () => {
     label: "押上の別地点",
   };
   const bearings = manager.requiredCelestialTripodBearings(subjectPoint.latitude);
+  // 2026-09-30: Eドライブが途中で止まっても例外で終わらせず、残り方位は1方位経路で
+  // 続行する契約に変更。ここでは1方位経路へ入った時点で利用者が中止した場合に、
+  // 確定済みの一括チャンクから再開できることを検証する。
+  const controller = new AbortController();
+  let fallbackNotice = null;
   await assert.rejects(manager.backfillBearingProfiles({
     subjectId: "edrive-resume-runtime",
     subjectPoint,
     cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
     maxDistanceMeters: 10_000,
-  }), { name: "PrecomputedBearingProfileUnavailableError" });
+    signal: controller.signal,
+    onProgress(progress) {
+      if (progress.directFallbackNotice) {
+        fallbackNotice = progress.directFallbackNotice;
+        controller.abort();
+      }
+    },
+  }).then((result) => {
+    if (result.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    return result;
+  }), { name: "AbortError" });
+  assert.match(fallbackNotice, /Eドライブ一時停止/, "the E-drive miss reason is shown on the per-bearing path");
   assert.equal(batchCalls, 2);
   assert.equal(legacyElevationCalls, 0);
 

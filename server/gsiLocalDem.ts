@@ -4,7 +4,7 @@ import {
   constrainedBicubicInterpolate,
   type BicubicGrid4x4,
 } from "./constrainedBicubicInterpolation.ts";
-import { serverPersistentCache } from "./cloudflareRuntime.ts";
+import { serverPersistentCache, serverRequestScope } from "./cloudflareRuntime.ts";
 import { createAbortError } from "./runtimeErrors.ts";
 
 /**
@@ -62,11 +62,22 @@ const MAX_NEGATIVE_CACHE_ENTRIES = 4_096;
 
 type MemoryEntry = { asset: LocalDemGridAsset; bytes: number };
 const memoryAssets = new Map<string, MemoryEntry>();
-const inFlightAssets = new Map<string, Promise<LocalDemGridAsset | null>>();
+// 2026-09-30: 取得中PromiseはCloudflareのリクエスト単位に閉じる。別リクエストが
+// 開始したR2読み取りを待つと、そのリクエストの中断時に永久に解決されない。
+const inFlightAssetsByScope = new WeakMap<object, Map<string, Promise<LocalDemGridAsset | null>>>();
+function inFlightAssetsForRequest(): Map<string, Promise<LocalDemGridAsset | null>> {
+  const owner = serverRequestScope();
+  let map = inFlightAssetsByScope.get(owner);
+  if (!map) {
+    map = new Map();
+    inFlightAssetsByScope.set(owner, map);
+  }
+  return map;
+}
 const unavailableAssets = new Map<string, number>();
 let memoryBytes = 0;
 
-let manifestPromise: Promise<boolean> | null = null;
+const manifestPromiseByScope = new WeakMap<object, Promise<boolean>>();
 let manifestResult: { enabled: boolean; expiresAt: number } | null = null;
 
 function byteView(value: ArrayBuffer | Uint8Array): Uint8Array {
@@ -583,13 +594,15 @@ export function configureLocalDemMemoryBudgetForPrivateOrigin(bytes: number): vo
   maximumMemoryBytes = bytes;
 }
 
-async function localDemManifestAvailable(): Promise<boolean> {
+export async function localDemManifestAvailable(): Promise<boolean> {
   const persistentCache = serverPersistentCache();
   if (!persistentCache) return false;
   const now = Date.now();
   if (manifestResult && manifestResult.expiresAt > now) return manifestResult.enabled;
-  if (manifestPromise) return manifestPromise;
-  manifestPromise = (async () => {
+  const scopeOwner = serverRequestScope();
+  const pendingManifest = manifestPromiseByScope.get(scopeOwner);
+  if (pendingManifest) return pendingManifest;
+  const manifestPromise = (async () => {
     try {
       const fallback = persistentCache.getWithStatus
         ? undefined
@@ -618,9 +631,10 @@ async function localDemManifestAvailable(): Promise<boolean> {
     } catch {
       return false;
     } finally {
-      manifestPromise = null;
+      manifestPromiseByScope.delete(scopeOwner);
     }
   })();
+  manifestPromiseByScope.set(scopeOwner, manifestPromise);
   return manifestPromise;
 }
 
@@ -660,6 +674,7 @@ async function loadAsset(
     return memory.asset;
   }
   if (unavailableAssetIsFresh(key)) return null;
+  const inFlightAssets = inFlightAssetsForRequest();
   const shared = inFlightAssets.get(key);
   if (shared) return shared;
   const promise = (async () => {
@@ -773,10 +788,10 @@ export async function lookupLocalDemElevationsForSource(
 /** Regression tests only; production callers must not depend on process cache state. */
 export function resetLocalDemRuntimeCacheForTests(): void {
   memoryAssets.clear();
-  inFlightAssets.clear();
+  inFlightAssetsForRequest().clear();
+  manifestPromiseByScope.delete(serverRequestScope());
   unavailableAssets.clear();
   memoryBytes = 0;
-  manifestPromise = null;
   manifestResult = null;
 }
 
