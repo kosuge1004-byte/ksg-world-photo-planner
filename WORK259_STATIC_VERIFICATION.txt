@@ -1,0 +1,21 @@
+Work259 static verification
+
+PASS: Linear DNG headroom + thumbnail preflight fused into one strip pass.
+PASS: Separate _determineLinearDngHeadroomEv and _buildEmbeddedThumbnail passes removed.
+PASS: Final DNG encode retains a separate required strip pass.
+PASS: DNG encode loop now checks cancellation inside large strips.
+PASS: LinearDngTransparencyMaskSource added with dimension and 0/255 validation.
+PASS: CFA Drizzle direct-RGB Linear DNG now uses row-streamed validity source.
+PASS: Existing transparencyMask / binaryValidityMask / contributionStore APIs retained.
+PASS: CFA direct-RGB coverage and saturation semantics preserved in source implementation.
+PASS: Native-CFA demosaic validity builder receives cancellation callback.
+PASS: Regression tests added for fused DNG preflight read count and streamed CFA validity.
+
+NOT RUN: flutter test (Dart/Flutter SDK unavailable)
+NOT RUN: flutter analyze (Dart/Flutter SDK unavailable)
+NOT BUILT: Android APK
+NOT VERIFIED: Sony α7 III real RAW end-to-end in this environment
+
+Remaining material export-memory risk identified, not changed in Work259:
+- JPEG export still materializes a full-resolution RGB8 buffer and package:image Image/encoded JPEG in memory. This is a separate encoder-architecture issue and should not be changed without a verified streaming/native JPEG path.
+- Native-CFA reconstruction+demosaic DNG validity still has a full-frame dilation dependency; Work259 adds cancellation but does not replace that algorithm with an unverified streaming morphology implementation.

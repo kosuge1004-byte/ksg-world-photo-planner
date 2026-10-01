@@ -1,0 +1,3 @@
+mobile_stack_raw_capabilities
+mobile_stack_raw_probe_metadata
+mobile_stack_raw_metadata_result_release

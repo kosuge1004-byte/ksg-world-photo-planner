@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "replace-me",
+  "samples": [
+    {
+      "id": "camera-model-sample-001",
+      "file": "files/replace-with-local-sample.dng",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "byteLength": 242,
+      "floatTolerance": 0.0001,
+      "provenance": {
+        "source": "replace-with-source-or-capture-record",
+        "license": "replace-with-license",
+        "redistributable": false,
+        "notes": "Template only; replace every placeholder before verification."
+      },
+      "reference": {
+        "tool": "replace-with-reference-tool",
+        "version": "replace-with-version",
+        "command": "replace-with-exact-command",
+        "recordedAt": "2026-07-29T00:00:00Z"
+      },
+      "expected": {
+        "width": 6000,
+        "height": 4000,
+        "cfa": "RGGB",
+        "activeArea": {
+          "left": 8,
+          "top": 8,
+          "width": 5984,
+          "height": 3984
+        },
+        "orientation": 1,
+        "blackLevels": [64, 64, 64, 64],
+        "whiteLevel": 16383,
+        "cameraWhiteBalance": [2, 1, 1, 1.5]
+      }
+    }
+  ]
+}

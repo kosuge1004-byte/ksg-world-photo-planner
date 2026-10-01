@@ -1,0 +1,9 @@
+LATEST BASELINE: Work364
+DATE: 2026-10-01
+VERSION: 0.8.46+202
+READ FIRST: CODEX_HANDOFF_WORK364_TO_EXECUTION.md
+
+Work350を基に Work351〜364（高画質化の選択機能＝既定OFF、FGS上限からの再開、通知、ネイティブSHA-256、天の川合成の並列化、星の軌跡の2回目デコード削減、診断ログ共有）を加えた版。正本はpubspec.yaml。
+既定設定の出力は Work350 とビット一致が条件（新機能はすべて既定OFF、常時有効の変更は結果中立）。Play配布可能。ETA/残り時間は表示しない。
+実行した検査と未実行の検査を区別してください。過去版のPASSを流用しないこと。
+最高品質・元解像度・FP32と最終DNG BaselineExposure 0 EVを維持。

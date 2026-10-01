@@ -1,0 +1,9 @@
+{
+  "serial": "emulator-5580",
+  "kind": "emulator",
+  "androidSdk": "36",
+  "androidVersion": "16",
+  "abiList": "x86_64,arm64-v8a",
+  "avd": "Mobile_Stack_API_36",
+  "isolatedReadOnly": true
+}

@@ -1,0 +1,6 @@
+lib/core/registration/local_residual_correction.dart
+lib/core/session/milky_way_pipeline.dart
+lib/core/session/cfa_drizzle_milky_way_pipeline.dart
+test/local_residual_correction_test.dart
+WORK254_FINAL_REGISTRATION_WEIGHT_INTEGRITY.md
+WORK254_CHANGED_FILES.txt

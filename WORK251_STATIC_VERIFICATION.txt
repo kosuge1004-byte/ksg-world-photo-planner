@@ -1,0 +1,8 @@
+PASS: identity out-of-bounds fallback removed
+PASS: fail-closed boundary comment present
+PASS: edge regression test present
+PASS: edge regression asserts zero coverage
+NOT RUN: flutter test
+NOT RUN: flutter analyze
+NOT RUN: Android release APK build
+NOT VERIFIED: Sony α7 III real RAW

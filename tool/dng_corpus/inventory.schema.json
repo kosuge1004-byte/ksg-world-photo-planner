@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mobile-stack.invalid/schema/dng-corpus-inventory-v1.json",
+  "title": "Mobile Stack DNG corpus candidate inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "inventoryType",
+    "inventoryVersion",
+    "status",
+    "generatedAt",
+    "options",
+    "samples"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "inventoryType": {
+      "const": "mobile-stack-dng-corpus-inventory"
+    },
+    "inventoryVersion": {
+      "const": 1
+    },
+    "status": {
+      "const": "draft"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximumFiles"],
+      "properties": {
+        "maximumFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/sample"
+      }
+    }
+  },
+  "$defs": {
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idSuggestion",
+        "file",
+        "byteLength",
+        "sha256"
+      ],
+      "properties": {
+        "idSuggestion": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

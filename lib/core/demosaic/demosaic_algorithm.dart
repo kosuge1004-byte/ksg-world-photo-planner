@@ -1,0 +1,4 @@
+enum DemosaicAlgorithm {
+  mobileStackAdaptive,
+  referenceBilinear,
+}

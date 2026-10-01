@@ -1,0 +1,8 @@
+lib/core/focus_stack/focus_map_regularizer.dart
+lib/core/focus_stack/focus_stack_pipeline.dart
+test/focus_map_regularizer_test.dart
+tool/raw_samples/test/focus_map_file_backed_regularization_contract.test.mjs
+WORK231_FOCUS_MAP_REGULARIZATION_FILE_BACKED.md
+HANDOFF_CHECKPOINT_WORK231.md
+CODEX_START_HERE.txt
+WORK231_CHANGED_FILES.txt

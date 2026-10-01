@@ -1,0 +1,18 @@
+Work288 validation in current container
+
+PASS: native host build completed.
+PASS: mobile_stack_raw_abi_layout
+PASS: mobile_stack_raw_c_contract
+PASS: mobile_stack_dng_hardening
+PASS: mobile_stack_dng_cli_contract
+PASS: mobile_stack_demosaic
+PASS: mobile_stack_demosaic_cache
+PASS: mobile_stack_demosaic_hash_cache_whitebox
+
+PRE-EXISTING FAILURE, unchanged from Work286 baseline:
+- mobile_stack_arw_lossless: pixel-limit expectation at test lines 367 / 457.
+  The same executable in the preserved Work286 build fails with the same messages.
+  Work287/288 did not modify ARW lossless decode or its pixel-limit logic.
+
+NOT RUN:
+- flutter analyze / flutter test / Android build: Flutter/Dart SDK is not installed in this execution environment.

@@ -1,0 +1,10 @@
+lib/core/engine/resource_snapshot.dart
+lib/core/engine/default_resource_reader.dart
+lib/core/engine/adaptive_resource_controller.dart
+lib/core/background/standard_stack_background_worker.dart
+android/app/src/main/kotlin/com/mobilestack/app/MainActivity.kt
+test/adaptive_resource_controller_test.dart
+tool/quality/adaptive_resource_controller_contract.test.mjs
+WORK312_ADAPTIVE_BACKGROUND_RESOURCE_CONTROL.md
+WORK312_CHANGED_FILES.txt
+WORK312_VERIFICATION.txt

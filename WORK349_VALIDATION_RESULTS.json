@@ -1,0 +1,191 @@
+{
+  "work": 349,
+  "version": "0.8.44+200",
+  "date": "2026-09-18",
+  "inputSource": "MobileStack_WORK348_registration-hard-noise-gate.zip",
+  "userInstruction": "検査して続行、実装後すべて検査、テストまで全部してapk",
+  "staticAnalysis": {
+    "result": "PASS",
+    "findings": 0
+  },
+  "nodeSuite": {
+    "tests": 772,
+    "pass": 772,
+    "fail": 0,
+    "result": "PASS"
+  },
+  "flutterSuite": {
+    "tests": 952,
+    "pass": 952,
+    "fail": 0,
+    "result": "PASS"
+  },
+  "nativeWindowsCTest": {
+    "tests": 8,
+    "pass": 8,
+    "fail": 0,
+    "result": "PASS"
+  },
+  "androidEmulator": {
+    "device": {
+      "serial": "emulator-5580",
+      "kind": "emulator",
+      "androidSdk": "36",
+      "androidVersion": "16",
+      "abiList": "x86_64,arm64-v8a",
+      "avd": "Mobile_Stack_API_36",
+      "isolatedReadOnly": true
+    },
+    "ffiTests": 23,
+    "saveTests": 2,
+    "result": "PASS",
+    "isPhysicalDevice": false
+  },
+  "actualRawWindows": {
+    "result": "PASS",
+    "platform": "Windows host-only bridge; not Android E2E",
+    "decoded": [
+      {
+        "source": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\raw_inputs\\DSC03692.ARW",
+        "ms": 10804,
+        "width": 4000,
+        "height": 6000
+      },
+      {
+        "source": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\raw_inputs\\DSC03693.ARW",
+        "ms": 10678,
+        "width": 4000,
+        "height": 6000
+      },
+      {
+        "source": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\raw_inputs\\DSC03694.ARW",
+        "ms": 10592,
+        "width": 4000,
+        "height": 6000
+      }
+    ],
+    "output": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\work348\\real_raw/milky_way_host349.dng",
+    "bytes": 288132792,
+    "included": 3,
+    "psf": {
+      "referenceMeasured": 69,
+      "pairs": 37,
+      "medianFwhmRatio": 0.999582721734232,
+      "p90FwhmRatio": 1.1255998058767693,
+      "roundnessDelta": -0.00022366061768349516
+    },
+    "noise": {
+      "selectedTiles": 8,
+      "coefficients": 12527,
+      "referenceSigma": 0.0003534437440219335,
+      "finalSigma": 0.0003077086808450986,
+      "ratio": 0.870601576770314
+    },
+    "allOutputSamplesFinite": true,
+    "frames": [
+      {
+        "source": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\raw_inputs\\DSC03692.ARW",
+        "included": true,
+        "reason": null,
+        "rms": 0.0,
+        "rmsLimit": null,
+        "p95": 0.0,
+        "max": 0.0,
+        "spanX": null,
+        "spanY": null,
+        "quadrants": null,
+        "localCorrection": false,
+        "weight": 0.9416235786753478
+      },
+      {
+        "source": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\raw_inputs\\DSC03693.ARW",
+        "included": true,
+        "reason": null,
+        "rms": 0.5139355185869533,
+        "rmsLimit": 1.5,
+        "p95": 1.2409370432456546,
+        "max": 1.3753303952695373,
+        "spanX": 0.5353284570762005,
+        "spanY": 0.18581397859184534,
+        "quadrants": 2,
+        "localCorrection": false,
+        "weight": 0.8422089985608058
+      },
+      {
+        "source": "C:\\Users\\kosuge\\Documents\\Codex\\2026-09-16\\files-mentioned-by-the-user-mobilestack\\work\\raw_inputs\\DSC03694.ARW",
+        "included": true,
+        "reason": null,
+        "rms": 0.6599085984446389,
+        "rmsLimit": 1.5,
+        "p95": 1.3964130757919513,
+        "max": 1.7062648898574546,
+        "spanX": 0.5529419345018759,
+        "spanY": 0.18581397859184534,
+        "quadrants": 2,
+        "localCorrection": false,
+        "weight": 0.7893500428946363
+      }
+    ]
+  },
+  "dngReadback": {
+    "result": "PASS",
+    "reader": "independent Python tifffile/numpy",
+    "width": 4000,
+    "height": 6000,
+    "channels": 3,
+    "sampleFormat": "FP32",
+    "photometric": "LinearRaw",
+    "baselineExposureEv": 0,
+    "allSamplesFinite": true,
+    "minimum": -0.16503620147705078,
+    "maximum": 0.8220022916793823,
+    "sha256": "5ce9a04a778d1c34e99ea72e67aa7bb4060e9848bab69c8f73f21e2e5c2e0921",
+    "bytes": 288132792
+  },
+  "releaseArtifact": {
+    "abi": [
+      "arm64-v8a"
+    ],
+    "nativeExports": 13,
+    "versionName": "0.8.44",
+    "versionCode": 200,
+    "signing": "local debug key",
+    "certificateSha256": "3402ed24f436859aa12c1b592f51f6fe509ae1fb0105e6890eea86814106be20",
+    "signatureVerification": "PASS",
+    "result": "PASS"
+  },
+  "releaseRuntimeSmoke": {
+    "result": "PASS",
+    "serial": "emulator-5580",
+    "isPhysicalDevice": false,
+    "apk": "arm64 release 0.8.44+200",
+    "installation": "Success (adb install -r)",
+    "coldLaunchStatus": "ok",
+    "coldLaunchTimeMs": 3853,
+    "mainActivityResumed": true,
+    "processAlive": true,
+    "processId": 5483,
+    "fatalCrashInProcessLog": false,
+    "scope": "install and startup smoke; not RAW synthesis E2E"
+  },
+  "apk": {
+    "file": "MobileStack_0.8.44_200_WORK349_quality-repair_arm64_release.apk",
+    "bytes": 25299805,
+    "sha256": "a60a4a1b5f5c26af3b1985c59f2a1bbd0494518a1b00e0d7771e755d1c71aee2"
+  },
+  "sourceZipVerification": {
+    "crc": "PASS",
+    "allArchivedSourceBytesMatch": "PASS"
+  },
+  "notRun": [
+    "Physical Android device RAW E2E and OS kill/6-hour resume",
+    "Complete 376-frame RAW synthesis on Work349",
+    "Nikon/other-camera device corpus integration (no supplied corpus/device)",
+    "Adobe output readback and real-scene visual A/B",
+    "iOS build/device tests (no macOS/iOS environment)",
+    "Linux ASan/UBSan (no Linux/WSL environment)"
+  ],
+  "allMandatoryReleaseGatesComplete": false,
+  "all22HandoffItemsComplete": false,
+  "historicalPassResultsReused": false
+}

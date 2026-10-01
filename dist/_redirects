@@ -1,0 +1,2 @@
+# Cloudflare Pagesはルート直下に404.htmlが無い場合、SPAフォールバックを自動適用します。
+# /* /index.html 200 は現行Wranglerで循環ルールになるため追加しません。

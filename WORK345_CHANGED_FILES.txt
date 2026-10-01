@@ -1,0 +1,7 @@
+lib/core/background/standard_stack_background_worker.dart
+lib/core/session/milky_way_pipeline.dart
+lib/core/session/export_pipeline_result.dart
+lib/core/stacking/tiled_weighted_average_combiner.dart
+tool/work345_stack_quality_repair_contract.test.mjs
+WORK345_STACK_QUALITY_REPAIR.md
+WORK345_CHANGED_FILES.txt

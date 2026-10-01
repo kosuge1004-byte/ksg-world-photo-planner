@@ -1,0 +1,6 @@
+PASS: geometry validation
+PASS: cancel threaded
+PASS: cancel rethrow
+PASS: stage restore
+PASS: geometry regression test
+PASS: cancellation regression test

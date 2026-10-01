@@ -1,0 +1,6 @@
+PASS: validity builder accepts isCancelled
+PASS: dedicated validity cancellation exception exists
+PASS: validity scan checks cancellation
+PASS: export forwards cancellation to mask build
+PASS: ownership flag occurs only after awaited push returns
+PASS: result temp cleanup remains present

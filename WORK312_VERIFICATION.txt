@@ -1,0 +1,16 @@
+Work312 verification
+
+PASS: node --test tool/quality/adaptive_resource_controller_contract.test.mjs
+  4 tests / 4 pass
+PASS: bash tool/run_all_node_tests.sh
+  686 tests / 686 pass
+
+NOT RUN: flutter test / flutter analyze / APK build
+Reason: Dart/Flutter SDK unavailable in this environment.
+
+NOT RUN: Gradle compileDebugKotlin
+Reason: Gradle wrapper distribution is not cached and network access to
+services.gradle.org is unavailable in this environment.
+
+NOT RUN: physical Android device adaptive-pressure test
+Reason: no physical Android device attached to this environment.

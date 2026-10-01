@@ -1,0 +1,5 @@
+lib/core/registration/star_detector.dart
+lib/core/registration/gaussian_psf_centroid_refinement.dart
+test/gaussian_psf_centroid_refinement_test.dart
+WORK255_PSF_ANCHOR_INTEGRITY.md
+WORK255_CHANGED_FILES.txt

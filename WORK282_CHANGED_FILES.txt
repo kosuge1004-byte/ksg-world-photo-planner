@@ -1,0 +1,6 @@
+lib/core/background/background_stack_controller.dart
+lib/core/background/background_task_dispatcher.dart
+lib/core/background/background_task_payload.dart
+test/background_task_payload_test.dart
+WORK282_ANDROID_WORKMANAGER_10KB_FIX.md
+WORK282_CHANGED_FILES.txt

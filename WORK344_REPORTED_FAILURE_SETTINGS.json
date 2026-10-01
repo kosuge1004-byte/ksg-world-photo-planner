@@ -1,0 +1,11 @@
+{
+  "automaticMovingObjectRemoval": true,
+  "preserveReferenceForeground": true,
+  "gapFillEnabled": true,
+  "fadeEnabled": true,
+  "fadeMode": "bothEnds",
+  "fadePercent": 15,
+  "inputFrameCount": null,
+  "gapFillMode": null,
+  "source": "user confirmation 2026-09-16"
+}

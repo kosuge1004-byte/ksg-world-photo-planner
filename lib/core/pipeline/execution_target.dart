@@ -1,0 +1,4 @@
+enum ExecutionTarget {
+  cpu,
+  gpu,
+}

@@ -1,0 +1,1 @@
+PASS: changed files balanced after comment/string stripping.

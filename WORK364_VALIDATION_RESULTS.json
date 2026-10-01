@@ -1,0 +1,38 @@
+{
+  "work": "Work364",
+  "version": "0.8.46+202",
+  "base": "Work350 (0.8.45+201)",
+  "executed": {
+    "node_contract_suite": {
+      "command": "bash tool/run_all_node_tests.sh",
+      "result": "872/872 PASS"
+    },
+    "native_gcc_release_ctest": {
+      "command": "cmake -S native -B build && cmake --build build && ctest",
+      "result": "9/9 PASS (GCC, Linux x86_64, Release)"
+    },
+    "native_exports": {
+      "command": "tool/check_native_exports.sh",
+      "result": "verified 13 native ABI exports"
+    },
+    "native_sha256_vectors": {
+      "result": "FIPS known-answer vectors and 11 random file sizes (0..300MB) equal to sha256sum; library called via ctypes equal to hashlib"
+    },
+    "static_crosscheck_scripts": {
+      "result": "named-argument, identifier, scope and prefer_final_locals cross-checks over all changed Dart: no findings in changed code (remaining hits are SDK calls)"
+    },
+    "reference_simulations": {
+      "result": "guided registration (7 sky geometries), focus gain/pyramid tiling exactness, hot pixels, mean background, meteor additive, fused star-trail merge order (400 trials)"
+    }
+  },
+  "notRun": [
+    "flutter analyze",
+    "flutter test",
+    "native sanitizer configurations",
+    "Gradle/APK build",
+    "APK verification",
+    "emulator smoke",
+    "device E2E (bit identity vs Work350, resume, FGS budget reset, timings)"
+  ],
+  "allMandatoryReleaseGatesComplete": false
+}

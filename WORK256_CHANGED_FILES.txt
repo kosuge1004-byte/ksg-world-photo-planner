@@ -1,0 +1,4 @@
+lib/core/session/milky_way_pipeline.dart
+lib/core/session/export_pipeline_result.dart
+test/work256_local_registration_support_guard_test.dart
+WORK256_REGISTRATION_QUALITY_BATCH_AUDIT.md

@@ -1,0 +1,5 @@
+lib/core/registration/adaptive_dual_alignment_resampler.dart
+test/adaptive_dual_alignment_resampler_test.dart
+WORK251_EDGE_COVERAGE_INTEGRITY.md
+WORK251_CHANGED_FILES.txt
+WORK251_STATIC_VERIFICATION.txt

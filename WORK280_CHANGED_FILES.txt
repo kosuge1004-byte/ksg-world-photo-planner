@@ -1,0 +1,172 @@
+Work280: Android background completion — foreground service permissions,
+per-tile/per-frame cooldowns, and explicit wake lock
+
+Changed files:
+- android/app/src/main/AndroidManifest.xml
+    Added FOREGROUND_SERVICE / FOREGROUND_SERVICE_DATA_SYNC / WAKE_LOCK
+    permissions, required for the existing foregroundServiceConfig requests
+    in background_stack_controller.dart to actually be granted on
+    Android 12+ (especially 14+).
+- lib/core/background/standard_stack_background_worker.dart
+- lib/core/session/cfa_drizzle_milky_way_pipeline.dart
+    Added a 150ms cooldown between frames in the RAW解析・較正 stage for
+    stacks of 8+ frames, mirroring Work279's tile cooldown but for this
+    earlier, previously-unthrottled stage. No pixel calculation changed.
+- pubspec.yaml
+    Added wakelock_plus dependency.
+- lib/core/background/background_task_dispatcher.dart
+    The background worker isolate now explicitly acquires a partial wake
+    lock (WakelockPlus.enable()) for the duration of any background stack
+    task, and releases it on completion, failure, or OS-initiated stop.
+- lib/core/session/milky_way_pipeline.dart  [likely root cause of the
+    reproducible 2-frame/max-quality freeze]
+    registerAndCombineDecodedFrames' per-tile combine loop (standard,
+    non-CFA-drizzle stacking) had NO yield/cooldown at all. At max quality
+    (linearScale == 1.0, full resolution) this iterates several hundred
+    output tiles back-to-back with zero breaks, independent of frame count
+    — matching the user's repro (2 frames + max quality hangs; lower
+    quality/resolution completes). Added an 8ms per-tile cooldown,
+    unconditional, mirroring Work279's CFA-drizzle tile cooldown. No pixel
+    calculation changed.
+
+Not yet run in this environment (no Flutter/Dart SDK available):
+- flutter pub get / flutter analyze / flutter test
+- Android APK build
+- On-device repro test: 2 frames, maximum quality — should no longer freeze
+- On-device test: leave running untouched (screen timeout) overnight
+- On-device test: switch away to another app / home screen
+
+Still recommended: capture adb logcat or a bug report during a freeze
+before this fix, if it's easy to do, to confirm the tile loop is in fact
+where time is being spent (vs. e.g. star detection, local registration, or
+DNG encode, which were not touched).
+
+Additional (this turn): in-app diagnostic log, no adb/PC required
+- lib/core/diagnostics/diagnostic_log.dart [new]
+    File-backed logger (app documents dir, flushed per write) so a freeze
+    doesn't lose the trail. Logs timestamp + current RSS (memory) + a short
+    message.
+- lib/core/session/milky_way_pipeline.dart
+    Logs star-detection per-frame progress and stack-combination tile
+    progress (every 10 tiles) — the two unbounded loops in this function.
+- lib/core/background/standard_stack_background_worker.dart
+    Logs run start, per-frame RAW decode progress, and entry/exit of every
+    major stage (downscale, star-trail combine, register+combine, task
+    complete/failed).
+- lib/features/settings/settings_screen.dart
+    New "診断ログを共有" row. Reads the log file and opens the normal OS
+    share sheet (same mechanism already used for exporting results) — no
+    adb, no PC, no developer options needed. If the app is force-closed
+    after a freeze and reopened, the last run's log is still there because
+    it was flushed to disk during the run, not just held in memory.
+
+How to use after a freeze: force-close the app, reopen it, go to
+設定 → 診断ログを共有, and send the file (e.g. to yourself via email/Files)
+so it can be reviewed here.
+
+Additional (this turn): star-trail shutter-gap fill, ON/OFF + linear/arc
+choice, per user request. New feature, not verified against the Dart SDK
+(none available here) — please run
+`test/star_trail_gap_fill_test.dart`-equivalent coverage (none written yet)
+and a real-device visual check before trusting this in production, per
+this project's own established convention for new algorithmic code.
+
+- lib/core/stacking/star_trail_gap_fill.dart [new]
+    Core geometry: matches stars between two consecutive frames (simple
+    nearest-neighbor for "linear" mode; estimateSimilarityTransform's
+    inlier matches for "arc" mode), and for arc mode solves the true
+    rotation fixed point (not estimateSimilarityTransform's own `centerX`/
+    `centerY`, which is only a numerically-convenient pivot — see the doc
+    comment for the closed-form derivation). Falls back to linear
+    automatically if a rotation can't be estimated (too few stars, no
+    rotation between frames).
+- lib/core/stacking/star_trail_gap_fill_drawer.dart [new]
+    Paints the computed segments into the combined LinearRgbTileStore.
+    Reads/writes only each segment's small bounding box (not the full
+    frame) — deliberately memory-bounded, consistent with this session's
+    broader memory-safety work, since a full-frame buffer pass here would
+    undercut Work280's other fixes.
+- lib/core/registration/tile_store_star_detection.dart [new]
+    Small public wrapper around the existing `detectStars` function for a
+    whole LinearRgbTileStore (a simplified, non-strip-chunked sibling of
+    milky_way_pipeline.dart's private `_detectRegistrationStars`).
+- lib/core/session/export_pipeline_result.dart
+    combineDecodedFramesAndExport gained a `gapFillMode` parameter; after
+    the existing lighten-blend combine, if not `off`, detects stars in
+    every frame and draws gap segments between each consecutive pair.
+    Wrapped in try/catch — a gap-fill failure degrades to "no gap fill",
+    never fails the whole export.
+- lib/core/session/processing_session.dart
+- lib/core/settings/app_settings.dart
+- lib/core/background/background_stack_controller.dart
+- lib/core/background/standard_stack_background_worker.dart
+- lib/features/common/raw_selection_screen.dart
+- lib/features/common/stack_settings_screen.dart
+    Threaded a new `StarTrailGapFillMode { off, linear, arc }` setting
+    through session -> WorkManager input data -> background worker ->
+    export call, persisted via AppSettings (default: off), with a
+    3-way segmented control in the star-trail-only section of
+    StackSettingsScreen (設定 within that mode's flow, not the global
+    Settings screen — this is a per-mode processing choice like the
+    aircraft-removal toggle right above it).
+
+Known simplifications / things a real test pass should check:
+- Arc mode's per-frame star detection + transform estimation adds cost
+  roughly comparable to Milky Way mode's own registration step, scaling
+  with frame count (flagged to the user before implementing).
+- Star matching for gap segments is independent from any matching used
+  elsewhere (e.g. aircraft/satellite streak detection); a star correctly
+  excluded as a satellite trail elsewhere could still get matched here.
+  Not cross-checked against `excludedStreaksByFrame` in this pass.
+- Dot-paint radius (1.4px) and falloff are a reasonable-looking default,
+  not tuned against real trail exposures.
+
+Additional (this turn): gap-fill option now shows a static OFF/直線/弧
+comparison table (見た目・精度・処理時間・安定性) above the selector, instead
+of only describing whichever option is currently selected — so the choice
+can be made by comparing all three at once.
+- lib/features/common/stack_settings_screen.dart
+    New _GapFillComparisonTable widget.
+
+Additional (this turn): Photoshop-style fixed tone baseline + brightness
+slider, per user request ("2を実装、Photoshopと同じにして"). Root cause was:
+every export (single frame vs. stack) independently auto-computed its own
+exposureScale/whitePoint from that export's own pixel statistics, so the
+same shoot could render at different brightness depending on what was
+exported and when. Fixed the default behavior to match Adobe Camera
+Raw/Lightroom's philosophy (a fixed per-shot baseline, not silently
+recomputed per render), with the new slider as the deliberate manual
+adjustment on top of that fixed baseline.
+
+- lib/core/export/export_result.dart
+    New public estimateFixedToneBaselineFromReferenceFrame(): computes
+    AutoToneParameters once from a single reference frame's own content,
+    reusing the exact same private helpers the old per-export auto-tone
+    path already used internally (no numeric behavior change to the
+    underlying auto-tone math itself, only when/how often it runs).
+- lib/core/background/standard_stack_background_worker.dart
+    Computes this fixed baseline once, right after RAW decode/calibration
+    (from frameStores[referenceIndex], while still full resolution), and
+    passes it explicitly as exposureScale/whitePoint into both the star
+    trail and milky way register+combine export calls — replacing the
+    previous `null` (= independently auto-compute) default. Logged to the
+    diagnostic log for visibility.
+    CFA drizzle path intentionally NOT touched: it always exports Linear
+    DNG (untouched linear data, no baked-in tone mapping — see
+    ResultScreen's own "露出・トーン・LUT・ガンマは焼き込まず" notice), so this
+    bug class doesn't apply there.
+- lib/features/common/result_screen.dart
+    New post-export brightness slider (-2..+2 EV) for JPEG results only
+    (the one displayed/re-encodable raster format here; TIFF16/Linear DNG
+    keep untouched data for a real photo editor by design). Live preview
+    via a cheap ColorFilter; the actual saved/shared file is re-encoded
+    once (via the `image` package, already a dependency) with the
+    adjustment baked in, triggered on slider release rather than every
+    drag frame.
+
+Not verified (no Flutter/Dart SDK here): whether
+estimateFixedToneBaselineFromReferenceFrame's reuse of export_result.dart's
+private helpers compiles as written, and whether the resulting fixed
+exposure actually looks reasonable across a range of real shoots — please
+compare a single-frame export and its stack again after this change and
+confirm they now match.

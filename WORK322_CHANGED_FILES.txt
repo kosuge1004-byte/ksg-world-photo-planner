@@ -1,0 +1,5 @@
+lib/core/background/background_stack_controller.dart
+lib/features/common/standard_background_progress_screen.dart
+tool/preflight_storage_capacity_contract.test.mjs
+WORK322_START_PRECHECK_STORAGE.md
+WORK322_CHANGED_FILES.txt

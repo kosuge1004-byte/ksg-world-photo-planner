@@ -1,0 +1,11 @@
+PASS: writer accepts contributionStore
+PASS: writer enforces one mask source
+PASS: writer streams 128-row contribution reads
+PASS: writer checks RGB contribution validity
+PASS: export wrapper forwards contributionStore
+PASS: production wrapper no longer materializes contribution mask
+PASS: streaming regression test present
+NOT RUN: flutter test
+NOT RUN: flutter analyze
+NOT BUILT: Android release APK
+NOT VERIFIED: Sony A7 III real RAW

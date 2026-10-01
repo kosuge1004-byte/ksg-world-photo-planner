@@ -1,0 +1,6 @@
+lib/core/export/linear_dng_writer.dart
+tool/raw_samples/test/linear_dng_float_range_source_contract.test.mjs
+tool/raw_samples/test/dng_metadata_consistency_source_contract.test.mjs
+WORK201_LINEAR_DNG_HIGHLIGHT_HEADROOM.md
+HANDOFF_CHECKPOINT_WORK201.txt
+WORK201_CHANGED_FILES.txt

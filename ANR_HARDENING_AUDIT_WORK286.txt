@@ -1,0 +1,61 @@
+Mobile Stack Work286 - Android ANR hardening audit
+Date: 2026-09-02
+
+Basis
+- Real-device diagnostic log: starTrail, 37 frames. rawDecode remained 0/37 while RSS rose from 176 MB to ~374 MB; later peaked at 427 MB and then rawDecode advanced to 1/37 after RSS fell to ~351 MB. This proves processing was still advancing and does not show an OOM termination.
+- Full source tree statically inspected for Android background workers, progress publication, notification/platform-channel traffic, forced file flushes, and image-sized synchronous work in Flutter UI code.
+
+Android background processing paths using StackJobReporter
+- lib/core/background/standard_stack_background_worker.dart (Milky Way + star trail)
+- lib/core/background/meteor_background_worker.dart
+- lib/core/background/meteor_composite_background_worker.dart
+- lib/core/background/focus_marking_background_worker.dart
+- lib/core/background/focus_stack_background_worker.dart
+- lib/core/background/cfa_drizzle_background_worker.dart
+
+Work285 protections retained
+- Routine progress persistence throttled to at most once per second.
+- High-frequency rawDecode diagnostic log throttled to at most once per second.
+- Diagnostic log writes serialized.
+
+Additional Work286 findings and fixes
+1. Progress publication backlog risk
+   File: lib/core/background/stack_job_reporter.dart
+   Work285 still serialized every accepted publish. If a status/platform publish itself took longer than the publish interval, one-second requests could accumulate behind it.
+   Fix: at most one publish is in flight; while it is running, only the latest pending snapshot is retained. Pending callers are completed when that latest snapshot is committed. An unbounded progress-publication queue can no longer form.
+
+2. WorkManager/Binder + notification frequency
+   File: lib/core/background/stack_job_reporter.dart
+   Work285 could still forward WorkManager progress and update the Android notification once per second.
+   Fix: local status remains up to one-second resolution for the UI, but routine platform publication is limited to once per five seconds. Start, heartbeat, stage/item transitions, completion, and failure force immediate platform publication.
+
+3. Full-resolution result brightness export on Flutter UI isolate
+   File: lib/features/common/result_screen.dart
+   Previous code performed image decode, a full-image pixel loop, and JPEG encoding in the UI isolate.
+   Fix: the full decode/gain/encode/write operation now runs in Isolate.run using file paths, so large results cannot monopolize the UI event loop during save/share preparation.
+
+4. Focus review mask/preview construction on Flutter UI isolate
+   File: lib/features/focus_stack/focus_marking_review_screen.dart
+   Previous mask rendering could scan essentially every full-resolution marking-mask pixel without yielding; preview RGBA construction also used one uninterrupted loop.
+   Fix: both loops cooperatively yield in bounded chunks and abort stale work if the displayed frame changes.
+
+5. Repeated fsync of large focus-review intermediate files
+   File: lib/core/background/focus_marking_background_codec.dart
+   Previous code forced flush:true for every full-resolution mask and every preview blob.
+   Fix: intermediate blob writes no longer force an fsync per file. All writes are awaited/closed, and the final metadata commit marker is still written with flush:true after all blobs complete.
+
+Static residual review
+- Android MainActivity result-file copy is already executed on a dedicated single-thread ExecutorService, not the Android main thread.
+- Native RAW decode is invoked through Isolate.run in lib/core/raw/ffi_raw_native_bridge.dart.
+- Standard Android routes for Milky Way, star trail and meteor use StandardBackgroundProgressScreen / WorkManager; focus marking and focus stack also use background workers on Android.
+- Remaining flush:true sites in the background path are small authoritative metadata/status/registry/diagnostic writes or one-time final result metadata, not repeated image-sized per-progress writes.
+- The one-second foreground status poll uses asynchronous file I/O.
+
+What this audit cannot prove
+- No Dart/Flutter SDK is installed in the execution environment, so flutter analyze, flutter test, Android build, and real-device ANR/Perfetto verification were not executable here.
+- Static inspection cannot guarantee that Android/vendor/plugin internals will never produce an ANR. A 100% claim requires a real-device ANR trace/Perfetto capture under representative workloads.
+
+Conclusion
+- Work285 was not the complete ANR hardening pass.
+- Work286 closes the additional source-level ANR risks found in the normal Android processing and review/save paths during this full static audit.
+- No additional same-pattern source-level candidate was found after the Work286 changes, but runtime proof is still required before claiming that all possible ANRs are eliminated.

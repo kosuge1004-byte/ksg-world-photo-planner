@@ -1,0 +1,4 @@
+lib/core/session/milky_way_pipeline.dart:410:  double localRegistrationMinimumMatchesPerCoefficient = 4,
+lib/core/session/milky_way_pipeline.dart:618:  double localRegistrationMinimumMatchesPerCoefficient = 4,
+lib/core/session/export_pipeline_result.dart:140:  double localRegistrationMinimumMatchesPerCoefficient = 4,
+lib/core/session/export_pipeline_result.dart:295:  double localRegistrationMinimumMatchesPerCoefficient = 4,

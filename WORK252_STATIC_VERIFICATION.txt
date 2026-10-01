@@ -1,0 +1,17 @@
+PASS: robust option added
+PASS: small-stack cap = 7
+PASS: MAD Gaussian scale present
+PASS: median/MAD seed present
+PASS: zero-MAD equality tolerance present
+PASS: minimum survivor guard retained
+PASS: Milky Way production enables robust seed
+PASS: Meteor production enables robust seed in both paths
+PASS: 3-frame outlier regression test present
+PASS: clean-triplet regression test present
+PASS: zero-MAD regression test present
+PASS: low-level backward-compat test present
+
+NOT RUN: flutter test
+NOT RUN: flutter analyze
+NOT RUN: Android release APK build
+NOT VERIFIED: Sony α7 III real RAW
