@@ -39,6 +39,7 @@ import {
   type PreviewMeasurementPoint,
 } from "./measurement/previewMeasurement";
 import { ForegroundPreviewOverlay } from "./components/ForegroundPreviewOverlay";
+import { projectSubjectPinToPreview } from "./preview/subjectProjection";
 import { ForegroundObjectControls } from "./components/ForegroundObjectControls";
 import { SpotSearchScreen } from "./components/SpotSearchScreen";
 const ProjectsScreen = lazy(() =>
@@ -1533,6 +1534,43 @@ function App() {
       return false;
     }
   }, [foregroundObject, subjectPoint]);
+
+  const previewSubjectPinScreenPoint = useMemo(() => {
+    if (!previewReady || !tripodPoint || !subjectPoint) return null;
+    try {
+      const projected = projectSubjectPinToPreview(
+        tripodPoint,
+        subjectPoint,
+        cameraSettings,
+        previewAspectRatio,
+        calculationMode,
+        previewViewCorrection
+      );
+      if (
+        !projected.inFront ||
+        !Number.isFinite(projected.xPercent) ||
+        !Number.isFinite(projected.yPercent) ||
+        projected.xPercent < -20 ||
+        projected.xPercent > 120 ||
+        projected.yPercent < -20 ||
+        projected.yPercent > 120
+      ) {
+        return null;
+      }
+      return projected;
+    } catch (error) {
+      console.warn("被写体ピンをプレビューへ投影できませんでした", error);
+      return null;
+    }
+  }, [
+    previewReady,
+    tripodPoint,
+    subjectPoint,
+    cameraSettings,
+    previewAspectRatio,
+    calculationMode,
+    previewViewCorrection,
+  ]);
 
   const celestialPoints = useMemo(() => {
     if (!tripodPoint || !subjectPoint) {
@@ -5486,8 +5524,15 @@ ${diagnosticMessage}
             viewCorrection={previewViewCorrection}
           />
 
-          {previewReady && !foregroundOverlapsSubjectPin && (
-            <div className="preview-subject-center" aria-hidden="true">
+          {previewSubjectPinScreenPoint && !foregroundOverlapsSubjectPin && (
+            <div
+              className="preview-subject-pin"
+              style={{
+                left: `${previewSubjectPinScreenPoint.xPercent}%`,
+                top: `${previewSubjectPinScreenPoint.yPercent}%`,
+              }}
+              aria-hidden="true"
+            >
               <svg viewBox="0 0 28 40">
                 <path d="M14 39C11 32 2 24 2 14A12 12 0 0 1 26 14c0 10-9 18-12 25Z" />
                 <circle cx="14" cy="14" r="4.5" />
@@ -5526,29 +5571,31 @@ ${diagnosticMessage}
           }}
         />
 
-        <CelestialMenu
-          open={celestialMenuOpen}
-          visibility={celestialVisibility}
-          onToggleOpen={() =>
-            setCelestialMenuOpen((current) => !current)
-          }
-          onChangeVisibility={setCelestialVisibility}
-          lightPollutionEnabled={lightPollutionEnabled}
-          onChangeLightPollution={setLightPollutionEnabled}
-        />
+        <div className="preview-celestial-toolbar">
+          <label className="celestial-drag-opacity-control">
+            <span>天体透明度</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={celestialDragOpacity}
+              onChange={(event) => setCelestialDragOpacity(Number(event.target.value))}
+              aria-label="天体の透明度（時間移動中）"
+            />
+          </label>
 
-        <label className="celestial-drag-opacity-control">
-          <span>天体透明度</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={celestialDragOpacity}
-            onChange={(event) => setCelestialDragOpacity(Number(event.target.value))}
-            aria-label="天体の透明度（時間移動中）"
+          <CelestialMenu
+            open={celestialMenuOpen}
+            visibility={celestialVisibility}
+            onToggleOpen={() =>
+              setCelestialMenuOpen((current) => !current)
+            }
+            onChangeVisibility={setCelestialVisibility}
+            lightPollutionEnabled={lightPollutionEnabled}
+            onChangeLightPollution={setLightPollutionEnabled}
           />
-        </label>
+        </div>
 
         <div className="preview-load-status">
           {previewStatus}

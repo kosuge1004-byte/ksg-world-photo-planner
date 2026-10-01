@@ -435,10 +435,10 @@ button { cursor: pointer; }
   from { transform: scale(0); }
   to { transform: scale(1); }
 }
-.preview-subject-center { position: absolute; z-index: 27; top: 50%; left: 50%; width: 5.6px; height: 8px; transform: translate(-50%, -100%); filter: drop-shadow(0 1px 1px #000); pointer-events: none; }
-.preview-subject-center svg { display: block; width: 5.6px; height: 8px; overflow: visible; }
-.preview-subject-center path { fill: #e53935; stroke: #fff; stroke-width: 3; }
-.preview-subject-center circle { fill: #fff; }
+.preview-subject-pin { position: absolute; z-index: 27; width: 5.6px; height: 8px; transform: translate(-50%, -100%); filter: drop-shadow(0 1px 1px #000); pointer-events: none; }
+.preview-subject-pin svg { display: block; width: 5.6px; height: 8px; overflow: visible; }
+.preview-subject-pin path { fill: #e53935; stroke: #fff; stroke-width: 3; }
+.preview-subject-pin circle { fill: #fff; }
 
 .preview-empty-state {
   position: absolute;
@@ -478,7 +478,9 @@ button { cursor: pointer; }
   left: 50%;
   bottom: calc(12px + env(safe-area-inset-bottom));
   box-sizing: border-box;
-  width: min(420px, calc(100% - 24px));
+  /* 左右の地図操作レール／操作ボタンを常に空ける。
+     画面幅344px級でも左右約56pxを操作専用領域として確保する。 */
+  width: min(420px, calc(100% - 112px));
   padding: 7px 12px;
   color: #eef4fb;
   border: 1px solid rgba(255, 255, 255, .22);
@@ -488,7 +490,9 @@ button { cursor: pointer; }
   line-height: 1.4;
   text-align: center;
   transform: translateX(-50%);
-  pointer-events: auto;
+  /* 背景・メッセージ文字は下の地図操作をブロックしない。
+     app-status内の実ボタンだけ個別にpointer-eventsを戻す。 */
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -509,10 +513,12 @@ button { cursor: pointer; }
   line-height: 1.35;
 }
 .app-status-tripod:disabled { opacity: 1; }
+.app-status-tripod { pointer-events: auto; }
 .app-status-tripod.tappable { cursor: pointer; }
 .app-status-tripod-progress { font-size: 9px; color: rgba(238,247,255,.9); }
 .app-status-tripod-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px; }
 .app-status-tripod-actions button {
+  pointer-events: auto;
   padding: 2px 6px;
   color: rgba(238,247,255,.82);
   border: 1px solid rgba(120,150,175,.4);
@@ -873,6 +879,28 @@ button { cursor: pointer; }
 .celestial-milkyWay.celestial-fast-position { display: none; }
 
 .celestial-menu { position: absolute; z-index: 60; top: 15px; right: 7px; pointer-events: auto; }
+/* プレビュー上部の透明度スライダーと天体選択を同一flex行に置き、
+   互いのタッチ領域が絶対に重ならないようにする。 */
+.preview-celestial-toolbar {
+  position: absolute;
+  z-index: 60;
+  top: 8px;
+  right: 7px;
+  left: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  pointer-events: none;
+}
+.preview-celestial-toolbar > * { pointer-events: auto; }
+.preview-celestial-toolbar > .celestial-menu {
+  position: static;
+  top: auto;
+  right: auto;
+  flex: 0 0 auto;
+}
 .celestial-menu-button { min-width: 94px; min-height: 27px; padding: 3px 7px; color: #fff; border: 1px solid #343c46; border-radius: 6px; background: rgba(2,5,9,.91); font-size: 11px; }
 .celestial-menu-popover { position: absolute; top: 30px; right: 0; width: 98px; max-height: calc(27.3dvh - 127px); padding: 3px; overflow-y: auto; border: 1px solid #333b46; border-radius: 6px; background: rgba(1,4,8,.94); box-shadow: 0 10px 26px rgba(0,0,0,.65); }
 /* 2026-09-02追記: 開閉トグルを廃止し、常時表示のコンパクトな1行UIにした。
@@ -1297,7 +1325,7 @@ button { cursor: pointer; }
   .preview-tool-rail { top: 14px; left: 8px; gap: 4px; }
   .preview-tool-rail > button { width: 42px; min-height: 45px; }
   .preview-zoom-control { grid-template-rows: repeat(2, 56px); width: 42px; }
-  .celestial-menu { top: 9px; right: 6px; }
+  .preview-celestial-toolbar { top: 9px; right: 6px; left: 72px; gap: 6px; }
   .preview-actions { right: 7px; bottom: 7px; }
   .preview-actions button { width: 42px; min-height: 38px; }
   .timeline-section { padding-inline: 5px; }
@@ -2959,24 +2987,29 @@ body.pseudo-fullscreen-active {
 }
 
 .celestial-drag-opacity-control {
-  position: absolute;
-  z-index: 25;
-  top: 8px;
-  left: 50%;
+  position: static;
+  z-index: auto;
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 5px;
-  width: min(170px, 40vw);
-  transform: translateX(-50%);
+  width: auto;
+  min-width: 0;
+  transform: none;
   color: #cdd3db;
   font-size: 9px;
   white-space: nowrap;
 }
 
+.celestial-drag-opacity-control span {
+  flex: 0 0 auto;
+}
+
 .celestial-drag-opacity-control input {
   display: block;
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: 44px;
+  max-width: 118px;
   margin: 0;
 }
 
