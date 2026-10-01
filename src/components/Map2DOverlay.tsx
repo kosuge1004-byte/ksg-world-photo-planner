@@ -52,19 +52,58 @@ function isInside(point: MapPixelPoint, size: MapSize): boolean {
   );
 }
 
-function extendRayPastTarget(
+type VisibleRaySegment = {
+  start: MapPixelPoint;
+  end: MapPixelPoint;
+};
+
+/**
+ * 被写体から天体方位へ伸びる「半直線」を、現在の表示領域までクリップする。
+ *
+ * 以前は画面対角線×4の固定ピクセル長だけ線を延長していたため、ズーム時に
+ * 被写体が画面外へ大きく離れると線の終端が表示領域まで届かず、候補点は
+ * 見えているのに破線だけ消えることがあった。さらに巨大な画面外座標をSVGへ
+ * 渡すとAndroid WebViewで描画精度が落ちるため、無限に近い長さへ伸ばすのでは
+ * なく、半直線と「画面＋余白」の矩形との交差区間だけを返す。
+ */
+function clipRayToViewport(
   origin: MapPixelPoint,
-  target: MapPixelPoint,
+  directionPoint: MapPixelPoint,
   size: MapSize
-): MapPixelPoint {
-  const dx = target.x - origin.x;
-  const dy = target.y - origin.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 0.001) return target;
-  const extension = Math.hypot(size.width, size.height) * 4;
+): VisibleRaySegment | null {
+  const dx = directionPoint.x - origin.x;
+  const dy = directionPoint.y - origin.y;
+  if (Math.hypot(dx, dy) < 0.001) return null;
+
+  const padding = 40;
+  const minX = -padding;
+  const maxX = size.width + padding;
+  const minY = -padding;
+  const maxY = size.height + padding;
+
+  let tEnter = 0;
+  let tExit = Number.POSITIVE_INFINITY;
+
+  const clipAxis = (originValue: number, delta: number, min: number, max: number) => {
+    if (Math.abs(delta) < 1e-9) {
+      return originValue >= min && originValue <= max;
+    }
+    let t0 = (min - originValue) / delta;
+    let t1 = (max - originValue) / delta;
+    if (t0 > t1) [t0, t1] = [t1, t0];
+    tEnter = Math.max(tEnter, t0);
+    tExit = Math.min(tExit, t1);
+    return tExit >= tEnter;
+  };
+
+  if (!clipAxis(origin.x, dx, minX, maxX)) return null;
+  if (!clipAxis(origin.y, dy, minY, maxY)) return null;
+  if (!Number.isFinite(tExit) || tExit < 0) return null;
+
+  const enter = Math.max(0, tEnter);
   return {
-    x: origin.x + dx / length * extension,
-    y: origin.y + dy / length * extension,
+    start: { x: origin.x + dx * enter, y: origin.y + dy * enter },
+    end: { x: origin.x + dx * tExit, y: origin.y + dy * tExit },
   };
 }
 
@@ -137,15 +176,16 @@ export function Map2DOverlayComponent({
             zoom,
             size
           );
-          const extendedTarget = extendRayPastTarget(start, directionPixel, size);
+          const visibleRay = clipRayToViewport(start, directionPixel, size);
+          if (!visibleRay) return null;
           return (
             <g key={`${line.id}-tripod-search-base-line`}>
               <line
                 className={`map-tripod-candidate-line map-candidate-${line.id}`}
-                x1={start.x}
-                y1={start.y}
-                x2={extendedTarget.x}
-                y2={extendedTarget.y}
+                x1={visibleRay.start.x}
+                y1={visibleRay.start.y}
+                x2={visibleRay.end.x}
+                y2={visibleRay.end.y}
               />
             </g>
           );

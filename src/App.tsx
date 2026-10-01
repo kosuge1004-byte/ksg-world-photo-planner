@@ -139,6 +139,7 @@ import {
 import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache";
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
+import { clearTripodCandidateEntities, updateTripodCandidateEntities } from "./cesium/tripodCandidateEntities";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup, setPreviewWireframeMode } from "./cesium/createMapViewer";
 import {
   calculateKarneyDestinationPoint,
@@ -1950,6 +1951,26 @@ function App() {
     () => displayedTripodCandidates,
     [displayedTripodCandidates]
   );
+
+  // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
+  // 対応するCesium Entityが無く、候補計算が正常でも点だけ表示されなかった。
+  // 2Dと同じdisplayedTripodCandidatesを唯一の描画元として3Dへ反映し、
+  // 非表示天体の候補は2Dと同様に除外する。計算値そのものは変更しない。
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    if (mapDisplayMode !== "3d" || !mapReady) {
+      clearTripodCandidateEntities(viewer);
+      return;
+    }
+    const visibleCandidates = displayedTripodCandidates.filter(
+      (candidate) => celestialVisibility[candidate.id]
+    );
+    updateTripodCandidateEntities(viewer, visibleCandidates);
+    return () => {
+      if (!viewer.isDestroyed()) clearTripodCandidateEntities(viewer);
+    };
+  }, [displayedTripodCandidates, celestialVisibility, mapDisplayMode, mapReady]);
 
   useEffect(() => {
     const enabledPoints = tripodCandidateSourcePoints.filter(
