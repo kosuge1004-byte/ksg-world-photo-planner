@@ -15,9 +15,10 @@ import { idFor } from "../subjectStorage";
 import { listDownloadedSpotData } from "./downloadedSpotData";
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type { CelestialScreenPoint, TripodCandidate } from "../types/celestial";
-import type { GroundPoint } from "../types/points";
+import { withLensCenterHeight, type GroundPoint } from "../types/points";
 import type { BearingProfileBatchProfile } from "../types/bearingProfileBatch";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
+import { computeApparentElevation } from "../apparent/apparentElevation";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { isAbortError } from "../utils/runtimeErrors";
 import {
@@ -739,9 +740,34 @@ function findApproximateBracketsFromProfile(
   subjectPoint: GroundPoint,
   azimuthDegrees: number,
   altitudeDegrees: number,
-  lensCenterHeightMeters: number
+  lensCenterHeightMeters: number,
+  calculationMode: CalculationMode,
+  initialDirectionObserver: GroundPoint | undefined
 ): number[] {
-  const ray = buildCelestialBackwardRay(subjectPoint, azimuthDegrees, altitudeDegrees);
+  // authoritative な calculateTripodCandidates() と同じ方向フレームを使う。
+  // 既存三脚がある場合はそのレンズ中心を観測点とし、無い場合だけ被写体の
+  // レンズ中心を使う。被写体地点のENUへaz/altをそのまま載せ替えると、
+  // 長距離ではECEF方向が本計算とずれて誤って「交点なし」にできる。
+  const rayDirectionObserver = initialDirectionObserver ?? withLensCenterHeight(
+    subjectPoint,
+    lensCenterHeightMeters,
+    "方位プロファイル初期方向観測点"
+  );
+  const initialSubjectElevation = computeApparentElevation(
+    rayDirectionObserver,
+    subjectPoint,
+    calculationMode
+  );
+  const initialGroundRefractionDegrees =
+    initialSubjectElevation.apparentAltitudeDegrees -
+    initialSubjectElevation.geometricAltitudeDegrees;
+  const geometricRayAltitudeDegrees = altitudeDegrees - initialGroundRefractionDegrees;
+  const ray = buildCelestialBackwardRay(
+    subjectPoint,
+    azimuthDegrees,
+    geometricRayAltitudeDegrees,
+    rayDirectionObserver
+  );
   if (!ray) return [];
   const errors = profile.points.map((point) => {
     const rayPoint = rayCartographicAtDistance(ray, point.distanceMeters);
@@ -753,13 +779,28 @@ function findApproximateBracketsFromProfile(
     const previous = errors[index - 1];
     const current = errors[index];
     if (!Number.isFinite(previous) || !Number.isFinite(current)) continue;
-    const crossed = (previous <= 0 && current > 0) || (previous >= 0 && current < 0);
+    const crossed = previous === 0 || current === 0 || previous * current < 0;
     if (!crossed) continue;
     const distancePrevious = profile.points[index - 1].distanceMeters;
     const distanceCurrent = profile.points[index].distanceMeters;
     const totalMagnitude = Math.abs(previous) + Math.abs(current);
     const t = totalMagnitude > 0 ? Math.abs(previous) / totalMagnitude : 0.5;
     brackets.push(distancePrevious + (distanceCurrent - distancePrevious) * t);
+  }
+
+  // 本計算の粗探索と同じ安全策。符号反転が見つからなくても、サンプル間隔の
+  // 間に狭い交差が存在する場合があるため、最もレイへ近かった地点を狭域確認へ
+  // 渡す。ここでは最終確定せず、後段のcalculateTripodCandidates()が通常どおり
+  // 精密化・round-trip検証するため、偽陽性を確定結果にするものではない。
+  if (brackets.length === 0) {
+    const finiteErrors = errors
+      .map((error, index) => ({ error, index }))
+      .filter(({ error }) => Number.isFinite(error));
+    if (finiteErrors.length === 0) return [];
+    const closest = finiteErrors.reduce((best, current) =>
+      Math.abs(current.error) < Math.abs(best.error) ? current : best
+    );
+    return [profile.points[closest.index].distanceMeters];
   }
   return brackets;
 }
@@ -780,9 +821,9 @@ function findApproximateBracketsFromProfile(
  *    通常どおり呼び、cm精度の確定値を必ずライブで取り直す。
  *    これにより最終結果の精度・信頼性は通常探索と完全に同一のまま、
  *    時間のかかる全域粗探索だけを省略できる。
- * 4. 交点が1つも見つからなければ、空配列（＝候補なしを確認済み）を
- *    返す。これは「キャッシュが無くて分からない」とは異なり、正当な
- *    「探した結果、無かった」という結果なので、フォールバックはしない。
+ * 4. キャッシュは高速化専用であり「候補なし」を最終確定する権限は持たない。
+ *    符号反転が無ければ最接近点を狭域確認し、それでも確定候補が得られない
+ *    場合はnullを返してauthoritativeな通常探索へ必ずフォールバックする。
  */
 export async function tryUseBearingProfileCache(
   subjectPoint: GroundPoint,
@@ -827,9 +868,12 @@ export async function tryUseBearingProfileCache(
       subjectPoint,
       point.azimuthDegrees,
       point.altitudeDegrees,
-      cameraSettings.lensCenterHeightMeters
+      cameraSettings.lensCenterHeightMeters,
+      calculationMode,
+      initialDirectionObserver
     );
 
+    const verifiedForPoint: TripodCandidate[] = [];
     for (const approximateDistance of approximateBrackets) {
       if (signal?.aborted) throw new DOMException("計算を中止しました", "AbortError");
       // 概算はあくまで「だいたいこの辺り」。屈折補正の微調整に加え、
@@ -861,7 +905,7 @@ export async function tryUseBearingProfileCache(
           false,
           initialDirectionObserver
         );
-        collected.push(...verified);
+        verifiedForPoint.push(...verified);
       } catch (error) {
         if (isAbortError(error)) throw error;
         console.warn(
@@ -872,10 +916,25 @@ export async function tryUseBearingProfileCache(
         verificationFailures += 1;
       }
     }
+
+    // 高速経路で一部の天体だけ候補が得られた状態をcompleteとして返さない。
+    // 1天体でも0件なら、その天体に本当に解が無いのかキャッシュが拾えなかった
+    // だけなのかを判別できないため、検索全体をauthoritativeな通常探索へ戻す。
+    if (verifiedForPoint.length === 0) return null;
+    collected.push(...verifiedForPoint);
   }
-  // 2026-09-30: 狭域再確認が失敗して1件も得られなかった場合に空配列を返すと、
-  // 呼び出し側は「候補なしで完了」と扱い、通常探索へ進まなかった。
-  // 失敗による空は「このキャッシュでは決められない」としてnullを返す。
-  if (collected.length === 0 && verificationFailures > 0) return null;
+  // 2026-10-01: 方位プロファイルは高速化専用。狭域再確認で候補が1件も
+  // 確定しなかった場合、それが「本当に解なし」なのか「プロファイルの粗さ・
+  // 方位量子化・狭域レンジでは拾えなかった」のかはキャッシュだけでは断定
+  // できない。空配列を成功結果として返すとApp側がcompleteにして全域探索を
+  // 打ち切るため、0件は理由を問わずnullとしてauthoritativeな通常探索へ戻す。
+  if (collected.length === 0) {
+    if (verificationFailures > 0) {
+      console.warn(
+        `[bearing-profile] 狭域再確認で確定候補を得られませんでした（失敗${verificationFailures}件）。通常探索へフォールバックします`
+      );
+    }
+    return null;
+  }
   return collected;
 }

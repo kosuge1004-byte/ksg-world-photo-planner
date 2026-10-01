@@ -2127,7 +2127,11 @@ function App() {
             controller.signal
           );
           if (cancelled || controller.signal.aborted) return;
-          if (bearingProfileResult) {
+          // 方位プロファイルは高速化専用。空配列を「正常完了」と扱うと、
+          // 候補0件のまま status=complete になり、候補ボタンがdisabledのまま
+          // 「確定した三脚候補」と表示される。確定候補が1件以上ある場合だけ
+          // 高速経路を採用し、0件/nullはauthoritativeな通常探索へ進める。
+          if (bearingProfileResult && bearingProfileResult.length > 0) {
             tripodCandidatesRef.current = bearingProfileResult;
             lastConfirmedTripodCandidatesRef.current = bearingProfileResult;
             lastConfirmedTripodSubjectRef.current = {
