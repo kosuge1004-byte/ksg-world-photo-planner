@@ -1107,6 +1107,7 @@ button { cursor: pointer; }
 .map-right-actions button:disabled { opacity: .72; cursor: progress; }
 .map-right-actions span { font-size: 22px; line-height: .9; }
 .map-right-actions small { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: -.08em; white-space: nowrap; }
+.map-right-actions .map-display-mode-toggle span { font-size: 16px; font-weight: 800; line-height: 1; letter-spacing: -.03em; }
 .map-current-location-status { position: absolute; z-index: 18; top: 48px; left: 50%; width: min(270px, calc(100% - 148px)); padding: 5px 8px; color: #edf4fb; border: 1px solid rgba(158,190,225,.45); border-radius: 6px; background: rgba(2,8,14,.9); font-size: 8px; line-height: 1.35; text-align: center; transform: translateX(-50%); pointer-events: none !important; }
 .map-current-location-status.permission-denied {
   /* 起動時プレビュー案内と同じ幅・文字・余白に統一し、左右の地図操作を塞がない。 */
@@ -3655,3 +3656,36 @@ body.pseudo-fullscreen-active {
 .spot-download-state { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid currentColor; border-radius: 999px; font-size: 10px; font-weight: 600; vertical-align: 1px; }
 .spot-download-state.complete { opacity: .85; }
 .spot-download-state.partial, .spot-download-state.needs-update { opacity: 1; }
+.dynamic-spot-status {
+  display: grid;
+  gap: 0.3rem;
+  width: min(100%, 34rem);
+  margin: 0.35rem auto 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(118, 177, 255, 0.55);
+  border-radius: 0.65rem;
+  background: rgba(13, 31, 52, 0.92);
+  color: #eef6ff;
+  text-align: left;
+}
+
+.dynamic-spot-status.complete {
+  border-color: rgba(94, 214, 147, 0.7);
+}
+
+.dynamic-spot-status.failed,
+.dynamic-spot-status.pending-pc {
+  border-color: rgba(255, 191, 94, 0.75);
+}
+
+.dynamic-spot-status progress {
+  width: 100%;
+}
+
+.dynamic-spot-status small {
+  color: #bed0e4;
+}
+
+.dynamic-spot-status button {
+  justify-self: start;
+}

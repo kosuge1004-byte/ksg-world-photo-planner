@@ -225,9 +225,7 @@ export async function fetchBearingProfileBatchDetailed(
       }
       if (response.status === 404 && code === "PRECOMPUTED_PROFILE_NOT_FOUND") {
         return miss(
-          Math.round(request.maxDistanceMeters) === 10_000
-            ? "この地点には計算済み地形データがありません"
-            : `計算済み地形データは探索範囲10kmのみです（現在${(request.maxDistanceMeters / 1000).toFixed(0)}km）`,
+          `この地点には探索範囲${(request.maxDistanceMeters / 1000).toFixed(0)}kmの計算済み地形データがありません`,
           true
         );
       }
@@ -279,7 +277,7 @@ export async function fetchBearingProfileBatch(
 // profiles-for-pages.mjs がマニフェストとSHA-256を照合して配置する）。
 
 const STATIC_PROFILE_TIMEOUT_MS = 45_000;
-const MAX_STATIC_PROFILE_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
+const MAX_STATIC_PROFILE_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 
 async function gunzipBounded(bytes: ArrayBuffer): Promise<Uint8Array> {
   const body = new Response(bytes).body;

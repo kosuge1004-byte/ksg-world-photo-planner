@@ -12,6 +12,12 @@ export type DownloadedSpotDataRecord = {
   /** 建物・塔等を名称変更しても、再配置・更新で地表へ戻さない。 */
   subjectSurfaceTarget?: "terrain" | "structure-roof";
   structureHeightMeters?: number;
+  /** Dynamic Spot fields are optional so every v1 record remains readable. */
+  dynamicSpotId?: string;
+  dynamicSpotCoordinateKey?: string;
+  dynamicSpotProfileVersion?: string;
+  dynamicSpotHeightSourceType?: "official" | "plateau-measured" | "osm-height" | "osm-levels-estimate" | "unknown";
+  dynamicSpotHeightStatus?: "verified" | "measured" | "estimated" | "unknown";
 };
 
 const STORAGE_KEY = "astrosight-downloaded-spot-data-v1";

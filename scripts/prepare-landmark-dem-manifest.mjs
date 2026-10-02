@@ -8,13 +8,28 @@ const EARTH_METERS_PER_DEGREE = 111_320;
 const BATCH_SIZE = 50;
 
 function parseArguments(argv) {
-  const output = { radii: DEFAULT_RADII_METERS, fetchMetadata: true };
+  const output = {
+    radii: DEFAULT_RADII_METERS,
+    fetchMetadata: true,
+    names: null,
+    outputPrefix: "gsi-landmark-dem",
+  };
   for (const argument of argv) {
     if (argument === "--no-fetch") output.fetchMetadata = false;
     else if (argument.startsWith("--radii=")) {
       output.radii = argument.slice("--radii=".length).split(",")
         .map(Number)
         .filter((value) => Number.isFinite(value) && value >= 0);
+    } else if (argument.startsWith("--names=")) {
+      output.names = argument.slice("--names=".length).split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    } else if (argument.startsWith("--output-prefix=")) {
+      const prefix = argument.slice("--output-prefix=".length).trim();
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(prefix)) {
+        throw new Error("output prefix is invalid");
+      }
+      output.outputPrefix = prefix;
     }
   }
   if (output.radii.length === 0) throw new Error("At least one non-negative radius is required");
@@ -162,11 +177,20 @@ async function main() {
   if (landmarks.length < 288 || landmarks.length !== seedLandmarks.length) {
     throw new Error(`Expected client and seed catalogues to match, parsed ${landmarks.length} / ${seedLandmarks.length}`);
   }
+  const selectedNames = options.names ? new Set(options.names) : null;
+  const selectedLandmarks = selectedNames
+    ? landmarks.filter((landmark) => selectedNames.has(landmark.name))
+    : landmarks;
+  if (selectedNames && selectedLandmarks.length !== selectedNames.size) {
+    const found = new Set(selectedLandmarks.map((landmark) => landmark.name));
+    const missing = [...selectedNames].filter((name) => !found.has(name));
+    throw new Error(`Unknown landmark name(s): ${missing.join(", ")}`);
+  }
   await fs.mkdir(demDirectory, { recursive: true });
 
   for (const radiusMeters of [...new Set(options.radii)].sort((a, b) => a - b)) {
     const landmarksByMesh = new Map();
-    for (const landmark of landmarks) {
+    for (const landmark of selectedLandmarks) {
       for (const meshCode of meshesForRadius(landmark, radiusMeters)) {
         const owners = landmarksByMesh.get(meshCode) ?? [];
         owners.push(landmark.name);
@@ -181,7 +205,8 @@ async function main() {
       capturedAt: new Date().toISOString(),
       source: API_URL,
       landmarkSource: "src/data/japanLandmarks.ts",
-      landmarkCount: landmarks.length,
+      landmarkCount: selectedLandmarks.length,
+      catalogueLandmarkCount: landmarks.length,
       radiusMeters,
       meshCodeLevel: "JIS X 0410 second mesh (about 10 km)",
       meshCount: meshCodes.length,
@@ -200,7 +225,7 @@ async function main() {
         landmarks: landmarksByMesh.get(String(file.place_code)) ?? [],
       })),
     };
-    const jsonPath = path.join(demDirectory, `gsi-landmark-dem-${suffix}-manifest.json`);
+    const jsonPath = path.join(demDirectory, `${options.outputPrefix}-${suffix}-manifest.json`);
     await fs.writeFile(jsonPath, `${JSON.stringify(manifest, null, 2)}\n`);
     const csvRows = [
       ["id", "typeCode", "meshCode", "fileName", "sizeKiB", "estimatedBytes", "updateDate", "downloadPath", "landmarks"],
@@ -210,7 +235,7 @@ async function main() {
       ]),
     ];
     await fs.writeFile(
-      path.join(demDirectory, `gsi-landmark-dem-${suffix}-manifest.csv`),
+      path.join(demDirectory, `${options.outputPrefix}-${suffix}-manifest.csv`),
       `${csvRows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`,
     );
     console.log(`${suffix}: ${meshCodes.length} meshes, ${manifest.summary.files} files, ${manifest.summary.estimatedGiB} GiB`);

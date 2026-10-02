@@ -47,7 +47,9 @@ import type { RefractionWeatherContext } from "../search/refractionWeatherModel"
 import { fetchSiteContexts } from "../search/siteContext";
 
 export const ABSOLUTE_MIN_DISTANCE_METERS = 8;
-export const ABSOLUTE_MAX_DISTANCE_METERS = 50_000;
+// 一般地点のUI上限は50kmのまま維持する。100kmは富士山の登録座標だけ、
+// precomputedBearingProfileTargetsの専用条件から渡される。
+export const ABSOLUTE_MAX_DISTANCE_METERS = 100_000;
 // 初回は粗い距離走査で画角内候補を絞り、交差区間だけ詳細化する。
 const DEFAULT_SAMPLE_COUNT = 32;
 // 交点取りこぼし防止用の補助走査。初期32点は維持しつつ、広すぎる区間だけを
@@ -93,6 +95,15 @@ const ADAPTIVE_NEAR_RAY_MAX_SPAN_METERS = 100;
 // 距離に依存しない固定のメートル単位の許容値に変更する。
 const ADAPTIVE_NEAR_RAY_ABSOLUTE_METERS = 6;
 export const ADAPTIVE_MAX_TOTAL_SAMPLES = 640;
+// 一般地点の上限を増やすと50km・32方位だけでWorker外向き要求が無料枠向け
+// 上限を超える。4096点は登録済み富士山の100km経路だけに限定する。
+export const MOUNT_FUJI_100KM_MAX_TOTAL_SAMPLES = 4096;
+
+export function maximumTerrainProfileSamples(maxDistanceMeters: number): number {
+  return maxDistanceMeters > 50_000
+    ? MOUNT_FUJI_100KM_MAX_TOTAL_SAMPLES
+    : ADAPTIVE_MAX_TOTAL_SAMPLES;
+}
 // 精密化は固定575点取得ではなく、交差区間だけを32分割して2段階で絞る。
 // 32^2=1024分割相当となるため、従来の576分割より最終距離分解能は高い。
 // 各段階で使うDEMは従来どおり1m指定のままなので、高さ精度も落とさない。
@@ -1346,7 +1357,14 @@ async function scanRayTerrainIntersections(
   if (baseDistances.length < 2) return [];
 
   // 第1段階: 遠距離側で対数サンプル間隔が大きくなりすぎないよう500m上限で一括補完。
-  let distances = densifyDistanceIntervals(baseDistances, ADAPTIVE_COARSE_MAX_SPAN_METERS);
+  const maximumTotalSamples = maximumTerrainProfileSamples(
+    distanceRange?.maxMeters ?? 50_000
+  );
+  let distances = densifyDistanceIntervals(
+    baseDistances,
+    ADAPTIVE_COARSE_MAX_SPAN_METERS,
+    maximumTotalSamples
+  );
   let { samples: sampled, errors } = await sampleRayTerrainErrors(
     ray,
     lensCenterHeightMeters,
@@ -1382,7 +1400,7 @@ async function scanRayTerrainIntersections(
   }
 
   if (additionalDistances.length > 0) {
-    const remainingCapacity = Math.max(0, ADAPTIVE_MAX_TOTAL_SAMPLES - distances.length);
+    const remainingCapacity = Math.max(0, maximumTotalSamples - distances.length);
     const additions = uniqueSortedDistances(additionalDistances).slice(0, remainingCapacity);
     if (additions.length > 0) {
       const { samples: addedSamples, errors: addedErrors } = await sampleRayTerrainErrors(

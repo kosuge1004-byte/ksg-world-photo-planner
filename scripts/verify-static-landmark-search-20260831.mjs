@@ -15,7 +15,7 @@ if (!search.includes("resolveStaticJapanLandmark(normalizedQuery)")) throw new E
 const staticIndex = search.indexOf("resolveStaticJapanLandmark(normalizedQuery)");
 const cacheIndex = search.indexOf("readCachedSpotLocation(normalizedQuery)");
 if (!(staticIndex >= 0 && cacheIndex > staticIndex)) throw new Error("static landmark lookup must precede cache/network path");
-for (const name of ["岐阜城", "東京タワー", "東京スカイツリー", "牛久大仏", "東京ディズニーランド", "富士山", "岩屋観世音菩薩像（愛知県）", "王ヶ頭ホテル（長野県）", "美しの塔（長野県）", "上陸大師像（愛知県）", "日出の石門（愛知県）", "夫婦岩（三重県）", "コスモクロック21", "ダイヤと花の大観覧車", "Sky-Boat", "HEP FIVE観覧車", "Fuji Sky View", "アミュラン"]) {
+for (const name of ["岐阜城", "東京タワー", "東京スカイツリー", "牛久大仏", "東京ディズニーランド", "富士山", "曽爾高原（奈良県）", "亀山峠（三重県・奈良県境）", "岩屋観世音菩薩像（愛知県）", "王ヶ頭ホテル（長野県）", "美しの塔（長野県）", "上陸大師像（愛知県）", "日出の石門（愛知県）", "夫婦岩（三重県）", "コスモクロック21", "ダイヤと花の大観覧車", "Sky-Boat", "HEP FIVE観覧車", "Fuji Sky View", "アミュラン"]) {
   if (!data.includes(`name: \"${name}\"`)) throw new Error(`missing static landmark: ${name}`);
 }
 if (!data.includes('"USJ"')) throw new Error("USJ alias missing");

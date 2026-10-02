@@ -1,6 +1,5 @@
 import { Cartographic } from "cesium";
 import {
-  ABSOLUTE_MAX_DISTANCE_METERS,
   ABSOLUTE_MIN_DISTANCE_METERS,
   ADAPTIVE_COARSE_MAX_SPAN_METERS,
   densifyDistanceIntervals,
@@ -16,6 +15,10 @@ import type { SiteContext } from "../src/types/geospatial.ts";
 import type { GroundPoint } from "../src/types/points.ts";
 import { sampleServerWorldTerrain } from "./worldTerrain.ts";
 import { fetchServerSiteContexts } from "./siteContext.ts";
+
+// この旧サーバージョブは一般地点用として50kmを維持する。富士山100kmは
+// 計算済みプロファイル経路だけで扱い、この未使用経路を全地点100kmに広げない。
+const LEGACY_JOB_MAX_DISTANCE_METERS = 50_000;
 
 /**
  * 2026-09-09追記（実機での動作確認で判明した不具合の修正）: サーバー側の
@@ -53,7 +56,7 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMessage: string): Pr
  */
 const baseDistances = densifyDistanceIntervals(
   logarithmicDistances(
-    { minMeters: ABSOLUTE_MIN_DISTANCE_METERS, maxMeters: ABSOLUTE_MAX_DISTANCE_METERS },
+    { minMeters: ABSOLUTE_MIN_DISTANCE_METERS, maxMeters: LEGACY_JOB_MAX_DISTANCE_METERS },
     32
   ),
   ADAPTIVE_COARSE_MAX_SPAN_METERS

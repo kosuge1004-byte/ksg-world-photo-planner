@@ -14,7 +14,7 @@ import {
 } from "./precomputedBearingProfiles.ts";
 
 const MAX_COMPRESSED_PROFILE_BYTES = 16 * 1024 * 1024;
-const MAX_UNCOMPRESSED_PROFILE_BYTES = 32 * 1024 * 1024;
+const MAX_UNCOMPRESSED_PROFILE_BYTES = 64 * 1024 * 1024;
 
 export type CompressedPrecomputedBearingProfile = {
   key: string;

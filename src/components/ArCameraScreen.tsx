@@ -13,6 +13,7 @@ import {
 } from "../ar/nativeCameraInfo";
 import { startEnvironmentCamera, stopCameraStream } from "../ar/cameraSession";
 import { loadArOrientationOffset, saveArOrientationOffset } from "../ar/orientationOffset";
+import { orientationOffsetFromSwipe } from "../ar/orientationCalibration";
 import { createArOrientationSmoother } from "../ar/orientationSmoothing";
 import {
   startArLocationTracking,
@@ -103,32 +104,47 @@ export function ArCameraScreen({
   const [orientationOffset, setOrientationOffset] = useState(() => loadArOrientationOffset());
   const orientationOffsetRef = useRef(orientationOffset);
   orientationOffsetRef.current = orientationOffset;
-  const swipeStartRef = useRef<{ x: number; y: number; offset: typeof orientationOffset } | null>(null);
+  const swipeStartRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    offset: typeof orientationOffset;
+  } | null>(null);
   const handleCalibrationPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    swipeStartRef.current = { x: event.clientX, y: event.clientY, offset: orientationOffsetRef.current };
+    if (!event.isPrimary || event.button !== 0) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, select, label, a")) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    swipeStartRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      offset: orientationOffsetRef.current,
+    };
   };
   const handleCalibrationPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const start = swipeStartRef.current;
-    if (!start || !cameraProjection) return;
-    const stageWidth = event.currentTarget.clientWidth || 1;
-    const stageHeight = event.currentTarget.clientHeight || 1;
-    // 画面いっぱいのスワイプ（stage幅/高さ分）が、ちょうどカメラの
-    // 画角（horizontalFovDeg/verticalFovDeg）分の回転に対応するようにする。
-    // これにより、実際にカメラに映っている景色の見た目の動きと、
-    // 3D表示の動きが一致し、直感的に合わせられる。
-    const dxDegrees = ((event.clientX - start.x) / stageWidth) * cameraProjection.horizontalFovDeg;
-    const dyDegrees = ((event.clientY - start.y) / stageHeight) * cameraProjection.verticalFovDeg;
-    setOrientationOffset({
-      // 画面を右にスワイプ＝景色を右へ動かしたい＝3D表示を左（マイナス）へ
-      // ずらす必要があるため符号を反転する。
-      headingOffsetDegrees: start.offset.headingOffsetDegrees - dxDegrees,
-      // 画面を下にスワイプ＝見上げる角度を下げたい＝pitchを減らす。
-      pitchOffsetDegrees: start.offset.pitchOffsetDegrees - dyDegrees,
-    });
+    if (!start || start.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    setOrientationOffset(orientationOffsetFromSwipe({
+      startX: start.x,
+      startY: start.y,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      stageWidth: event.currentTarget.clientWidth,
+      stageHeight: event.currentTarget.clientHeight,
+      startOffset: start.offset,
+      projection: cameraProjection,
+    }));
   };
-  const handleCalibrationPointerUp = () => {
-    if (!swipeStartRef.current) return;
+  const handleCalibrationPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) return;
     swipeStartRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     saveArOrientationOffset(orientationOffsetRef.current);
   };
   const handleCalibrationReset = () => {
@@ -351,6 +367,7 @@ export function ArCameraScreen({
         onPointerMove={handleCalibrationPointerMove}
         onPointerUp={handleCalibrationPointerUp}
         onPointerCancel={handleCalibrationPointerUp}
+        onLostPointerCapture={handleCalibrationPointerUp}
       >
         <video
           ref={videoRef}

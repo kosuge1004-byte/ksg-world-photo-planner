@@ -13,6 +13,7 @@ import { createLocalDemRequestHandler } from "./app.ts";
 import { loadConfig } from "./config.ts";
 import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
 import { createLocalDemPersistentCache } from "./localDemPersistentCache.ts";
+import { createDynamicSpotStore } from "./dynamicSpotStore.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -22,6 +23,18 @@ async function main(): Promise<void> {
   const precomputedProfiles = await createReadOnlyBearingProfileStore(config.dataRoot);
   configureServerRuntime({ persistentCache });
 
+  const computeExactProfile = (request: Parameters<typeof computeBearingProfileBatch>[0], signal: AbortSignal) =>
+    computeBearingProfileBatch(request, signal, {
+      // Static and dynamic stored profiles are checked before this callback.
+      // Exact generation always uses the requested coordinate itself.
+      lookupPrecomputed: async () => null,
+      lookupElevations: (points, requestSignal) =>
+        lookupGsiElevations(points, requestSignal, undefined, { useLocalGateway: false }),
+      lookupGeoidHeights: lookupBearingProfileGeoidHeights,
+      nowIso: () => new Date().toISOString(),
+    });
+  const dynamicSpots = await createDynamicSpotStore(config.dataRoot, computeExactProfile);
+
   const handler = createLocalDemRequestHandler(
     config,
     lookupLocalDemElevationsForSource,
@@ -29,17 +42,8 @@ async function main(): Promise<void> {
     precomputedProfiles
       ? (request) => precomputedProfiles.lookup(request)
       : undefined,
-    (request, signal) => computeBearingProfileBatch(request, signal, {
-      // The precomputed route is tried before this exact on-demand route.
-      // Keeping this calculation independent prevents a second file lookup and
-      // guarantees that the requested coordinates, including metre-scale
-      // offsets from catalogue points, are sampled as supplied.
-      lookupPrecomputed: async () => null,
-      lookupElevations: (points, requestSignal) =>
-        lookupGsiElevations(points, requestSignal, undefined, { useLocalGateway: false }),
-      lookupGeoidHeights: lookupBearingProfileGeoidHeights,
-      nowIso: () => new Date().toISOString(),
-    })
+    computeExactProfile,
+    dynamicSpots
   );
   const server = createServer((request, response) => {
     void handler(request, response);
@@ -54,7 +58,9 @@ async function main(): Promise<void> {
       host: "loopback",
       port: config.port,
       precomputedProfiles: precomputedProfiles?.entryCount ?? 0,
+      dynamicSpotStore: true,
     }));
+    dynamicSpots.resumeIncomplete();
   });
 
   let stopping = false;

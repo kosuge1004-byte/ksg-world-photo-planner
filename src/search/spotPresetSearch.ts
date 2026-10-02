@@ -8,6 +8,15 @@ import { diagnosticFetch } from "../network/networkDiagnostics";
 import { requestTimeZone } from "../network/timeZoneRequest";
 import { JAPAN_LANDMARKS, type JapanLandmark } from "../data/japanLandmarks";
 import { landmarkStructureHeightMeters } from "../types/landmarkSubjectSpec";
+import {
+  findLocalDynamicSpotByQuery,
+  lookupEdriveDynamicSpotByQuery,
+} from "../cache/dynamicSpotData";
+import type {
+  DynamicSpotHeightSourceType,
+  DynamicSpotHeightStatus,
+  DynamicSpotRecord,
+} from "../types/dynamicSpot";
 
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type {
@@ -97,11 +106,19 @@ export type ResolvedSpotLocation = {
   subjectSurfaceTarget?: "terrain" | "structure-roof";
   /** 内蔵カタログで確認済みの、接地面から頂上までの高さ。 */
   structureHeightMeters?: number;
+  category?: string;
+  heightSourceType?: DynamicSpotHeightSourceType;
+  heightSourceUrl?: string | null;
+  heightSourceLabel?: string | null;
+  heightStatus?: DynamicSpotHeightStatus;
+  dynamicSpot?: DynamicSpotRecord;
+  locationSource?: "static" | "dynamic-local" | "dynamic-edrive" | "search";
 };
 
 export type SpotSubjectSurfaceHint = {
   requireStructureRoof: boolean;
   knownStructureHeightMeters?: number;
+  dynamicHeightPriority?: boolean;
 };
 
 // v3 stores structure classification/known height. v2 entries could make a
@@ -157,6 +174,32 @@ function resolveStaticJapanLandmark(query: string): ResolvedSpotLocation | null 
     label: exact.name,
     subjectSurfaceTarget: structure ? "structure-roof" : "terrain",
     structureHeightMeters: structure ? landmarkStructureHeightMeters(exact) : undefined,
+    category: exact.category,
+    heightSourceType: structure ? "official" : "unknown",
+    heightSourceLabel: structure ? "AstroSight検証済み静的スポット" : null,
+    heightSourceUrl: null,
+    heightStatus: structure ? "verified" : "unknown",
+    locationSource: "static",
+  };
+}
+
+function resolvedDynamicSpot(
+  spot: DynamicSpotRecord,
+  source: "dynamic-local" | "dynamic-edrive"
+): ResolvedSpotLocation {
+  return {
+    latitude: spot.latitude,
+    longitude: spot.longitude,
+    label: spot.name,
+    subjectSurfaceTarget: spot.subjectSurface === "structure" ? "structure-roof" : "terrain",
+    structureHeightMeters: spot.structureHeightMeters === null ? undefined : spot.structureHeightMeters,
+    category: spot.category,
+    heightSourceType: spot.heightSourceType,
+    heightSourceUrl: spot.heightSourceUrl,
+    heightSourceLabel: spot.heightSourceLabel,
+    heightStatus: spot.heightStatus,
+    dynamicSpot: spot,
+    locationSource: source,
   };
 }
 
@@ -244,7 +287,8 @@ export function snapSpotLocationToRegisteredLandmark<T extends ResolvedSpotLocat
  * 古い地表高度をそのまま再利用しないための互換経路。
  */
 export function subjectSurfaceHintForSpotLocation(
-  location: Pick<ResolvedSpotLocation, "latitude" | "longitude" | "label" | "subjectSurfaceTarget" | "structureHeightMeters">
+  location: Pick<ResolvedSpotLocation, "latitude" | "longitude" | "label" | "subjectSurfaceTarget" |
+    "structureHeightMeters" | "heightSourceType" | "locationSource">
 ): SpotSubjectSurfaceHint {
   if (location.subjectSurfaceTarget === "structure-roof") {
     return {
@@ -252,6 +296,9 @@ export function subjectSurfaceHintForSpotLocation(
       knownStructureHeightMeters: Number.isFinite(location.structureHeightMeters)
         ? location.structureHeightMeters
         : undefined,
+      ...(location.locationSource && location.locationSource !== "static"
+        ? { dynamicHeightPriority: true }
+        : {}),
     };
   }
   const normalizedLabel = normalizedLocationQuery(location.label);
@@ -268,7 +315,7 @@ export function subjectSurfaceHintForSpotLocation(
     );
   });
   return landmark
-    ? {
+      ? {
         requireStructureRoof: true,
         knownStructureHeightMeters: landmarkStructureHeightMeters(landmark),
       }
@@ -313,6 +360,12 @@ function readCachedSpotLocation(query: string): ResolvedSpotLocation | null {
       structureHeightMeters: Number.isFinite(structureHeightMeters) && structureHeightMeters > 0
         ? structureHeightMeters
         : undefined,
+      category: typeof entry.value.category === "string" ? entry.value.category : undefined,
+      heightSourceType: entry.value.heightSourceType,
+      heightSourceUrl: entry.value.heightSourceUrl,
+      heightSourceLabel: entry.value.heightSourceLabel,
+      heightStatus: entry.value.heightStatus,
+      locationSource: "search",
     };
     locationMemoryCache.set(key, { value, expiresAt: entry.expiresAt });
     return value;
@@ -348,7 +401,8 @@ function writeCachedSpotLocation(query: string, value: ResolvedSpotLocation): vo
 
 function searchResultSubjectSurfaceMetadata(
   result: Pick<SearchResult, "category" | "type" | "extratags">
-): Pick<ResolvedSpotLocation, "subjectSurfaceTarget" | "structureHeightMeters"> {
+): Pick<ResolvedSpotLocation, "subjectSurfaceTarget" | "structureHeightMeters" |
+  "category" | "heightSourceType" | "heightSourceLabel" | "heightSourceUrl" | "heightStatus"> {
   const category = result.category ?? "";
   const type = result.type ?? "";
   const isStructure = category === "building" ||
@@ -359,16 +413,24 @@ function searchResultSubjectSurfaceMetadata(
     (category === "amenity" && type === "place_of_worship") ||
     (category === "tourism" && ["hotel", "museum"].includes(type)) ||
     (category === "leisure" && type === "stadium");
-  if (!isStructure) return {};
+  const resultCategory = [category, type].filter(Boolean).join("/") || "unknown";
+  if (!isStructure) return { category: resultCategory };
   const mappedHeight = Number.parseFloat(String(result.extratags?.height ?? ""));
   const levels = Number.parseFloat(String(result.extratags?.["building:levels"] ?? ""));
+  const hasMappedHeight = Number.isFinite(mappedHeight) && mappedHeight > 0;
+  const hasLevels = Number.isFinite(levels) && levels > 0;
   return {
     subjectSurfaceTarget: "structure-roof",
-    structureHeightMeters: Number.isFinite(mappedHeight) && mappedHeight > 0
+    structureHeightMeters: hasMappedHeight
       ? mappedHeight
-      : Number.isFinite(levels) && levels > 0
+      : hasLevels
         ? levels * 3
         : undefined,
+    category: resultCategory,
+    heightSourceType: hasMappedHeight ? "osm-height" : hasLevels ? "osm-levels-estimate" : "unknown",
+    heightSourceLabel: hasMappedHeight ? "OpenStreetMap height" : hasLevels ? "OpenStreetMap building:levels × 3m" : null,
+    heightSourceUrl: "https://www.openstreetmap.org/",
+    heightStatus: hasMappedHeight || hasLevels ? "estimated" : "unknown",
   };
 }
 
@@ -463,6 +525,10 @@ export async function resolveSpotLocation(
   const normalizedQuery = query.trim();
   const staticLandmark = resolveStaticJapanLandmark(normalizedQuery);
   if (staticLandmark) return staticLandmark;
+  const localDynamic = findLocalDynamicSpotByQuery(normalizedQuery);
+  if (localDynamic) return resolvedDynamicSpot(localDynamic, "dynamic-local");
+  const edriveDynamic = await lookupEdriveDynamicSpotByQuery(normalizedQuery, signal);
+  if (edriveDynamic) return resolvedDynamicSpot(edriveDynamic, "dynamic-edrive");
   const cached = readCachedSpotLocation(normalizedQuery);
   if (cached) return snapSpotLocationToRegisteredLandmark(cached);
 
@@ -559,6 +625,11 @@ async function resolveSpotLocationUncached(
         label?: unknown;
         subjectSurfaceTarget?: unknown;
         structureHeightMeters?: unknown;
+        category?: unknown;
+        heightSourceType?: unknown;
+        heightSourceUrl?: unknown;
+        heightSourceLabel?: unknown;
+        heightStatus?: unknown;
       };
       const latitude = Number(location.latitude);
       const longitude = Number(location.longitude);
@@ -578,6 +649,16 @@ async function resolveSpotLocationUncached(
           structureHeightMeters: Number.isFinite(structureHeightMeters) && structureHeightMeters > 0
             ? structureHeightMeters
             : undefined,
+          category: typeof location.category === "string" ? location.category : "unknown",
+          heightSourceType: location.heightSourceType === "osm-height" ||
+            location.heightSourceType === "osm-levels-estimate"
+            ? location.heightSourceType
+            : location.subjectSurfaceTarget === "structure-roof" ? "unknown" : undefined,
+          heightSourceUrl: typeof location.heightSourceUrl === "string" ? location.heightSourceUrl : null,
+          heightSourceLabel: typeof location.heightSourceLabel === "string" ? location.heightSourceLabel : null,
+          heightStatus: location.heightStatus === "estimated" ? "estimated" :
+            location.subjectSurfaceTarget === "structure-roof" ? "unknown" : undefined,
+          locationSource: "search",
         };
         writeCachedSpotLocation(normalizedQuery, resolved);
         return resolved;
@@ -654,6 +735,7 @@ async function resolveSpotLocationUncached(
     longitude,
     label: result.display_name,
     ...searchResultSubjectSurfaceMetadata(result),
+    locationSource: "search",
   };
   writeCachedSpotLocation(normalizedQuery, resolved);
   return resolved;

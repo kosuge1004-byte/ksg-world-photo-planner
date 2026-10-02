@@ -4,6 +4,7 @@ import {
   ADAPTIVE_COARSE_MAX_SPAN_METERS,
   densifyDistanceIntervals,
   logarithmicDistances,
+  maximumTerrainProfileSamples,
 } from "../src/cesium/tripodCandidates.ts";
 import { calculateKarneyDestinationPoint } from "../src/geodesy/karneyGeodesic.ts";
 import type {
@@ -22,12 +23,15 @@ import { lookupGsiGeoidHeight } from "./gsiGeoid.ts";
 import { lookupLocalJpgeo2024Height } from "./jpgeo2024Local.ts";
 import { isPrecomputedBearingProfileResponse } from "./precomputedBearingProfiles.ts";
 import { lookupPublishedPrecomputedBearingProfile } from "./publishedPrecomputedBearingProfiles.ts";
+import { findPrecomputedBearingProfileTarget } from "./precomputedBearingProfileTargets.ts";
 
 const MAX_BEARINGS_PER_REQUEST = 360;
+const STANDARD_MAX_DISTANCE_METERS = 50_000;
 const MAX_ELEVATION_POINTS_PER_LOOKUP = 2_048;
 const MAX_GEOID_POINTS_PER_LOOKUP = 2_048;
 // Keep only a small set of coordinates/elevation samples live at once. The
-// response supports 360 x 640 points, but retaining repeated coordinate objects
+// Response distances can reach 4096 points for the registered Fuji 100 km profile,
+// but retaining repeated coordinate objects for every bearing at once
 // for all of them exceeds the Workers 128 MiB isolate limit.
 const MAX_BEARINGS_PER_PROCESS_CHUNK = 8;
 
@@ -109,6 +113,13 @@ export function isBearingProfileBatchRequest(
     request.maxDistanceMeters > ABSOLUTE_MAX_DISTANCE_METERS ||
     !Array.isArray(request.bearings) || request.bearings.length === 0 ||
     request.bearings.length > MAX_BEARINGS_PER_REQUEST) return false;
+  if (request.maxDistanceMeters > STANDARD_MAX_DISTANCE_METERS) {
+    const target = findPrecomputedBearingProfileTarget(
+      point.latitude as number,
+      point.longitude as number
+    );
+    if (!target || request.maxDistanceMeters !== target.maxDistanceMeters) return false;
+  }
   const seen = new Set<number>();
   return request.bearings.every((bearing) => {
     if (!finiteNumber(bearing) || bearing < 0 || bearing >= 360 || seen.has(bearing)) return false;
@@ -144,7 +155,8 @@ export async function computeBearingProfileBatch(
       minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
       maxMeters: request.maxDistanceMeters,
     }, 32),
-    ADAPTIVE_COARSE_MAX_SPAN_METERS
+    ADAPTIVE_COARSE_MAX_SPAN_METERS,
+    maximumTerrainProfileSamples(request.maxDistanceMeters)
   );
   const profiles: BearingProfileBatchCompactProfile[] = [];
   const failedBearings: BearingProfileBatchResponseV2["failedBearings"] = [];

@@ -241,6 +241,15 @@ const cases = [
     ],
   },
   {
+    name: "Dynamic Spot persistence, provenance, resume, exact identity and API safety",
+    arguments: [
+      "--import",
+      "./scripts/register-typescript-source-loader.mjs",
+      "--test",
+      "./tests/regression/dynamic-spots.test.mjs",
+    ],
+  },
+  {
     name: "constrained bicubic interpolation (overshoot clamping)",
     arguments: [
       "--import",

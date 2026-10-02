@@ -83,7 +83,7 @@ async function lookupSpotSearchPrecomputedProfile(
   subject: SpotSearchJob["input"]["subject"],
   lensCenterHeightMeters: number
 ): Promise<BearingProfileBatchResponseV2 | null> {
-  const registered = PRECOMPUTED_BEARING_PROFILE_TARGETS.some((landmark) =>
+  const registered = PRECOMPUTED_BEARING_PROFILE_TARGETS.find((landmark) =>
     Math.abs(landmark.latitude - subject.latitude) <= 0.0000001 &&
     Math.abs(landmark.longitude - subject.longitude) <= 0.0000001
   );
@@ -97,7 +97,7 @@ async function lookupSpotSearchPrecomputedProfile(
       subjectPoint: subject,
       cameraSettings: { lensCenterHeightMeters },
       bearings: Array.from({ length: 360 }, (_, bearing) => bearing),
-      maxDistanceMeters: 10_000,
+      maxDistanceMeters: registered.maxDistanceMeters,
     }, controller.signal);
   } catch {
     return null;

@@ -3,12 +3,14 @@ import test from "node:test";
 
 import {
   findRegisteredLandmarkForLocation,
+  resolveSpotLocation,
   snapSpotLocationToRegisteredLandmark,
 } from "../../src/search/spotPresetSearch.ts";
 import { fetchBearingProfileBatchDetailed } from "../../src/cache/bearingProfileBatchClient.ts";
 import {
   PRECOMPUTED_BEARING_PROFILE_TARGETS,
   findPrecomputedBearingProfileTarget,
+  registeredProfileCoverageDistanceMeters,
 } from "../../src/data/precomputedBearingProfileTargets.ts";
 import { apiEndpoint } from "../../src/network/apiEndpoint.ts";
 
@@ -42,11 +44,34 @@ test("exact registered location is returned unchanged", () => {
 });
 
 test("precomputed targets include every non-mountain landmark and Steel Dragon 2000", () => {
-  assert.equal(PRECOMPUTED_BEARING_PROFILE_TARGETS.length, 201);
+  assert.equal(PRECOMPUTED_BEARING_PROFILE_TARGETS.length, 203);
   assert.equal(
     findPrecomputedBearingProfileTarget(35.0326866, 136.7332893)?.name,
     "スチールドラゴン2000"
   );
+});
+
+test("Soni Plateau aliases and Kameyama Pass resolve to exact terrain coordinates", async () => {
+  const soni = await resolveSpotLocation("曽爾高原");
+  assert.equal(soni.label, "曽爾高原（奈良県）");
+  assert.deepEqual(
+    { latitude: soni.latitude, longitude: soni.longitude, surface: soni.subjectSurfaceTarget },
+    { latitude: 34.517839, longitude: 136.160488, surface: "terrain" }
+  );
+  const pass = await resolveSpotLocation("亀山峠（三重県と奈良県の境）");
+  assert.equal(pass.label, "亀山峠（三重県・奈良県境）");
+  assert.deepEqual(
+    { latitude: pass.latitude, longitude: pass.longitude, surface: pass.subjectSurfaceTarget },
+    { latitude: 34.5200761, longitude: 136.1675341, surface: "terrain" }
+  );
+});
+
+test("only Mount Fuji expands registered coverage to 100 km", () => {
+  const fuji = findPrecomputedBearingProfileTarget(35.3606255, 138.7273634);
+  assert.equal(fuji?.name, "富士山");
+  assert.equal(fuji?.maxDistanceMeters, 100_000);
+  assert.equal(registeredProfileCoverageDistanceMeters(35.3606255, 138.7273634, 10_000), 100_000);
+  assert.equal(registeredProfileCoverageDistanceMeters(SKYTREE.latitude, SKYTREE.longitude, 10_000), 10_000);
 });
 
 test("Capacitor API requests use Cloudflare instead of the bundled index.html origin", () => {
@@ -77,7 +102,7 @@ test("batch miss reasons are reported instead of collapsing to null", async () =
 
   const wideRange = await fetchBearingProfileBatchDetailed({ ...batchRequest, maxDistanceMeters: 20_000 }, undefined, async () =>
     jsonResponse(404, { code: "PRECOMPUTED_PROFILE_NOT_FOUND", error: "x" }));
-  assert.match(wideRange.miss.reason, /10kmのみ/);
+  assert.match(wideRange.miss.reason, /探索範囲20kmの計算済み地形データがありません/);
 
   const tooMany = await fetchBearingProfileBatchDetailed(batchRequest, undefined, async () =>
     jsonResponse(422, { error: "Too many subrequests" }));

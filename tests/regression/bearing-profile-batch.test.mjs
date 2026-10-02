@@ -10,6 +10,7 @@ import {
 import { fetchBearingProfileBatch } from "../../src/cache/bearingProfileBatchClient.ts";
 import { configureServerRuntime } from "../../server/cloudflareRuntime.ts";
 import { calculateKarneyDestinationPoint } from "../../src/geodesy/karneyGeodesic.ts";
+import { ADAPTIVE_COARSE_MAX_SPAN_METERS } from "../../src/cesium/tripodCandidates.ts";
 import { lookupLocalJpgeo2024Height } from "../../server/jpgeo2024Local.ts";
 import {
   PRECOMPUTED_BEARING_PROFILE_FORMAT,
@@ -284,8 +285,11 @@ test("compact batch safely covers the full 360-bearing, 50 km contract", async (
   assert.ok(maximumElevationLookupPoints <= 2_048);
   assert.ok(geoidLookupCallCount > 1,
     "360 bearings must be processed in bounded live-coordinate chunks");
-  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 8 * 1024 * 1024,
-    "360-bearing response must remain compact enough for the Worker/browser boundary");
+  const raw = Buffer.from(JSON.stringify(result));
+  assert.ok(raw.length < 64 * 1024 * 1024,
+    "the validated uncompressed profile must stay inside the reader safety limit");
+  assert.ok(gzipSync(raw).length < 16 * 1024 * 1024,
+    "the immutable profile must stay inside the static/R2 compressed-file limit");
 });
 
 test("compact response keeps per-bearing failures and rejects incomplete envelopes", async () => {
@@ -329,8 +333,50 @@ test("invalid or duplicate bearings are rejected before terrain work", () => {
   assert.equal(isBearingProfileBatchRequest({ ...request, maxDistanceMeters: 50_001 }), false);
   assert.equal(isBearingProfileBatchRequest({
     ...request,
+    subjectPoint: {
+      ...request.subjectPoint,
+      latitude: 35.3606255,
+      longitude: 138.7273634,
+    },
+    maxDistanceMeters: 100_000,
+  }), true, "Mount Fuji alone accepts the registered 100km contract");
+  assert.equal(isBearingProfileBatchRequest({
+    ...request,
+    subjectPoint: {
+      ...request.subjectPoint,
+      latitude: 35.3606255,
+      longitude: 138.7273634,
+    },
+    maxDistanceMeters: 99_999,
+  }), false, "wide requests must match Mount Fuji's exact registered range");
+  assert.equal(isBearingProfileBatchRequest({
+    ...request,
     subjectPoint: { ...request.subjectPoint, latitude: Number.NaN },
   }), false);
+});
+
+test("Mount Fuji's 100km profile reaches the endpoint without widening the 30m terrain spacing", async () => {
+  const fujiRequest = {
+    ...request,
+    subjectPoint: {
+      ...request.subjectPoint,
+      latitude: 35.3606255,
+      longitude: 138.7273634,
+    },
+    bearings: [0],
+    maxDistanceMeters: 100_000,
+  };
+  const result = await computeBearingProfileBatch(fujiRequest, undefined, {
+    lookupElevations: async (points) => points.map(() => ({ heightMeters: 100, source: "DEM10B" })),
+    lookupGeoidHeights: async (points) => points.map(() => 38),
+    nowIso: () => "2026-10-02T00:00:00.000Z",
+  });
+  assert.equal(result.failedBearings.length, 0);
+  assert.equal(result.distancesMeters.at(-1), 100_000);
+  assert.ok(result.distancesMeters.length > 3_300);
+  assert.ok(result.distancesMeters.slice(1).every((distance, index) =>
+    distance - result.distancesMeters[index] <= ADAPTIVE_COARSE_MAX_SPAN_METERS + 1e-9
+  ));
 });
 
 test("batch client falls back on an unavailable endpoint and preserves user abort", async () => {

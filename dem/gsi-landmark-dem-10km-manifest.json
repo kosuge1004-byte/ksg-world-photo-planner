@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-28T16:16:50.379Z",
+  "capturedAt": "2026-10-01T22:07:29.301Z",
   "source": "https://service.gsi.go.jp/kiban/app/api/dem/latest",
   "landmarkSource": "src/data/japanLandmarks.ts",
-  "landmarkCount": 288,
+  "landmarkCount": 289,
+  "catalogueLandmarkCount": 289,
   "radiusMeters": 10000,
   "meshCodeLevel": "JIS X 0410 second mesh (about 10 km)",
   "meshCount": 1299,
@@ -2463,13 +2464,16 @@
       "志摩スペイン村"
     ],
     "513650": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513651": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513652": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513654": [
       "田丸城跡"
@@ -2488,13 +2492,16 @@
       "夫婦岩（三重県）"
     ],
     "513660": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513661": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513662": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513664": [
       "田丸城跡"
@@ -2511,10 +2518,12 @@
       "夫婦岩（三重県）"
     ],
     "513670": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513671": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513673": [
       "津城跡"
@@ -22313,7 +22322,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538440",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22326,7 +22336,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685622",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22339,7 +22350,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686658",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22352,7 +22364,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/729653",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22365,7 +22378,8 @@
       "updateDate": "2022/01/24",
       "downloadPath": "/kiban/app/api/download/file/729654",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22378,7 +22392,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538441",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22391,7 +22406,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685623",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22404,7 +22420,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686659",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22417,7 +22434,8 @@
       "updateDate": "2025/06/05",
       "downloadPath": "/kiban/app/api/download/file/615926",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22430,7 +22448,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538442",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22443,7 +22462,8 @@
       "updateDate": "2025/06/06",
       "downloadPath": "/kiban/app/api/download/file/612469",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22456,7 +22476,8 @@
       "updateDate": "2025/06/20",
       "downloadPath": "/kiban/app/api/download/file/617558",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22664,7 +22685,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538448",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22677,7 +22699,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685626",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22690,7 +22713,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686662",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22703,7 +22727,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538449",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22716,7 +22741,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685627",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22729,7 +22755,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686663",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22742,7 +22769,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538450",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22755,7 +22783,8 @@
       "updateDate": "2025/08/28",
       "downloadPath": "/kiban/app/api/download/file/663722",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22768,7 +22797,8 @@
       "updateDate": "2025/08/28",
       "downloadPath": "/kiban/app/api/download/file/662244",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22930,7 +22960,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538456",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22943,7 +22974,8 @@
       "updateDate": "2025/08/28",
       "downloadPath": "/kiban/app/api/download/file/663723",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22956,7 +22988,8 @@
       "updateDate": "2025/08/28",
       "downloadPath": "/kiban/app/api/download/file/662245",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22969,7 +23002,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538457",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22982,7 +23016,8 @@
       "updateDate": "2025/08/28",
       "downloadPath": "/kiban/app/api/download/file/663724",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -22995,7 +23030,8 @@
       "updateDate": "2025/08/28",
       "downloadPath": "/kiban/app/api/download/file/662246",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -23008,7 +23044,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/729662",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {

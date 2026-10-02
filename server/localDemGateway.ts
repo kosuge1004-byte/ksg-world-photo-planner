@@ -9,6 +9,11 @@ import type {
 } from "../src/types/bearingProfileBatch.ts";
 import { isPrecomputedBearingProfileResponse } from "./precomputedBearingProfiles.ts";
 import {
+  isDynamicSpotRecord,
+  type DynamicSpotRecord,
+  type DynamicSpotRegistrationInput,
+} from "../src/types/dynamicSpot.ts";
+import {
   isQuickTunnelElevationEndpoint,
   readRegisteredLocalDemEndpoint,
 } from "./localDemEndpointRegistry.ts";
@@ -58,7 +63,9 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 // 360-bearing catalogue profile is about 3.3 MiB. Keep a firm ceiling above
 // both valid responses while still rejecting an unexpectedly large origin
 // body before JSON parsing.
-const MAX_PROFILE_RESPONSE_BYTES = 8 * 1024 * 1024;
+// 富士山100km・360方位の非圧縮compact JSONも受け取れる上限。通常地点は
+// 従来どおり数MiB以内で、これは任意ファイルではなく検証済みJSONだけに適用。
+const MAX_PROFILE_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MIN_HEIGHT_METERS = -500;
 const MAX_HEIGHT_METERS = 10_000;
 
@@ -134,6 +141,93 @@ function computedProfileEndpointUrl(configuration: LocalDemGatewayConfiguration)
   const elevationEndpoint = endpointUrl(configuration);
   if (!elevationEndpoint) return null;
   return new URL("/v1/bearing-profile/compute", elevationEndpoint);
+}
+
+function dynamicSpotEndpointUrl(
+  configuration: LocalDemGatewayConfiguration,
+  action: "lookup" | "register" | "status" | "retry"
+): URL | null {
+  const elevationEndpoint = endpointUrl(configuration);
+  if (!elevationEndpoint) return null;
+  return new URL(`/v1/dynamic-spot/${action}`, elevationEndpoint);
+}
+
+async function requestDynamicSpot(
+  action: "lookup" | "register" | "status" | "retry",
+  body: unknown,
+  signal?: AbortSignal
+): Promise<DynamicSpotRecord | null> {
+  const configuration = await resolvedGatewayConfiguration();
+  if (!configuration) return null;
+  const endpoint = dynamicSpotEndpointUrl(configuration, action);
+  if (!endpoint) return null;
+  if (signal?.aborted) throw createAbortError();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createTimeoutError("Dynamic Spot APIタイムアウト"));
+  }, REQUEST_TIMEOUT_MS);
+  const onAbort = () => controller.abort(createAbortError());
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: gatewayHeaders(configuration),
+      body: JSON.stringify(body),
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (response.status === 404) {
+      await response.body?.cancel();
+      return null;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      return null;
+    }
+    const value = await readBoundedJson(response);
+    if (typeof value !== "object" || value === null || !("spot" in value) ||
+      !isDynamicSpotRecord(value.spot)) return null;
+    return value.spot;
+  } catch {
+    if (signal?.aborted && !timedOut) throw createAbortError();
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+export function lookupLocalDynamicSpot(
+  lookup: { query: string } | { latitude: number; longitude: number },
+  signal?: AbortSignal
+): Promise<DynamicSpotRecord | null> {
+  return requestDynamicSpot("lookup", lookup, signal);
+}
+
+export function registerLocalDynamicSpot(
+  input: DynamicSpotRegistrationInput,
+  signal?: AbortSignal
+): Promise<DynamicSpotRecord | null> {
+  return requestDynamicSpot("register", input, signal);
+}
+
+export function readLocalDynamicSpotStatus(
+  latitude: number,
+  longitude: number,
+  signal?: AbortSignal
+): Promise<DynamicSpotRecord | null> {
+  return requestDynamicSpot("status", { latitude, longitude }, signal);
+}
+
+export function retryLocalDynamicSpot(
+  latitude: number,
+  longitude: number,
+  signal?: AbortSignal
+): Promise<DynamicSpotRecord | null> {
+  return requestDynamicSpot("retry", { latitude, longitude }, signal);
 }
 
 function isJapanPoint(point: { latitude: number; longitude: number }): boolean {

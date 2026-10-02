@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-28T16:16:45.271Z",
+  "capturedAt": "2026-10-01T22:07:24.742Z",
   "source": "https://service.gsi.go.jp/kiban/app/api/dem/latest",
   "landmarkSource": "src/data/japanLandmarks.ts",
-  "landmarkCount": 288,
+  "landmarkCount": 289,
+  "catalogueLandmarkCount": 289,
   "radiusMeters": 3000,
   "meshCodeLevel": "JIS X 0410 second mesh (about 10 km)",
   "meshCount": 505,
@@ -893,7 +894,8 @@
       "志摩スペイン村"
     ],
     "513651": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513654": [
       "田丸城跡"
@@ -905,7 +907,8 @@
       "夫婦岩（三重県）"
     ],
     "513661": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513664": [
       "田丸城跡"
@@ -7908,7 +7911,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538441",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -7921,7 +7925,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685623",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -7934,7 +7939,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686659",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -7947,7 +7953,8 @@
       "updateDate": "2025/06/05",
       "downloadPath": "/kiban/app/api/download/file/615926",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -8103,7 +8110,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538449",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -8116,7 +8124,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685627",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -8129,7 +8138,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686663",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {

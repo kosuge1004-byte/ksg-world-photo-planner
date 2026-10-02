@@ -4,6 +4,11 @@ export type ResolvedPlaceName = {
   label: string;
   subjectSurfaceTarget?: "terrain" | "structure-roof";
   structureHeightMeters?: number;
+  category?: string;
+  heightSourceType?: "osm-height" | "osm-levels-estimate" | "unknown";
+  heightSourceUrl?: string | null;
+  heightSourceLabel?: string | null;
+  heightStatus?: "estimated" | "unknown";
 };
 
 type NominatimPlace = {
@@ -100,6 +105,11 @@ export async function resolveJapanesePlaceName(
           ...best,
           subjectSurfaceTarget: "structure-roof",
           structureHeightMeters: structureMetadata.structureHeightMeters,
+          category: structureMetadata.category,
+          heightSourceType: structureMetadata.heightSourceType,
+          heightSourceUrl: structureMetadata.heightSourceUrl,
+          heightSourceLabel: structureMetadata.heightSourceLabel,
+          heightStatus: structureMetadata.heightStatus,
         }
       : best;
   }
@@ -249,7 +259,8 @@ function isNominatimPoi(place: NominatimPlace): boolean {
 
 function nominatimSubjectSurfaceMetadata(
   place: NominatimPlace
-): Pick<ResolvedPlaceName, "subjectSurfaceTarget" | "structureHeightMeters"> {
+): Pick<ResolvedPlaceName, "subjectSurfaceTarget" | "structureHeightMeters" | "category" |
+  "heightSourceType" | "heightSourceUrl" | "heightSourceLabel" | "heightStatus"> {
   const category = typeof place.category === "string" ? place.category : "";
   const type = typeof place.type === "string" ? place.type : "";
   const isStructure = category === "building" ||
@@ -260,7 +271,8 @@ function nominatimSubjectSurfaceMetadata(
     (category === "amenity" && type === "place_of_worship") ||
     (category === "tourism" && ["hotel", "museum"].includes(type)) ||
     (category === "leisure" && type === "stadium");
-  if (!isStructure) return {};
+  const resolvedCategory = [category, type].filter(Boolean).join("/") || "unknown";
+  if (!isStructure) return { category: resolvedCategory };
   const tags = place.extratags && typeof place.extratags === "object"
     ? place.extratags as Record<string, unknown>
     : {};
@@ -274,6 +286,19 @@ function nominatimSubjectSurfaceMetadata(
   return {
     subjectSurfaceTarget: "structure-roof",
     structureHeightMeters,
+    category: resolvedCategory,
+    heightSourceType: Number.isFinite(mappedHeight) && mappedHeight > 0
+      ? "osm-height"
+      : Number.isFinite(levels) && levels > 0
+        ? "osm-levels-estimate"
+        : "unknown",
+    heightSourceUrl: "https://www.openstreetmap.org/",
+    heightSourceLabel: Number.isFinite(mappedHeight) && mappedHeight > 0
+      ? "OpenStreetMap height"
+      : Number.isFinite(levels) && levels > 0
+        ? "OpenStreetMap building:levels × 3m"
+        : null,
+    heightStatus: structureHeightMeters === undefined ? "unknown" : "estimated",
   };
 }
 

@@ -196,7 +196,7 @@ import {
   isCelestialOcclusionConfirmedHidden,
 } from "./types/celestial";
 import type { GroundPoint } from "./types/points";
-import { withLensCenterHeight, withVerticalOffset } from "./types/points";
+import { ellipsoidalHeightMeters, withLensCenterHeight, withVerticalOffset } from "./types/points";
 import {
   DEFAULT_FOREGROUND_HEIGHT_CM,
   normalizeForegroundHeightCm,
@@ -220,6 +220,19 @@ import { BearingProfileDownloadDialog, type BearingProfileDialogState } from "./
 import { withAbortableTimeout } from "./utils/abortableSemaphore";
 import type { SubjectRecord } from "./subjectStorage";
 import { listDownloadedSpotData, removeDownloadedSpotData, renameDownloadedSpotData, upsertDownloadedSpotData, type DownloadedSpotDataRecord } from "./cache/downloadedSpotData";
+import {
+  createPendingLocalDynamicSpot,
+  readEdriveDynamicSpotStatus,
+  registerEdriveDynamicSpot,
+  retryEdriveDynamicSpot,
+  upsertLocalDynamicSpot,
+} from "./cache/dynamicSpotData";
+import type {
+  DynamicSpotHeightSourceType,
+  DynamicSpotHeightStatus,
+  DynamicSpotRecord,
+  DynamicSpotRegistrationInput,
+} from "./types/dynamicSpot";
 import { inspectDownloadedSpotStorage, type DownloadedSpotStorageSummary } from "./cache/downloadedSpotDataStats";
 import { deletePersistentSiteContextsForSpot } from "./cache/siteContextPersistentCache";
 import { deleteGsiDeviceTilesForDownloadedSpot } from "./cesium/gsiDemTileCache";
@@ -238,8 +251,10 @@ import {
   searchSpotPresets,
   subjectSurfaceHintForSpotLocation,
   registeredLandmarkAtExactPoint,
+  type ResolvedSpotLocation,
   type SpotSubjectSurfaceHint,
 } from "./search/spotPresetSearch";
+import { registeredProfileCoverageDistanceMeters } from "./data/precomputedBearingProfileTargets";
 import {
   anchorToRegisteredCoordinates,
   rememberStructureHeight,
@@ -279,6 +294,12 @@ const DEFAULT_CELESTIAL_VISIBILITY: CelestialVisibility = {
   moon: false,
   milkyWay: false,
   polaris: false,
+};
+
+type DynamicSpotUiState = {
+  spot: DynamicSpotRecord;
+  phase: "pending-pc" | "generating" | "syncing-device" | "complete" | "failed";
+  message: string;
 };
 
 /**
@@ -665,6 +686,10 @@ function App() {
   const [downloadedSpotData, setDownloadedSpotData] = useState<DownloadedSpotDataRecord[]>(
     () => listDownloadedSpotData()
   );
+  const [dynamicSpotUi, setDynamicSpotUi] = useState<DynamicSpotUiState | null>(null);
+  const dynamicSpotControllerRef = useRef<AbortController | null>(null);
+  const dynamicSpotHydratingRef = useRef<Set<string>>(new Set());
+  useEffect(() => () => dynamicSpotControllerRef.current?.abort(), []);
   const [downloadedSpotStorageSummary, setDownloadedSpotStorageSummary] = useState<DownloadedSpotStorageSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -2265,7 +2290,11 @@ function App() {
                 // ため、ここでは初回探索の上限だけを制御する。
                 {
                   minMeters: ABSOLUTE_MIN_DISTANCE_METERS,
-                  maxMeters: precisionSettings.tripodSearchMaxDistanceMeters,
+                  maxMeters: registeredProfileCoverageDistanceMeters(
+                    subjectPoint.latitude,
+                    subjectPoint.longitude,
+                    precisionSettings.tripodSearchMaxDistanceMeters
+                  ),
                 },
                 undefined,
                 previewRefractionWeather,
@@ -3297,14 +3326,43 @@ function App() {
       ? applyOsmSubjectHeightHint(groundPoint, osmInspection.heightHint, label)
       : null;
     const requireStructureRoof = surfaceHint.requireStructureRoof || osmInspection.isStructure;
-    const select = (roofPoint: GroundPoint | null) => selectSubjectSurfacePoint({
-      groundPoint,
-      roofPoint,
-      osmPoint,
-      requireStructureRoof,
-      knownStructureHeightMeters: surfaceHint.knownStructureHeightMeters,
-      label,
-    });
+    const select = (roofPoint: GroundPoint | null) => {
+      // Dynamic Spotの高さ出典優先順位はPLATEAU実測→OSM height/levels。
+      // Static Landmarkの既知公式値は上の早期returnで既に確定している。
+      // 既存Staticの未確認地点だけは従来の候補比較を維持する。
+      const roofClearance = roofPoint
+        ? ellipsoidalHeightMeters(roofPoint) - ellipsoidalHeightMeters(groundPoint)
+        : Number.NEGATIVE_INFINITY;
+      const priorityRoof = surfaceHint.dynamicHeightPriority && roofPoint &&
+        roofClearance >= MIN_STRUCTURE_CLEARANCE_METERS
+        ? roofPoint
+        : null;
+      const osmClearance = osmPoint
+        ? ellipsoidalHeightMeters(osmPoint) - ellipsoidalHeightMeters(groundPoint)
+        : Number.NEGATIVE_INFINITY;
+      const priorityOsm = surfaceHint.dynamicHeightPriority && !priorityRoof &&
+        osmPoint && osmClearance >= MIN_STRUCTURE_CLEARANCE_METERS
+        ? osmPoint
+        : surfaceHint.dynamicHeightPriority ? null : osmPoint;
+      const selected = selectSubjectSurfacePoint({
+        groundPoint,
+        roofPoint: surfaceHint.dynamicHeightPriority ? priorityRoof : roofPoint,
+        osmPoint: priorityOsm,
+        requireStructureRoof,
+        knownStructureHeightMeters: surfaceHint.dynamicHeightPriority && (priorityRoof || priorityOsm)
+          ? undefined
+          : surfaceHint.knownStructureHeightMeters,
+        label,
+      });
+      if (selected.subjectSurfaceTarget !== "structure-roof") return selected;
+      const measuredHeight = ellipsoidalHeightMeters(selected) - ellipsoidalHeightMeters(groundPoint);
+      return {
+        ...selected,
+        structureHeightMeters: Number.isFinite(selected.structureHeightMeters)
+          ? selected.structureHeightMeters
+          : measuredHeight >= MIN_STRUCTURE_CLEARANCE_METERS ? measuredHeight : undefined,
+      };
+    };
     // 2026-09-29: 登録スポットは「登録座標＋高さ」で定義する。屋根/OSMは高さだけを
     // 提供し、水平位置は登録座標に固定する（計算済み三脚候補データを常に引ける）。
     // 高さを確定できない場合は学習済み高さだけを代替に使い、地表へは置かない。
@@ -3347,6 +3405,277 @@ function App() {
     }
   }
 
+  function dynamicHeightProvenance(
+    location: ResolvedSpotLocation,
+    subject: GroundPoint
+  ): {
+    source: DynamicSpotHeightSourceType;
+    status: DynamicSpotHeightStatus;
+    url: string | null;
+    label: string | null;
+  } {
+    if (location.dynamicSpot) {
+      return {
+        source: location.dynamicSpot.heightSourceType,
+        status: location.dynamicSpot.heightStatus,
+        url: location.dynamicSpot.heightSourceUrl,
+        label: location.dynamicSpot.heightSourceLabel,
+      };
+    }
+    if (subject.subjectSurfaceTarget !== "structure-roof") {
+      return { source: "unknown", status: "unknown", url: null, label: null };
+    }
+    if (subject.heightSource === "3d-picked") {
+      return {
+        source: "plateau-measured",
+        status: "measured",
+        url: "https://www.mlit.go.jp/plateau/",
+        label: "国土交通省PLATEAU 3D建物からの実測",
+      };
+    }
+    if (subject.heightSource === "osm-surveyed-height") {
+      return {
+        source: "osm-height",
+        status: "estimated",
+        url: "https://www.openstreetmap.org/",
+        label: "OpenStreetMap height",
+      };
+    }
+    if (subject.heightSource === "osm-levels-estimate") {
+      return {
+        source: "osm-levels-estimate",
+        status: "estimated",
+        url: "https://www.openstreetmap.org/",
+        label: "OpenStreetMap building:levels × 3m",
+      };
+    }
+    return {
+      source: location.heightSourceType ?? "unknown",
+      status: location.heightStatus ?? "unknown",
+      url: location.heightSourceUrl ?? null,
+      label: location.heightSourceLabel ?? null,
+    };
+  }
+
+  async function hydrateCompletedDynamicSpot(
+    spot: DynamicSpotRecord,
+    subject: GroundPoint,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    if (dynamicSpotHydratingRef.current.has(spot.coordinateKey)) return true;
+    dynamicSpotHydratingRef.current.add(spot.coordinateKey);
+    setDynamicSpotUi({ spot, phase: "syncing-device", message: "完成データを端末へ保存しています" });
+    try {
+      const result = await backfillBearingProfiles({
+        subjectId: idFor(subject),
+        subjectPoint: subject,
+        cameraSettings,
+        signal,
+        maxDistanceMeters: 10_000,
+        bearingsOverride: Array.from({ length: 360 }, (_, bearing) => bearing),
+        preferPrecomputed: true,
+        allowDirectFallback: false,
+        onProgress: (progress) => {
+          if (signal.aborted) return;
+          setDynamicSpotUi({
+            spot,
+            phase: "syncing-device",
+            message: `完成データを端末へ保存中 ${progress.completedSteps}/${progress.totalSteps}方位`,
+          });
+        },
+      });
+      if (signal.aborted || result.failedBearings > 0 || result.storageWriteFailures > 0) return false;
+      const subjectId = idFor(subject);
+      enableBearingProfile(subjectId, spot.name);
+      setDownloadedSpotData(upsertDownloadedSpotData({
+        subjectId,
+        label: spot.name,
+        latitude: spot.latitude,
+        longitude: spot.longitude,
+        downloadedAtIso: new Date().toISOString(),
+        status: "complete",
+        profilePoints: result.profilePoints,
+        highPrecisionPoints: result.highPrecisionPoints,
+        demTileCount: result.demTileCount,
+        demTileBytes: result.demTileBytes,
+        subjectSurfaceTarget: spot.subjectSurface === "structure" ? "structure-roof" : "terrain",
+        structureHeightMeters: spot.structureHeightMeters ?? undefined,
+        dynamicSpotId: spot.id,
+        dynamicSpotCoordinateKey: spot.coordinateKey,
+        dynamicSpotProfileVersion: spot.profileVersion,
+        dynamicSpotHeightSourceType: spot.heightSourceType,
+        dynamicSpotHeightStatus: spot.heightStatus,
+      }));
+      setDynamicSpotUi({ spot, phase: "complete", message: "スポットデータ作成完了" });
+      return true;
+    } catch (error) {
+      if (!signal.aborted) console.warn("Dynamic Spot完成データを端末へ保存できませんでした", error);
+      return false;
+    } finally {
+      dynamicSpotHydratingRef.current.delete(spot.coordinateKey);
+    }
+  }
+
+  async function followDynamicSpotGeneration(
+    initial: DynamicSpotRecord,
+    subject: GroundPoint,
+    controller: AbortController
+  ): Promise<void> {
+    let latest = initial;
+    while (!controller.signal.aborted) {
+      upsertLocalDynamicSpot(latest);
+      if (latest.demProfileStatus === "complete") {
+        const hydrated = await hydrateCompletedDynamicSpot(latest, subject, controller.signal);
+        if (!hydrated && !controller.signal.aborted) {
+          setDynamicSpotUi({
+            spot: latest,
+            phase: "pending-pc",
+            message: "Eドライブの完成データは保持されています。PC接続後に端末保存を再開します",
+          });
+        }
+        return;
+      }
+      const completed = latest.completedBearings ?? 0;
+      const percent = Math.floor(completed / Math.max(1, latest.bearingCount) * 100);
+      const terminalFailure = latest.currentStage === "failed";
+      setDynamicSpotUi({
+        spot: latest,
+        phase: terminalFailure ? "failed" : "generating",
+        message: terminalFailure
+          ? "一部データを作成できませんでした"
+          : `スポットデータ生成中 ${completed}/${latest.bearingCount}方位 ${percent}%`,
+      });
+      if (terminalFailure) return;
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      if (controller.signal.aborted) return;
+      const next = await readEdriveDynamicSpotStatus(
+        latest.latitude,
+        latest.longitude,
+        controller.signal
+      );
+      if (next) {
+        latest = next;
+      } else {
+        setDynamicSpotUi({
+          spot: latest,
+          phase: "pending-pc",
+          message: "PC/Eドライブ未接続です。検索と撮影計画は利用でき、接続後に生成を再開します",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 7_000));
+      }
+    }
+  }
+
+  async function ensureDynamicSpot(
+    location: ResolvedSpotLocation,
+    subject: GroundPoint,
+    subjectGround: GroundPoint
+  ): Promise<void> {
+    if (location.locationSource === "static" ||
+      registeredLandmarkAtExactPoint(location.latitude, location.longitude)) return;
+    const subjectSurface = subject.subjectSurfaceTarget === "structure-roof" ? "structure" : "terrain";
+    const measuredStructureHeight = subjectSurface === "structure"
+      ? subject.structureHeightMeters ??
+        (ellipsoidalHeightMeters(subject) - ellipsoidalHeightMeters(subjectGround))
+      : 0;
+    const validStructureHeight = subjectSurface === "structure" &&
+      Number.isFinite(measuredStructureHeight) && measuredStructureHeight >= MIN_STRUCTURE_CLEARANCE_METERS
+      ? measuredStructureHeight
+      : subjectSurface === "structure" ? null : 0;
+    const provenance = dynamicHeightProvenance(location, subject);
+    const input: DynamicSpotRegistrationInput = {
+      name: location.dynamicSpot?.name ?? location.label,
+      aliases: Array.from(new Set([
+        ...(location.dynamicSpot?.aliases ?? []),
+        location.label,
+      ])).slice(0, 20),
+      latitude: location.latitude,
+      longitude: location.longitude,
+      category: location.category ?? location.dynamicSpot?.category ?? "unknown",
+      subjectSurface,
+      structureHeightMeters: validStructureHeight,
+      heightSourceType: validStructureHeight === null ? "unknown" : provenance.source,
+      heightSourceUrl: provenance.url,
+      heightSourceLabel: provenance.label,
+      heightStatus: validStructureHeight === null ? "unknown" : provenance.status,
+      maxDistanceMeters: 10_000,
+      bearingCount: 360,
+    };
+    const local = await createPendingLocalDynamicSpot(input);
+    upsertLocalDynamicSpot(local);
+    dynamicSpotControllerRef.current?.abort();
+    const controller = new AbortController();
+    dynamicSpotControllerRef.current = controller;
+    setDynamicSpotUi({
+      spot: local,
+      phase: "generating",
+      message: "スポットデータ生成を準備しています",
+    });
+    const registered = await registerEdriveDynamicSpot(input, controller.signal);
+    if (!registered) {
+      if (!controller.signal.aborted) {
+        setDynamicSpotUi({
+          spot: local,
+          phase: "pending-pc",
+          message: "PC/Eドライブ未接続です。検索と撮影計画は利用でき、接続後に生成を再開します",
+        });
+      }
+      return;
+    }
+    await followDynamicSpotGeneration(registered, subject, controller);
+  }
+
+  async function rememberUnresolvedDynamicStructure(location: ResolvedSpotLocation): Promise<void> {
+    if (location.locationSource === "static" ||
+      registeredLandmarkAtExactPoint(location.latitude, location.longitude) ||
+      location.subjectSurfaceTarget !== "structure-roof" ||
+      Number.isFinite(location.structureHeightMeters)) return;
+    const input: DynamicSpotRegistrationInput = {
+      name: location.dynamicSpot?.name ?? location.label,
+      aliases: Array.from(new Set([...(location.dynamicSpot?.aliases ?? []), location.label])).slice(0, 20),
+      latitude: location.latitude,
+      longitude: location.longitude,
+      category: location.category ?? "unknown",
+      subjectSurface: "structure",
+      structureHeightMeters: null,
+      heightSourceType: "unknown",
+      heightSourceUrl: location.heightSourceUrl ?? null,
+      heightSourceLabel: location.heightSourceLabel ?? null,
+      heightStatus: "unknown",
+      maxDistanceMeters: 10_000,
+      bearingCount: 360,
+    };
+    const local = await createPendingLocalDynamicSpot(input);
+    upsertLocalDynamicSpot(local);
+    setDynamicSpotUi({
+      spot: local,
+      phase: "pending-pc",
+      message: "構造物の高さを確認中です。未確認値を公式値として保存しません",
+    });
+    const remote = await registerEdriveDynamicSpot(input);
+    if (remote) upsertLocalDynamicSpot(remote);
+  }
+
+  async function retryCurrentDynamicSpot(): Promise<void> {
+    const current = dynamicSpotUi?.spot;
+    const subject = currentSubjectPoint();
+    if (!current || !subject) return;
+    dynamicSpotControllerRef.current?.abort();
+    const controller = new AbortController();
+    dynamicSpotControllerRef.current = controller;
+    setDynamicSpotUi({ spot: current, phase: "generating", message: "未完了方位を再開しています" });
+    const retried = await retryEdriveDynamicSpot(current.latitude, current.longitude, controller.signal);
+    if (!retried) {
+      if (!controller.signal.aborted) setDynamicSpotUi({
+        spot: current,
+        phase: "pending-pc",
+        message: "PC/Eドライブへ接続できません。接続後に再試行してください",
+      });
+      return;
+    }
+    await followDynamicSpotGeneration(retried, subject, controller);
+  }
+
   function currentSubjectPoint(): GroundPoint | null {
     if (subjectPoint) return subjectPoint;
     const viewer = mapViewerRef.current;
@@ -3376,6 +3705,9 @@ function App() {
     if (!location) {
       throw new Error("現在の被写体ピンがありません。メイン画面で配置してください");
     }
+    void rememberUnresolvedDynamicStructure(location).catch((error) => {
+      if (!isAbortError(error)) console.warn("高さ未解決Dynamic Spotを保存できませんでした", error);
+    });
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const searchTimeZone = criteria.useCurrentSubjectPin
       ? timeZone
@@ -3438,6 +3770,9 @@ function App() {
       ]);
     }
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
+    void ensureDynamicSpot(location, subject, subjectGround).catch((error) => {
+      if (!isAbortError(error)) console.warn("Dynamic Spotのバックグラウンド登録を開始できませんでした", error);
+    });
     const preparationInput = {
       criteria,
       subject,
@@ -3571,6 +3906,11 @@ ${diagnosticMessage}
     onProgress(target === "subject" ? "被写体の位置を検索しています…" : "三脚位置を検索しています…", 0);
     const location = await resolveSpotLocation(query, signal);
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
+    if (target === "subject") {
+      void rememberUnresolvedDynamicStructure(location).catch((error) => {
+        if (!isAbortError(error)) console.warn("高さ未解決Dynamic Spotを保存できませんでした", error);
+      });
+    }
     stopAllEditModes();
     if (target === "tripod") {
       onProgress("三脚位置の標高を取得しています…", 45);
@@ -3621,14 +3961,22 @@ ${diagnosticMessage}
     // 生じていた。ユーザー指摘により、建物屋根合わせ・OSM高さ推定を含めて
     // 待ってから被写体ピンを配置する方式（resolveSearchSubject、スポット
     // プリセット等と同じ経路）に戻す。
-    const subject = await resolveSearchSubject(
+    const subjectGroundPromise = resolveGroundPoint(
       location.latitude,
       location.longitude,
-      location.label,
-      undefined,
-      subjectSurfaceHintForSpotLocation(location),
-      signal
+      `${location.label} 地表`
     );
+    const [subject, subjectGround] = await Promise.all([
+      resolveSearchSubject(
+        location.latitude,
+        location.longitude,
+        location.label,
+        subjectGroundPromise,
+        subjectSurfaceHintForSpotLocation(location),
+        signal
+      ),
+      subjectGroundPromise,
+    ]);
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     const pinned = viewer && !viewer.isDestroyed()
       ? setSubjectPinFromPosition(
@@ -3664,8 +4012,11 @@ ${diagnosticMessage}
     }
     setSpotSearchOpen(false);
     setSearchMessage(subjectPlacedMessage(pinned));
+    void ensureDynamicSpot(location, pinned, subjectGround).catch((error) => {
+      if (!isAbortError(error)) console.warn("Dynamic Spotのバックグラウンド登録を開始できませんでした", error);
+    });
     const searchedRecord = updatedHistory[0];
-    if (searchedRecord) {
+    if (searchedRecord && location.locationSource === "static") {
       offerBearingProfileDownload(searchedRecord);
     }
   }
@@ -3888,7 +4239,9 @@ ${diagnosticMessage}
       progress: { totalSteps: 0, completedSteps: 0, currentBearingDegrees: null, phase: "preparing" },
     });
     // Preflight storage guard. Estimate from already-managed spots when available;
-    // otherwise use a conservative 32 MiB planning estimate. This is only a guard;
+    // otherwise use a conservative 32 MiB planning estimate. The registered Fuji
+    // 100 km profile has about ten times the points of the normal 10 km profile,
+    // so reserve 192 MiB before starting it. This is only a guard;
     // actual IndexedDB write failures are also detected below.
     try {
       const estimate = await withAbortableTimeout(async () => navigator.storage?.estimate?.(),
@@ -3900,7 +4253,15 @@ ${diagnosticMessage}
         const observedAverage = downloadedSpotStorageSummary && downloadedSpotData.length > 0
           ? downloadedSpotStorageSummary.uniqueManagedBytes / managedCount
           : 0;
-        const estimatedRequired = Math.max(32 * 1024 * 1024, Math.ceil(observedAverage * 1.25));
+        const plannedMaxDistanceMeters = registeredProfileCoverageDistanceMeters(
+          downloadPoint.latitude,
+          downloadPoint.longitude,
+          precisionSettings.tripodSearchMaxDistanceMeters
+        );
+        const minimumPlanningBytes = plannedMaxDistanceMeters >= 100_000
+          ? 192 * 1024 * 1024
+          : 32 * 1024 * 1024;
+        const estimatedRequired = Math.max(minimumPlanningBytes, Math.ceil(observedAverage * 1.25));
         if (remaining < estimatedRequired) {
           setSearchMessage(`端末の保存空き容量が不足しています（推定必要容量 約${Math.ceil(estimatedRequired / 1048576)}MB / 利用可能 約${Math.floor(remaining / 1048576)}MB）。ダウンロードを開始しませんでした。`);
           setBearingProfileDialog(null);
@@ -3931,7 +4292,11 @@ ${diagnosticMessage}
         subjectId: record.id,
         subjectPoint: downloadPoint,
         cameraSettings,
-        maxDistanceMeters: precisionSettings.tripodSearchMaxDistanceMeters,
+        maxDistanceMeters: registeredProfileCoverageDistanceMeters(
+          downloadPoint.latitude,
+          downloadPoint.longitude,
+          precisionSettings.tripodSearchMaxDistanceMeters
+        ),
         signal: controller.signal,
         forceRefresh,
         onProgress: (progress) => {
@@ -5875,6 +6240,19 @@ ${diagnosticMessage}
             )}
 
             <div className="map-right-actions">
+              <button
+                type="button"
+                className="map-display-mode-toggle"
+                aria-label={mapDisplayMode === "2d" ? "3D地図へ切り替え" : "2D地図へ切り替え"}
+                onClick={() => {
+                  stopAllEditModes();
+                  setMapTool("none");
+                  toggleMapDisplayMode();
+                }}
+              >
+                <span>{mapDisplayMode === "2d" ? "3D" : "2D"}</span>
+                <small>切替</small>
+              </button>
               {mapDisplayMode === "2d" && (
                 <button
                   type="button"
@@ -5974,6 +6352,29 @@ ${diagnosticMessage}
 
       <div className="app-status" aria-live="polite">
         <span>{status}</span>
+        {dynamicSpotUi && (
+          <section className={`dynamic-spot-status ${dynamicSpotUi.phase}`}>
+            <strong>{dynamicSpotUi.spot.name}</strong>
+            <span>{dynamicSpotUi.message}</span>
+            {(dynamicSpotUi.phase === "generating" || dynamicSpotUi.phase === "syncing-device") && (
+              <progress
+                max={dynamicSpotUi.spot.bearingCount}
+                value={dynamicSpotUi.phase === "syncing-device"
+                  ? dynamicSpotUi.spot.bearingCount
+                  : dynamicSpotUi.spot.completedBearings ?? 0}
+              />
+            )}
+            <small>
+              最終更新 {new Date(dynamicSpotUi.spot.updatedAt).toLocaleString("ja-JP")}
+              {Number.isFinite(dynamicSpotUi.spot.generationElapsedMs)
+                ? `・経過 ${Math.round((dynamicSpotUi.spot.generationElapsedMs ?? 0) / 1000)}秒`
+                : ""}
+            </small>
+            {(dynamicSpotUi.phase === "failed" || dynamicSpotUi.phase === "pending-pc") && (
+              <button type="button" onClick={() => void retryCurrentDynamicSpot()}>再試行</button>
+            )}
+          </section>
+        )}
         {tripodCandidateCalculationStatus !== "idle" && (
           <button
             type="button"

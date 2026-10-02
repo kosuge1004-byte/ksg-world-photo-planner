@@ -5,6 +5,10 @@ import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { ACTIVE_PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import {
+  findPrecomputedBearingProfileTarget,
+  REGISTERED_PROFILE_DEFAULT_DISTANCE_METERS,
+} from "../src/data/precomputedBearingProfileTargets.ts";
+import {
   PRECOMPUTED_BEARING_PROFILE_DIRECTORY,
   PRECOMPUTED_BEARING_PROFILE_FORMAT,
   isPrecomputedBearingProfileResponse,
@@ -42,14 +46,17 @@ assert(manifest?.entries && typeof manifest.entries === "object", "manifest entr
 const expected = new Map();
 const expectedNames = new Set();
 for (const landmark of ACTIVE_PREWARM_LANDMARKS) {
+  const maximumDistanceMeters =
+    findPrecomputedBearingProfileTarget(landmark.latitude, landmark.longitude)?.maxDistanceMeters ??
+    REGISTERED_PROFILE_DEFAULT_DISTANCE_METERS;
   const identity = precomputedBearingProfileIdentity({
     latitude: landmark.latitude,
     longitude: landmark.longitude,
-    maxDistanceMeters: 10_000,
+    maxDistanceMeters: maximumDistanceMeters,
   });
   assert(!expected.has(identity), `duplicate catalogue identity: ${identity}`);
   assert(!expectedNames.has(landmark.name), `duplicate catalogue name: ${landmark.name}`);
-  expected.set(identity, landmark);
+  expected.set(identity, { ...landmark, maximumDistanceMeters });
   expectedNames.add(landmark.name);
 }
 
@@ -72,7 +79,7 @@ for (const [identity, entry] of entries) {
   assert(entry.name === landmark.name, `name mismatch for ${identity}`);
   assert(entry.latitude === landmark.latitude, `latitude mismatch for ${entry.name}`);
   assert(entry.longitude === landmark.longitude, `longitude mismatch for ${entry.name}`);
-  assert(entry.maxDistanceMeters === 10_000, `distance mismatch for ${entry.name}`);
+  assert(entry.maxDistanceMeters === landmark.maximumDistanceMeters, `distance mismatch for ${entry.name}`);
   assert(/^[a-f0-9]{64}\.json\.gz$/.test(entry.file), `unsafe filename for ${entry.name}`);
   assert(!seenFiles.has(entry.file), `duplicate profile filename: ${entry.file}`);
   assert(!seenNames.has(entry.name), `duplicate manifest name: ${entry.name}`);
@@ -85,7 +92,7 @@ for (const [identity, entry] of entries) {
   assert(metadata.size === entry.bytes, `compressed size mismatch for ${entry.name}`);
   const compressed = await readFile(filePath);
   assert(sha256(compressed) === entry.sha256, `SHA-256 mismatch for ${entry.name}`);
-  const raw = gunzipSync(compressed, { maxOutputLength: 32 * 1_048_576 });
+  const raw = gunzipSync(compressed, { maxOutputLength: 64 * 1_048_576 });
   const payload = JSON.parse(raw.toString("utf8"));
   assert(payload?.schemaVersion === 1, `payload schema mismatch for ${entry.name}`);
   assert(payload?.format === PRECOMPUTED_BEARING_PROFILE_FORMAT, `payload format mismatch for ${entry.name}`);
@@ -124,7 +131,7 @@ const report = {
   manifestEntryCount: entries.length,
   profileFileCount: files.length,
   bearingsPerLandmark: 360,
-  maximumDistanceMeters: 10_000,
+  maximumDistanceMeters: Math.max(...[...expected.values()].map((item) => item.maximumDistanceMeters)),
   totalTerrainPointCount: pointCount,
   compressedBytes,
   uncompressedBytes,

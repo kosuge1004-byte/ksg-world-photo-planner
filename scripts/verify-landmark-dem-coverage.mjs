@@ -21,4 +21,12 @@ for (const suffix of ["center", "3km", "10km", "50km"]) {
   }
 }
 
+const fuji100 = JSON.parse(read("dem/gsi-landmark-dem-fuji-100km-manifest.json"));
+assert.equal(fuji100.landmarkSource, "src/data/japanLandmarks.ts");
+assert.equal(fuji100.landmarkCount, 1);
+assert.equal(fuji100.radiusMeters, 100_000);
+const fujiOwners = new Set(Object.values(fuji100.landmarksByMesh).flat());
+assert.deepEqual([...fujiOwners], ["富士山"]);
+assert.ok(fuji100.meshCount > 0, "Fuji 100km manifest must contain meshes");
+
 console.log(`landmark DEM coverage verification passed (${landmarks.length}/${landmarks.length})`);

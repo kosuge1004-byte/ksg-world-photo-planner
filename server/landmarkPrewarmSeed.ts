@@ -96,7 +96,10 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   { name: "美ヶ原高原（王ヶ頭）", category: "mountain", latitude: 36.225917, longitude: 138.107444, subjectSurface: "terrain", heightMeters: 0 },
   { name: "王ヶ頭ホテル（長野県）", category: "building", latitude: 36.225682, longitude: 138.108718, subjectSurface: "structure", heightMeters: null, heightStatus: "unverified" },
   { name: "美しの塔（長野県）", category: "tower", latitude: 36.224146, longitude: 138.124295, subjectSurface: "structure", heightMeters: 6 },
-  { name: "曽爾高原", category: "mountain", latitude: 34.517839, longitude: 136.160488, subjectSurface: "terrain", heightMeters: 0 },
+  // 曽爾村観光協会「曽爾高原」。高原の代表点を地形被写体として扱う。
+  { name: "曽爾高原（奈良県）", category: "natural", latitude: 34.517839, longitude: 136.160488, subjectSurface: "terrain", heightMeters: 0 },
+  // 奈良県公式コース資料の亀山峠（標高810m）。OSM node 1582193816で座標照合。
+  { name: "亀山峠（三重県・奈良県境）", category: "natural", latitude: 34.5200761, longitude: 136.1675341, subjectSurface: "terrain", heightMeters: 0 },
   { name: "岩木山", category: "mountain", latitude: 40.6559319, longitude: 140.3029642, subjectSurface: "terrain", heightMeters: 0 },
   { name: "恵那山", category: "mountain", latitude: 35.4432801, longitude: 137.5970233, subjectSurface: "terrain", heightMeters: 0 },
   { name: "開聞岳", category: "mountain", latitude: 31.1801363, longitude: 130.5283045, subjectSurface: "terrain", heightMeters: 0 },

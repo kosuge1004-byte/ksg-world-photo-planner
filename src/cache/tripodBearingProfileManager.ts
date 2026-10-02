@@ -7,6 +7,7 @@ import {
   calculateTripodCandidates,
   densifyDistanceIntervals,
   logarithmicDistances,
+  maximumTerrainProfileSamples,
   rayCartographicAtDistance,
 } from "../cesium/tripodCandidates";
 import { sampleWorldTerrainNeutral, terrainDataSource } from "../cesium/worldTerrain";
@@ -263,8 +264,14 @@ export async function backfillBearingProfiles(params: {
   signal?: AbortSignal;
   onProgress?: (progress: BearingBackfillProgress) => void;
   forceRefresh?: boolean;
-  /** 精度設定の三脚探索最大距離。既定10km、上限50km。 */
+  /** 精度設定の三脚探索最大距離。一般地点は上限50km、富士山だけ100km。 */
   maxDistanceMeters?: number;
+  /** Dynamic Spotの完成データ取込み時だけ全360方位を明示する。 */
+  bearingsOverride?: readonly number[];
+  /** Eドライブで完全性確認済みのDynamic Spotは1応答で取得できる。 */
+  preferPrecomputed?: boolean;
+  /** 自動同期では低速な1方位経路へ落とさず、次回のEドライブ再接続を待つ。 */
+  allowDirectFallback?: boolean;
 }): Promise<BearingBackfillResult> {
   const { subjectId, subjectPoint, cameraSettings, signal, onProgress, forceRefresh = false } = params;
   // 2026-09-10追記: 方位プロファイル本体の書き込み失敗（IndexedDBエラー・
@@ -294,7 +301,11 @@ export async function backfillBearingProfiles(params: {
   try {
   // 360°を無条件取得せず、この被写体緯度で太陽・月・天の川中心が
   // 物理的に必要とし得る三脚方位だけを対象にする。低緯度は安全側で360°維持。
-  const bearings = requiredCelestialTripodBearings(subjectPoint.latitude);
+  const bearings = params.bearingsOverride
+    ? Array.from(new Set(params.bearingsOverride)).filter((bearing) =>
+        Number.isInteger(bearing) && bearing >= 0 && bearing < 360
+      ).sort((left, right) => left - right)
+    : requiredCelestialTripodBearings(subjectPoint.latitude);
 
   if (signal?.aborted) {
     resumeDeviceTilePrefetch();
@@ -313,8 +324,8 @@ export async function backfillBearingProfiles(params: {
     if (forceRefresh) return true;
     const existing = existingProfiles[index];
     if (!existing || existing.points.length === 0) return true;
-    // 10kmで保存済みのプロファイルを、後で20/50km設定へ広げた際に
-    // 完成済みと誤認しない。旧50kmデータは10km要求にもそのまま利用可能。
+    // 短い範囲で保存済みのプロファイルを、後で範囲を広げた際に完成済みと
+    // 誤認しない。長い既存データは短い要求にもそのまま利用可能。
     const existingMaxDistanceMeters = existing.points[existing.points.length - 1]?.distanceMeters ?? 0;
     return existingMaxDistanceMeters + 0.01 < requestedMaxDistanceMeters;
   });
@@ -333,7 +344,8 @@ export async function backfillBearingProfiles(params: {
       { minMeters: ABSOLUTE_MIN_DISTANCE_METERS, maxMeters: requestedMaxDistanceMeters },
       32
     ),
-    ADAPTIVE_COARSE_MAX_SPAN_METERS
+    ADAPTIVE_COARSE_MAX_SPAN_METERS,
+    maximumTerrainProfileSamples(requestedMaxDistanceMeters)
   );
 
   let totalProfilePoints = 0;
@@ -377,10 +389,15 @@ export async function backfillBearingProfiles(params: {
   // the locally generated profile, so this changes transport count, not precision.
   const remainingBearingSet = new Set(pendingBearings);
   let batchFallbackReason: string | null = null;
-  const requiredPrecomputedTarget = requestedMaxDistanceMeters === 10_000
-    ? findPrecomputedBearingProfileTarget(subjectPoint.latitude, subjectPoint.longitude)
-    : null;
-  const bearingBatchSize = requiredPrecomputedTarget
+  const matchingTarget = findPrecomputedBearingProfileTarget(
+    subjectPoint.latitude,
+    subjectPoint.longitude
+  );
+  const requiredPrecomputedTarget =
+    matchingTarget?.maxDistanceMeters === requestedMaxDistanceMeters
+      ? matchingTarget
+      : null;
+  const bearingBatchSize = requiredPrecomputedTarget || params.preferPrecomputed
     ? PRECOMPUTED_BEARING_BATCH_SIZE
     : Math.max(1, Math.min(
         EDRIVE_EXACT_BEARING_BATCH_SIZE,
@@ -490,6 +507,23 @@ export async function backfillBearingProfiles(params: {
     }
   }
   const remainingBearings = pendingBearings.filter((bearing) => remainingBearingSet.has(bearing));
+  if (remainingBearings.length > 0 && !signal?.aborted && params.allowDirectFallback === false) {
+    resumeDeviceTilePrefetch();
+    const captured = await finishCapture();
+    return {
+      profilePoints: totalProfilePoints,
+      highPrecisionPoints: totalHighPrecisionPoints,
+      demTileCount: captured.tileCount,
+      demTileBytes: captured.bytes,
+      storageWriteFailures: captured.writeFailures +
+        (getBearingProfileWriteFailureCount() - bearingProfileWriteFailuresAtStart),
+      requestedBearings: totalSteps,
+      successfulBearings,
+      failedBearings: remainingBearings.length,
+      aborted: false,
+      demTileFailures: captured.downloadFailures,
+    };
+  }
   // 2026-09-30: 以前はR2・Eドライブの一括経路で完全な結果を得られない場合、
   // ここで例外にしてダウンロードを失敗させていた（旧1方位経路が全点を
   // Pages Functions経由で取得し約54分かかっていたため）。現在の1方位経路は

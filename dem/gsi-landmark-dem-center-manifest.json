@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-28T16:16:43.392Z",
+  "capturedAt": "2026-10-01T22:07:22.864Z",
   "source": "https://service.gsi.go.jp/kiban/app/api/dem/latest",
   "landmarkSource": "src/data/japanLandmarks.ts",
-  "landmarkCount": 288,
+  "landmarkCount": 289,
+  "catalogueLandmarkCount": 289,
   "radiusMeters": 0,
   "meshCodeLevel": "JIS X 0410 second mesh (about 10 km)",
   "meshCount": 227,
@@ -406,7 +407,8 @@
       "田丸城跡"
     ],
     "513661": [
-      "曽爾高原"
+      "曽爾高原（奈良県）",
+      "亀山峠（三重県・奈良県境）"
     ],
     "513666": [
       "夫婦岩（三重県）"
@@ -3577,7 +3579,8 @@
       "updateDate": "2016/10/01",
       "downloadPath": "/kiban/app/api/download/file/538449",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -3590,7 +3593,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/685627",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {
@@ -3603,7 +3607,8 @@
       "updateDate": "2025/12/08",
       "downloadPath": "/kiban/app/api/download/file/686663",
       "landmarks": [
-        "曽爾高原"
+        "曽爾高原（奈良県）",
+        "亀山峠（三重県・奈良県境）"
       ]
     },
     {

@@ -28,7 +28,6 @@ import { PRECOMPUTED_BEARING_PROFILE_TARGETS } from "../src/data/precomputedBear
 
 const DEFAULT_DATA_ROOT = process.env.LOCAL_DEM_DATA_ROOT ||
   "E:\\AstroSight-GSI-data-20260926\\dem\\r2-ready";
-const REGISTERED_MAX_DISTANCE_METERS = 10_000;
 // Cloudflare Pages の静的ファイル上限（1ファイル25MiB・2万ファイル）より十分小さく。
 const MAX_FILES = 250;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
@@ -88,7 +87,7 @@ const missing = PRECOMPUTED_BEARING_PROFILE_TARGETS.filter((target) => !staged.h
   precomputedBearingProfileIdentity({
     latitude: target.latitude,
     longitude: target.longitude,
-    maxDistanceMeters: REGISTERED_MAX_DISTANCE_METERS,
+    maxDistanceMeters: target.maxDistanceMeters,
   })
 ));
 console.log(JSON.stringify({

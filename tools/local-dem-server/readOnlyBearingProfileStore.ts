@@ -17,7 +17,7 @@ import {
 const FILE_NAME = /^[a-f0-9]{64}\.json\.gz$/;
 const MAX_MANIFEST_BYTES = 2 * 1_048_576;
 const MAX_COMPRESSED_PROFILE_BYTES = 16 * 1_048_576;
-const MAX_UNCOMPRESSED_PROFILE_BYTES = 32 * 1_048_576;
+const MAX_UNCOMPRESSED_PROFILE_BYTES = 64 * 1_048_576;
 const MAX_MEMORY_ENTRIES = 8;
 
 function isInside(root: string, target: string): boolean {
@@ -43,7 +43,7 @@ function validManifest(value: unknown): value is PrecomputedBearingProfileManife
     identity === precomputedBearingProfileIdentity(entry) &&
     typeof entry.name === "string" && entry.name.length > 0 && entry.name.length <= 200 &&
     Number.isFinite(entry.latitude) && Number.isFinite(entry.longitude) &&
-    Number.isFinite(entry.maxDistanceMeters) && entry.maxDistanceMeters >= 8 && entry.maxDistanceMeters <= 50_000 &&
+    Number.isFinite(entry.maxDistanceMeters) && entry.maxDistanceMeters >= 8 && entry.maxDistanceMeters <= 100_000 &&
     FILE_NAME.test(entry.file) &&
     Number.isSafeInteger(entry.bytes) && entry.bytes > 0 && entry.bytes <= MAX_COMPRESSED_PROFILE_BYTES &&
     /^[a-f0-9]{64}$/.test(entry.sha256) &&

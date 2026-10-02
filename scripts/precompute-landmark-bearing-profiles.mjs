@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
 import { computeBearingProfileBatch } from "../server/bearingProfileBatch.ts";
 import { ACTIVE_PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
+import {
+  findPrecomputedBearingProfileTarget,
+  REGISTERED_PROFILE_DEFAULT_DISTANCE_METERS,
+} from "../src/data/precomputedBearingProfileTargets.ts";
 import { configureLocalDemMemoryBudgetForPrivateOrigin } from "../server/gsiLocalDem.ts";
 import {
   PRECOMPUTED_BEARING_PROFILE_DIRECTORY,
@@ -52,7 +56,10 @@ const dataRoot = path.resolve(option(
 const outputRoot = path.resolve(
   option("output", path.join(dataRoot, PRECOMPUTED_BEARING_PROFILE_DIRECTORY))
 );
-const maxDistanceMeters = integerOption("distance", 10_000, 8, 50_000);
+const hasDistanceOverride = process.argv.slice(2).some((value) => value.startsWith("--distance="));
+const distanceOverrideMeters = hasDistanceOverride
+  ? integerOption("distance", REGISTERED_PROFILE_DEFAULT_DISTANCE_METERS, 8, 100_000)
+  : null;
 const start = integerOption("start", 0, 0, ACTIVE_PREWARM_LANDMARKS.length);
 const count = integerOption(
   "count",
@@ -61,6 +68,7 @@ const count = integerOption(
   ACTIVE_PREWARM_LANDMARKS.length - start
 );
 const force = process.argv.includes("--force");
+const prune = process.argv.includes("--prune");
 const noManifest = process.argv.includes("--no-manifest");
 const rebuildManifest = process.argv.includes("--rebuild-manifest");
 const memoryMiB = integerOption("memory-mib", 1024, 32, 2048);
@@ -91,7 +99,7 @@ if (rebuildManifest) {
     try {
       const filePath = path.join(outputRoot, file);
       const compressed = await readFile(filePath);
-      const payload = JSON.parse(gunzipSync(compressed, { maxOutputLength: 32 * 1_048_576 }).toString("utf8"));
+      const payload = JSON.parse(gunzipSync(compressed, { maxOutputLength: 64 * 1_048_576 }).toString("utf8"));
       const request = {
         bearings: payload?.response?.profiles?.map((profile) => profile.bearingDegrees) ?? [],
         maxDistanceMeters: payload?.maxDistanceMeters,
@@ -139,11 +147,15 @@ if (rebuildManifest) {
 }
 
 const selected = ACTIVE_PREWARM_LANDMARKS.slice(start, start + count);
+if (prune && (start !== 0 || count !== ACTIVE_PREWARM_LANDMARKS.length || distanceOverrideMeters !== null)) {
+  throw new Error("--prune requires the complete registered-target run without --distance");
+}
 const report = {
   generatedAt: new Date().toISOString(),
   dataRoot,
   outputRoot,
-  maxDistanceMeters,
+  distanceMode: distanceOverrideMeters === null ? "registered-target" : "override",
+  maxDistanceMeters: distanceOverrideMeters,
   requested: selected.length,
   generated: 0,
   skipped: 0,
@@ -164,6 +176,10 @@ async function saveManifest() {
 }
 
 for (const [offset, landmark] of selected.entries()) {
+  const target = findPrecomputedBearingProfileTarget(landmark.latitude, landmark.longitude);
+  const maxDistanceMeters = distanceOverrideMeters ??
+    target?.maxDistanceMeters ??
+    REGISTERED_PROFILE_DEFAULT_DISTANCE_METERS;
   const identity = precomputedBearingProfileIdentity({
     latitude: landmark.latitude,
     longitude: landmark.longitude,
@@ -251,6 +267,23 @@ for (const [offset, landmark] of selected.entries()) {
   }
 }
 
+if (prune) {
+  const expectedIdentities = new Set(ACTIVE_PREWARM_LANDMARKS.map((landmark) => {
+    const target = findPrecomputedBearingProfileTarget(landmark.latitude, landmark.longitude);
+    return precomputedBearingProfileIdentity({
+      latitude: landmark.latitude,
+      longitude: landmark.longitude,
+      maxDistanceMeters: target?.maxDistanceMeters ?? REGISTERED_PROFILE_DEFAULT_DISTANCE_METERS,
+    });
+  }));
+  for (const [identity, entry] of Object.entries(entries)) {
+    if (expectedIdentities.has(identity)) continue;
+    if (/^[a-f0-9]{64}\.json\.gz$/u.test(entry.file)) {
+      await rm(path.join(outputRoot, entry.file), { force: true });
+    }
+    delete entries[identity];
+  }
+}
 await saveManifest();
 report.elapsedMs = Date.now() - startedAt;
 const reportPath = path.join(repositoryRoot, "evidence", "precomputed-landmark-profiles-latest.json");

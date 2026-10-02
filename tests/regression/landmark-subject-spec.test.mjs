@@ -79,7 +79,7 @@ test("every non-mountain registered spot is a required precomputed target", asyn
   assert.match(endpoint, /findPrecomputedBearingProfileTarget/u);
   assert.doesNotMatch(endpoint, /ACTIVE_PREWARM_LANDMARKS/u);
   const published = new Set(PRECOMPUTED_BEARING_PROFILE_TARGETS.map((target) => target.name));
-  assert.equal(published.size, 201);
+  assert.equal(published.size, 203);
   assert.equal(published.has("スチールドラゴン2000"), true);
   assert.ok(JAPAN_LANDMARKS.some((landmark) => landmark.name === "スチールドラゴン2000"));
 });
