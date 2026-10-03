@@ -1,6 +1,6 @@
 # AstroSight 全国DEM変換
 
-`AstroSight-Nationwide-DEM-Converter.cmd` をダブルクリックし、画面の
+リポジトリ直下の `AstroSight-Nationwide-DEM-Converter.cmd` をダブルクリックし、画面の
 「実行」を押す。進捗はパーセントだけを表示し、正常完了すると「終了」と
 表示する。
 
@@ -15,4 +15,3 @@
 Shift_JIS/UTF-8、CRC32、SHA-256、atomic write、中断後のjournal再開を維持する。
 
 GitHub、Cloudflare、R2へのアップロードは行わず、ネットワーク通信もしない。
-
