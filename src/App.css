@@ -1061,7 +1061,8 @@ button { cursor: pointer; }
 .map-observer-center { fill: #25ec47; stroke: #06380d; stroke-width: 1.5; }
 .map-tripod-rise-set-arc {
   fill: none;
-  stroke-width: 1.25;
+  stroke: rgba(255, 42, 42, .98);
+  stroke-width: .625;
   stroke-dasharray: 6 4;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -3666,16 +3667,23 @@ body.pseudo-fullscreen-active {
 .spot-download-state.complete { opacity: .85; }
 .spot-download-state.partial, .spot-download-state.needs-update { opacity: 1; }
 .dynamic-spot-status {
-  display: grid;
-  gap: 0.3rem;
-  width: min(100%, 34rem);
-  margin: 0.35rem auto 0;
-  padding: 0.55rem 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.18rem auto 0;
+  padding: 0.18rem 0.48rem;
+  overflow: hidden;
   border: 1px solid rgba(118, 177, 255, 0.55);
-  border-radius: 0.65rem;
-  background: rgba(13, 31, 52, 0.92);
+  border-radius: 999px;
+  background: rgba(13, 31, 52, 0.82);
   color: #eef6ff;
-  text-align: left;
+  font-size: 9px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dynamic-spot-status.complete {
@@ -3687,14 +3695,7 @@ body.pseudo-fullscreen-active {
   border-color: rgba(255, 191, 94, 0.75);
 }
 
-.dynamic-spot-status progress {
-  width: 100%;
-}
-
-.dynamic-spot-status small {
+.dynamic-spot-status > span {
   color: #bed0e4;
-}
-
-.dynamic-spot-status button {
-  justify-self: start;
+  font-variant-numeric: tabular-nums;
 }

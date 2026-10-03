@@ -19,7 +19,6 @@ const COMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/compute";
 const DYNAMIC_SPOT_LOOKUP_ENDPOINT = "/v1/dynamic-spot/lookup";
 const DYNAMIC_SPOT_REGISTER_ENDPOINT = "/v1/dynamic-spot/register";
 const DYNAMIC_SPOT_STATUS_ENDPOINT = "/v1/dynamic-spot/status";
-const DYNAMIC_SPOT_RETRY_ENDPOINT = "/v1/dynamic-spot/retry";
 const JAPAN_BOUNDS = Object.freeze({ south: 20, north: 46.5, west: 122, east: 154 });
 const SOURCES = new Set<Exclude<LocalGsiDemSource, "DEM10A">>([
   "DEM1A", "DEM5A", "DEM5B", "DEM5C", "DEM10B",
@@ -413,8 +412,7 @@ export function createLocalDemRequestHandler(
         requestUrl !== COMPUTED_PROFILE_ENDPOINT &&
         requestUrl !== DYNAMIC_SPOT_LOOKUP_ENDPOINT &&
         requestUrl !== DYNAMIC_SPOT_REGISTER_ENDPOINT &&
-        requestUrl !== DYNAMIC_SPOT_STATUS_ENDPOINT &&
-        requestUrl !== DYNAMIC_SPOT_RETRY_ENDPOINT) {
+        requestUrl !== DYNAMIC_SPOT_STATUS_ENDPOINT) {
         throw new HttpError(404, "not found");
       }
       if (request.method !== "POST") throw new HttpError(405, "method not allowed");
@@ -441,16 +439,6 @@ export function createLocalDemRequestHandler(
         if (!dynamicSpots) throw new HttpError(503, "dynamic spot store is unavailable");
         const registration = parseDynamicSpotRegistrationPayload(body);
         const spot = await dynamicSpots.register(registration);
-        responseStatus = 202;
-        writeJson(response, 202, { spot });
-        return;
-      }
-      if (requestUrl === DYNAMIC_SPOT_RETRY_ENDPOINT) {
-        if (!dynamicSpots) throw new HttpError(503, "dynamic spot store is unavailable");
-        const lookup = parseDynamicSpotLookupPayload(body);
-        if (lookup.mode !== "coordinate") throw new HttpError(400, "dynamic spot retry requires coordinates");
-        const spot = await dynamicSpots.retry(lookup.latitude, lookup.longitude);
-        if (!spot) throw new HttpError(404, "dynamic spot was not found");
         responseStatus = 202;
         writeJson(response, 202, { spot });
         return;
@@ -565,8 +553,6 @@ export function createLocalDemRequestHandler(
                   ? DYNAMIC_SPOT_REGISTER_ENDPOINT
                   : request.url === DYNAMIC_SPOT_STATUS_ENDPOINT
                     ? DYNAMIC_SPOT_STATUS_ENDPOINT
-                    : request.url === DYNAMIC_SPOT_RETRY_ENDPOINT
-                      ? DYNAMIC_SPOT_RETRY_ENDPOINT
               : request.url === AUTHENTICATED_HEALTH_ENDPOINT
                 ? AUTHENTICATED_HEALTH_ENDPOINT
             : request.url === "/health" ? "/health" : "other",

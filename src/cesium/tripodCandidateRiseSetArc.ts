@@ -23,7 +23,11 @@ export type TripodCandidateRiseSetArc = {
   id: RiseSetCandidateBodyId;
   riseAt: Date;
   setAt: Date;
-  points: TripodCandidate[];
+  points: TripodCandidateRiseSetArcPoint[];
+};
+
+export type TripodCandidateRiseSetArcPoint = TripodCandidate & {
+  timestampMilliseconds: number;
 };
 
 type BuildTripodCandidateRiseSetArcInput = {
@@ -131,13 +135,15 @@ export function buildTripodCandidateRiseSetArc({
   for (let time = firstSampleMs; time <= lastSampleMs; time += stepMs) sampleTimes.push(time);
   if (sampleTimes.at(-1) !== lastSampleMs) sampleTimes.push(lastSampleMs);
 
-  const points = sampleTimes.flatMap((time): TripodCandidate[] => {
+  const points = sampleTimes.flatMap((time): TripodCandidateRiseSetArcPoint[] => {
     const point = celestialPoint(id, new Date(time), observer, calculationMode, refractionWeather);
     if (point.altitudeDegrees <= 0) return [];
     const [preliminary] = buildPreliminaryTripodCandidates(
       subject, [point], lensCenterHeightMeters, observer
     );
-    if (preliminary && preliminary.distanceMeters <= maxDistanceMeters) return [preliminary];
+    if (preliminary && preliminary.distanceMeters <= maxDistanceMeters) {
+      return [{ ...preliminary, timestampMilliseconds: time }];
+    }
 
     const destination = calculateKarneyDestinationPoint(
       subject, (point.azimuthDegrees + 180) % 360, maxDistanceMeters
@@ -150,8 +156,45 @@ export function buildTripodCandidateRiseSetArc({
       height: ellipsoidalHeightMeters(subject),
       distanceMeters: maxDistanceMeters,
       solutionType: "preliminary",
+      timestampMilliseconds: time,
     }];
   });
 
   return points.length >= 2 ? { id, riseAt, setAt, points } : null;
+}
+
+/** 現在時刻の精密DEM候補を候補線の同時刻位置へ組み込む。 */
+export function alignRiseSetArcToConfirmedCandidates(
+  arc: TripodCandidateRiseSetArc,
+  candidates: readonly TripodCandidate[],
+  currentDate: Date
+): TripodCandidateRiseSetArc {
+  const matching = candidates
+    .filter((candidate) => candidate.id === arc.id)
+    .sort((left, right) => left.distanceMeters - right.distanceMeters);
+  const timestamp = currentDate.getTime();
+  if (matching.length === 0 || Number.isNaN(timestamp) || arc.points.length === 0) return arc;
+
+  let nearestIndex = 0;
+  let nearestDelta = Number.POSITIVE_INFINITY;
+  arc.points.forEach((point, index) => {
+    const delta = Math.abs(point.timestampMilliseconds - timestamp);
+    if (delta < nearestDelta) {
+      nearestDelta = delta;
+      nearestIndex = index;
+    }
+  });
+
+  const aligned = matching.map((candidate): TripodCandidateRiseSetArcPoint => ({
+    ...candidate,
+    timestampMilliseconds: timestamp,
+  }));
+  return {
+    ...arc,
+    points: [
+      ...arc.points.slice(0, nearestIndex),
+      ...aligned,
+      ...arc.points.slice(nearestIndex + 1),
+    ],
+  };
 }

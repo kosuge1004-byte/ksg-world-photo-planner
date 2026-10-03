@@ -13,6 +13,7 @@ import {
   dynamicSpotStoreInternalsForTests,
 } from "../../tools/local-dem-server/dynamicSpotStore.ts";
 import { localDemAppInternalsForTests } from "../../tools/local-dem-server/app.ts";
+import { handleDynamicSpotApi } from "../../functions/_shared/dynamicSpotApi.ts";
 
 function input(overrides = {}) {
   return {
@@ -170,6 +171,34 @@ test("F partial generation resumes after restart and skips successful bearings",
     (record) => record.demProfileStatus === "complete");
   assert.equal(complete.completedBearings, 360);
   assert.equal(resumedCounter.calls, 13, "only the remaining 312 bearings are calculated in 24-bearing chunks");
+});
+
+test("PC service automatically retries an incomplete Dynamic Spot without a phone request", async () => {
+  const root = await temporaryDataRoot();
+  let calls = 0;
+  const compute = successfulCompute();
+  const store = await createDynamicSpotStore(root, async (request) => {
+    calls += 1;
+    if (calls === 1) throw new Error("transient DEM failure");
+    return compute(request);
+  }, { autoRetryBaseMs: 5, autoRetryMaxMs: 20 });
+  const created = await store.register(input({ latitude: 35.2234567 }));
+  const complete = await waitFor(store, created.latitude, created.longitude,
+    (record) => record.demProfileStatus === "complete");
+  assert.equal(complete.completedBearings, 360);
+  assert.ok(calls > 15, "the missing first chunk was retried by the PC-owned timer");
+});
+
+test("public retry endpoint cannot operate the E-drive queue", async () => {
+  const response = await handleDynamicSpotApi({
+    request: new Request("https://astrosight.pages.dev/api/dynamic-spot-retry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ latitude: 35.1, longitude: 136.1 }),
+    }),
+  }, "retry");
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "DYNAMIC_SPOT_RETRY_AUTOMATIC");
 });
 
 test("I/L adjacent coordinates get separate spot identities while sharing the external DEM cache layer", async () => {

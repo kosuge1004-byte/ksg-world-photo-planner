@@ -164,7 +164,7 @@ export function Map2DOverlayComponent({
         {candidateRiseSetArcPixels.map((arc) => arc.points.length >= 2 ? (
           <polyline
             key={`${arc.id}-rise-set-tripod-arc`}
-            className={`map-tripod-rise-set-arc map-candidate-${arc.id}`}
+            className="map-tripod-rise-set-arc"
             points={arc.points.map((point) => `${point.x},${point.y}`).join(" ")}
           />
         ) : null)}

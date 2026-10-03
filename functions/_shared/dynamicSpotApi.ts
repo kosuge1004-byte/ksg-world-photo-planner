@@ -5,7 +5,6 @@ import {
   lookupLocalDynamicSpot,
   readLocalDynamicSpotStatus,
   registerLocalDynamicSpot,
-  retryLocalDynamicSpot,
 } from "../../server/localDemGateway.ts";
 import { withCloudflareServerRuntime, type CloudflareEnv } from "./env.ts";
 import { errorMessage, jsonResponse, readJsonRequest, requestErrorStatus } from "./http.ts";
@@ -48,6 +47,14 @@ export async function handleDynamicSpotApi(
 ): Promise<Response> {
   if (context.request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
   if (context.request.method !== "POST") return json({ error: "POSTリクエストのみ利用できます" }, 405);
+  if (action === "retry") {
+    // A phone must not remotely control the E-drive job queue. Retry and
+    // resume are owned by the always-running PC service.
+    return json({
+      code: "DYNAMIC_SPOT_RETRY_AUTOMATIC",
+      error: "Dynamic SpotはPC側で自動再試行されます",
+    }, 409);
+  }
   return withCloudflareServerRuntime(context, async () => {
     try {
       const body = await readJsonRequest(context.request, MAX_REQUEST_BYTES);
@@ -71,15 +78,16 @@ export async function handleDynamicSpotApi(
       }
       const coordinate = coordinateLookup(body);
       if (!coordinate) return json({ error: "Dynamic Spot座標が不正です" }, 400);
-      const spot = action === "status"
-        ? await readLocalDynamicSpotStatus(coordinate.latitude, coordinate.longitude, context.request.signal)
-        : await retryLocalDynamicSpot(coordinate.latitude, coordinate.longitude, context.request.signal);
+      const spot = await readLocalDynamicSpotStatus(
+        coordinate.latitude,
+        coordinate.longitude,
+        context.request.signal
+      );
       return spot
-        ? json({ spot }, action === "retry" ? 202 : 200)
+        ? json({ spot })
         : json({ code: "DYNAMIC_SPOT_NOT_FOUND", error: "Dynamic Spotが見つかりません" }, 404);
     } catch (error) {
       return json({ error: errorMessage(error) }, requestErrorStatus(error));
     }
   });
 }
-

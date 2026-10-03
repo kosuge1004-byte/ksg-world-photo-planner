@@ -29,6 +29,8 @@ const MANIFEST_FORMAT = "astrosight-dynamic-spots-v1";
 const MAX_MANIFEST_BYTES = 16 * 1_048_576;
 const MAX_COMPLETE_PROFILE_BYTES = 32 * 1_048_576;
 const BEARINGS_PER_COMPUTE = 24;
+const DEFAULT_AUTO_RETRY_BASE_MS = 30_000;
+const DEFAULT_AUTO_RETRY_MAX_MS = 15 * 60_000;
 
 type DynamicSpotManifest = {
   schemaVersion: 1;
@@ -56,6 +58,11 @@ export type DynamicSpotProfileCompute = (
   request: BearingProfileBatchRequest,
   signal: AbortSignal
 ) => Promise<BearingProfileBatchResponseV2>;
+
+type DynamicSpotStoreOptions = {
+  autoRetryBaseMs?: number;
+  autoRetryMaxMs?: number;
+};
 
 function isInside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -147,14 +154,14 @@ export type DynamicSpotStore = {
   register(input: DynamicSpotRegistrationInput): Promise<DynamicSpotRecord>;
   lookupByQuery(query: string): DynamicSpotRecord | null;
   lookupByCoordinate(latitude: number, longitude: number): DynamicSpotRecord | null;
-  retry(latitude: number, longitude: number): Promise<DynamicSpotRecord | null>;
   lookupProfile(request: BearingProfileBatchRequest): Promise<BearingProfileBatchResponseV2 | null>;
   resumeIncomplete(): void;
 };
 
 export async function createDynamicSpotStore(
   configuredDataRoot: string,
-  compute: DynamicSpotProfileCompute
+  compute: DynamicSpotProfileCompute,
+  options: DynamicSpotStoreOptions = {}
 ): Promise<DynamicSpotStore> {
   const canonicalDataRoot = await realpath(path.resolve(configuredDataRoot));
   const requestedRoot = dynamicRootFromDataRoot(canonicalDataRoot);
@@ -258,6 +265,16 @@ export async function createDynamicSpotStore(
 
   let jobQueue = Promise.resolve();
   const queued = new Set<string>();
+  const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const retryAttempts = new Map<string, number>();
+  const autoRetryBaseMs = Number.isFinite(options.autoRetryBaseMs) &&
+    (options.autoRetryBaseMs ?? 0) >= 1
+    ? Math.floor(options.autoRetryBaseMs!)
+    : DEFAULT_AUTO_RETRY_BASE_MS;
+  const autoRetryMaxMs = Number.isFinite(options.autoRetryMaxMs) &&
+    (options.autoRetryMaxMs ?? 0) >= autoRetryBaseMs
+    ? Math.floor(options.autoRetryMaxMs!)
+    : DEFAULT_AUTO_RETRY_MAX_MS;
 
   const runGeneration = async (coordinateKey: string): Promise<void> => {
     let record = records[coordinateKey];
@@ -433,6 +450,12 @@ export async function createDynamicSpotStore(
 
   const enqueue = (coordinateKey: string): void => {
     if (queued.has(coordinateKey)) return;
+    const scheduled = retryTimers.get(coordinateKey);
+    if (scheduled) {
+      clearTimeout(scheduled);
+      retryTimers.delete(coordinateKey);
+    }
+    const completedBeforeRun = records[coordinateKey]?.completedBearings ?? 0;
     queued.add(coordinateKey);
     jobQueue = jobQueue.then(() => runGeneration(coordinateKey))
       .catch(async (error) => {
@@ -446,7 +469,31 @@ export async function createDynamicSpotStore(
           updatedAt: new Date().toISOString(),
         });
       })
-      .finally(() => queued.delete(coordinateKey));
+      .finally(() => {
+        queued.delete(coordinateKey);
+        const current = records[coordinateKey];
+        if (!current || current.demProfileStatus === "complete" || !heightReady(current)) {
+          retryAttempts.delete(coordinateKey);
+          return;
+        }
+        // Generation belongs to the always-running PC service. A transient DEM
+        // or tunnel failure must never require a phone button or an open app.
+        // Successful progress resets the backoff; repeated zero-progress runs
+        // back off to protect GSI and the free Cloudflare allowance.
+        const madeProgress = (current.completedBearings ?? 0) > completedBeforeRun;
+        const attempt = madeProgress ? 0 : retryAttempts.get(coordinateKey) ?? 0;
+        const delayMs = Math.min(
+          autoRetryMaxMs,
+          autoRetryBaseMs * 2 ** Math.min(attempt, 8)
+        );
+        retryAttempts.set(coordinateKey, attempt + 1);
+        const timer = setTimeout(() => {
+          retryTimers.delete(coordinateKey);
+          enqueue(coordinateKey);
+        }, delayMs);
+        timer.unref?.();
+        retryTimers.set(coordinateKey, timer);
+      });
   };
 
   const lookupByCoordinate = (latitude: number, longitude: number): DynamicSpotRecord | null => {
@@ -507,13 +554,6 @@ export async function createDynamicSpotStore(
     return record;
   };
 
-  const retry = async (latitude: number, longitude: number): Promise<DynamicSpotRecord | null> => {
-    const record = lookupByCoordinate(latitude, longitude);
-    if (!record) return null;
-    if (record.demProfileStatus !== "complete" && heightReady(record)) enqueue(record.coordinateKey);
-    return record;
-  };
-
   const lookupProfile = async (request: BearingProfileBatchRequest): Promise<BearingProfileBatchResponseV2 | null> => {
     const record = lookupByCoordinate(request.subjectPoint.latitude, request.subjectPoint.longitude);
     if (!record || record.demProfileStatus !== "complete" || !record.profileSha256 || !record.profileBytes) return null;
@@ -538,7 +578,6 @@ export async function createDynamicSpotStore(
     register,
     lookupByQuery,
     lookupByCoordinate,
-    retry,
     lookupProfile,
     resumeIncomplete: () => {
       for (const record of Object.values(records)) {
@@ -556,4 +595,6 @@ export const dynamicSpotStoreInternalsForTests = {
   isInside,
   validManifest,
   validStoredBearing,
+  DEFAULT_AUTO_RETRY_BASE_MS,
+  DEFAULT_AUTO_RETRY_MAX_MS,
 };

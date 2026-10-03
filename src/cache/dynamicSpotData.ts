@@ -157,11 +157,3 @@ export function readEdriveDynamicSpotStatus(
 ): Promise<DynamicSpotRecord | null> {
   return requestSpot("/api/dynamic-spot-status", { latitude, longitude }, LOOKUP_TIMEOUT_MS, signal);
 }
-
-export function retryEdriveDynamicSpot(
-  latitude: number,
-  longitude: number,
-  signal?: AbortSignal
-): Promise<DynamicSpotRecord | null> {
-  return requestSpot("/api/dynamic-spot-retry", { latitude, longitude }, WRITE_TIMEOUT_MS, signal);
-}

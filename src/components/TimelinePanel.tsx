@@ -296,7 +296,11 @@ function TimelinePanelComponent({
 
   useEffect(() => {
     // 高分解能トラックパッドの連続wheel間でも差分を失わないよう、表示時刻とは別に累積値を保持する。
-    if (timelineFrameRef.current === null) {
+    if (
+      timelineFrameRef.current === null &&
+      timelineDragRef.current === null &&
+      wheelIdleTimerRef.current === null
+    ) {
       timelineTimestampRef.current = selectedTime;
     }
   }, [selectedTime]);
@@ -344,6 +348,18 @@ function TimelinePanelComponent({
     });
   }, [onChangeDateTime, timeZone]);
 
+  const flushPendingTimelineTime = useCallback(() => {
+    if (timelineFrameRef.current !== null) {
+      cancelAnimationFrame(timelineFrameRef.current);
+      timelineFrameRef.current = null;
+    }
+    const pending = pendingTimestampRef.current;
+    pendingTimestampRef.current = null;
+    if (pending !== null) {
+      updateTimelineTimestamp(pending, timeZone, onChangeDateTime);
+    }
+  }, [onChangeDateTime, timeZone]);
+
   useEffect(() => {
     const ruler = timelineRulerRef.current;
     if (!ruler) return;
@@ -355,6 +371,7 @@ function TimelinePanelComponent({
       }
       wheelIdleTimerRef.current = window.setTimeout(() => {
         wheelIdleTimerRef.current = null;
+        flushPendingTimelineTime();
         onInteractionChange?.(false);
       }, 140);
       const delta =
@@ -377,7 +394,7 @@ function TimelinePanelComponent({
     // 時間軸のホイールを確実に捕捉するためnon-passiveで登録する。
     ruler.addEventListener("wheel", wheel, { passive: false });
     return () => ruler.removeEventListener("wheel", wheel);
-  }, [onInteractionChange, updateTimelineTime]);
+  }, [flushPendingTimelineTime, onInteractionChange, updateTimelineTime]);
 
   function startTimelineDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -403,6 +420,7 @@ function TimelinePanelComponent({
   function stopTimelineDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (timelineDragRef.current?.pointerId !== event.pointerId) return;
     timelineDragRef.current = null;
+    flushPendingTimelineTime();
     onInteractionChange?.(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);

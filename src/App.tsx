@@ -127,6 +127,7 @@ import {
   ABSOLUTE_MIN_DISTANCE_METERS,
 } from "./cesium/tripodCandidates";
 import {
+  alignRiseSetArcToConfirmedCandidates,
   buildTripodCandidateRiseSetArc,
   type RiseSetCandidateBodyId,
 } from "./cesium/tripodCandidateRiseSetArc";
@@ -237,7 +238,6 @@ import {
   createPendingLocalDynamicSpot,
   readEdriveDynamicSpotStatus,
   registerEdriveDynamicSpot,
-  retryEdriveDynamicSpot,
   upsertLocalDynamicSpot,
 } from "./cache/dynamicSpotData";
 import type {
@@ -1925,7 +1925,7 @@ function App() {
     [subjectPoint, tripodCandidateSourcePoints, celestialVisibility]
   );
 
-  const tripodCandidateRiseSetArcs = useMemo(() => {
+  const tripodCandidateRiseSetBaseArcs = useMemo(() => {
     if (!subjectPoint) return [];
     const ids: RiseSetCandidateBodyId[] = ["sun", "moon", "milkyWay"];
     const maxDistanceMeters = registeredProfileCoverageDistanceMeters(
@@ -2021,6 +2021,13 @@ function App() {
   const selectableDisplayedTripodCandidates = useMemo(
     () => displayedTripodCandidates,
     [displayedTripodCandidates]
+  );
+
+  const tripodCandidateRiseSetArcs = useMemo(
+    () => tripodCandidateRiseSetBaseArcs.map((arc) =>
+      alignRiseSetArcToConfirmedCandidates(arc, displayedTripodCandidates, selectedDate)
+    ),
+    [tripodCandidateRiseSetBaseArcs, displayedTripodCandidates, selectedDate]
   );
 
   // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
@@ -2767,19 +2774,20 @@ function App() {
     const longitude = tripodPoint?.longitude ?? subjectPoint?.longitude;
     if (latitude === undefined || longitude === undefined) return;
     const controller = new AbortController();
-    const previousTimeZone = timeZoneRef.current;
-    const absoluteTime = dateFromZonedDateTimeLocal(
-      dateTimeLocalRef.current,
-      previousTimeZone
-    );
     void requestTimeZone(latitude, longitude, controller.signal)
       .then((resolvedTimeZone) => {
         if (resolvedTimeZone === null) return;
+        const previousTimeZone = timeZoneRef.current;
         if (
           !isValidTimeZone(resolvedTimeZone) ||
           resolvedTimeZone === previousTimeZone
         ) return;
-        // 地点変更で時刻そのものがずれないよう、絶対時刻を保って現地表示へ変換する。
+        // タイムゾーン応答を待っている間に時間軸が動いた場合も、その瞬間の
+        // 最新時刻を変換する。リクエスト開始時の古い時刻で上書きしない。
+        const absoluteTime = dateFromZonedDateTimeLocal(
+          dateTimeLocalRef.current,
+          previousTimeZone
+        );
         if (!Number.isNaN(absoluteTime.getTime())) {
           const localized = zonedDateTimeLocalFromDate(
             absoluteTime,
@@ -3643,11 +3651,10 @@ function App() {
         spot: latest,
         phase: terminalFailure ? "failed" : "generating",
         message: terminalFailure
-          ? "一部データを作成できませんでした"
+          ? "PC側で未完了方位を自動再試行しています"
           : `スポットデータ生成中 ${completed}/${latest.bearingCount}方位 ${percent}%`,
       });
-      if (terminalFailure) return;
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await new Promise((resolve) => setTimeout(resolve, terminalFailure ? 10_000 : 3_000));
       if (controller.signal.aborted) return;
       const next = await readEdriveDynamicSpotStatus(
         latest.latitude,
@@ -3755,26 +3762,6 @@ function App() {
     });
     const remote = await registerEdriveDynamicSpot(input);
     if (remote) upsertLocalDynamicSpot(remote);
-  }
-
-  async function retryCurrentDynamicSpot(): Promise<void> {
-    const current = dynamicSpotUi?.spot;
-    const subject = currentSubjectPoint();
-    if (!current || !subject) return;
-    dynamicSpotControllerRef.current?.abort();
-    const controller = new AbortController();
-    dynamicSpotControllerRef.current = controller;
-    setDynamicSpotUi({ spot: current, phase: "generating", message: "未完了方位を再開しています" });
-    const retried = await retryEdriveDynamicSpot(current.latitude, current.longitude, controller.signal);
-    if (!retried) {
-      if (!controller.signal.aborted) setDynamicSpotUi({
-        spot: current,
-        phase: "pending-pc",
-        message: "PC/Eドライブへ接続できません。接続後に再試行してください",
-      });
-      return;
-    }
-    await followDynamicSpotGeneration(retried, subject, controller);
   }
 
   function currentSubjectPoint(): GroundPoint | null {
@@ -5842,6 +5829,22 @@ ${diagnosticMessage}
   // 開発用: #landmark-height-audit で登録スポットの高さ実測パネルを開く。
   const landmarkHeightAuditRequested = typeof window !== "undefined" &&
     window.location.hash === "#landmark-height-audit";
+  const dynamicSpotCompletedBearings = dynamicSpotUi
+    ? dynamicSpotUi.phase === "syncing-device" || dynamicSpotUi.phase === "complete"
+      ? dynamicSpotUi.spot.bearingCount
+      : dynamicSpotUi.spot.completedBearings ?? 0
+    : 0;
+  const dynamicSpotStatusText = dynamicSpotUi
+    ? dynamicSpotUi.phase === "generating"
+      ? "スポットデータ生成中"
+      : dynamicSpotUi.phase === "syncing-device"
+        ? "スポットデータ保存中"
+        : dynamicSpotUi.phase === "complete"
+          ? "スポットデータ作成完了"
+          : dynamicSpotUi.phase === "pending-pc"
+            ? "PC接続待ち・自動再開"
+            : "PC側で自動再試行中"
+    : "";
 
   return (
     <main className="app" data-ar-tracking={arTracking.location || arTracking.orientation ? "active" : "idle"}>
@@ -5998,7 +6001,9 @@ ${diagnosticMessage}
 
           <CelestialOverlay
             points={celestialPoints}
-            tracks={celestialTracks}
+            // 上部3Dプレビューは撮影構図だけを確認する画面とし、
+            // 天体軌跡など計算補助線は描画しない。
+            tracks={[]}
             milkyWayPath={visibleMilkyWayPath}
             visibility={celestialVisibility}
             occlusion={celestialOcclusion}
@@ -6450,32 +6455,48 @@ ${diagnosticMessage}
         >
           国土地理院 標高タイル
         </a>
+        {/* Native element fullscreen only renders descendants of the fullscreen
+            element. Keep the complete spot-search flow inside the map section so
+            it remains visible and interactive in both native and iOS fallback
+            fullscreen modes. Fixed positioning preserves the normal-screen UI. */}
+        <SpotSearchScreen
+          open={spotSearchOpen}
+          onBack={() => setSpotSearchOpen(false)}
+          onLocatePin={locatePinFromSpotScreen}
+          currentSubject={currentSubjectPoint()}
+          history={subjectHistory}
+          currentSubjectIsSaved={Boolean(subjectPoint) && downloadedSpotData.some((item) => item.subjectId === idFor(subjectPoint!))}
+          onSelectStoredSubject={applyStoredSubject}
+          onSelectDownloadedSpotData={(record) => void applyDownloadedSpotData(record)}
+          onToggleCurrentSaved={toggleCurrentSubjectSaved}
+          onRenameDownloadedSpotData={(subjectId, label) => setDownloadedSpotData(renameDownloadedSpotData(subjectId, label))}
+          justSavedDownloadId={justSavedDownload}
+          downloadedSpotData={downloadedSpotData}
+          downloadedSpotStorageSummary={downloadedSpotStorageSummary}
+          onDeleteDownloadedSpotData={(record) => void handleDeleteBearingProfileData(record.subjectId)}
+          onDeleteDownloadedSpotDataBulk={(records) => void handleDeleteDownloadedSpotDataBulk(records)}
+          onRefreshDownloadedSpotData={(record) => void refreshDownloadedSpotData(record)}
+        />
+        <BearingProfileDownloadDialog
+          state={bearingProfileDialog}
+          onConfirm={() => void confirmBearingProfileDownload()}
+          onDecline={declineBearingProfileDownload}
+          onCancelDownload={cancelBearingProfileDownload}
+        />
       </section>
 
       <div className="app-status" aria-live="polite">
         <span>{status}</span>
         {dynamicSpotUi && (
-          <section className={`dynamic-spot-status ${dynamicSpotUi.phase}`}>
-            <strong>{dynamicSpotUi.spot.name}</strong>
-            <span>{dynamicSpotUi.message}</span>
-            {(dynamicSpotUi.phase === "generating" || dynamicSpotUi.phase === "syncing-device") && (
-              <progress
-                max={dynamicSpotUi.spot.bearingCount}
-                value={dynamicSpotUi.phase === "syncing-device"
-                  ? dynamicSpotUi.spot.bearingCount
-                  : dynamicSpotUi.spot.completedBearings ?? 0}
-              />
-            )}
-            <small>
-              最終更新 {new Date(dynamicSpotUi.spot.updatedAt).toLocaleString("ja-JP")}
-              {Number.isFinite(dynamicSpotUi.spot.generationElapsedMs)
-                ? `・経過 ${Math.round((dynamicSpotUi.spot.generationElapsedMs ?? 0) / 1000)}秒`
-                : ""}
-            </small>
-            {(dynamicSpotUi.phase === "failed" || dynamicSpotUi.phase === "pending-pc") && (
-              <button type="button" onClick={() => void retryCurrentDynamicSpot()}>再試行</button>
-            )}
-          </section>
+          <span
+            className={`dynamic-spot-status ${dynamicSpotUi.phase}`}
+            title={`${dynamicSpotUi.spot.name}：${dynamicSpotUi.message}`}
+          >
+            <strong>{dynamicSpotStatusText}</strong>
+            <span>
+              {dynamicSpotCompletedBearings}/{dynamicSpotUi.spot.bearingCount}
+            </span>
+          </span>
         )}
         {tripodCandidateCalculationStatus !== "idle" && (
           <button
@@ -6657,30 +6678,6 @@ ${diagnosticMessage}
           />
         </Suspense>
       )}
-      <SpotSearchScreen
-        open={spotSearchOpen}
-        onBack={() => setSpotSearchOpen(false)}
-        onLocatePin={locatePinFromSpotScreen}
-        currentSubject={currentSubjectPoint()}
-        history={subjectHistory}
-        currentSubjectIsSaved={Boolean(subjectPoint) && downloadedSpotData.some((item) => item.subjectId === idFor(subjectPoint!))}
-        onSelectStoredSubject={applyStoredSubject}
-        onSelectDownloadedSpotData={(record) => void applyDownloadedSpotData(record)}
-        onToggleCurrentSaved={toggleCurrentSubjectSaved}
-        onRenameDownloadedSpotData={(subjectId, label) => setDownloadedSpotData(renameDownloadedSpotData(subjectId, label))}
-        justSavedDownloadId={justSavedDownload}
-        downloadedSpotData={downloadedSpotData}
-        downloadedSpotStorageSummary={downloadedSpotStorageSummary}
-        onDeleteDownloadedSpotData={(record) => void handleDeleteBearingProfileData(record.subjectId)}
-        onDeleteDownloadedSpotDataBulk={(records) => void handleDeleteDownloadedSpotDataBulk(records)}
-        onRefreshDownloadedSpotData={(record) => void refreshDownloadedSpotData(record)}
-      />
-      <BearingProfileDownloadDialog
-        state={bearingProfileDialog}
-        onConfirm={() => void confirmBearingProfileDownload()}
-        onDecline={declineBearingProfileDownload}
-        onCancelDownload={cancelBearingProfileDownload}
-      />
       {savedPlansOpen && (
         <Suspense fallback={null}>
           <ProjectsScreen

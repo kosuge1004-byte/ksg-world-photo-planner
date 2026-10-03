@@ -80,7 +80,7 @@ export function updateTripodCandidateEntities(
     if (arc.points.length < 2) continue;
     const hasTerrainGlobe = Boolean(viewer.scene.globe);
     const material = new PolylineDashMaterialProperty({
-      color: candidateColor(arc.id).withAlpha(0.95),
+      color: Color.RED.withAlpha(0.98),
       dashLength: 12,
       dashPattern: 255,
     });
@@ -100,8 +100,8 @@ export function updateTripodCandidateEntities(
               ])
             ),
         clampToGround: hasTerrainGlobe,
-        // 被写体から現在候補へ伸びる基準線(2.5px)の半分。
-        width: 1.25,
+        // 従来の三脚候補線(1.25px)からさらに半分へ細くする。
+        width: 0.625,
         material,
         // Google Photorealistic 3Dでは楕円体高の線が地形内部へ入るため、
         // 深度テストで隠れた区間にも同じ線を出して軌跡を欠落させない。

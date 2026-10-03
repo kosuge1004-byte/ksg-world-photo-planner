@@ -145,7 +145,7 @@ function computedProfileEndpointUrl(configuration: LocalDemGatewayConfiguration)
 
 function dynamicSpotEndpointUrl(
   configuration: LocalDemGatewayConfiguration,
-  action: "lookup" | "register" | "status" | "retry"
+  action: "lookup" | "register" | "status"
 ): URL | null {
   const elevationEndpoint = endpointUrl(configuration);
   if (!elevationEndpoint) return null;
@@ -153,7 +153,7 @@ function dynamicSpotEndpointUrl(
 }
 
 async function requestDynamicSpot(
-  action: "lookup" | "register" | "status" | "retry",
+  action: "lookup" | "register" | "status",
   body: unknown,
   signal?: AbortSignal
 ): Promise<DynamicSpotRecord | null> {
@@ -220,14 +220,6 @@ export function readLocalDynamicSpotStatus(
   signal?: AbortSignal
 ): Promise<DynamicSpotRecord | null> {
   return requestDynamicSpot("status", { latitude, longitude }, signal);
-}
-
-export function retryLocalDynamicSpot(
-  latitude: number,
-  longitude: number,
-  signal?: AbortSignal
-): Promise<DynamicSpotRecord | null> {
-  return requestDynamicSpot("retry", { latitude, longitude }, signal);
 }
 
 function isJapanPoint(point: { latitude: number; longitude: number }): boolean {

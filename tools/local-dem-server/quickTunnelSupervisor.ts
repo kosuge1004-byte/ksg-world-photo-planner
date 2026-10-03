@@ -14,6 +14,8 @@ const originToken = process.env.LOCAL_DEM_ORIGIN_TOKEN?.trim() ?? "";
 const registrationToken = process.env.LOCAL_DEM_REGISTRATION_TOKEN?.trim() ?? "";
 const port = Number(process.env.LOCAL_DEM_PORT ?? "8789");
 const cloudflared = process.env.LOCAL_DEM_CLOUDFLARED_PATH?.trim() || "cloudflared";
+const cloudflaredMetricsAddress = "127.0.0.1:20241";
+const cloudflaredMetricsUrl = `http://${cloudflaredMetricsAddress}/metrics`;
 const registrationUrl = new URL(
   process.env.ASTROSIGHT_LOCAL_DEM_REGISTER_URL?.trim() ||
     "https://astrosight.pages.dev/api/local-dem-register"
@@ -38,6 +40,8 @@ let tunnel: ChildProcess | null = null;
 let heartbeat: ReturnType<typeof setInterval> | null = null;
 let registrationRetry: ReturnType<typeof setTimeout> | null = null;
 let activeQuickTunnelUrl: string | null = null;
+let registrationInFlight = false;
+let metricsPollInFlight = false;
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -47,31 +51,44 @@ async function registerQuickTunnel(url: string): Promise<void> {
   if (!quickTunnelElevationEndpoint(url)) {
     throw new Error("cloudflared returned an invalid Quick Tunnel URL");
   }
-  const response = await fetch(registrationUrl, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json; charset=utf-8",
-      "X-AstroSight-Registration-Token": registrationToken,
-    },
-    body: JSON.stringify({ url }),
-    cache: "no-store",
-    redirect: "error",
-    signal: AbortSignal.timeout(15_000),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let response: Response;
+  let responseText = "";
+  try {
+    console.log("[local-dem] Quick Tunnel heartbeat registration requested");
+    response = await fetch(registrationUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json; charset=utf-8",
+        "X-AstroSight-Registration-Token": registrationToken,
+      },
+      body: JSON.stringify({ url }),
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    console.log(`[local-dem] Quick Tunnel registration response received (${response.status})`);
+    responseText = await response.text();
+    console.log("[local-dem] Quick Tunnel registration response body received");
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (responseText.length > 16_384) {
+    throw new Error("Quick Tunnel registration response is too large");
+  }
   if (!response.ok) {
     let code = "";
     try {
-      const body = await response.json() as { code?: unknown };
+      const body = JSON.parse(responseText) as { code?: unknown };
       if (typeof body.code === "string" && /^[A-Z0-9_]{1,64}$/u.test(body.code)) {
         code = ` (${body.code})`;
       }
-    } catch {
-      await response.body?.cancel();
-    }
+    } catch { /* The HTTP status is sufficient when the body is not JSON. */ }
     throw new Error(`Quick Tunnel registration failed with HTTP ${response.status}${code}`);
   }
-  const body = await response.json() as { gatewayVerified?: unknown };
+  const body = JSON.parse(responseText) as { gatewayVerified?: unknown };
   if (body.gatewayVerified !== true) {
     throw new Error("Quick Tunnel registration response did not verify the gateway");
   }
@@ -79,24 +96,29 @@ async function registerQuickTunnel(url: string): Promise<void> {
 }
 
 function startHeartbeat(url: string): void {
+  if (activeQuickTunnelUrl === url && heartbeat) return;
   activeQuickTunnelUrl = url;
+  console.log("[local-dem] Quick Tunnel heartbeat started");
   if (heartbeat) clearInterval(heartbeat);
   if (registrationRetry) clearTimeout(registrationRetry);
   registrationRetry = null;
   const send = async () => {
-    if (stopping || activeQuickTunnelUrl !== url) return;
+    if (stopping || activeQuickTunnelUrl !== url || registrationInFlight) return;
+    registrationInFlight = true;
     try {
       await registerQuickTunnel(url);
       if (registrationRetry) clearTimeout(registrationRetry);
       registrationRetry = null;
     } catch (error) {
-      console.error(`[local-dem] ${error instanceof Error ? error.message : String(error)}`);
+      console.log(`[local-dem] ${error instanceof Error ? error.message : String(error)}`);
       if (!stopping && activeQuickTunnelUrl === url && !registrationRetry) {
         registrationRetry = setTimeout(() => {
           registrationRetry = null;
           void send();
         }, 30_000);
       }
+    } finally {
+      registrationInFlight = false;
     }
   };
   void send();
@@ -153,6 +175,8 @@ async function runQuickTunnelOnce(): Promise<void> {
   tunnel = spawn(cloudflared, [
     "tunnel",
     "--no-autoupdate",
+    "--metrics",
+    cloudflaredMetricsAddress,
     "--url",
     `http://127.0.0.1:${port}`,
   ], {
@@ -174,10 +198,43 @@ async function runQuickTunnelOnce(): Promise<void> {
     createInterface({ input: tunnel.stderr }).on("line", inspectLine);
   }
 
-  await new Promise<void>((resolve, reject) => {
-    tunnel?.once("error", reject);
-    tunnel?.once("exit", () => resolve());
-  });
+  // Recent cloudflared builds do not always print the generated hostname to a
+  // redirected stdout/stderr stream. Its loopback-only metrics endpoint still
+  // publishes the same hostname, so use that as a second discovery channel.
+  const metricsPoll = setInterval(async () => {
+    if (stopping || activeQuickTunnelUrl || metricsPollInFlight) return;
+    metricsPollInFlight = true;
+    try {
+      const response = await fetch(cloudflaredMetricsUrl, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return;
+      }
+      const body = await response.text();
+      const match = body.match(
+        /cloudflared_tunnel_user_hostnames_counts\{[^}]*userHostname="(https:\/\/[a-z0-9-]+\.trycloudflare\.com)"/iu
+      );
+      if (match && !activeQuickTunnelUrl) {
+        console.log("[local-dem] Quick Tunnel endpoint discovered from loopback metrics");
+        startHeartbeat(match[1]);
+      }
+    } catch {
+      // The metrics listener is not ready yet; the next bounded poll retries.
+    } finally {
+      metricsPollInFlight = false;
+    }
+  }, 1_000);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      tunnel?.once("error", reject);
+      tunnel?.once("exit", () => resolve());
+    });
+  } finally {
+    clearInterval(metricsPoll);
+  }
   tunnel = null;
 }
 

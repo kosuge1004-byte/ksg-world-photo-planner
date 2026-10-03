@@ -39,6 +39,8 @@ export function orientationOffsetFromSwipe(input: {
   const dyDegrees = ((input.currentY - input.startY) / height) * verticalFov;
   return {
     headingOffsetDegrees: input.startOffset.headingOffsetDegrees - dxDegrees,
-    pitchOffsetDegrees: input.startOffset.pitchOffsetDegrees - dyDegrees,
+    // 左右は従来どおり。上下だけ、指で動かした方向へ3D像が追従する
+    // 操作感に合わせて符号を反転する。
+    pitchOffsetDegrees: input.startOffset.pitchOffsetDegrees + dyDegrees,
   };
 }

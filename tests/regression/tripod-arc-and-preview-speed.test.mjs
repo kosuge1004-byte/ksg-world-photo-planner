@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildTripodCandidateRiseSetArc } from "../../src/cesium/tripodCandidateRiseSetArc.ts";
+import {
+  alignRiseSetArcToConfirmedCandidates,
+  buildTripodCandidateRiseSetArc,
+} from "../../src/cesium/tripodCandidateRiseSetArc.ts";
 import { buildTripodSearchBaseLines } from "../../src/cesium/tripodSearchLine.ts";
 
 test("ground base line follows the current celestial azimuth independently of tripod placement", () => {
@@ -94,7 +97,43 @@ test("sun, moon and Milky Way rise-to-set guides stay inside the configured sear
   assert.match(app, /candidateRiseSetArcs=\{tripodCandidateRiseSetArcs\}/);
 });
 
-test("rise-set guides use half-width matching-color dashes and 3D adds the white camera sight line", async () => {
+test("the exact current candidate is inserted into the same-time rise-set guide", () => {
+  const arc = {
+    id: "moon",
+    riseAt: new Date("2026-10-03T00:00:00Z"),
+    setAt: new Date("2026-10-03T03:00:00Z"),
+    points: [0, 1, 2].map((hour) => ({
+      id: "moon",
+      label: "月",
+      latitude: 35 + hour * 0.01,
+      longitude: 138,
+      height: 100,
+      distanceMeters: 1_000 + hour,
+      solutionType: "preliminary",
+      timestampMilliseconds: Date.parse(`2026-10-03T0${hour}:00:00Z`),
+    })),
+  };
+  const exact = {
+    id: "moon",
+    label: "月",
+    latitude: 35.123456,
+    longitude: 138.654321,
+    height: 210,
+    distanceMeters: 2_345,
+    solutionType: "aligned",
+  };
+  const aligned = alignRiseSetArcToConfirmedCandidates(
+    arc,
+    [exact],
+    new Date("2026-10-03T01:02:00Z")
+  );
+  assert.equal(aligned.points.length, 3);
+  assert.ok(aligned.points.some((point) =>
+    point.latitude === exact.latitude && point.longitude === exact.longitude
+  ));
+});
+
+test("rise-set guides use thinner red dashes and 3D adds the white camera sight line", async () => {
   const css = await readFile(new URL("../../src/App.css", import.meta.url), "utf8");
   const candidateEntities = await readFile(
     new URL("../../src/cesium/tripodCandidateEntities.ts", import.meta.url),
@@ -106,10 +145,10 @@ test("rise-set guides use half-width matching-color dashes and 3D adds the white
   );
   const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
 
-  assert.match(css, /\.map-tripod-rise-set-arc\s*\{[\s\S]*?stroke-width:\s*1\.25;[\s\S]*?stroke-dasharray:\s*6 4;/);
+  assert.match(css, /\.map-tripod-rise-set-arc\s*\{[\s\S]*?stroke:\s*rgba\(255, 42, 42, \.98\);[\s\S]*?stroke-width:\s*\.625;[\s\S]*?stroke-dasharray:\s*6 4;/);
   assert.match(candidateEntities, /PolylineDashMaterialProperty/);
-  assert.match(candidateEntities, /width:\s*1\.25/);
-  assert.match(candidateEntities, /candidateColor\(arc\.id\)/);
+  assert.match(candidateEntities, /width:\s*0\.625/);
+  assert.match(candidateEntities, /Color\.RED\.withAlpha\(0\.98\)/);
   assert.match(sightLine, /Color\.WHITE\.withAlpha/);
   assert.match(sightLine, /PolylineDashMaterialProperty/);
   assert.match(sightLine, /ellipsoidalHeightMeters\(tripod\) \+ lensCenterHeightMeters/);
@@ -138,4 +177,14 @@ test("upper preview is progressive, bounded to six seconds, and keeps its previe
   assert.match(app, /tileWaitTimeoutMs,[\s\S]*?false\s*\)/);
   assert.match(viewer, /viewer\.terrainProvider = terrainProvider/);
   assert.match(app, /heightMeters: mapDisplayModeRef\.current === "3d" \? 1_200 : 2_000_000/);
+  assert.match(app, /<CelestialOverlay[\s\S]*?tracks=\{\[\]\}/);
+});
+
+test("timeline commits its latest frame and timezone updates cannot restore an old timestamp", async () => {
+  const timeline = await readFile(new URL("../../src/components/TimelinePanel.tsx", import.meta.url), "utf8");
+  const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
+  assert.match(timeline, /const flushPendingTimelineTime = useCallback/);
+  assert.match(timeline, /timelineDragRef\.current = null;\s*flushPendingTimelineTime\(\);\s*onInteractionChange\?\.\(false\)/);
+  assert.match(timeline, /wheelIdleTimerRef\.current = null;\s*flushPendingTimelineTime\(\);/);
+  assert.match(app, /const previousTimeZone = timeZoneRef\.current;[\s\S]*?dateFromZonedDateTimeLocal\(\s*dateTimeLocalRef\.current,[\s\S]*?previousTimeZone/);
 });
