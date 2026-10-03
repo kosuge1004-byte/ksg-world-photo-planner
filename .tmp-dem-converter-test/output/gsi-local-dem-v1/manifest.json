@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "format": "astrosight-gsi-local-dem-v1",
+  "generatedAt": "2026-10-03T22:50:58.906Z",
+  "assetPrefix": "gsi-local-dem-v1/",
+  "heightEncoding": "signed int32 centimetres; -2147483648 is NoData",
+  "coordinateOrder": "latitude longitude; +x-y (west to east, north to south)",
+  "assetCount": 1,
+  "gzipBytes": 112,
+  "rawBytes": 116,
+  "sources": {
+    "DEM5A": {
+      "assetCount": 1,
+      "gzipBytes": 112,
+      "rawBytes": 116
+    }
+  }
+}

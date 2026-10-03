@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Dataset xmlns:gml="http://www.opengis.net/gml/3.2"><DEM>
+<mesh>53341400</mesh><coverage><gml:boundedBy><gml:Envelope>
+<gml:lowerCorner>35.416666667 134.5</gml:lowerCorner><gml:upperCorner>35.425 134.5125</gml:upperCorner>
+</gml:Envelope></gml:boundedBy><gml:gridDomain><gml:Grid><gml:limits><gml:GridEnvelope>
+<gml:low>0 0</gml:low><gml:high>2 2</gml:high>
+</gml:GridEnvelope></gml:limits></gml:Grid></gml:gridDomain>
+<gml:rangeSet><gml:DataBlock><gml:tupleList>
+地表面,1.00
+その他,-9999.
+地表面,3.00
+地表面,4.00
+地表面,5.00
+地表面,6.00
+地表面,7.00
+地表面,8.00
+地表面,9.00
+</gml:tupleList></gml:DataBlock></gml:rangeSet>
+<gml:coverageFunction><gml:GridFunction><gml:sequenceRule order="+x-y">Linear</gml:sequenceRule>
+<gml:startPoint>0 0</gml:startPoint></gml:GridFunction></gml:coverageFunction>
+</coverage></DEM></Dataset>
