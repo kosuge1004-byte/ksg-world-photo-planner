@@ -21,7 +21,10 @@ type CameraState = {
 
 
 const PREVIEW_TILE_WAIT_TIMEOUT_MS = 8_000;
+export const PREVIEW_INITIAL_TILE_WAIT_TIMEOUT_MS = 4_000;
+export const PREVIEW_REFINEMENT_TILE_WAIT_TIMEOUT_MS = 2_000;
 const PREVIEW_TILE_RENDER_INTERVAL_MS = 80;
+const PREVIEW_FRAME_COPY_INTERVAL_MS = 240;
 
 function previewAbortError(): DOMException {
   return new DOMException("古いプレビュー生成を中止しました", "AbortError");
@@ -150,12 +153,14 @@ export async function waitForPreviewTiles(
   viewer: Viewer,
   previewCanvas: HTMLCanvasElement,
   context: CanvasRenderingContext2D,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs = PREVIEW_TILE_WAIT_TIMEOUT_MS
 ): Promise<boolean> {
   if (signal?.aborted) throw previewAbortError();
   const startedAt = performance.now();
   const originalResolutionScale = viewer.resolutionScale;
   viewer.resolutionScale = PREVIEW_FAST_RESOLUTION_SCALE;
+  let lastCopiedAt = Number.NEGATIVE_INFINITY;
 
   // Cesiumの自動描画ループはAstroSight側で停止している。したがって
   // プレビュー視点へカメラを移しただけでは、その視点に必要な3D Tiles/地形の
@@ -168,10 +173,22 @@ export async function waitForPreviewTiles(
       if (signal?.aborted) throw previewAbortError();
       viewer.scene.requestRender();
       viewer.scene.render();
-      copyViewerFrameToPreview(viewer, previewCanvas, context);
+      const now = performance.now();
+      const fullyLoaded = visiblePreviewTilesLoaded(viewer);
+      const timedOut = now - startedAt >= timeoutMs;
+      // CesiumのLOD更新には短いrender間隔が必要だが、WebGL→2D Canvas転写は
+      // GPU同期を伴う。表示の進捗は保ちつつ転写を3フレームに1回程度へ抑える。
+      if (
+        now - lastCopiedAt >= PREVIEW_FRAME_COPY_INTERVAL_MS ||
+        fullyLoaded ||
+        timedOut
+      ) {
+        copyViewerFrameToPreview(viewer, previewCanvas, context);
+        lastCopiedAt = now;
+      }
 
-      if (visiblePreviewTilesLoaded(viewer)) return true;
-      if (performance.now() - startedAt >= PREVIEW_TILE_WAIT_TIMEOUT_MS) return false;
+      if (fullyLoaded) return true;
+      if (timedOut) return false;
 
       await abortablePreviewDelay(PREVIEW_TILE_RENDER_INTERVAL_MS, signal);
     }
@@ -245,7 +262,9 @@ export async function captureTripodPreview(
   calculationMode: CalculationMode,
   viewCorrection?: CameraViewCorrection,
   restoreVisibleScene = true,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  tileWaitTimeoutMs = PREVIEW_TILE_WAIT_TIMEOUT_MS,
+  restoreCameraAfterCapture = true
 ): Promise<boolean> {
   if (signal?.aborted) throw previewAbortError();
   if (viewer.isDestroyed()) {
@@ -256,8 +275,10 @@ export async function captureTripodPreview(
   const cssHeight = Math.max(1, previewCanvas.clientHeight);
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
-  previewCanvas.width = Math.round(cssWidth * pixelRatio);
-  previewCanvas.height = Math.round(cssHeight * pixelRatio);
+  const pixelWidth = Math.round(cssWidth * pixelRatio);
+  const pixelHeight = Math.round(cssHeight * pixelRatio);
+  if (previewCanvas.width !== pixelWidth) previewCanvas.width = pixelWidth;
+  if (previewCanvas.height !== pixelHeight) previewCanvas.height = pixelHeight;
 
   const context = previewCanvas.getContext("2d");
 
@@ -294,15 +315,21 @@ export async function captureTripodPreview(
     // 移動した直後の1フレームだけでは3D Tiles/地形がまだ未取得のことがある。
     // 現在のプレビュー視点を維持したまま必要タイルの読込を明示的に進めてから
     // Canvasへ転写する。これにより初回の黒画面を自動的に解消する。
-    tilesFullyLoaded = await waitForPreviewTiles(viewer, previewCanvas, context, signal);
+    tilesFullyLoaded = await waitForPreviewTiles(
+      viewer,
+      previewCanvas,
+      context,
+      signal,
+      tileWaitTimeoutMs
+    );
   } finally {
     restoreTilesetDetail();
     defaultDataSource.show = defaultDataSourceWasVisible;
 
-    restoreCamera(viewer, cameraState);
+    if (restoreCameraAfterCapture) restoreCamera(viewer, cameraState);
     // 3Dマップが実際に表示されている時だけ復元フレームを即描画する。
     // 2D表示中はCesium自体を休止しているため、不可視の1フレームを描く必要はない。
-    if (restoreVisibleScene) viewer.scene.render();
+    if (restoreVisibleScene && restoreCameraAfterCapture) viewer.scene.render();
   }
   return tilesFullyLoaded;
 }

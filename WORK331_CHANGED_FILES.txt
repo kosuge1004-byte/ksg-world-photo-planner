@@ -1,6 +1,0 @@
-android/app/src/main/kotlin/com/mobilestack/app/MainActivity.kt
-lib/features/common/standard_background_progress_screen.dart
-tool/work330_supervisor_fgs_start_resilience_contract.test.mjs
-tool/work331_processor_own_fgs_start_resilience_contract.test.mjs
-WORK331_PROCESSOR_OWN_FGS_START_RESILIENCE.md
-WORK331_CHANGED_FILES.txt

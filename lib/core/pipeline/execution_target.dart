@@ -1,4 +1,0 @@
-enum ExecutionTarget {
-  cpu,
-  gpu,
-}

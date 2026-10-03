@@ -224,7 +224,8 @@ async function createPhotorealisticTilesetWithTimeout(): Promise<GooglePhotoreal
 async function createStandardViewer(
   container: HTMLDivElement,
   setStatus: (message: string) => void,
-  terrainShadingEnabled: boolean
+  terrainShadingEnabled: boolean,
+  onSceneContentChanged?: () => void
 ): Promise<Viewer> {
   const baseLayer = new ImageryLayer(new UrlTemplateImageryProvider({
     url: GSI_STANDARD_TILE_URL,
@@ -232,8 +233,7 @@ async function createStandardViewer(
     maximumLevel: 18,
   }));
 
-  // 地形（Viewer構築に必須）とPLATEAU建物タイルセット（表示専用、地形とは
-  // 別エンドポイントで地形の結果に依存しない）を並行して取得開始する。
+  // 地形とPLATEAU建物タイルセットを並行して取得開始する。
   // 建物を実際にシーンへ追加するかどうかは従来どおり地形の取得成功に
   // 依存させる（両者とも楕円体高基準で、垂直方向の整合を前提としている
   // ため）が、取得そのものを直列に待つ理由はない。読み込み内容・精度・
@@ -252,17 +252,11 @@ async function createStandardViewer(
   // 下の使用箇所で行う）。
   plateauBuildingsPromise.catch(() => undefined);
 
-  let terrainProvider: CesiumTerrainProvider | undefined;
-  try {
-    terrainProvider = await terrainProviderPromise;
-  } catch (error) {
-    console.warn("PLATEAU terrain could not be loaded; PLATEAU buildings will be disabled.", error);
-    setStatus("標準：PLATEAU地形未取得のため国土地理院地図で表示中");
-  }
-
+  // 地理院地図だけでViewerを直ちに利用可能にする。PLATEAU rootの応答を
+  // 待ってからViewerを作る旧経路では、上部プレビュー全体が外部通信待ちに
+  // なっていた。地形・建物は後から同じViewerへ追加し、追加時に再撮影する。
   const viewer = new Viewer(container, {
     baseLayer,
-    terrainProvider,
     baseLayerPicker: false,
     geocoder: false,
     animation: false,
@@ -276,36 +270,45 @@ async function createStandardViewer(
     requestRenderMode: true,
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
+  viewer.useDefaultRenderLoop = false;
 
   viewer.scene.globe.show = true;
   viewer.scene.globe.depthTestAgainstTerrain = true;
   viewer.scene.globe.enableLighting = true;
 
-  // Display-only layer for standard mode. Do not use this tileset for height,
-  // obstruction, line-of-sight, or search calculations. The building layer is
-  // enabled only when PLATEAU-Terrain loaded successfully, because both use
-  // ellipsoidal heights and are designed to align vertically.
-  if (!terrainProvider) {
-    // 地形が取得できなかった場合、先行取得していた建物タイルセットは
-    // 使わずに破棄する（垂直方向の整合が取れないため表示しない方針は
-    // 従来どおり変更しない）。
-    void plateauBuildingsPromise
-      .then((tileset) => tileset.destroy())
-      .catch(() => undefined);
-    return viewer;
-  }
+  setStatus("標準3D：国土地理院地図を表示しました。PLATEAU地形を読み込み中…");
 
-  try {
-    setStatus("標準3D：PLATEAU建物を読み込み中…");
-    const plateauBuildings = await plateauBuildingsPromise;
-
-    viewer.scene.primitives.add(plateauBuildings);
-    setStatus("標準3D：PLATEAU建物表示中（利用可能な最高LOD・テクスチャ優先）");
+  void terrainProviderPromise.then(async (terrainProvider) => {
+    if (viewer.isDestroyed()) return;
+    viewer.terrainProvider = terrainProvider;
     viewer.scene.requestRender();
-  } catch (error) {
-    console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);
-    setStatus("標準：PLATEAU未取得のため国土地理院地図で表示中");
-  }
+    setStatus("標準3D：PLATEAU地形を表示しました。建物を読み込み中…");
+    onSceneContentChanged?.();
+
+    try {
+      const plateauBuildings = await plateauBuildingsPromise;
+      if (viewer.isDestroyed()) {
+        plateauBuildings.destroy();
+        return;
+      }
+      // Display-only layer. Height/obstruction/search calculations do not use it.
+      viewer.scene.primitives.add(plateauBuildings);
+      setStatus("標準3D：国土地理院地図＋PLATEAU地形・建物を表示中");
+      viewer.scene.requestRender();
+      onSceneContentChanged?.();
+    } catch (error) {
+      console.warn("PLATEAU buildings could not be loaded; continuing with GSI map only.", error);
+      setStatus("標準3D：PLATEAU建物未取得のため地形・国土地理院地図で表示中");
+    }
+  }).catch((error) => {
+    if (viewer.isDestroyed()) {
+      void plateauBuildingsPromise.then((tileset) => tileset.destroy()).catch(() => undefined);
+      return;
+    }
+    console.warn("PLATEAU terrain could not be loaded; PLATEAU buildings will be disabled.", error);
+    setStatus("標準：PLATEAU地形未取得のため国土地理院地図で表示中");
+    void plateauBuildingsPromise.then((tileset) => tileset.destroy()).catch(() => undefined);
+  });
 
   return viewer;
 }
@@ -364,6 +367,7 @@ async function createHighestPrecisionViewer(
     requestRenderMode: true,
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
+  viewer.useDefaultRenderLoop = false;
 
   let tileset: GooglePhotorealisticTileset;
   try {
@@ -415,16 +419,26 @@ export async function createMapViewer(
   token: string | undefined,
   accuracyMode: AccuracyMode,
   setStatus: (message: string) => void,
-  terrainShadingEnabled = false
+  terrainShadingEnabled = false,
+  initialView?: { latitude: number; longitude: number; heightMeters?: number },
+  onSceneContentChanged?: () => void
 ): Promise<Viewer> {
   const viewer = accuracyMode === "highest"
     ? await createHighestPrecisionViewer(container, token ?? "", setStatus)
-    : await createStandardViewer(container, setStatus, terrainShadingEnabled);
+    : await createStandardViewer(
+        container,
+        setStatus,
+        terrainShadingEnabled,
+        onSceneContentChanged
+      );
 
   enableDoubleTapZoom(viewer);
 
+  const latitude = initialView?.latitude ?? 35.658581;
+  const longitude = initialView?.longitude ?? 139.745433;
+  const heightMeters = initialView?.heightMeters ?? 1_200;
   viewer.camera.setView({
-    destination: Cartesian3.fromDegrees(139.745433, 35.658581, 1200),
+    destination: Cartesian3.fromDegrees(longitude, latitude, heightMeters),
     orientation: {
       heading: CesiumMath.toRadians(20),
       pitch: CesiumMath.toRadians(-35),
@@ -432,10 +446,8 @@ export async function createMapViewer(
     },
   });
 
-  setStatus(
-    accuracyMode === "highest"
-      ? "Googleタイルモード：Google Photorealistic 3D Tiles 表示中"
-      : "標準3D：国土地理院地図＋PLATEAU建物（表示専用）"
-  );
+  if (accuracyMode === "highest") {
+    setStatus("Googleタイルモード：Google Photorealistic 3D Tiles 表示中");
+  }
   return viewer;
 }

@@ -11,7 +11,7 @@ const checks = [
   ['3D candidate entity updater exists', /export function updateTripodCandidateEntities/.test(entities)],
   ['3D candidates use exact candidate lon-lat-height', /Cartesian3\.fromDegrees\([\s\S]*candidate\.longitude[\s\S]*candidate\.latitude[\s\S]*candidate\.height/.test(entities)],
   ['3D candidates remain visible over 3D tiles', /disableDepthTestDistance:\s*Number\.POSITIVE_INFINITY/.test(entities)],
-  ['App feeds displayed candidates to 3D entities', /updateTripodCandidateEntities\(viewer, visibleCandidates\)/.test(app)],
+  ['App feeds displayed candidates and the subject origin to 3D entities', /updateTripodCandidateEntities\(viewer, visibleCandidates, subjectPoint\)/.test(app)],
   ['App applies same celestial visibility filter in 3D', /displayedTripodCandidates\.filter\([\s\S]*celestialVisibility\[candidate\.id\]/.test(app)],
   ['3D candidate entities are cleared outside 3D mode', /mapDisplayMode !== "3d"[\s\S]*clearTripodCandidateEntities\(viewer\)/.test(app)],
 ];

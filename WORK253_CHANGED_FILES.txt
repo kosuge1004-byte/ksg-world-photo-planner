@@ -1,8 +1,0 @@
-lib/core/registration/tiled_affine_rgb_resampler.dart
-lib/core/registration/adaptive_dual_alignment_resampler.dart
-lib/core/session/milky_way_pipeline.dart
-lib/core/session/export_pipeline_result.dart
-test/tiled_affine_rgb_resampler_test.dart
-WORK253_LOCAL_RESIDUAL_REGISTRATION_RGB.md
-WORK253_STATIC_VERIFICATION.txt
-WORK253_CHANGED_FILES.txt

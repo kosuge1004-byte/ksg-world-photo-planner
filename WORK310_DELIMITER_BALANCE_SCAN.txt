@@ -1,6 +1,0 @@
-lib/core/export/tiff16_writer.dart {}: 0 != 2
-test/lighten_blend_combiner_test.dart {}: 10 != 9
-test/star_detector_noise_robustness_test.dart (): 69 != 70
-test/star_detector_noise_robustness_test.dart {}: 23 != 24
-test/streak_candidate_detector_test.dart (): 178 != 179
-test/streak_candidate_detector_test.dart {}: 26 != 27

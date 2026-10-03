@@ -30,7 +30,6 @@ import { findPrecomputedBearingProfileTarget } from "../data/precomputedBearingP
 import {
   BEARING_STEP_DEGREES,
   clearBearingProfileCacheForSubject,
-  getBearingProfile,
   getBearingProfileWriteFailureCount,
   getBearingProfilesMany,
   setBearingProfile,
@@ -884,17 +883,23 @@ export async function tryUseBearingProfileCache(
 
   const collected: TripodCandidate[] = [];
   let verificationFailures = 0;
-  for (const point of enabledPoints) {
+  // 必要方位を1回のIndexedDB readonly transactionでまとめて読む。
+  // 候補ごとの個別transaction待ちだけを除去し、地形値と最終精密化は変えない。
+  if (enabledPoints.some((point) =>
+    !Number.isFinite(point.azimuthDegrees) || !Number.isFinite(point.altitudeDegrees)
+  )) return null;
+  const tripodBearings = enabledPoints.map((point) => (point.azimuthDegrees + 180) % 360);
+  const profiles = await getBearingProfilesMany(
+    subjectId,
+    cameraSettings.lensCenterHeightMeters,
+    tripodBearings
+  );
+  if (profiles.some((profile) => profile === null)) return null;
+
+  for (let pointIndex = 0; pointIndex < enabledPoints.length; pointIndex += 1) {
+    const point = enabledPoints[pointIndex];
     if (signal?.aborted) throw new DOMException("計算を中止しました", "AbortError");
-    if (!Number.isFinite(point.azimuthDegrees) || !Number.isFinite(point.altitudeDegrees)) {
-      return null;
-    }
-    const tripodBearing = (point.azimuthDegrees + 180) % 360;
-    const profile = await getBearingProfile(
-      subjectId,
-      cameraSettings.lensCenterHeightMeters,
-      tripodBearing
-    );
+    const profile = profiles[pointIndex];
     if (!profile) return null;
 
     const approximateBrackets = findApproximateBracketsFromProfile(

@@ -1,5 +1,0 @@
-android/app/src/main/kotlin/com/mobilestack/app/MainActivity.kt
-tool/work331_processor_own_fgs_start_resilience_contract.test.mjs
-tool/work332_processor_launch_job_identity_contract.test.mjs
-WORK332_PROCESSOR_LAUNCH_JOB_IDENTITY.md
-WORK332_CHANGED_FILES.txt

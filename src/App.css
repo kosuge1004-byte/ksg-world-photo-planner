@@ -1059,6 +1059,15 @@ button { cursor: pointer; }
 .map-current-body-milkyWay { fill: #e4ded4; }
 .map-current-body-polaris { fill: #fff; stroke: #a980ff; }
 .map-observer-center { fill: #25ec47; stroke: #06380d; stroke-width: 1.5; }
+.map-tripod-candidate-arc {
+  fill: none;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 1px 2px #000) drop-shadow(0 0 3px rgba(37, 208, 255, .85));
+}
 .map-tripod-candidate-line { stroke-width: 2.5; stroke-dasharray: 6 4; filter: drop-shadow(0 1px 1px #000); }
 .map-candidate-sun { stroke: rgba(255, 185, 0, .95); }
 .map-candidate-moon { stroke: rgba(37, 191, 255, .95); }

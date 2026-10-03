@@ -146,7 +146,12 @@ import {
   calculateKarneyLineMetrics,
   calculateKarneySurfaceDistanceMeters,
 } from "./geodesy/karneyGeodesic";
-import { captureTripodPreview, pickTripodPreviewSurface } from "./cesium/previewSnapshot";
+import {
+  captureTripodPreview,
+  pickTripodPreviewSurface,
+  PREVIEW_INITIAL_TILE_WAIT_TIMEOUT_MS,
+  PREVIEW_REFINEMENT_TILE_WAIT_TIMEOUT_MS,
+} from "./cesium/previewSnapshot";
 import { isAbortError } from "./utils/runtimeErrors";
 import {
   setSubjectPinFromCoordinates,
@@ -1991,11 +1996,11 @@ function App() {
     const visibleCandidates = displayedTripodCandidates.filter(
       (candidate) => celestialVisibility[candidate.id]
     );
-    updateTripodCandidateEntities(viewer, visibleCandidates);
+    updateTripodCandidateEntities(viewer, visibleCandidates, subjectPoint);
     return () => {
       if (!viewer.isDestroyed()) clearTripodCandidateEntities(viewer);
     };
-  }, [displayedTripodCandidates, celestialVisibility, mapDisplayMode, mapReady]);
+  }, [displayedTripodCandidates, celestialVisibility, mapDisplayMode, mapReady, subjectPoint]);
 
   useEffect(() => {
     const enabledPoints = tripodCandidateSourcePoints.filter(
@@ -2479,7 +2484,16 @@ function App() {
           token,
           available ? accuracyMode : "standard",
           setStatus,
-          precisionSettings.terrainShadingEnabled
+          precisionSettings.terrainShadingEnabled,
+          {
+            ...mapCenterRef.current,
+            // 2D起動時は詳細タイルを初期地点で先読みせず、実際の三脚視点へ
+            // 移動してから必要なタイルだけ要求する。
+            heightMeters: mapDisplayModeRef.current === "3d" ? 1_200 : 2_000_000,
+          },
+          () => {
+            if (!disposed) setPreviewRetrySequence((current) => current + 1);
+          }
         )
       )
       .then((viewer) => {
@@ -2564,7 +2578,11 @@ function App() {
           token,
           available ? accuracyMode : "standard",
           setPreviewSecondaryViewerStatus,
-          precisionSettings.terrainShadingEnabled
+          precisionSettings.terrainShadingEnabled,
+          { ...mapCenterRef.current, heightMeters: 2_000_000 },
+          () => {
+            if (!disposed) setPreviewRetrySequence((current) => current + 1);
+          }
         )
       )
       .then((viewer) => {
@@ -3036,7 +3054,7 @@ function App() {
       Cartesian3.distanceSquared(a.direction, b.direction) < 1e-12;
     const mapCameraAtSchedule = cameraSignature();
 
-    const updatePreview = (label: string) => {
+    const updatePreview = (label: string, tileWaitTimeoutMs: number) => {
       const render = async (): Promise<boolean> => {
         if (cancelled || jobId !== previewJobRef.current) return true;
         try {
@@ -3050,7 +3068,12 @@ function App() {
             calculationMode,
             previewViewCorrection,
             false,
-            previewAbortController.signal
+            previewAbortController.signal,
+            tileWaitTimeoutMs,
+            // 2D表示中のViewerと、3D同時表示用の第2Viewerはどちらも
+            // プレビュー専用。撮影後に別カメラへ戻さず、次回の同条件更新で
+            // タイルとLODをそのまま再利用する。
+            false
           );
 
           if (!cancelled && jobId === previewJobRef.current) {
@@ -3104,7 +3127,10 @@ function App() {
       return scheduled;
     };
 
-    const firstPassFullyLoaded = updatePreview("プレビュー生成中…");
+    const firstPassFullyLoaded = updatePreview(
+      "プレビュー生成中…",
+      PREVIEW_INITIAL_TILE_WAIT_TIMEOUT_MS
+    );
     void firstPassFullyLoaded;
 
     // Preview視点で追加タイルが読み込まれた後に最終高精細描画を1回だけ行う。
@@ -3121,7 +3147,10 @@ function App() {
           const current = cameraSignature();
           if (sameCamera(current, mapCameraAtSchedule)) {
             // 予約後にメイン3Dカメラが動いていなければ従来どおり3.2秒で最終更新。
-            void updatePreview("プレビュー最終更新中…");
+            void updatePreview(
+              "プレビュー最終更新中…",
+              PREVIEW_REFINEMENT_TILE_WAIT_TIMEOUT_MS
+            );
             return;
           }
 
@@ -3133,7 +3162,10 @@ function App() {
             if (cancelled || jobId !== previewJobRef.current) return;
             const next = cameraSignature();
             if (sameCamera(previous, next)) {
-              void updatePreview("プレビュー最終更新中…");
+              void updatePreview(
+                "プレビュー最終更新中…",
+                PREVIEW_REFINEMENT_TILE_WAIT_TIMEOUT_MS
+              );
               return;
             }
             previous = next;

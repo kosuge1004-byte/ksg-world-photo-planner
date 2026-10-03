@@ -12,6 +12,7 @@ import type { GroundPoint } from "../types/points";
 import type { ForegroundObject } from "../types/foreground";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { TripodSearchBaseLine } from "../cesium/tripodSearchLine";
+import { orderTripodCandidatesForArc } from "../cesium/tripodCandidateArc";
 import {
   coordinatesAtMapPixel,
   projectCoordinatesToMapPixel,
@@ -143,6 +144,10 @@ export function Map2DOverlayComponent({
   const foregroundPixel = foregroundObject?.enabled
     ? projectCoordinatesToMapPixel(foregroundObject, center, zoom, size)
     : null;
+  const candidateArcPoints = orderTripodCandidatesForArc(
+    subject,
+    candidates.filter((candidate) => visibility[candidate.id])
+  ).map((candidate) => projectCoordinatesToMapPixel(candidate, center, zoom, size));
 
 
   return (
@@ -152,6 +157,12 @@ export function Map2DOverlayComponent({
         viewBox={`0 0 ${size.width} ${size.height}`}
         preserveAspectRatio="none"
       >
+        {candidateArcPoints.length >= 2 && (
+          <polyline
+            className="map-tripod-candidate-arc"
+            points={candidateArcPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+          />
+        )}
         {tripodSearchLines.map((line) => {
           const start = projectCoordinatesToMapPixel(line.start, center, zoom, size);
           // 250km先の地理座標をWeb Mercatorへ投影して直線で結ぶと、

@@ -118,6 +118,11 @@ function Get-ExclusionReason([string]$relativePath, [bool]$isDirectory) {
     }
   }
 
+  # dist is reproducible with `npm run build`. Keeping it in a source ZIP made
+  # archives about five times larger and could retain obsolete hashed chunks
+  # from an earlier build. Cloudflare/GitHub builds from package.json instead.
+  if ($lower -eq 'dist' -or $lower.StartsWith('dist/')) { return 'generated-build-output' }
+
   # Gradle can create build directories in every Android module (including
   # generated Capacitor/Cordova modules), not only android/build and
   # android/app/build. Keep all module build output out of the source archive.
@@ -153,6 +158,25 @@ function Get-ExclusionReason([string]$relativePath, [bool]$isDirectory) {
   }
 
   if (-not $isDirectory) {
+    # Historical one-off reports remain recoverable from Git history. Keep only
+    # the current operational documents at the repository root; current design
+    # and implementation reports live under docs/.
+    if (-not $lower.Contains('/')) {
+      $rootDocumentExtension = [System.IO.Path]::GetExtension($leaf)
+      $keptRootDocuments = @(
+        'readme.md',
+        'cloudflare_deployment.md',
+        'landmark_data_rules.md',
+        'r2_free_tier_policy_20260927.md',
+        'readme_bearing_profile_download_job_setup.md',
+        'readme_d1_r2_write_budget_setup.md',
+        'readme_deploy_prewarm_worker.md'
+      )
+      if ($rootDocumentExtension -in @('.md', '.txt', '.diff', '.patch') -and
+          $leaf -notin $keptRootDocuments) {
+        return 'historical-root-report'
+      }
+    }
     if ($leaf -eq '.env.example' -and $lower -eq '.env.example') {
       # A placeholder-only template is part of the source release.
     } elseif ($leaf -eq '.env' -or $leaf.StartsWith('.env.', [StringComparison]::Ordinal)) {
@@ -263,7 +287,7 @@ function Assert-RequiredContents($records) {
     if (-not $selected.Contains($required)) { throw "Required release file is missing: $required" }
   }
 
-  foreach ($prefix in @('src/', 'server/', 'functions/', 'workers/', 'docs/', 'tools/local-dem-server/', 'tests/', 'dist/')) {
+  foreach ($prefix in @('src/', 'server/', 'functions/', 'workers/', 'docs/', 'tools/local-dem-server/', 'tests/')) {
     $found = $false
     foreach ($record in $records) {
       if ($record.RelativePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -316,8 +340,7 @@ function Find-SecretsInText([string]$relativePath, [string]$text) {
   $allowedCesiumVendorJwtSha256 = 'd7f2994e9c528046e6e31f86a636fb18204e9b5385717fb2bf2fed2aa13357f4'
   foreach ($match in [regex]::Matches($text, $jwtPattern)) {
     $hash = Get-StringSha256 $match.Value
-    $isCesiumVendorPath = $relativePath.Replace('\', '/').EndsWith('/cesium/Cesium.js', [StringComparison]::OrdinalIgnoreCase) -or
-      $relativePath.Replace('\', '/').Equals('dist/cesium/Cesium.js', [StringComparison]::OrdinalIgnoreCase)
+    $isCesiumVendorPath = $relativePath.Replace('\', '/').EndsWith('/cesium/Cesium.js', [StringComparison]::OrdinalIgnoreCase)
     if ($isCesiumVendorPath -and $hash -eq $allowedCesiumVendorJwtSha256) {
       $allowedVendorJwtCount += 1
     } else {

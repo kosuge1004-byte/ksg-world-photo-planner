@@ -1,9 +1,0 @@
-lib/core/session/milky_way_pipeline.dart
-- Added common decoded-raster geometry validation before star detection.
-- Added cancellation propagation during registration-star preparation.
-- Prevented cancellation from being swallowed as a star-detection failure.
-- Restored stack-combination diagnostic stage after successful adaptive foreground sampling.
-
-test/milky_way_pipeline_test.dart
-- Added mixed-raster geometry rejection regression test.
-- Added registration-star-preparation cancellation propagation regression test.

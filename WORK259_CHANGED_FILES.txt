@@ -1,9 +1,0 @@
-lib/core/export/linear_dng_writer.dart
-lib/core/export/export_result.dart
-lib/core/export/cfa_drizzle_dng_validity.dart
-lib/core/session/cfa_drizzle_milky_way_export.dart
-test/linear_dng_writer_test.dart
-test/cfa_drizzle_dng_validity_streaming_test.dart
-WORK259_EXPORT_MEMORY_IO_BATCH_AUDIT.md
-WORK259_STATIC_VERIFICATION.txt
-WORK259_CHANGED_FILES.txt

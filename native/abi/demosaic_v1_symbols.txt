@@ -1,2 +1,0 @@
-mobile_stack_demosaic_adaptive_tile
-mobile_stack_demosaic_api_version

@@ -1,6 +1,0 @@
-lib/core/pipeline/phase2_quality_pipeline_factory.dart
-lib/features/common/processing_progress_screen.dart
-lib/core/session/export_pipeline_result.dart
-test/phase2_quality_pipeline_test.dart
-WORK249_STACK_PIPELINE_AUDIT_FIXES.md
-WORK249_CHANGED_FILES.txt

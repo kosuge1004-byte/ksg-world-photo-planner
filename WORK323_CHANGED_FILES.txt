@@ -1,7 +1,0 @@
-lib/core/background/standard_stack_background_worker.dart
-lib/core/background/background_stack_controller.dart
-lib/core/background/stack_job_registry.dart
-tool/storage_capacity_recovery_contract.test.mjs
-tool/preflight_storage_capacity_contract.test.mjs
-WORK323_STORAGE_AUDIT_FIXES.md
-WORK323_CHANGED_FILES.txt

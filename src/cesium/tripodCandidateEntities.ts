@@ -3,10 +3,13 @@ import {
   Color,
   Entity,
   NearFarScalar,
+  PolylineGlowMaterialProperty,
   Viewer,
 } from "cesium";
 
 import type { CelestialBodyId, TripodCandidate } from "../types/celestial";
+import type { GroundPoint } from "../types/points";
+import { orderTripodCandidatesForArc } from "./tripodCandidateArc";
 
 const ENTITY_ID_PREFIX = "ksg-tripod-candidate";
 
@@ -37,7 +40,8 @@ function entityId(candidate: TripodCandidate, index: number): string {
  */
 export function updateTripodCandidateEntities(
   viewer: Viewer,
-  candidates: TripodCandidate[]
+  candidates: TripodCandidate[],
+  subject: GroundPoint | null
 ): void {
   if (viewer.isDestroyed()) return;
 
@@ -72,6 +76,36 @@ export function updateTripodCandidateEntities(
       })
     );
   });
+
+  const arc = orderTripodCandidatesForArc(subject, candidates);
+  if (arc.length >= 2) {
+    const hasTerrainGlobe = Boolean(viewer.scene.globe);
+    viewer.entities.add(new Entity({
+      id: `${ENTITY_ID_PREFIX}:arc`,
+      name: "三脚候補円弧",
+      polyline: {
+        positions: hasTerrainGlobe
+          ? Cartesian3.fromDegreesArray(
+              arc.flatMap((candidate) => [candidate.longitude, candidate.latitude])
+            )
+          : Cartesian3.fromDegreesArrayHeights(
+              arc.flatMap((candidate) => [
+                candidate.longitude,
+                candidate.latitude,
+                candidate.height + 0.5,
+              ])
+            ),
+        // 標準3Dは地形へクランプする。Google Photorealisticモードはglobe=false
+        // なので、確定候補自身の楕円体高を使用して線が消えないようにする。
+        clampToGround: hasTerrainGlobe,
+        width: 5,
+        material: new PolylineGlowMaterialProperty({
+          color: Color.WHITE.withAlpha(0.96),
+          glowPower: 0.22,
+        }),
+      },
+    }));
+  }
 
   viewer.scene.requestRender();
 }

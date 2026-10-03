@@ -1,5 +1,0 @@
-lib/core/session/cfa_drizzle_milky_way_pipeline.dart
-lib/core/session/cfa_drizzle_milky_way_export.dart
-lib/core/export/export_result.dart
-WORK261_FINAL_STATIC_HARDENING.md
-WORK261_CHANGED_FILES.txt

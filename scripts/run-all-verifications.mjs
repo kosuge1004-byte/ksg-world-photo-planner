@@ -31,7 +31,10 @@ for (let index = 0; index < names.length; index += 1) {
     {
       cwd: root,
       encoding: "utf8",
-      timeout: 180_000,
+      // The final release verifier intentionally runs several nested suites and
+      // a production build. On slower Windows hosts it can legitimately exceed
+      // three minutes even though every child check is still making progress.
+      timeout: 300_000,
       maxBuffer: 16 * 1024 * 1024,
       env: process.env,
     }

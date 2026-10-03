@@ -35,6 +35,8 @@ const cases = [
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/device-direct-terrain.test.mjs"] },
   { name: "stale 3D preview cancellation",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/preview-cancellation.test.mjs"] },
+  { name: "tripod candidate arc, downloaded-profile shortcut and progressive 3D preview",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/tripod-arc-and-preview-speed.test.mjs"] },
   { name: "persistent site-context connection recovery and network fallback",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/site-context-connection-recovery.test.mjs"] },
   { name: "downloaded data audit fixes", arguments: ["./scripts/verify-downloaded-data-audit-fixes-20260908.mjs"] },
