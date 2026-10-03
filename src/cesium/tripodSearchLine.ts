@@ -30,8 +30,9 @@ function destinationGroundPoint(
 }
 
 /**
- * 地面投影ラインと将来の三脚候補ラインが共有する唯一の基礎ラインを生成する。
- * 天体の方位を被写体側へ180°反転し、被写体から三脚側へ地表上を延長する。
+ * 被写体と現在時刻の天体方向を結ぶ関係を地表へ投影した基礎線。
+ * 時間軸とともに天体方位が変わると線も動き、出から入までの候補線との
+ * 交点が現在時刻の三脚候補点として見える。
  */
 export function buildTripodSearchBaseLines(
   subject: GroundPoint | null,
@@ -39,7 +40,6 @@ export function buildTripodSearchBaseLines(
   visibility: CelestialVisibility
 ): TripodSearchBaseLine[] {
   if (!subject) return [];
-
   return points.flatMap((point) => {
     if (!visibility[point.id] || point.altitudeDegrees <= 0) return [];
     const bearingDegrees = (point.azimuthDegrees + 180) % 360;

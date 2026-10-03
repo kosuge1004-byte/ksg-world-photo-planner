@@ -127,6 +127,10 @@ import {
   ABSOLUTE_MIN_DISTANCE_METERS,
 } from "./cesium/tripodCandidates";
 import {
+  buildTripodCandidateRiseSetArc,
+  type RiseSetCandidateBodyId,
+} from "./cesium/tripodCandidateRiseSetArc";
+import {
   loadPersistentTripodSeeds,
   savePersistentTripodSeeds,
   clearPersistentTripodSeeds,
@@ -140,6 +144,10 @@ import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache"
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
 import { clearTripodCandidateEntities, updateTripodCandidateEntities } from "./cesium/tripodCandidateEntities";
+import {
+  clearTripodSubjectSightLineEntity,
+  updateTripodSubjectSightLineEntity,
+} from "./cesium/tripodSubjectSightLineEntities";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup, setPreviewWireframeMode } from "./cesium/createMapViewer";
 import {
   calculateKarneyDestinationPoint,
@@ -1917,6 +1925,39 @@ function App() {
     [subjectPoint, tripodCandidateSourcePoints, celestialVisibility]
   );
 
+  const tripodCandidateRiseSetArcs = useMemo(() => {
+    if (!subjectPoint) return [];
+    const ids: RiseSetCandidateBodyId[] = ["sun", "moon", "milkyWay"];
+    const maxDistanceMeters = registeredProfileCoverageDistanceMeters(
+      subjectPoint.latitude,
+      subjectPoint.longitude,
+      precisionSettings.tripodSearchMaxDistanceMeters
+    );
+    return ids.flatMap((id) => {
+      if (!celestialVisibility[id]) return [];
+      const arc = buildTripodCandidateRiseSetArc({
+        id,
+        subject: subjectPoint,
+        dayStart: selectedDayStart,
+        dayEnd: selectedDayEnd,
+        lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
+        calculationMode,
+        maxDistanceMeters,
+        refractionWeather: previewRefractionWeather,
+      });
+      return arc ? [arc] : [];
+    });
+  }, [
+    subjectPoint,
+    celestialVisibility,
+    selectedDayStart,
+    selectedDayEnd,
+    cameraSettings.lensCenterHeightMeters,
+    calculationMode,
+    precisionSettings.tripodSearchMaxDistanceMeters,
+    previewRefractionWeather,
+  ]);
+
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
   // にしか実装が無く、3D表示中は最初から描画されなかった(仕様漏れ)。
   // 2Dと同じ元データ(tripodSearchLines)を、3D表示中だけ地表クランプの
@@ -1996,11 +2037,39 @@ function App() {
     const visibleCandidates = displayedTripodCandidates.filter(
       (candidate) => celestialVisibility[candidate.id]
     );
-    updateTripodCandidateEntities(viewer, visibleCandidates, subjectPoint);
+    updateTripodCandidateEntities(
+      viewer,
+      visibleCandidates,
+      tripodCandidateRiseSetArcs
+    );
     return () => {
       if (!viewer.isDestroyed()) clearTripodCandidateEntities(viewer);
     };
-  }, [displayedTripodCandidates, celestialVisibility, mapDisplayMode, mapReady, subjectPoint]);
+  }, [displayedTripodCandidates, celestialVisibility, mapDisplayMode, mapReady, subjectPoint, tripodCandidateRiseSetArcs]);
+
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    if (mapDisplayMode !== "3d" || !mapReady || !subjectPoint || !tripodPoint) {
+      clearTripodSubjectSightLineEntity(viewer);
+      return;
+    }
+    updateTripodSubjectSightLineEntity(
+      viewer,
+      subjectPoint,
+      tripodPoint,
+      cameraSettings.lensCenterHeightMeters
+    );
+    return () => {
+      if (!viewer.isDestroyed()) clearTripodSubjectSightLineEntity(viewer);
+    };
+  }, [
+    mapDisplayMode,
+    mapReady,
+    subjectPoint,
+    tripodPoint,
+    cameraSettings.lensCenterHeightMeters,
+  ]);
 
   useEffect(() => {
     const enabledPoints = tripodCandidateSourcePoints.filter(
@@ -6083,6 +6152,7 @@ ${diagnosticMessage}
               milkyWayPath={visibleMilkyWayPath}
               visibility={celestialVisibility}
               candidates={displayedTripodCandidates}
+              candidateRiseSetArcs={tripodCandidateRiseSetArcs}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
               foregroundEditing={foregroundPlacementActive}

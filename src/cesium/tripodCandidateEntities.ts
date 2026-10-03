@@ -3,13 +3,12 @@ import {
   Color,
   Entity,
   NearFarScalar,
-  PolylineGlowMaterialProperty,
+  PolylineDashMaterialProperty,
   Viewer,
 } from "cesium";
 
 import type { CelestialBodyId, TripodCandidate } from "../types/celestial";
-import type { GroundPoint } from "../types/points";
-import { orderTripodCandidatesForArc } from "./tripodCandidateArc";
+import type { TripodCandidateRiseSetArc } from "./tripodCandidateRiseSetArc";
 
 const ENTITY_ID_PREFIX = "ksg-tripod-candidate";
 
@@ -41,7 +40,7 @@ function entityId(candidate: TripodCandidate, index: number): string {
 export function updateTripodCandidateEntities(
   viewer: Viewer,
   candidates: TripodCandidate[],
-  subject: GroundPoint | null
+  candidateRiseSetArcs: readonly TripodCandidateRiseSetArc[] = []
 ): void {
   if (viewer.isDestroyed()) return;
 
@@ -77,32 +76,36 @@ export function updateTripodCandidateEntities(
     );
   });
 
-  const arc = orderTripodCandidatesForArc(subject, candidates);
-  if (arc.length >= 2) {
+  for (const arc of candidateRiseSetArcs) {
+    if (arc.points.length < 2) continue;
     const hasTerrainGlobe = Boolean(viewer.scene.globe);
+    const material = new PolylineDashMaterialProperty({
+      color: candidateColor(arc.id).withAlpha(0.95),
+      dashLength: 12,
+      dashPattern: 255,
+    });
     viewer.entities.add(new Entity({
-      id: `${ENTITY_ID_PREFIX}:arc`,
-      name: "三脚候補円弧",
+      id: `${ENTITY_ID_PREFIX}:${arc.id}-rise-set-arc`,
+      name: `${arc.points[0]?.label ?? arc.id}の出から入までの三脚候補線`,
       polyline: {
         positions: hasTerrainGlobe
           ? Cartesian3.fromDegreesArray(
-              arc.flatMap((candidate) => [candidate.longitude, candidate.latitude])
+              arc.points.flatMap((candidate) => [candidate.longitude, candidate.latitude])
             )
           : Cartesian3.fromDegreesArrayHeights(
-              arc.flatMap((candidate) => [
+              arc.points.flatMap((candidate) => [
                 candidate.longitude,
                 candidate.latitude,
-                candidate.height + 0.5,
+                candidate.height + 2,
               ])
             ),
-        // 標準3Dは地形へクランプする。Google Photorealisticモードはglobe=false
-        // なので、確定候補自身の楕円体高を使用して線が消えないようにする。
         clampToGround: hasTerrainGlobe,
-        width: 5,
-        material: new PolylineGlowMaterialProperty({
-          color: Color.WHITE.withAlpha(0.96),
-          glowPower: 0.22,
-        }),
+        // 被写体から現在候補へ伸びる基準線(2.5px)の半分。
+        width: 1.25,
+        material,
+        // Google Photorealistic 3Dでは楕円体高の線が地形内部へ入るため、
+        // 深度テストで隠れた区間にも同じ線を出して軌跡を欠落させない。
+        depthFailMaterial: material,
       },
     }));
   }

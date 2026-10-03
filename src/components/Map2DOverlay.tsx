@@ -12,7 +12,7 @@ import type { GroundPoint } from "../types/points";
 import type { ForegroundObject } from "../types/foreground";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { TripodSearchBaseLine } from "../cesium/tripodSearchLine";
-import { orderTripodCandidatesForArc } from "../cesium/tripodCandidateArc";
+import type { TripodCandidateRiseSetArc } from "../cesium/tripodCandidateRiseSetArc";
 import {
   coordinatesAtMapPixel,
   projectCoordinatesToMapPixel,
@@ -32,6 +32,7 @@ type Props = {
   milkyWayPath: MilkyWayPathPoint[];
   visibility: CelestialVisibility;
   candidates: TripodCandidate[];
+  candidateRiseSetArcs: TripodCandidateRiseSetArc[];
   tripodSearchLines: TripodSearchBaseLine[];
   foregroundObject: ForegroundObject | null;
   foregroundEditing: boolean;
@@ -126,6 +127,7 @@ export function Map2DOverlayComponent({
   tripodSubjectDistanceMeters,
   visibility,
   candidates,
+  candidateRiseSetArcs,
   tripodSearchLines,
   foregroundObject,
   foregroundEditing,
@@ -144,10 +146,12 @@ export function Map2DOverlayComponent({
   const foregroundPixel = foregroundObject?.enabled
     ? projectCoordinatesToMapPixel(foregroundObject, center, zoom, size)
     : null;
-  const candidateArcPoints = orderTripodCandidatesForArc(
-    subject,
-    candidates.filter((candidate) => visibility[candidate.id])
-  ).map((candidate) => projectCoordinatesToMapPixel(candidate, center, zoom, size));
+  const candidateRiseSetArcPixels = candidateRiseSetArcs.map((arc) => ({
+    id: arc.id,
+    points: arc.points.map((candidate) =>
+      projectCoordinatesToMapPixel(candidate, center, zoom, size)
+    ),
+  }));
 
 
   return (
@@ -157,12 +161,13 @@ export function Map2DOverlayComponent({
         viewBox={`0 0 ${size.width} ${size.height}`}
         preserveAspectRatio="none"
       >
-        {candidateArcPoints.length >= 2 && (
+        {candidateRiseSetArcPixels.map((arc) => arc.points.length >= 2 ? (
           <polyline
-            className="map-tripod-candidate-arc"
-            points={candidateArcPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+            key={`${arc.id}-rise-set-tripod-arc`}
+            className={`map-tripod-rise-set-arc map-candidate-${arc.id}`}
+            points={arc.points.map((point) => `${point.x},${point.y}`).join(" ")}
           />
-        )}
+        ) : null)}
         {tripodSearchLines.map((line) => {
           const start = projectCoordinatesToMapPixel(line.start, center, zoom, size);
           // 250km先の地理座標をWeb Mercatorへ投影して直線で結ぶと、
@@ -177,10 +182,9 @@ export function Map2DOverlayComponent({
             line.bearingDegrees,
             1_000
           );
-          // 確定/暫定候補がある場合は、その実座標を画面上の方向基準にする。
-          // これにより「被写体→天体線」と三脚候補点が同じ投影経路を使い、
-          // 表示上の線だけが候補点から外れることを防ぐ。候補未算出時だけ
-          // 被写体直近1kmの測地線接線を使う。
+          // 確定候補がある場合は、その実座標を画面上の方向基準にする。
+          // Web Mercatorの非線形差があっても、時間軸連動線と候補点が
+          // 見た目上きちんと交差する。
           const directionPixel = projectCoordinatesToMapPixel(
             matchingCandidate ?? localDirectionCoordinate,
             center,
