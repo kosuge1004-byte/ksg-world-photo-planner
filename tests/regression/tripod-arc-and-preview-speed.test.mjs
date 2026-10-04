@@ -7,6 +7,7 @@ import {
   buildTripodCandidateRiseSetArc,
 } from "../../src/cesium/tripodCandidateRiseSetArc.ts";
 import { buildTripodSearchBaseLines } from "../../src/cesium/tripodSearchLine.ts";
+import { selectFarthestVerifiedCandidate } from "../../src/cache/tripodBearingProfileManager.ts";
 
 test("ground base line follows the current celestial azimuth independently of tripod placement", () => {
   const subject = { latitude: 35, longitude: 138, height: 100, label: "subject" };
@@ -131,6 +132,71 @@ test("the exact current candidate is inserted into the same-time rise-set guide"
   assert.ok(aligned.points.some((point) =>
     point.latitude === exact.latitude && point.longitude === exact.longitude
   ));
+});
+
+test("multiple cached intersections collapse to the same farthest candidate as the authoritative search", () => {
+  const candidates = [837, 1_082, 897].map((distanceMeters, index) => ({
+    id: "moon",
+    label: "月",
+    latitude: 35 + index * 0.001,
+    longitude: 138,
+    height: 100,
+    distanceMeters,
+    solutionType: "aligned",
+    intersectionIndex: index + 1,
+    intersectionCount: 3,
+  }));
+  const selected = selectFarthestVerifiedCandidate(candidates);
+  assert.ok(selected);
+  assert.equal(selected.distanceMeters, 1_082);
+  assert.equal(selected.intersectionIndex, 1);
+  assert.equal(selected.intersectionCount, 1);
+});
+
+test("rise-set guide inserts only one farthest point and ignores candidates outside its active date interval", () => {
+  const arc = {
+    id: "moon",
+    riseAt: new Date("2026-10-04T15:00:00Z"),
+    setAt: new Date("2026-10-05T05:30:00Z"),
+    points: [0, 1, 2].map((hour) => ({
+      id: "moon",
+      label: "月",
+      latitude: 35 + hour * 0.01,
+      longitude: 138,
+      height: 100,
+      distanceMeters: 900,
+      solutionType: "preliminary",
+      timestampMilliseconds: Date.parse(`2026-10-04T${15 + hour}:00:00Z`),
+    })),
+  };
+  const candidates = [837, 1_082, 897].map((distanceMeters, index) => ({
+    id: "moon",
+    label: "月",
+    latitude: 36 + index * 0.01,
+    longitude: 139,
+    height: 110,
+    distanceMeters,
+    solutionType: "aligned",
+  }));
+
+  const aligned = alignRiseSetArcToConfirmedCandidates(
+    arc,
+    candidates,
+    new Date("2026-10-04T16:08:00Z")
+  );
+  assert.equal(aligned.points.length, arc.points.length);
+  assert.equal(
+    aligned.points.filter((point) => point.distanceMeters === 1_082).length,
+    1,
+    "候補線へは最遠の現在候補1件だけを挿入する"
+  );
+
+  const outside = alignRiseSetArcToConfirmedCandidates(
+    arc,
+    candidates,
+    new Date("2026-10-05T08:00:00Z")
+  );
+  assert.deepEqual(outside, arc, "月没後の古い候補で線を変形しない");
 });
 
 test("rise-set guides use thinner red dashes and 3D adds the white camera sight line", async () => {

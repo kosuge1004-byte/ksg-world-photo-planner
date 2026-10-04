@@ -839,6 +839,28 @@ function findApproximateBracketsFromProfile(
 }
 
 /**
+ * 方位プロファイルの各狭域ブラケットは、それぞれ通常探索と同じ精密計算を
+ * 行うため、同一天体について複数の確定候補を返し得る。通常の全域探索は
+ * 最遠の交点1件だけを最終候補にするので、高速経路も同じ規則へ揃える。
+ */
+export function selectFarthestVerifiedCandidate(
+  candidates: readonly TripodCandidate[]
+): TripodCandidate | null {
+  const farthest = candidates
+    .filter((candidate) => Number.isFinite(candidate.distanceMeters))
+    .reduce<TripodCandidate | null>(
+      (selected, candidate) =>
+        selected === null || candidate.distanceMeters > selected.distanceMeters
+          ? candidate
+          : selected,
+      null
+    );
+  return farthest
+    ? { ...farthest, intersectionIndex: 1, intersectionCount: 1 }
+    : null;
+}
+
+/**
  * 2026-09-05追記: ライブ検索（App.tsx）から呼ぶ、方位プロファイル
  * キャッシュの読み出し。
  *
@@ -960,7 +982,9 @@ export async function tryUseBearingProfileCache(
     // 1天体でも0件なら、その天体に本当に解が無いのかキャッシュが拾えなかった
     // だけなのかを判別できないため、検索全体をauthoritativeな通常探索へ戻す。
     if (verifiedForPoint.length === 0) return null;
-    collected.push(...verifiedForPoint);
+    const farthestVerified = selectFarthestVerifiedCandidate(verifiedForPoint);
+    if (!farthestVerified) return null;
+    collected.push(farthestVerified);
   }
   // 2026-10-01: 方位プロファイルは高速化専用。狭域再確認で候補が1件も
   // 確定しなかった場合、それが「本当に解なし」なのか「プロファイルの粗さ・

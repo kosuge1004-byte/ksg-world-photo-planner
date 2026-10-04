@@ -171,9 +171,12 @@ export function alignRiseSetArcToConfirmedCandidates(
 ): TripodCandidateRiseSetArc {
   const matching = candidates
     .filter((candidate) => candidate.id === arc.id)
-    .sort((left, right) => left.distanceMeters - right.distanceMeters);
+    .sort((left, right) => right.distanceMeters - left.distanceMeters);
   const timestamp = currentDate.getTime();
-  if (matching.length === 0 || Number.isNaN(timestamp) || arc.points.length === 0) return arc;
+  if (
+    matching.length === 0 || Number.isNaN(timestamp) || arc.points.length === 0 ||
+    timestamp < arc.riseAt.getTime() || timestamp > arc.setAt.getTime()
+  ) return arc;
 
   let nearestIndex = 0;
   let nearestDelta = Number.POSITIVE_INFINITY;
@@ -185,15 +188,18 @@ export function alignRiseSetArcToConfirmedCandidates(
     }
   });
 
-  const aligned = matching.map((candidate): TripodCandidateRiseSetArcPoint => ({
-    ...candidate,
+  // 通常探索と方位プロファイル高速経路はいずれも、同一天体では最遠の
+  // 地形交点1件を表示する。古いキャッシュに複数件が残っていても、線へ
+  // 同時刻の点を複数挿入して折り返し・長い対角線を作らない。
+  const aligned: TripodCandidateRiseSetArcPoint = {
+    ...matching[0],
     timestampMilliseconds: timestamp,
-  }));
+  };
   return {
     ...arc,
     points: [
       ...arc.points.slice(0, nearestIndex),
-      ...aligned,
+      aligned,
       ...arc.points.slice(nearestIndex + 1),
     ],
   };
