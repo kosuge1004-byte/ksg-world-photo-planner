@@ -85,6 +85,26 @@ function isHiddenHeightLookupTileset(primitive: unknown): boolean {
   );
 }
 
+/**
+ * 地図用Entity（ピン・三脚候補線・探索基礎ライン・視線の白線など）の表示状態を
+ * 即座にシーンへ反映する。
+ *
+ * EntityのshowやEntityの削除は、DataSourceDisplay.update() が走って初めて
+ * 実際の描画プリミティブへ伝わる。update()はviewer.render()（時計のtick）から
+ * しか呼ばれないが、プレビュー撮影はscene.render()を直接呼ぶため、
+ * defaultDataSource.show = false にしただけでは線が残ったまま撮影されていた
+ * （2D表示中はviewer.render()自体が止まっているので、3D表示で作られた線が
+ * 削除後も残り続けていた）。撮影の各フレーム前に明示的に同期する。
+ */
+function syncEntityVisibility(viewer: Viewer): void {
+  if (viewer.isDestroyed()) return;
+  try {
+    viewer.dataSourceDisplay.update(viewer.clock.currentTime);
+  } catch (error) {
+    console.warn("プレビュー用のEntity表示状態を同期できませんでした", error);
+  }
+}
+
 function visiblePreviewTilesLoaded(viewer: Viewer): boolean {
   const scene = viewer.scene;
   const globe = scene.globe;
@@ -171,6 +191,9 @@ export async function waitForPreviewTiles(
   try {
     while (!viewer.isDestroyed()) {
       if (signal?.aborted) throw previewAbortError();
+      // 地表貼り付け線は非同期に生成されるため、生成完了が撮影中に重なっても
+      // 非表示のままになるよう毎フレーム同期する。
+      syncEntityVisibility(viewer);
       viewer.scene.requestRender();
       viewer.scene.render();
       const now = performance.now();
@@ -197,6 +220,7 @@ export async function waitForPreviewTiles(
     viewer.resolutionScale = originalResolutionScale;
     if (!viewer.isDestroyed() && !signal?.aborted) {
       // 解像度を戻した状態でもう1回だけ描画し、最終フレームの画質を保つ。
+      syncEntityVisibility(viewer);
       viewer.scene.requestRender();
       viewer.scene.render();
       copyViewerFrameToPreview(viewer, previewCanvas, context);
@@ -300,6 +324,7 @@ export async function captureTripodPreview(
   const restoreTilesetDetail = relaxTilesetDetailForPreview(viewer);
   try {
     defaultDataSource.show = false;
+    syncEntityVisibility(viewer);
 
     setPreviewFromTripodToSubject(
       viewer,
@@ -325,6 +350,7 @@ export async function captureTripodPreview(
   } finally {
     restoreTilesetDetail();
     defaultDataSource.show = defaultDataSourceWasVisible;
+    syncEntityVisibility(viewer);
 
     if (restoreCameraAfterCapture) restoreCamera(viewer, cameraState);
     // 3Dマップが実際に表示されている時だけ復元フレームを即描画する。
@@ -363,6 +389,7 @@ export async function pickTripodPreviewSurface(
 
   try {
     defaultDataSource.show = false;
+    syncEntityVisibility(viewer);
     setPreviewFromTripodToSubject(
       viewer,
       tripod,
@@ -398,6 +425,7 @@ export async function pickTripodPreviewSurface(
     return picked ? Cartesian3.clone(picked) : null;
   } finally {
     defaultDataSource.show = defaultDataSourceWasVisible;
+    syncEntityVisibility(viewer);
     restoreCamera(viewer, cameraState);
   }
 }

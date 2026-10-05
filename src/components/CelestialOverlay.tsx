@@ -18,6 +18,8 @@ type Props = {
    * 画面外インジケーター（点線の丸）や、地形等で隠れていることを示す表示は
    * 常に完全な不透明度のまま維持する（薄くすると視認できなくなるため）。 */
   discOpacity?: number;
+  /** 軌跡線の配色。"yellow"は上部プレビュー用（全天体共通の黄色）。 */
+  trackTone?: "body" | "yellow";
 };
 
 const MOON_MARIA = [
@@ -324,6 +326,7 @@ function CelestialOverlayComponent({
   visibility,
   occlusion,
   discOpacity = 1,
+  trackTone = "body",
 }: Props) {
   const milkyWaySegments = milkyWayBandSegments(milkyWayPath, true);
   const hiddenMilkyWaySegments = milkyWayBandSegments(milkyWayPath, false);
@@ -351,7 +354,7 @@ function CelestialOverlayComponent({
       data-occlusion-milky-way-state={occlusion.milkyWay?.verificationState ?? "checking"}
     >
       <svg className="celestial-track-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <g className="celestial-track-line-group">
+        <g className={`celestial-track-line-group${trackTone === "yellow" ? " celestial-track-tone-yellow" : ""}`}>
           {tracks.map((track) => {
             if (!visibility[track.id]) return null;
             return trackSegments(track).map((segment, index) => (
@@ -372,7 +375,7 @@ function CelestialOverlayComponent({
           .map((point) => (
             <span
               key={`${track.id}-${point.timestampMilliseconds}`}
-              className={`celestial-track-time track-time-${track.id}`}
+              className={`celestial-track-time track-time-${track.id}${trackTone === "yellow" ? " track-time-tone-yellow" : ""}`}
               style={{ left: `${point.xPercent}%`, top: `${point.yPercent}%` }}
             >
               {point.timeLabel}

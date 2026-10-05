@@ -332,6 +332,7 @@ function normalizeCelestialVisibility(value: CelestialVisibility): CelestialVisi
   };
 }
 
+const PREVIEW_TRACK_NEXT_DAY_EXTENSION_MS = 6 * 60 * 60 * 1_000;
 const TRIPOD_CACHE_PREPARATION_TIMEOUT_MS = 2_000;
 // 2026-09-29修正（実機診断で原因確定）:
 // 固定90秒の「探索開始からの絶対上限」は廃止する。実機ログでは
@@ -1776,6 +1777,40 @@ function App() {
     previewRefractionWeather,
   ]);
 
+  // 2026-10-05追記: 上部プレビューに描く「天体が通る線」。選択日の24時間に加え、
+  // 深夜に昇る天体（例: 23:39の月出）でも線が0:00で途切れないよう、翌朝6時まで
+  // 延長して計算する。2D地図側のcelestialTracks（選択日のみ）は変更しない。
+  const previewCelestialTracks = useMemo(() => {
+    if (!tripodPoint || !subjectPoint) return [];
+    if (
+      Number.isNaN(selectedDayStart.getTime()) ||
+      Number.isNaN(selectedDayEnd.getTime())
+    ) return [];
+    return calculateCelestialScreenTracks(
+      tripodPoint,
+      subjectPoint,
+      cameraSettings,
+      previewAspectRatio,
+      calculationMode,
+      selectedDayStart,
+      new Date(selectedDayEnd.getTime() + PREVIEW_TRACK_NEXT_DAY_EXTENSION_MS),
+      timeZone,
+      previewViewCorrection,
+      previewRefractionWeather
+    );
+  }, [
+    selectedDayStart,
+    selectedDayEnd,
+    tripodPoint,
+    subjectPoint,
+    cameraSettings,
+    previewAspectRatio,
+    calculationMode,
+    timeZone,
+    previewViewCorrection,
+    previewRefractionWeather,
+  ]);
+
   useEffect(() => {
     // 被写体ピンを新しく置いた直後は、モバイルのpointer/touch終了イベントが
     // 取りこぼされていても候補計算を再開できるよう、時間操作中フラグを解除する。
@@ -1925,6 +1960,19 @@ function App() {
     [subjectPoint, tripodCandidateSourcePoints, celestialVisibility]
   );
 
+  // 三脚候補線の高さ基準（確定候補がまだ無い間に使う地表の楕円体高）。
+  // 三脚ピンがあればその地表高、無ければ被写体地点の標高0m相当（ジオイド高）。
+  // 確定候補が出た後は、候補自身の高さが優先される
+  // （alignRiseSetArcToConfirmedCandidates）。
+  const tripodCandidateArcReferenceGroundHeight = useMemo(() => {
+    if (tripodPoint) {
+      const height = ellipsoidalHeightMeters(tripodPoint);
+      if (Number.isFinite(height)) return Math.round(height * 10) / 10;
+    }
+    const geoid = subjectPoint?.geoidHeightMeters;
+    return Number.isFinite(geoid) ? Math.round((geoid as number) * 10) / 10 : undefined;
+  }, [tripodPoint, subjectPoint]);
+
   const tripodCandidateRiseSetBaseArcs = useMemo(() => {
     if (!subjectPoint) return [];
     const ids: RiseSetCandidateBodyId[] = ["sun", "moon", "milkyWay"];
@@ -1944,6 +1992,7 @@ function App() {
         calculationMode,
         maxDistanceMeters,
         refractionWeather: previewRefractionWeather,
+        referenceGroundEllipsoidalHeightMeters: tripodCandidateArcReferenceGroundHeight,
       });
       return arc ? [arc] : [];
     });
@@ -1956,6 +2005,7 @@ function App() {
     calculationMode,
     precisionSettings.tripodSearchMaxDistanceMeters,
     previewRefractionWeather,
+    tripodCandidateArcReferenceGroundHeight,
   ]);
 
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
@@ -6001,9 +6051,11 @@ ${diagnosticMessage}
 
           <CelestialOverlay
             points={celestialPoints}
-            // 上部3Dプレビューは撮影構図だけを確認する画面とし、
-            // 天体軌跡など計算補助線は描画しない。
-            tracks={[]}
+            // 2026-10-05変更（明示指示により）: 上部プレビューには地図用の
+            // 補助線（三脚候補線・地上線・視線の白線）を出さず、天体が通る線
+            // だけを黄色で描画する。
+            tracks={previewCelestialTracks}
+            trackTone="yellow"
             milkyWayPath={visibleMilkyWayPath}
             visibility={celestialVisibility}
             occlusion={celestialOcclusion}

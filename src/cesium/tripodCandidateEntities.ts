@@ -1,5 +1,6 @@
 import {
   Cartesian3,
+  ClassificationType,
   Color,
   Entity,
   NearFarScalar,
@@ -77,35 +78,33 @@ export function updateTripodCandidateEntities(
   });
 
   for (const arc of candidateRiseSetArcs) {
-    if (arc.points.length < 2) continue;
-    const hasTerrainGlobe = Boolean(viewer.scene.globe);
-    const material = new PolylineDashMaterialProperty({
-      color: Color.RED.withAlpha(0.98),
-      dashLength: 12,
-      dashPattern: 255,
-    });
+    const positions = arc.points.flatMap((candidate) =>
+      Number.isFinite(candidate.longitude) && Number.isFinite(candidate.latitude)
+        ? [candidate.longitude, candidate.latitude]
+        : []
+    );
+    if (positions.length < 4) continue;
     viewer.entities.add(new Entity({
       id: `${ENTITY_ID_PREFIX}:${arc.id}-rise-set-arc`,
       name: `${arc.points[0]?.label ?? arc.id}の出から入までの三脚候補線`,
       polyline: {
-        positions: hasTerrainGlobe
-          ? Cartesian3.fromDegreesArray(
-              arc.points.flatMap((candidate) => [candidate.longitude, candidate.latitude])
-            )
-          : Cartesian3.fromDegreesArrayHeights(
-              arc.points.flatMap((candidate) => [
-                candidate.longitude,
-                candidate.latitude,
-                candidate.height + 2,
-              ])
-            ),
-        clampToGround: hasTerrainGlobe,
+        // 2026-10-05修正: Google Photorealistic 3D（globe無し）では、線を
+        // 「楕円体高+2m」の空間上の線として置き、深度テストに負けた区間も
+        // depthFailMaterialで透かして描いていた。線の高さが実際の表面と一致
+        // しないため、3Dマップを動かすと視差で線が建物や地面の上を滑って見えた。
+        // 探索基礎ライン（水色）と同じく常に表面へ貼り付け、緯度経度だけで
+        // 位置を決める。地形(globe)にも3D Tilesにも貼り付くので、視点を
+        // どう動かしても同じ場所にとどまる。
+        positions: Cartesian3.fromDegreesArray(positions),
+        clampToGround: true,
+        classificationType: ClassificationType.BOTH,
         // 従来の三脚候補線(1.25px)からさらに半分へ細くする。
         width: 0.625,
-        material,
-        // Google Photorealistic 3Dでは楕円体高の線が地形内部へ入るため、
-        // 深度テストで隠れた区間にも同じ線を出して軌跡を欠落させない。
-        depthFailMaterial: material,
+        material: new PolylineDashMaterialProperty({
+          color: Color.RED.withAlpha(0.98),
+          dashLength: 12,
+          dashPattern: 255,
+        }),
       },
     }));
   }

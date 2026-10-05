@@ -1,15 +1,31 @@
+import { Cartesian3, Ellipsoid } from "cesium";
+
 import type { CalculationMode } from "../types/camera";
-import type { CelestialBodyId, CelestialScreenPoint, TripodCandidate } from "../types/celestial";
+import type { CelestialBodyId, TripodCandidate } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import { ellipsoidalHeightMeters, withLensCenterHeight } from "../types/points";
+import { withLensCenterHeight } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeather";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { calculateCelestialHorizontalCoordinates, findHorizonCrossing } from "./celestial";
-import { buildPreliminaryTripodCandidates } from "./tripodCandidates";
+import {
+  buildCelestialBackwardRay,
+  rayCartographicAtDistance,
+  sightlineDistanceToEllipsoidalHeightMeters,
+} from "./tripodCandidates";
 
 const CROSSING_SEARCH_MARGIN_MS = 30 * 60 * 60 * 1_000;
 const CROSSING_CURSOR_ADVANCE_MS = 60_000;
 const DEFAULT_SAMPLE_MINUTES = 10;
+const MINIMUM_ALTITUDE_DEGREES = 0.25;
+const RADIANS_TO_DEGREES = 180 / Math.PI;
+
+// 確定候補が「現在時刻の視線レイ上にある」とみなす許容差。
+// これを超える候補（方位だけ合わせた確認地点、時刻ドラッグ中の再投影など）は
+// 線へ頂点として挿入しない。挿入すると線がその1点だけ折れ曲がる。
+const ON_RAY_HEIGHT_TOLERANCE_METERS = 30;
+const ON_RAY_LATERAL_TOLERANCE_METERS = 25;
+const ON_RAY_LATERAL_TOLERANCE_RATIO = 0.02;
+const SAME_SAMPLE_WINDOW_MS = 60_000;
 
 export type RiseSetCandidateBodyId = Extract<CelestialBodyId, "sun" | "moon" | "milkyWay">;
 
@@ -19,11 +35,31 @@ const BODY_LABELS: Record<RiseSetCandidateBodyId, string> = {
   milkyWay: "天の川",
 };
 
+type RiseSetArcSample = {
+  timestampMilliseconds: number;
+  azimuthDegrees: number;
+  /** レイ方向に使う高度。精密探索と同じく幾何高度を優先する。 */
+  rayAltitudeDegrees: number;
+};
+
+/** 線の全頂点を同じ高さ基準で並べ直すための再計算用データ。 */
+type RiseSetArcModel = {
+  subject: GroundPoint;
+  observer: GroundPoint;
+  lensCenterHeightMeters: number;
+  maxDistanceMeters: number;
+  calculationMode: CalculationMode;
+  refractionWeather?: RefractionWeatherContext;
+  samples: RiseSetArcSample[];
+};
+
 export type TripodCandidateRiseSetArc = {
   id: RiseSetCandidateBodyId;
   riseAt: Date;
   setAt: Date;
   points: TripodCandidateRiseSetArcPoint[];
+  /** buildTripodCandidateRiseSetArc() が作った線だけが持つ。 */
+  model?: RiseSetArcModel;
 };
 
 export type TripodCandidateRiseSetArcPoint = TripodCandidate & {
@@ -40,6 +76,11 @@ type BuildTripodCandidateRiseSetArcInput = {
   maxDistanceMeters: number;
   refractionWeather?: RefractionWeatherContext;
   sampleMinutes?: number;
+  /**
+   * 三脚を立てる地表の楕円体高(m)の目安。確定候補がまだ無い間の線の高さ基準。
+   * 未指定時は従来どおりWGS84楕円体面(0m)。
+   */
+  referenceGroundEllipsoidalHeightMeters?: number;
 };
 
 function findLastCrossing(
@@ -64,22 +105,86 @@ function findLastCrossing(
   return lastCrossing;
 }
 
-function celestialPoint(
+function sampleAt(
   id: RiseSetCandidateBodyId,
-  date: Date,
-  observer: GroundPoint,
-  calculationMode: CalculationMode,
-  refractionWeather?: RefractionWeatherContext
-): CelestialScreenPoint {
-  return {
+  timestampMilliseconds: number,
+  model: Pick<RiseSetArcModel, "observer" | "calculationMode" | "refractionWeather">
+): RiseSetArcSample | null {
+  const horizontal = calculateCelestialHorizontalCoordinates(
     id,
-    label: BODY_LABELS[id],
-    ...calculateCelestialHorizontalCoordinates(id, date, observer, calculationMode, refractionWeather),
-    xPercent: 50,
-    yPercent: 50,
-    inFront: true,
-    visibleInFrame: false,
+    new Date(timestampMilliseconds),
+    model.observer,
+    model.calculationMode,
+    model.refractionWeather
+  );
+  if (
+    !Number.isFinite(horizontal.altitudeDegrees) ||
+    !Number.isFinite(horizontal.azimuthDegrees) ||
+    horizontal.altitudeDegrees <= 0
+  ) return null;
+  const geometric = (horizontal as { geometricAltitudeDegrees?: number }).geometricAltitudeDegrees;
+  return {
+    timestampMilliseconds,
+    azimuthDegrees: horizontal.azimuthDegrees,
+    rayAltitudeDegrees:
+      horizontal.altitudeDegrees > MINIMUM_ALTITUDE_DEGREES && Number.isFinite(geometric)
+        ? (geometric as number)
+        : horizontal.altitudeDegrees > MINIMUM_ALTITUDE_DEGREES
+          ? horizontal.altitudeDegrees
+          : Number.NaN,
   };
+}
+
+/**
+ * 全サンプルを「レンズ中心がこの楕円体高にある」という1つの高さ基準で並べる。
+ * 頂点ごとに高さ基準が混ざらないので、線は時刻順に滑らかに続く。
+ */
+function layoutArcPoints(
+  id: RiseSetCandidateBodyId,
+  model: RiseSetArcModel,
+  lensSurfaceEllipsoidalHeightMeters: number
+): TripodCandidateRiseSetArcPoint[] {
+  const label = BODY_LABELS[id];
+  const groundHeight = lensSurfaceEllipsoidalHeightMeters - model.lensCenterHeightMeters;
+  return model.samples.map((sample): TripodCandidateRiseSetArcPoint => {
+    const ray = Number.isFinite(sample.rayAltitudeDegrees) && sample.rayAltitudeDegrees > 0
+      ? buildCelestialBackwardRay(
+          model.subject, sample.azimuthDegrees, sample.rayAltitudeDegrees, model.observer
+        )
+      : null;
+    const distanceMeters = ray
+      ? sightlineDistanceToEllipsoidalHeightMeters(ray, lensSurfaceEllipsoidalHeightMeters)
+      : null;
+    if (ray && distanceMeters !== null && distanceMeters <= model.maxDistanceMeters) {
+      const cartographic = rayCartographicAtDistance(ray, distanceMeters);
+      if (cartographic) {
+        return {
+          id,
+          label,
+          latitude: cartographic.latitude * RADIANS_TO_DEGREES,
+          longitude: cartographic.longitude * RADIANS_TO_DEGREES,
+          height: groundHeight,
+          distanceMeters,
+          solutionType: "preliminary",
+          timestampMilliseconds: sample.timestampMilliseconds,
+        };
+      }
+    }
+    // 地平線付近で交点が探索上限を越える（または存在しない）部分は検索上限円周へ収める。
+    const destination = calculateKarneyDestinationPoint(
+      model.subject, (sample.azimuthDegrees + 180) % 360, model.maxDistanceMeters
+    );
+    return {
+      id,
+      label,
+      latitude: destination.latitude,
+      longitude: destination.longitude,
+      height: groundHeight,
+      distanceMeters: model.maxDistanceMeters,
+      solutionType: "preliminary",
+      timestampMilliseconds: sample.timestampMilliseconds,
+    };
+  });
 }
 
 /**
@@ -97,6 +202,7 @@ export function buildTripodCandidateRiseSetArc({
   maxDistanceMeters,
   refractionWeather,
   sampleMinutes = DEFAULT_SAMPLE_MINUTES,
+  referenceGroundEllipsoidalHeightMeters,
 }: BuildTripodCandidateRiseSetArcInput): TripodCandidateRiseSetArc | null {
   if (
     Number.isNaN(dayStart.getTime()) || Number.isNaN(dayEnd.getTime()) ||
@@ -135,42 +241,100 @@ export function buildTripodCandidateRiseSetArc({
   for (let time = firstSampleMs; time <= lastSampleMs; time += stepMs) sampleTimes.push(time);
   if (sampleTimes.at(-1) !== lastSampleMs) sampleTimes.push(lastSampleMs);
 
-  const points = sampleTimes.flatMap((time): TripodCandidateRiseSetArcPoint[] => {
-    const point = celestialPoint(id, new Date(time), observer, calculationMode, refractionWeather);
-    if (point.altitudeDegrees <= 0) return [];
-    const [preliminary] = buildPreliminaryTripodCandidates(
-      subject, [point], lensCenterHeightMeters, observer
-    );
-    if (preliminary && preliminary.distanceMeters <= maxDistanceMeters) {
-      return [{ ...preliminary, timestampMilliseconds: time }];
-    }
-
-    const destination = calculateKarneyDestinationPoint(
-      subject, (point.azimuthDegrees + 180) % 360, maxDistanceMeters
-    );
-    return [{
-      id,
-      label,
-      latitude: destination.latitude,
-      longitude: destination.longitude,
-      height: ellipsoidalHeightMeters(subject),
-      distanceMeters: maxDistanceMeters,
-      solutionType: "preliminary",
-      timestampMilliseconds: time,
-    }];
+  const modelBase = { observer, calculationMode, refractionWeather };
+  const samples = sampleTimes.flatMap((time) => {
+    const sample = sampleAt(id, time, modelBase);
+    return sample ? [sample] : [];
   });
+  if (samples.length < 2) return null;
 
-  return points.length >= 2 ? { id, riseAt, setAt, points } : null;
+  const model: RiseSetArcModel = {
+    ...modelBase,
+    subject,
+    lensCenterHeightMeters,
+    maxDistanceMeters,
+    samples,
+  };
+  const referenceGround = Number.isFinite(referenceGroundEllipsoidalHeightMeters)
+    ? (referenceGroundEllipsoidalHeightMeters as number)
+    : 0;
+  const points = layoutArcPoints(id, model, referenceGround + lensCenterHeightMeters);
+  return { id, riseAt, setAt, points, model };
 }
 
-/** 現在時刻の精密DEM候補を候補線の同時刻位置へ組み込む。 */
+/**
+ * 確定候補のレンズ位置が現在時刻の視線レイ上にあるかを調べ、あればその地点での
+ * レイの楕円体高（＝線全体に使う高さ基準）を返す。
+ */
+function lensSurfaceFromConfirmedCandidate(
+  arc: TripodCandidateRiseSetArc,
+  model: RiseSetArcModel,
+  candidate: TripodCandidate,
+  timestampMilliseconds: number
+): { heightMeters: number; onRay: boolean } {
+  const nominal = candidate.height + model.lensCenterHeightMeters;
+  const fallback = { heightMeters: nominal, onRay: false };
+  if (candidate.solutionType === "direction-only") return fallback;
+  const sample = sampleAt(arc.id, timestampMilliseconds, model);
+  if (!sample || !Number.isFinite(sample.rayAltitudeDegrees) || sample.rayAltitudeDegrees <= 0) {
+    return fallback;
+  }
+  const ray = buildCelestialBackwardRay(
+    model.subject, sample.azimuthDegrees, sample.rayAltitudeDegrees, model.observer
+  );
+  if (!ray) return fallback;
+  const lens = Cartesian3.fromDegrees(
+    candidate.longitude, candidate.latitude, nominal, Ellipsoid.WGS84
+  );
+  const alongRay = Cartesian3.dot(
+    Cartesian3.subtract(lens, ray.origin, new Cartesian3()),
+    ray.direction
+  );
+  if (!(alongRay > 0)) return fallback;
+  const onRayPosition = Cartesian3.add(
+    ray.origin,
+    Cartesian3.multiplyByScalar(ray.direction, alongRay, new Cartesian3()),
+    new Cartesian3()
+  );
+  const cartographic = Ellipsoid.WGS84.cartesianToCartographic(onRayPosition);
+  if (!cartographic) return fallback;
+  const offRay = Cartesian3.distance(onRayPosition, lens);
+  const lateralTolerance = Math.max(
+    ON_RAY_LATERAL_TOLERANCE_METERS,
+    alongRay * ON_RAY_LATERAL_TOLERANCE_RATIO
+  );
+  if (
+    offRay > lateralTolerance ||
+    Math.abs(cartographic.height - nominal) > ON_RAY_HEIGHT_TOLERANCE_METERS
+  ) return fallback;
+  return { heightMeters: cartographic.height, onRay: true };
+}
+
+/**
+ * 現在時刻の精密DEM候補へ候補線を合わせる。
+ *
+ * 2026-10-05修正: 以前は、楕円体高0m基準で作った線の「最寄り1頂点だけ」を
+ * 実地形基準の確定候補へ差し替えていた。実際の地表は楕円体より高いため確定候補は
+ * 常に線より被写体側にあり、その1点だけが手前へ引き込まれて線がV字に折れていた。
+ * 現在は確定候補の高さを線全体の高さ基準として全頂点を並べ直し、確定候補は
+ * 時刻順の正しい位置へ挿入する。
+ */
 export function alignRiseSetArcToConfirmedCandidates(
   arc: TripodCandidateRiseSetArc,
   candidates: readonly TripodCandidate[],
   currentDate: Date
 ): TripodCandidateRiseSetArc {
+  // 通常探索と方位プロファイル高速経路はいずれも、同一天体では最遠の
+  // 地形交点1件を表示する。古いキャッシュに複数件が残っていても、線へ
+  // 同時刻の点を複数挿入して折り返し・長い対角線を作らない。
   const matching = candidates
-    .filter((candidate) => candidate.id === arc.id)
+    .filter((candidate) =>
+      candidate.id === arc.id &&
+      candidate.solutionType !== "preliminary" &&
+      Number.isFinite(candidate.latitude) &&
+      Number.isFinite(candidate.longitude) &&
+      Number.isFinite(candidate.height)
+    )
     .sort((left, right) => right.distanceMeters - left.distanceMeters);
   const timestamp = currentDate.getTime();
   if (
@@ -178,29 +342,50 @@ export function alignRiseSetArcToConfirmedCandidates(
     timestamp < arc.riseAt.getTime() || timestamp > arc.setAt.getTime()
   ) return arc;
 
-  let nearestIndex = 0;
-  let nearestDelta = Number.POSITIVE_INFINITY;
-  arc.points.forEach((point, index) => {
-    const delta = Math.abs(point.timestampMilliseconds - timestamp);
-    if (delta < nearestDelta) {
-      nearestDelta = delta;
-      nearestIndex = index;
-    }
-  });
-
-  // 通常探索と方位プロファイル高速経路はいずれも、同一天体では最遠の
-  // 地形交点1件を表示する。古いキャッシュに複数件が残っていても、線へ
-  // 同時刻の点を複数挿入して折り返し・長い対角線を作らない。
   const aligned: TripodCandidateRiseSetArcPoint = {
     ...matching[0],
     timestampMilliseconds: timestamp,
   };
+
+  const model = arc.model;
+  if (!model) {
+    // 再計算用データを持たない線（外部で組み立てた線）は最寄り頂点の差し替えのみ。
+    let nearestIndex = 0;
+    let nearestDelta = Number.POSITIVE_INFINITY;
+    arc.points.forEach((point, index) => {
+      const delta = Math.abs(point.timestampMilliseconds - timestamp);
+      if (delta < nearestDelta) {
+        nearestDelta = delta;
+        nearestIndex = index;
+      }
+    });
+    return {
+      ...arc,
+      points: [
+        ...arc.points.slice(0, nearestIndex),
+        aligned,
+        ...arc.points.slice(nearestIndex + 1),
+      ],
+    };
+  }
+
+  const surface = lensSurfaceFromConfirmedCandidate(arc, model, matching[0], timestamp);
+  const points = layoutArcPoints(arc.id, model, surface.heightMeters);
+  if (!surface.onRay) return { ...arc, points };
+
+  const withoutSameTime = points.filter(
+    (point) => Math.abs(point.timestampMilliseconds - timestamp) >= SAME_SAMPLE_WINDOW_MS
+  );
+  const insertAt = withoutSameTime.findIndex(
+    (point) => point.timestampMilliseconds > timestamp
+  );
+  const index = insertAt < 0 ? withoutSameTime.length : insertAt;
   return {
     ...arc,
     points: [
-      ...arc.points.slice(0, nearestIndex),
+      ...withoutSameTime.slice(0, index),
       aligned,
-      ...arc.points.slice(nearestIndex + 1),
+      ...withoutSameTime.slice(index),
     ],
   };
 }

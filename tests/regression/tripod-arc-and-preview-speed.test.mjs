@@ -243,7 +243,8 @@ test("upper preview is progressive, bounded to six seconds, and keeps its previe
   assert.match(app, /tileWaitTimeoutMs,[\s\S]*?false\s*\)/);
   assert.match(viewer, /viewer\.terrainProvider = terrainProvider/);
   assert.match(app, /heightMeters: mapDisplayModeRef\.current === "3d" \? 1_200 : 2_000_000/);
-  assert.match(app, /<CelestialOverlay[\s\S]*?tracks=\{\[\]\}/);
+  // 2026-10-05: 上部プレビューは天体が通る線だけを黄色で描く。
+  assert.match(app, /<CelestialOverlay[\s\S]*?tracks=\{previewCelestialTracks\}[\s\S]*?trackTone="yellow"/);
 });
 
 test("timeline commits its latest frame and timezone updates cannot restore an old timestamp", async () => {
@@ -253,4 +254,102 @@ test("timeline commits its latest frame and timezone updates cannot restore an o
   assert.match(timeline, /timelineDragRef\.current = null;\s*flushPendingTimelineTime\(\);\s*onInteractionChange\?\.\(false\)/);
   assert.match(timeline, /wheelIdleTimerRef\.current = null;\s*flushPendingTimelineTime\(\);/);
   assert.match(app, /const previousTimeZone = timeZoneRef\.current;[\s\S]*?dateFromZonedDateTimeLocal\(\s*dateTimeLocalRef\.current,[\s\S]*?previousTimeZone/);
+});
+
+test("upper preview hides map guide lines by syncing entity visibility before every captured frame", async () => {
+  const preview = await readFile(new URL("../../src/cesium/previewSnapshot.ts", import.meta.url), "utf8");
+  const css = await readFile(new URL("../../src/App.css", import.meta.url), "utf8");
+  assert.match(preview, /viewer\.dataSourceDisplay\.update\(viewer\.clock\.currentTime\)/);
+  assert.match(preview, /defaultDataSource\.show = false;\s*syncEntityVisibility\(viewer\);/);
+  assert.match(preview, /syncEntityVisibility\(viewer\);\s*viewer\.scene\.requestRender\(\);\s*viewer\.scene\.render\(\);/);
+  assert.match(css, /\.celestial-track-tone-yellow \.celestial-track-line\s*\{\s*stroke:\s*rgba\(255, 221, 0/);
+});
+
+test("3D rise-set guide is draped on the surface so it cannot slide when the camera moves", async () => {
+  const entities = await readFile(new URL("../../src/cesium/tripodCandidateEntities.ts", import.meta.url), "utf8");
+  assert.match(entities, /clampToGround:\s*true/);
+  assert.match(entities, /classificationType:\s*ClassificationType\.BOTH/);
+  assert.doesNotMatch(entities, /depthFailMaterial:/);
+  assert.doesNotMatch(entities, /fromDegreesArrayHeights/);
+});
+
+test("rise-set guide stays smooth through a confirmed candidate that sits on real terrain", async () => {
+  const { Cartesian3, Cartographic, Math: CesiumMath } = await import("cesium");
+  const { buildCelestialBackwardRay } = await import("../../src/cesium/tripodCandidates.ts");
+  const { calculateCelestialHorizontalCoordinates } = await import("../../src/cesium/celestial.ts");
+
+  // 138タワーパーク付近。地表の楕円体高は約48m（楕円体面より十分高い）。
+  const subject = {
+    latitude: 35.3445, longitude: 136.7870, height: 180,
+    ellipsoidalHeightMeters: 180, label: "塔",
+  };
+  const lens = 1.6;
+  const groundHeight = 48;
+  const arc = buildTripodCandidateRiseSetArc({
+    id: "moon",
+    subject,
+    dayStart: new Date("2026-10-03T15:00:00.000Z"),
+    dayEnd: new Date("2026-10-04T15:00:00.000Z"),
+    lensCenterHeightMeters: lens,
+    calculationMode: "pro",
+    maxDistanceMeters: 30_000,
+  });
+  assert.ok(arc);
+
+  // 月出の約45分後。精密解に相当する「視線レイが実地表+レンズ高へ届く地点」を作る。
+  const now = new Date(arc.riseAt.getTime() + 45 * 60_000);
+  const observer = { ...subject, height: subject.height + lens, ellipsoidalHeightMeters: subject.height + lens };
+  const horizontal = calculateCelestialHorizontalCoordinates("moon", now, observer, "pro");
+  const ray = buildCelestialBackwardRay(
+    subject, horizontal.azimuthDegrees, horizontal.geometricAltitudeDegrees, observer
+  );
+  let low = 0;
+  let high = 100_000;
+  for (let step = 0; step < 60; step += 1) {
+    const middle = (low + high) / 2;
+    const position = Cartesian3.add(
+      ray.origin, Cartesian3.multiplyByScalar(ray.direction, middle, new Cartesian3()), new Cartesian3()
+    );
+    if (Cartographic.fromCartesian(position).height > groundHeight + lens) low = middle;
+    else high = middle;
+  }
+  const hit = Cartographic.fromCartesian(Cartesian3.add(
+    ray.origin, Cartesian3.multiplyByScalar(ray.direction, high, new Cartesian3()), new Cartesian3()
+  ));
+  const confirmed = {
+    id: "moon",
+    label: "月",
+    latitude: CesiumMath.toDegrees(hit.latitude),
+    longitude: CesiumMath.toDegrees(hit.longitude),
+    height: groundHeight,
+    distanceMeters: high,
+    solutionType: "aligned",
+  };
+
+  const aligned = alignRiseSetArcToConfirmedCandidates(arc, [confirmed], now);
+  const index = aligned.points.findIndex((point) => point.solutionType === "aligned");
+  assert.ok(index > 0 && index < aligned.points.length - 1, "確定候補は線の途中へ時刻順に入る");
+  assert.ok(
+    aligned.points.every((point, i) =>
+      i === 0 || point.timestampMilliseconds > aligned.points[i - 1].timestampMilliseconds
+    ),
+    "頂点は時刻順"
+  );
+
+  // 月が昇るほど三脚は被写体へ近づく。確定候補の前後で距離が単調に並ぶこと
+  // （以前は確定候補だけ手前へ引き込まれ、前後の頂点が両方とも遠いV字になっていた）。
+  const before = aligned.points[index - 1];
+  const after = aligned.points[index + 1];
+  assert.ok(before.distanceMeters > confirmed.distanceMeters, "直前の頂点は確定候補より遠い");
+  assert.ok(after.distanceMeters < confirmed.distanceMeters, "直後の頂点は確定候補より近い");
+
+  // 旧実装（楕円体高0m基準の線へ1点だけ差し替え）ではここが成り立たない。
+  const legacyAfter = arc.points.find((point) => point.timestampMilliseconds > now.getTime());
+  assert.ok(legacyAfter.distanceMeters > confirmed.distanceMeters, "旧基準の線は確定候補より遠い側に残る");
+
+  // 方位だけ合わせた確認地点は線の頂点にしない。
+  const directionOnly = alignRiseSetArcToConfirmedCandidates(
+    arc, [{ ...confirmed, solutionType: "direction-only", distanceMeters: 500 }], now
+  );
+  assert.ok(directionOnly.points.every((point) => point.solutionType === "preliminary"));
 });

@@ -742,6 +742,42 @@ function directSightlineSeedDistanceMeters(
 }
 
 /**
+ * 被写体から天体の反対側へ延ばしたレイが、指定した楕円体高の面
+ * （WGS84楕円体を高さ分だけ外側へ広げた面）へ降りてくるまでのECEF直線距離。
+ *
+ * 三脚候補線（出から入までの案内線）専用。楕円体高0mとの交点
+ * （directSightlineSeedDistanceMeters）は、実際の地表が楕円体より数十m
+ * 高い地域では精密候補より必ず遠くなるため、候補線と確定候補を同じ高さ基準で
+ * 並べる目的でこの関数を使う。被写体が指定面より低い場合はnullを返す。
+ */
+export function sightlineDistanceToEllipsoidalHeightMeters(
+  ray: CelestialSubjectRay,
+  surfaceEllipsoidalHeightMeters: number
+): number | null {
+  if (!Number.isFinite(surfaceEllipsoidalHeightMeters)) return null;
+  const radii = Ellipsoid.WGS84.radii;
+  const rx = radii.x + surfaceEllipsoidalHeightMeters;
+  const ry = radii.y + surfaceEllipsoidalHeightMeters;
+  const rz = radii.z + surfaceEllipsoidalHeightMeters;
+  const ox = ray.origin.x / rx;
+  const oy = ray.origin.y / ry;
+  const oz = ray.origin.z / rz;
+  const dx = ray.direction.x / rx;
+  const dy = ray.direction.y / ry;
+  const dz = ray.direction.z / rz;
+  const a = dx * dx + dy * dy + dz * dz;
+  const b = 2 * (ox * dx + oy * dy + oz * dz);
+  const c = ox * ox + oy * oy + oz * oz - 1;
+  // c <= 0 は被写体が指定面以下にあることを示す。レイは下向きなので交点は無い。
+  if (!(a > 0) || !(c > 0)) return null;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return null;
+  const t = (-b - Math.sqrt(discriminant)) / (2 * a);
+  if (!Number.isFinite(t) || t <= 0) return null;
+  return t;
+}
+
+/**
  * 地形・気象・キャッシュI/Oを開始する前に表示する概算候補を構成する。
  * WGS84楕円体との理論交点であり、精密探索の最終結果としては採用しない。
  */
