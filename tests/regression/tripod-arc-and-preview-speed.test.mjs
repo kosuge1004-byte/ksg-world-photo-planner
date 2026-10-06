@@ -244,7 +244,7 @@ test("upper preview is progressive, bounded to six seconds, and keeps its previe
   assert.match(viewer, /viewer\.terrainProvider = terrainProvider/);
   assert.match(app, /heightMeters: mapDisplayModeRef\.current === "3d" \? 1_200 : 2_000_000/);
   // 2026-10-05: 上部プレビューは天体が通る線だけを黄色で描く。
-  assert.match(app, /<CelestialOverlay[\s\S]*?tracks=\{previewCelestialTracks\}[\s\S]*?trackTone="yellow"/);
+  assert.match(app, /<CelestialOverlay[\s\S]*?tracks=\{previewCelestialTracksForNow\}[\s\S]*?trackTone="yellow"/);
 });
 
 test("timeline commits its latest frame and timezone updates cannot restore an old timestamp", async () => {
@@ -428,4 +428,34 @@ test("startup restores the previous date, time zone and pins, and ignores damage
   assert.match(app, /if \(!lastSessionRestoreDone\) return;\s*saveLastSessionPins\(timeZone, subjectPoint, tripodPoint\);/);
   // 共有リンクの取り込みや、先に置かれたピンを上書きしない。
   assert.match(app, /if \(!sharedImportPayload && !subjectPoint && !tripodPoint\) \{/);
+});
+
+test("upper preview draws only the pass the selected time belongs to, never tomorrow's as a second line", async () => {
+  const { selectCelestialTrackPass } = await import("../../src/cesium/celestialTrackPass.ts");
+  const hour = 3_600_000;
+  const base = Date.parse("2026-10-06T15:00:00.000Z"); // 10/07 00:00 JST
+  // 月: 10/07 02:00〜15:30 と 10/08 03:10〜 の2回が計算範囲に入る。
+  const points = [];
+  for (let minutes = -12 * 60; minutes <= 36 * 60; minutes += 10) {
+    const time = base + minutes * 60_000;
+    const up = (time >= base + 2 * hour && time <= base + 15.5 * hour) ||
+      time >= base + 27.17 * hour || time <= base - 9.5 * hour;
+    points.push({ timestampMilliseconds: time, altitudeDegrees: up ? 20 : -20, inFront: true });
+  }
+  const track = { id: "moon", label: "月", points };
+  const within = (selected, from, to) => selected.points.every((point) =>
+    point.timestampMilliseconds >= base + from * hour && point.timestampMilliseconds <= base + to * hour);
+
+  const during = selectCelestialTrackPass(track, base + 2.67 * hour); // 02:40
+  assert.ok(during.points.length > 10 && within(during, 2, 15.5), "今日の通過だけ");
+  const nextNight = selectCelestialTrackPass(track, base + 28 * hour);
+  assert.ok(within(nextNight, 27, 36), "翌日の通過中は翌日の線");
+  const beforeRise = selectCelestialTrackPass(track, base + 1 * hour); // 01:00、月の出前
+  assert.ok(within(beforeRise, 2, 15.5), "沈んでいる間は時刻が最も近い通過");
+  const afterSet = selectCelestialTrackPass(track, base + 16 * hour);
+  assert.ok(within(afterSet, 2, 15.5));
+
+  // 通過が1回だけ（太陽など）のときは何も変えない。
+  const single = { id: "sun", label: "太陽", points: points.map((point) => ({ ...point, altitudeDegrees: 10 })) };
+  assert.equal(selectCelestialTrackPass(single, base), single);
 });

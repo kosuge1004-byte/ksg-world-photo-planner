@@ -147,6 +147,7 @@ import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
 import { clearTripodCandidateEntities, updateTripodCandidateEntities } from "./cesium/tripodCandidateEntities";
 import { loadLastSession, saveLastSessionPins } from "./storage/lastSession";
+import { selectCelestialTrackPass } from "./cesium/celestialTrackPass";
 import {
   clearTripodSubjectSightLineEntity,
   updateTripodSubjectSightLineEntity,
@@ -334,7 +335,8 @@ function normalizeCelestialVisibility(value: CelestialVisibility): CelestialVisi
   };
 }
 
-const PREVIEW_TRACK_NEXT_DAY_EXTENSION_MS = 6 * 60 * 60 * 1_000;
+// 選択日の前後へ延長する幅。通過の途中で線が切れないよう、前後とも12時間。
+const PREVIEW_TRACK_EXTENSION_MS = 12 * 60 * 60 * 1_000;
 const TRIPOD_CACHE_PREPARATION_TIMEOUT_MS = 2_000;
 // 2026-09-29修正（実機診断で原因確定）:
 // 固定90秒の「探索開始からの絶対上限」は廃止する。実機ログでは
@@ -1840,8 +1842,9 @@ function App() {
   }, [showUserNotice]);
 
   // 2026-10-05追記: 上部プレビューに描く「天体が通る線」。選択日の24時間に加え、
-  // 深夜に昇る天体（例: 23:39の月出）でも線が0:00で途切れないよう、翌朝6時まで
-  // 延長して計算する。2D地図側のcelestialTracks（選択日のみ）は変更しない。
+  // 深夜に昇る天体（例: 23:39の月出）でも線が0:00で途切れないよう、前後12時間ずつ
+  // 延長して計算する。延長範囲に入る前日・翌日の通過は、下の
+  // previewCelestialTracksForNow で取り除く（線が2本にならないようにする）。2D地図側のcelestialTracks（選択日のみ）は変更しない。
   const previewCelestialTracks = useMemo(() => {
     if (!tripodPoint || !subjectPoint) return [];
     if (
@@ -1854,8 +1857,8 @@ function App() {
       cameraSettings,
       previewAspectRatio,
       calculationMode,
-      selectedDayStart,
-      new Date(selectedDayEnd.getTime() + PREVIEW_TRACK_NEXT_DAY_EXTENSION_MS),
+      new Date(selectedDayStart.getTime() - PREVIEW_TRACK_EXTENSION_MS),
+      new Date(selectedDayEnd.getTime() + PREVIEW_TRACK_EXTENSION_MS),
       timeZone,
       previewViewCorrection,
       previewRefractionWeather
@@ -1872,6 +1875,12 @@ function App() {
     previewViewCorrection,
     previewRefractionWeather,
   ]);
+
+  const selectedTimestamp = selectedDate.getTime();
+  const previewCelestialTracksForNow = useMemo(
+    () => previewCelestialTracks.map((track) => selectCelestialTrackPass(track, selectedTimestamp)),
+    [previewCelestialTracks, selectedTimestamp]
+  );
 
   useEffect(() => {
     // 被写体ピンを新しく置いた直後は、モバイルのpointer/touch終了イベントが
@@ -6179,7 +6188,7 @@ ${diagnosticMessage}
             // 2026-10-05変更（明示指示により）: 上部プレビューには地図用の
             // 補助線（三脚候補線・地上線・視線の白線）を出さず、天体が通る線
             // だけを黄色で描画する。
-            tracks={previewCelestialTracks}
+            tracks={previewCelestialTracksForNow}
             trackTone="yellow"
             milkyWayPath={visibleMilkyWayPath}
             visibility={celestialVisibility}
