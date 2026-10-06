@@ -14,6 +14,7 @@ import type { CalculationMode } from "../types/camera";
 import type { CelestialBodyId } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
 import { calculateCelestialHorizontalCoordinates, findHorizonCrossing } from "../cesium/celestial";
+import { timelineSunColor } from "../time/timelineSunColor";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import {
   dateFromZonedDateTimeLocal,
@@ -45,6 +46,11 @@ const SAMPLE_MINUTES = 5;
 // 撮影計画の時刻精度を落とさず、スクロール操作は1分単位で確定する。
 const TIMELINE_SNAP_MS = 60_000;
 const TIMELINE_HOUR_WIDTH_PX = 52;
+const TIMELINE_TICK_MS = 10 * 60_000;
+// 時間軸の線の色分け。ブルーアワーは10分ほどしか続かないので2分刻みで色を求める。
+const TIMELINE_SUN_SAMPLE_MS = 2 * 60_000;
+/** 位置が未設定で太陽高度を計算できないときの色（従来の青）。 */
+const TIMELINE_UNKNOWN_SUN_COLOR = "rgb(36,93,229)";
 const DAY_MS = 86_400_000;
 
 function updateTimelineTimestamp(
@@ -333,6 +339,37 @@ function TimelinePanelComponent({
     });
   }, [selectedTime, timeZone]);
 
+  // 2026-10-07: 時間軸の線を太陽の状態で色分けする。
+  // 昼はオレンジ、夜は濃紺。その間はゴールデンアワー・ブルーアワー・市民／航海／天文薄明を
+  // 太陽高度に応じた色で示す（色の定義は src/time/timelineSunColor.ts）。
+  // 位置が未設定のときは太陽高度を計算できないので、従来どおり全体を青にする。
+  const timelineFirstTickTime = timelineTicks[0].time;
+  const timelineTickCount = timelineTicks.length;
+  const timelineBarDurationMs = (timelineTickCount - 1) * TIMELINE_TICK_MS;
+  // 色の計算は目盛りの並びが変わるとき（10分をまたぐとき）だけ行い、
+  // ドラッグ中の毎フレームは位置だけを更新する。
+  const timelineSunGradient = useMemo(() => {
+    if (!location) return TIMELINE_UNKNOWN_SUN_COLOR;
+    const sampleCount = Math.round(timelineBarDurationMs / TIMELINE_SUN_SAMPLE_MS);
+    const stops = Array.from({ length: sampleCount + 1 }, (_, index) => {
+      const altitude = calculateCelestialHorizontalCoordinates(
+        "sun",
+        new Date(timelineFirstTickTime + index * TIMELINE_SUN_SAMPLE_MS),
+        location,
+        calculationMode,
+        refractionWeather
+      ).altitudeDegrees;
+      const color = Number.isFinite(altitude) ? timelineSunColor(altitude) : TIMELINE_UNKNOWN_SUN_COLOR;
+      return `${color} ${(index / sampleCount * 100).toFixed(3)}%`;
+    });
+    return `linear-gradient(90deg, ${stops.join(", ")})`;
+  }, [timelineFirstTickTime, timelineBarDurationMs, location, calculationMode, refractionWeather]);
+  const timelineSunBar = {
+    left: `calc(50% + ${(timelineFirstTickTime - selectedTime) / HOUR_MS * TIMELINE_HOUR_WIDTH_PX}px)`,
+    width: `${timelineBarDurationMs / HOUR_MS * TIMELINE_HOUR_WIDTH_PX}px`,
+    background: timelineSunGradient,
+  };
+
   const updateTimelineTime = useCallback((timestamp: number) => {
     timelineTimestampRef.current = timestamp;
     pendingTimestampRef.current = timestamp;
@@ -493,6 +530,7 @@ function TimelinePanelComponent({
             </div>
             <div className="timeline-scroll-clip" aria-hidden="true">
               <div className="timeline-scroll-track">
+                <span className="timeline-sun-bar" style={timelineSunBar} />
                 {timelineTicks.map((tick) => (
                   <span
                     key={tick.time}

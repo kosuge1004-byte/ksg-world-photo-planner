@@ -99,7 +99,10 @@ export function updateTripodCandidateEntities(
         clampToGround: true,
         classificationType: ClassificationType.BOTH,
         // 従来の三脚候補線(1.25px)からさらに半分へ細くする。
-        width: 0.625,
+        // 2026-10-06: Google Photorealistic 3D（globe無し）では、0.625pxの
+        // 貼り付け線が建物や樹木の細かい凹凸で途切れてほとんど見えなかったため、
+        // その表示のときだけ太くする。地形(globe)表示の太さは従来どおり。
+        width: viewer.scene.globe?.show === true ? 0.625 : 2.5,
         material: new PolylineDashMaterialProperty({
           color: Color.RED.withAlpha(0.98),
           dashLength: 12,

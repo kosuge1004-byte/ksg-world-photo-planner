@@ -111,6 +111,7 @@ import {
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
+  findHorizonCrossing,
 } from "./cesium/celestial";
 import {
   evaluateCelestialLineOfSight,
@@ -145,6 +146,7 @@ import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache"
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
 import { clearTripodCandidateEntities, updateTripodCandidateEntities } from "./cesium/tripodCandidateEntities";
+import { loadLastSession, saveLastSessionPins } from "./storage/lastSession";
 import {
   clearTripodSubjectSightLineEntity,
   updateTripodSubjectSightLineEntity,
@@ -509,8 +511,15 @@ function loadCalculationMode(): CalculationMode {
 }
 
 function loadCelestialDateTime(): string {
-  // アプリ起動時は、前回終了時の日時ではなく端末の現在日時を表示する。
-  return zonedDateTimeLocalFromDate(new Date(), systemTimeZone());
+  // 2026-10-07変更（明示指示により）: 起動時は前回終了時の日時を表示する。
+  // 保存値が無い・壊れている場合だけ端末の現在日時にする。
+  return loadLastSession().dateTimeLocal ??
+    zonedDateTimeLocalFromDate(new Date(), systemTimeZone());
+}
+
+function loadInitialTimeZone(): string {
+  // 日時は「そのタイムゾーンでの時刻」として保存されているので、組で復元する。
+  return loadLastSession().timeZone ?? systemTimeZone();
 }
 
 type PlacementMode = "none" | "subject" | "tripod" | "foreground";
@@ -1007,7 +1016,7 @@ function App() {
   }, []);
 
   const [calculationMode] = useState<CalculationMode>(loadCalculationMode);
-  const [timeZone, setTimeZone] = useState(systemTimeZone);
+  const [timeZone, setTimeZone] = useState(loadInitialTimeZone);
 
   const [celestialMenuOpen, setCelestialMenuOpen] = useState(true);
   const initialMapStateRef = useRef<LastMapState>(loadLastMapState());
@@ -1776,6 +1785,59 @@ function App() {
     previewViewCorrection,
     previewRefractionWeather,
   ]);
+
+  // 2026-10-06: 月齢カレンダーの日付を押すと、その日の月の出へ移動する。
+  // 月の出の求め方はタイムラインの「月出」ボタンと同じ（観測地点は三脚、無ければ被写体。
+  // その日の0時〜翌0時で最初に昇る時刻）。約1か月に1日ある「月の出が無い日」と、
+  // 地点が未設定の場合は、日付だけ移動して時刻は変えず、理由を通知する。
+  const moonCalendarJumpInputRef = useRef<{
+    location: GroundPoint | null;
+    timeZone: string;
+    calculationMode: CalculationMode;
+    refractionWeather: typeof previewRefractionWeather;
+    dateTimeLocal: string;
+  } | null>(null);
+  useEffect(() => {
+    moonCalendarJumpInputRef.current = {
+      location: tripodPoint ?? subjectPoint,
+      timeZone,
+      calculationMode,
+      refractionWeather: previewRefractionWeather,
+      dateTimeLocal,
+    };
+  }, [tripodPoint, subjectPoint, timeZone, calculationMode, previewRefractionWeather, dateTimeLocal]);
+  const handleMoonCalendarJump = useCallback((dateKey: string) => {
+    const input = moonCalendarJumpInputRef.current;
+    if (!input || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+    const [year, month, day] = dateKey.split("-").map(Number);
+    const next = new Date(Date.UTC(year, month - 1, day + 1));
+    const nextKey = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+    const moonrise = input.location
+      ? findHorizonCrossing(
+          "moon",
+          1,
+          input.location,
+          dateFromZonedDateTimeLocal(`${dateKey}T00:00`, input.timeZone),
+          dateFromZonedDateTimeLocal(`${nextKey}T00:00`, input.timeZone),
+          input.calculationMode,
+          input.refractionWeather
+        )
+      : null;
+    if (moonrise) {
+      setDateTimeLocal(zonedDateTimeLocalFromDate(moonrise, input.timeZone));
+    } else {
+      const currentTime = input.dateTimeLocal.slice(11, 16) || "00:00";
+      setDateTimeLocal(`${dateKey}T${currentTime}`);
+      showUserNotice({
+        key: "moon-calendar-jump",
+        tone: "warning",
+        message: input.location
+          ? `${dateKey.replaceAll("-", "/")}は月の出がありません（月が昇るのは前後の日です）。日付だけ移動しました。`
+          : "被写体・三脚の位置が未設定のため月の出を計算できません。日付だけ移動しました。",
+      });
+    }
+    setMoonAgeCalendarOpen(false);
+  }, [showUserNotice]);
 
   // 2026-10-05追記: 上部プレビューに描く「天体が通る線」。選択日の24時間に加え、
   // 深夜に昇る天体（例: 23:39の月出）でも線が0:00で途切れないよう、翌朝6時まで
@@ -2882,6 +2944,69 @@ function App() {
       dateTimeLocal
     );
   }, [dateTimeLocal]);
+
+  // 2026-10-07: 起動時に前回の被写体ピン・三脚ピンを復元する。
+  // ピンは3D地図(Cesium)上の実体を伴うので、地図の準備ができてから1回だけ行う。
+  // 共有リンクからの取り込み中や、復元前に利用者が既にピンを置いた場合は復元しない。
+  const [lastSessionRestoreDone, setLastSessionRestoreDone] = useState(false);
+  useEffect(() => {
+    if (lastSessionRestoreDone || !mapReady) return;
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    const session = loadLastSession();
+    if (!sharedImportPayload && !subjectPoint && !tripodPoint) {
+      const saved = session.subject;
+      const subject = saved
+        ? setSubjectPinFromPosition(
+            viewer,
+            Cartesian3.fromDegrees(saved.longitude, saved.latitude, saved.height),
+            saved.label,
+            saved
+          )
+        : null;
+      if (subject) setSubjectPoint(subject);
+      if (session.tripod) {
+        const tripod = setTripodPin(
+          viewer,
+          Cartesian3.fromDegrees(session.tripod.longitude, session.tripod.latitude, session.tripod.height),
+          session.tripod
+        );
+        setTripodPoint(tripod);
+      }
+      if (subject && session.tripod) {
+        const tripod = session.tripod;
+        // プロジェクト読込時と同じく、保存済みの被写体〜三脚距離を最初の三脚探索の
+        // ヒントにする（ヒントが無いと全距離の走査になり、起動直後の地形取得が増える）。
+        const savedDistanceMeters = calculateKarneyLineMetrics(tripod, subject).distanceMeters;
+        tripodCandidatesRef.current = (Object.keys(celestialVisibility) as CelestialBodyId[])
+          .filter((id) => celestialVisibility[id])
+          .map((id) => ({
+            id,
+            label: "",
+            latitude: tripod.latitude,
+            longitude: tripod.longitude,
+            height: tripod.height,
+            distanceMeters: savedDistanceMeters,
+            solutionType: "aligned",
+          }));
+        tripodHintSubjectRef.current = { latitude: subject.latitude, longitude: subject.longitude };
+      }
+    }
+    setLastSessionRestoreDone(true);
+  }, [
+    lastSessionRestoreDone,
+    mapReady,
+    sharedImportPayload,
+    subjectPoint,
+    tripodPoint,
+    celestialVisibility,
+  ]);
+
+  // 復元が済むまでは保存しない（起動直後の「ピンなし」で前回の保存を上書きしないため）。
+  useEffect(() => {
+    if (!lastSessionRestoreDone) return;
+    saveLastSessionPins(timeZone, subjectPoint, tripodPoint);
+  }, [lastSessionRestoreDone, timeZone, subjectPoint, tripodPoint]);
 
   useEffect(() => {
     const viewer = mapViewerRef.current;
@@ -6774,6 +6899,7 @@ ${diagnosticMessage}
             timeZone={timeZone}
             initialDate={selectedDate}
             onBack={() => setMoonAgeCalendarOpen(false)}
+            onJumpToDate={handleMoonCalendarJump}
           />
         </Suspense>
       )}

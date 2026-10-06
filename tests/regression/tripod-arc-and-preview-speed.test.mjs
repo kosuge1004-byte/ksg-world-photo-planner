@@ -213,7 +213,7 @@ test("rise-set guides use thinner red dashes and 3D adds the white camera sight 
 
   assert.match(css, /\.map-tripod-rise-set-arc\s*\{[\s\S]*?stroke:\s*rgba\(255, 42, 42, \.98\);[\s\S]*?stroke-width:\s*\.625;[\s\S]*?stroke-dasharray:\s*6 4;/);
   assert.match(candidateEntities, /PolylineDashMaterialProperty/);
-  assert.match(candidateEntities, /width:\s*0\.625/);
+  assert.match(candidateEntities, /width:\s*viewer\.scene\.globe\?\.show === true \? 0\.625 : 2\.5/);
   assert.match(candidateEntities, /Color\.RED\.withAlpha\(0\.98\)/);
   assert.match(sightLine, /Color\.WHITE\.withAlpha/);
   assert.match(sightLine, /PolylineDashMaterialProperty/);
@@ -352,4 +352,80 @@ test("rise-set guide stays smooth through a confirmed candidate that sits on rea
     arc, [{ ...confirmed, solutionType: "direction-only", distanceMeters: 500 }], now
   );
   assert.ok(directionOnly.points.every((point) => point.solutionType === "preliminary"));
+});
+
+test("moon age calendar jumps to the tapped day's moonrise using the timeline's own rule", async () => {
+  const calendar = await readFile(new URL("../../src/components/MoonAgeCalendarScreen.tsx", import.meta.url), "utf8");
+  const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
+  assert.match(calendar, /onClick=\{\(\) => \{ setSelectedKey\(day\.key\); onJumpToDate\?\.\(day\.key\); \}\}/);
+  assert.match(app, /onJumpToDate=\{handleMoonCalendarJump\}/);
+  // タイムラインの「月出」と同じく、その日の0時〜翌0時で最初に昇る時刻。
+  assert.match(app, /findHorizonCrossing\(\s*"moon",\s*1,\s*input\.location,\s*dateFromZonedDateTimeLocal\(`\$\{dateKey\}T00:00`, input\.timeZone\),\s*dateFromZonedDateTimeLocal\(`\$\{nextKey\}T00:00`, input\.timeZone\)/);
+  assert.match(app, /setDateTimeLocal\(zonedDateTimeLocalFromDate\(moonrise, input\.timeZone\)\)/);
+  // 月の出が無い日は日付だけ移動し、黙って別の日の月の出へ飛ばない。
+  assert.match(app, /月の出がありません/);
+  assert.match(app, /location: tripodPoint \?\? subjectPoint/);
+});
+
+test("timeline bar is as thick as a 10-minute tick and shows day, golden hour, blue hour and each twilight", async () => {
+  const { timelineSunColor } = await import("../../src/time/timelineSunColor.ts");
+  const panel = await readFile(new URL("../../src/components/TimelinePanel.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../../src/App.css", import.meta.url), "utf8");
+  assert.match(css, /\.timeline-sun-bar \{[^}]*height: 7px/);
+  assert.match(css, /\.timeline-scroll-tick \{[^}]*height: 7px/);
+
+  const rgb = (altitude) => timelineSunColor(altitude).match(/\d+/g).map(Number);
+  assert.deepEqual(rgb(30), [255, 140, 20], "昼はオレンジ");
+  assert.deepEqual(rgb(6), [255, 140, 20]);
+  assert.deepEqual(rgb(3), [255, 200, 40], "ゴールデンアワーは金色");
+  assert.deepEqual(rgb(-5), [70, 185, 255], "ブルーアワーは明るい水色");
+  assert.deepEqual(rgb(-6), [36, 93, 229], "市民薄明と航海薄明の境は従来の青");
+  assert.deepEqual(rgb(-12), [27, 54, 150], "航海薄明と天文薄明の境");
+  assert.deepEqual(rgb(-18), [22, 36, 104], "夜は濃紺");
+  assert.deepEqual(rgb(-40), [22, 36, 104]);
+  // 各段階が見分けられること: 昼→夜へ向かって青成分が増え、赤成分が減る区間がある。
+  assert.ok(rgb(0)[0] > rgb(-5)[0] && rgb(-5)[2] > rgb(0)[2]);
+  assert.ok(rgb(-9)[2] > rgb(-15)[2] && rgb(-15)[2] > rgb(-18)[2]);
+  // 色の再計算は10分をまたぐときだけ（ドラッグ中の毎フレームではない）。
+  assert.match(panel, /\[timelineFirstTickTime, timelineBarDurationMs, location, calculationMode, refractionWeather\]/);
+  assert.match(panel, /TIMELINE_SUN_SAMPLE_MS = 2 \* 60_000/);
+});
+
+test("startup restores the previous date, time zone and pins, and ignores damaged saved values", async () => {
+  const { parseLastSession } = await import("../../src/storage/lastSession.ts");
+  const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
+  const subject = { latitude: 35.3445, longitude: 136.787, height: 180, label: "塔", subjectSurfaceTarget: "structure-roof" };
+  const tripod = { latitude: 35.33, longitude: 136.75, height: 48, label: "三脚" };
+
+  const restored = parseLastSession(
+    "2026-10-06T23:10",
+    JSON.stringify({ timeZone: "Asia/Tokyo", subject, tripod })
+  );
+  assert.equal(restored.dateTimeLocal, "2026-10-06T23:10");
+  assert.equal(restored.timeZone, "Asia/Tokyo");
+  assert.deepEqual(restored.subject, subject, "高さの種別などの付随情報も失わない");
+  assert.deepEqual(restored.tripod, tripod);
+
+  // 初回起動・旧データ（ピン未保存）
+  assert.deepEqual(parseLastSession(null, null), { dateTimeLocal: null, timeZone: null, subject: null, tripod: null });
+  assert.equal(parseLastSession("2026-10-06T23:10", null).dateTimeLocal, "2026-10-06T23:10");
+
+  // 壊れた値はその項目だけ捨てる
+  const damaged = parseLastSession("2026-13-40T99:99", JSON.stringify({
+    timeZone: "Nowhere/Invalid",
+    subject: { latitude: 95, longitude: 136, height: 0, label: "x" },
+    tripod,
+  }));
+  assert.equal(damaged.dateTimeLocal, null);
+  assert.equal(damaged.timeZone, null);
+  assert.equal(damaged.subject, null);
+  assert.deepEqual(damaged.tripod, tripod);
+  assert.equal(parseLastSession("not a date", "{broken").subject, null);
+
+  assert.match(app, /loadLastSession\(\)\.dateTimeLocal \?\?/);
+  assert.match(app, /useState\(loadInitialTimeZone\)/);
+  // 復元が済むまで保存しない（起動直後の「ピンなし」で上書きしない）。
+  assert.match(app, /if \(!lastSessionRestoreDone\) return;\s*saveLastSessionPins\(timeZone, subjectPoint, tripodPoint\);/);
+  // 共有リンクの取り込みや、先に置かれたピンを上書きしない。
+  assert.match(app, /if \(!sharedImportPayload && !subjectPoint && !tripodPoint\) \{/);
 });

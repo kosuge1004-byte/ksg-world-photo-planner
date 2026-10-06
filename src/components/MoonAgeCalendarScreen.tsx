@@ -11,6 +11,11 @@ type Props = {
   timeZone: string;
   initialDate: Date;
   onBack: () => void;
+  /**
+   * 日付を押したときに呼ばれる（"YYYY-MM-DD"）。指定されている場合、
+   * その日の月の出へメイン画面を移動する（移動と画面を閉じる処理は呼び出し側）。
+   */
+  onJumpToDate?: (dateKey: string) => void;
 };
 
 type MoonDay = {
@@ -77,7 +82,7 @@ function MoonIcon({ phaseDegrees, size = 42 }: { phaseDegrees: number; size?: nu
   );
 }
 
-export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack }: Props) {
+export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack, onJumpToDate }: Props) {
   const [month, setMonth] = useState(() => new Date(initialDate.getFullYear(), initialDate.getMonth(), 1));
   const [selectedKey, setSelectedKey] = useState(() => dateKey(initialDate.getFullYear(), initialDate.getMonth(), initialDate.getDate()));
 
@@ -113,12 +118,12 @@ export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack }: P
         <strong>{month.getFullYear()}年 {month.getMonth() + 1}月</strong>
         <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
       </div>
-      <p className="moon-calendar-offline-note">端末内の天文計算で表示・オフライン対応</p>
+      <p className="moon-calendar-offline-note">端末内の天文計算で表示・オフライン対応{onJumpToDate ? "／日付を押すとその日の月の出へ移動します" : ""}</p>
       <div className="calendar-week">{["日","月","火","水","木","金","土"].map((label) => <b key={label}>{label}</b>)}</div>
       <div className="moon-calendar-grid">
         {Array(firstWeekday).fill(null).map((_, index) => <span key={`empty-${index}`} />)}
         {days.map((day) => (
-          <button type="button" key={day.key} className={selectedKey === day.key ? "selected" : ""} onClick={() => setSelectedKey(day.key)}>
+          <button type="button" key={day.key} className={selectedKey === day.key ? "selected" : ""} onClick={() => { setSelectedKey(day.key); onJumpToDate?.(day.key); }} aria-label={`${day.key.replaceAll("-", "/")} 月齢${day.ageDays.toFixed(1)} この日の月の出へ移動`}>
             <span>{day.day}</span>
             <MoonIcon phaseDegrees={day.phaseDegrees} size={34} />
             <small>月齢 {day.ageDays.toFixed(1)}</small>

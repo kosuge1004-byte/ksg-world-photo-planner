@@ -953,7 +953,9 @@ button { cursor: pointer; }
 .timeline-current-time::after { position: absolute; top: 100%; left: 50%; border: 4px solid transparent; border-top-color: #0c50e9; content: ""; transform: translateX(-50%); }
 .timeline-now-button { padding: 3px 8px; color: #fff; border: 1px solid rgba(255,255,255,.28); border-radius: 5px; background: rgba(5,7,10,.88); font-size: 16px; font-weight: 700; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
 .timeline-now-button:active { background: rgba(36,93,229,.9); }
-.timeline-scroll-track { position: absolute; z-index: 1; right: 0; bottom: 6px; left: 0; height: 34px; border-bottom: 2px solid #245de5; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(34,91,255,.12), rgba(255,255,255,.05)); }
+.timeline-scroll-track { position: absolute; z-index: 1; right: 0; bottom: 6px; left: 0; height: 34px; border-bottom: 2px solid transparent; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(34,91,255,.12), rgba(255,255,255,.05)); }
+/* 2026-10-06: 時間軸の線。太さは10分目盛り(7px)と同じ。色は太陽の状態（TimelinePanel.tsx）。 */
+.timeline-sun-bar { position: absolute; bottom: -2px; height: 7px; pointer-events: none; }
 .timeline-scroll-tick { position: absolute; bottom: -1px; width: 1px; height: 7px; background: rgba(226,232,241,.58); transform: translateX(-50%); }
 .timeline-scroll-tick.major { height: 13px; background: #e3e8ef; }
 .timeline-scroll-tick b { position: absolute; bottom: 18px; left: 50%; color: #d9dde4; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; transform: translateX(-50%); }

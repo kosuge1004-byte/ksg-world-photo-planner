@@ -97,7 +97,7 @@ function isHiddenHeightLookupTileset(primitive: unknown): boolean {
  * 削除後も残り続けていた）。撮影の各フレーム前に明示的に同期する。
  */
 function syncEntityVisibility(viewer: Viewer): void {
-  if (viewer.isDestroyed()) return;
+  if (viewer.isDestroyed() || !viewer.dataSourceDisplay) return;
   try {
     viewer.dataSourceDisplay.update(viewer.clock.currentTime);
   } catch (error) {
