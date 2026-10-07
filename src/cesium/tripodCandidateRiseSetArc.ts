@@ -78,9 +78,12 @@ type BuildTripodCandidateRiseSetArcInput = {
   sampleMinutes?: number;
   /**
    * 三脚を立てる地表の楕円体高(m)の目安。確定候補がまだ無い間の線の高さ基準。
-   * 未指定時は従来どおりWGS84楕円体面(0m)。
+   * 優先順に並べた候補を渡す。先頭から試し、実際の交点が2点以上できる最初の高さを使う
+   * （例: 被写体直下の地表 → 三脚ピンの地表 → 標高0m）。
+   * 山頂のように被写体ピンが地表にある場合、被写体直下の地表では交点ができないので
+   * 次の候補へ進む。未指定時はWGS84楕円体面(0m)。
    */
-  referenceGroundEllipsoidalHeightMeters?: number;
+  referenceGroundEllipsoidalHeightMeters?: number | readonly number[];
 };
 
 function findLastCrossing(
@@ -146,7 +149,7 @@ function layoutArcPoints(
 ): TripodCandidateRiseSetArcPoint[] {
   const label = BODY_LABELS[id];
   const groundHeight = lensSurfaceEllipsoidalHeightMeters - model.lensCenterHeightMeters;
-  return model.samples.map((sample): TripodCandidateRiseSetArcPoint => {
+  return model.samples.flatMap((sample): TripodCandidateRiseSetArcPoint[] => {
     const ray = Number.isFinite(sample.rayAltitudeDegrees) && sample.rayAltitudeDegrees > 0
       ? buildCelestialBackwardRay(
           model.subject, sample.azimuthDegrees, sample.rayAltitudeDegrees, model.observer
@@ -158,7 +161,7 @@ function layoutArcPoints(
     if (ray && distanceMeters !== null && distanceMeters <= model.maxDistanceMeters) {
       const cartographic = rayCartographicAtDistance(ray, distanceMeters);
       if (cartographic) {
-        return {
+        return [{
           id,
           label,
           latitude: cartographic.latitude * RADIANS_TO_DEGREES,
@@ -167,14 +170,19 @@ function layoutArcPoints(
           distanceMeters,
           solutionType: "preliminary",
           timestampMilliseconds: sample.timestampMilliseconds,
-        };
+        }];
       }
     }
-    // 地平線付近で交点が探索上限を越える（または存在しない）部分は検索上限円周へ収める。
+    // 2026-10-08修正: 視線が基準の高さまで降りてこない（被写体ピンがレンズの高さ以下にある）
+    // 場合、その時刻に三脚候補は存在しない。以前はこれも検索上限の円周へ置いていたため、
+    // 基準の高さが被写体ピンより高いと全時刻が円周に並び、被写体を囲む大きな円弧が
+    // 描かれていた。存在しない候補は線に含めない。
+    if (ray && distanceMeters === null) return [];
+    // 地平線付近で交点が探索上限を越える部分だけ、検索上限円周へ収める。
     const destination = calculateKarneyDestinationPoint(
       model.subject, (sample.azimuthDegrees + 180) % 360, model.maxDistanceMeters
     );
-    return {
+    return [{
       id,
       label,
       latitude: destination.latitude,
@@ -183,8 +191,13 @@ function layoutArcPoints(
       distanceMeters: model.maxDistanceMeters,
       solutionType: "preliminary",
       timestampMilliseconds: sample.timestampMilliseconds,
-    };
+    }];
   });
+}
+
+/** 検索上限の円周へ寄せた点ではない、実際の交点の数。 */
+function realPointCount(points: readonly TripodCandidateRiseSetArcPoint[], maxDistanceMeters: number): number {
+  return points.filter((point) => point.distanceMeters < maxDistanceMeters).length;
 }
 
 /**
@@ -255,10 +268,19 @@ export function buildTripodCandidateRiseSetArc({
     maxDistanceMeters,
     samples,
   };
-  const referenceGround = Number.isFinite(referenceGroundEllipsoidalHeightMeters)
-    ? (referenceGroundEllipsoidalHeightMeters as number)
-    : 0;
-  const points = layoutArcPoints(id, model, referenceGround + lensCenterHeightMeters);
+  const references = (Array.isArray(referenceGroundEllipsoidalHeightMeters)
+    ? referenceGroundEllipsoidalHeightMeters
+    : [referenceGroundEllipsoidalHeightMeters]
+  ).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (references.length === 0) references.push(0);
+  let points: TripodCandidateRiseSetArcPoint[] = [];
+  for (const referenceGround of references) {
+    points = layoutArcPoints(id, model, referenceGround + lensCenterHeightMeters);
+    if (realPointCount(points, maxDistanceMeters) >= 2) break;
+  }
+  // どの高さ基準でも実際の交点ができない場合、案内線は描かない
+  // （検索上限の円周だけを線として見せない）。
+  if (realPointCount(points, maxDistanceMeters) < 2) return null;
   return { id, riseAt, setAt, points, model };
 }
 
@@ -371,6 +393,8 @@ export function alignRiseSetArcToConfirmedCandidates(
 
   const surface = lensSurfaceFromConfirmedCandidate(arc, model, matching[0], timestamp);
   const points = layoutArcPoints(arc.id, model, surface.heightMeters);
+  // 並べ直した結果に実際の交点が残らない場合は、元の線をそのまま使う。
+  if (realPointCount(points, model.maxDistanceMeters) < 2) return arc;
   if (!surface.onRay) return { ...arc, points };
 
   const withoutSameTime = points.filter(

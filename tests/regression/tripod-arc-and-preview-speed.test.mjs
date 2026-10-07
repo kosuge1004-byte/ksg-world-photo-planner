@@ -459,3 +459,60 @@ test("upper preview draws only the pass the selected time belongs to, never tomo
   const single = { id: "sun", label: "太陽", points: points.map((point) => ({ ...point, altitudeDegrees: 10 })) };
   assert.equal(selectCelestialTrackPass(single, base), single);
 });
+
+test("rise-set guide never turns into the search-limit circle when the reference ground is as high as the pin", () => {
+  // 2026-10-08の報告を再現: 被写体ピン（楕円体高138.6m）と、約1km離れた丘の上の
+  // 三脚ピン（地表137.1m）。レンズ高1.6mを足すと基準面が被写体ピンより高くなる。
+  const subject = {
+    latitude: 34.50888737, longitude: 135.6309602, height: 138.551,
+    ellipsoidalHeightMeters: 138.551, label: "塔",
+  };
+  const base = {
+    id: "moon",
+    subject,
+    dayStart: new Date("2026-10-06T15:00:00.000Z"),
+    dayEnd: new Date("2026-10-07T15:00:00.000Z"),
+    lensCenterHeightMeters: 1.6,
+    calculationMode: "pro",
+    maxDistanceMeters: 10_000,
+  };
+  const real = (arc) => arc.points.filter((point) => point.distanceMeters < 10_000);
+
+  // 三脚ピンの高さしか基準が無い場合: 交点が存在しないので線を描かない（円にしない）。
+  assert.equal(buildTripodCandidateRiseSetArc({ ...base, referenceGroundEllipsoidalHeightMeters: [137.1] }), null);
+
+  // 被写体直下の地表（ピンの約24m下）が分かっていれば、それを基準に線ができる。
+  const withSubjectGround = buildTripodCandidateRiseSetArc({
+    ...base, referenceGroundEllipsoidalHeightMeters: [114.5, 137.1, 38.9],
+  });
+  assert.ok(withSubjectGround);
+  assert.ok(real(withSubjectGround).length > 20);
+  // 月の高度が約31度の04:48(JST)ごろ、候補は被写体から数十mの位置（診断の初期交点は63m）。
+  const target = Date.parse("2026-10-06T19:48:00.000Z");
+  const nearest = withSubjectGround.points.reduce((best, point) =>
+    Math.abs(point.timestampMilliseconds - target) < Math.abs(best.timestampMilliseconds - target) ? point : best);
+  assert.ok(nearest.distanceMeters > 20 && nearest.distanceMeters < 80, `distance ${nearest.distanceMeters}`);
+
+  // 被写体直下の地表が未取得でも、三脚ピンで交点ができなければ次の基準（標高0m）へ進む。
+  const fallback = buildTripodCandidateRiseSetArc({
+    ...base, referenceGroundEllipsoidalHeightMeters: [137.1, 38.9],
+  });
+  assert.ok(fallback && real(fallback).length > 20);
+  // 線の全点が円周上、ということは起きない。
+  assert.ok(fallback.points.some((point) => point.distanceMeters < 1_000));
+});
+
+test("3D display speed tuning: tiles load while moving, MSAA is off, and the idle map is not redrawn every frame", async () => {
+  const viewer = await readFile(new URL("../../src/cesium/createMapViewer.ts", import.meta.url), "utf8");
+  const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
+  assert.match(viewer, /tileset\.cullRequestsWhileMoving = false;\s*tileset\.foveatedTimeDelay = 0;/);
+  assert.match(viewer, /viewer\.scene\.msaaSamples = 1;\s*viewer\.scene\.postProcessStages\.fxaa\.enabled = true;/);
+  // Google 3D・標準3Dの両方のViewerと、Google・PLATEAUのタイルセットに適用する。
+  assert.equal((viewer.match(/applyLightweightRendering\(viewer\);/g) ?? []).length, 2);
+  assert.equal((viewer.match(/applyResponsiveTileLoading\((tileset|buildings)\);/g) ?? []).length, 3);
+  // 画質（詳細度）の設定は変えていない。
+  assert.match(viewer, /tileset\.maximumScreenSpaceError = 24;/);
+  // 止まっている間の強制描画は0.25秒に1回。完全には止めない。
+  assert.match(app, /IDLE_FORCED_RENDER_INTERVAL_MS = 250;/);
+  assert.match(app, /if \(now - lastForcedRenderAt >= IDLE_FORCED_RENDER_INTERVAL_MS\) \{\s*lastForcedRenderAt = now;\s*viewer\.scene\.requestRender\(\);\s*\}\s*viewer\.render\(\);/);
+});

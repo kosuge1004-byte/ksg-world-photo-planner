@@ -920,10 +920,21 @@ function App() {
       });
     }, ScreenSpaceEventType.LEFT_CLICK);
 
+    // 2026-10-08: 表示速度の改善。以前は毎フレーム必ず描画を要求していたため、
+    // 何も動いていない間も常に全力で描画し続け、端末が熱を持って処理が落ちる
+    // 原因になっていた。視点の移動やタイルの到着時はCesium自身が描画を行うので
+    // （requestRenderMode）、こちらからの強制描画は0.25秒に1回だけにする。
+    // 強制描画を完全にやめないのは、描画要求を出し忘れた更新があっても
+    // 0.25秒以内に必ず画面へ反映されるようにするため。
+    const IDLE_FORCED_RENDER_INTERVAL_MS = 250;
+    let lastForcedRenderAt = 0;
     let rafId: number | null = null;
-    const renderLoop = () => {
+    const renderLoop = (now: number) => {
       if (viewer.isDestroyed()) return;
-      viewer.scene.requestRender();
+      if (now - lastForcedRenderAt >= IDLE_FORCED_RENDER_INTERVAL_MS) {
+        lastForcedRenderAt = now;
+        viewer.scene.requestRender();
+      }
       viewer.render();
       rafId = requestAnimationFrame(renderLoop);
     };
@@ -2032,17 +2043,52 @@ function App() {
   );
 
   // 三脚候補線の高さ基準（確定候補がまだ無い間に使う地表の楕円体高）。
-  // 三脚ピンがあればその地表高、無ければ被写体地点の標高0m相当（ジオイド高）。
-  // 確定候補が出た後は、候補自身の高さが優先される
-  // （alignRiseSetArcToConfirmedCandidates）。
-  const tripodCandidateArcReferenceGroundHeight = useMemo(() => {
-    if (tripodPoint) {
-      const height = ellipsoidalHeightMeters(tripodPoint);
-      if (Number.isFinite(height)) return Math.round(height * 10) / 10;
-    }
-    const geoid = subjectPoint?.geoidHeightMeters;
-    return Number.isFinite(geoid) ? Math.round((geoid as number) * 10) / 10 : undefined;
-  }, [tripodPoint, subjectPoint]);
+  // 2026-10-08修正: 以前は三脚ピンの地表高だけを基準にしていた。三脚ピンが被写体ピンと
+  // 同じくらいの高さの場所（離れた丘の上など）にあると、視線がその高さまで降りてこず、
+  // 全時刻が検索上限の円周に並んでいた。優先順に複数の基準を用意し、
+  // 実際に交点ができる最初の高さを使う（buildTripodCandidateRiseSetArc）。
+  //   1. 被写体直下の地表（塔・建物の周辺は同じくらいの高さの土地であることが多い）
+  //   2. 三脚ピンの地表（山頂など、被写体ピン自体が地表にある場合）
+  //   3. 被写体地点の標高0m相当
+  // 確定候補が出た後は、候補自身の高さが優先される（alignRiseSetArcToConfirmedCandidates）。
+  const subjectLatitude = subjectPoint?.latitude ?? null;
+  const subjectLongitude = subjectPoint?.longitude ?? null;
+  const [subjectGroundHeight, setSubjectGroundHeight] = useState<{
+    key: string;
+    ellipsoidalHeightMeters: number;
+  } | null>(null);
+  const subjectGroundKey = subjectLatitude !== null && subjectLongitude !== null
+    ? `${subjectLatitude.toFixed(6)},${subjectLongitude.toFixed(6)}`
+    : "";
+  useEffect(() => {
+    if (!subjectGroundKey || subjectLatitude === null || subjectLongitude === null) return;
+    let cancelled = false;
+    void resolveGroundPoint(subjectLatitude, subjectLongitude, "被写体直下の地表")
+      .then((ground) => {
+        if (!cancelled) {
+          setSubjectGroundHeight({
+            key: subjectGroundKey,
+            ellipsoidalHeightMeters: Math.round(ellipsoidalHeightMeters(ground) * 10) / 10,
+          });
+        }
+      })
+      .catch(() => {
+        // 取得できない場合は、三脚ピン・標高0mの基準で線を描く。
+      });
+    return () => { cancelled = true; };
+  }, [subjectGroundKey, subjectLatitude, subjectLongitude]);
+  const subjectGroundEllipsoidalHeight = subjectGroundHeight?.key === subjectGroundKey
+    ? subjectGroundHeight.ellipsoidalHeightMeters
+    : null;
+  const tripodGroundEllipsoidalHeight = tripodPoint
+    ? Math.round(ellipsoidalHeightMeters(tripodPoint) * 10) / 10
+    : null;
+  const subjectGeoidHeight = subjectPoint?.geoidHeightMeters ?? null;
+  const tripodCandidateArcReferenceGroundHeights = useMemo(
+    () => [subjectGroundEllipsoidalHeight, tripodGroundEllipsoidalHeight, subjectGeoidHeight]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    [subjectGroundEllipsoidalHeight, tripodGroundEllipsoidalHeight, subjectGeoidHeight]
+  );
 
   const tripodCandidateRiseSetBaseArcs = useMemo(() => {
     if (!subjectPoint) return [];
@@ -2063,7 +2109,7 @@ function App() {
         calculationMode,
         maxDistanceMeters,
         refractionWeather: previewRefractionWeather,
-        referenceGroundEllipsoidalHeightMeters: tripodCandidateArcReferenceGroundHeight,
+        referenceGroundEllipsoidalHeightMeters: tripodCandidateArcReferenceGroundHeights,
       });
       return arc ? [arc] : [];
     });
@@ -2076,7 +2122,7 @@ function App() {
     calculationMode,
     precisionSettings.tripodSearchMaxDistanceMeters,
     previewRefractionWeather,
-    tripodCandidateArcReferenceGroundHeight,
+    tripodCandidateArcReferenceGroundHeights,
   ]);
 
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)

@@ -52,6 +52,7 @@ export async function loadPlateauBuildingsTileset(): Promise<Cesium3DTileset> {
   });
   buildings.show = false;
   buildings.maximumScreenSpaceError = 8;
+  applyResponsiveTileLoading(buildings);
   buildings.dynamicScreenSpaceError = true;
   buildings.skipLevelOfDetail = true;
   buildings.preferLeaves = true;
@@ -84,6 +85,7 @@ export async function ensureHiddenPlateauBuildingsForHeightLookup(
 
   const buildings = await Cesium3DTileset.fromUrl(PLATEAU_BUILDINGS_TILESET_URL);
   buildings.maximumScreenSpaceError = 32;
+  applyResponsiveTileLoading(buildings);
   buildings.dynamicScreenSpaceError = true;
   buildings.skipLevelOfDetail = true;
   buildings.preferLeaves = true;
@@ -133,6 +135,32 @@ export function setPreviewWireframeMode(viewer: Viewer, enabled: boolean): void 
   // 直接の原因になっていた。建物3Dタイルセットのワイヤーフレーム化
   // （上のループ）だけで十分に軽量化の目的は果たせるため、地面の
   // 画像レイヤーを隠す処理自体を廃止する。
+}
+
+/**
+ * 2026-10-08: 表示速度の改善（3Dタイルの読み込み方）。
+ *
+ * Cesiumの既定では、視点を動かしている間は新しいタイルの要求を控え
+ * （cullRequestsWhileMoving）、止まってからも0.2秒待って周辺部の読み込みを始める
+ * （foveatedTimeDelay）。そのため「動かすたびに、止まってから建物がはっきりするまで
+ * 待たされる」動きになっていた。移動中から読み込みを始め、停止後の待ちも無くす。
+ * 取得するタイル数（通信量）は増える。Cesium ionの月間root取得カウントには影響しない。
+ */
+function applyResponsiveTileLoading(tileset: Cesium3DTileset): void {
+  tileset.cullRequestsWhileMoving = false;
+  tileset.foveatedTimeDelay = 0;
+}
+
+/**
+ * 2026-10-08: 表示速度の改善（描画の負荷）。
+ *
+ * Cesiumは既定で4倍のマルチサンプリング（MSAA）を行う。スマートフォンのGPUでは
+ * これが1フレームの描画時間の大きな部分を占め、視点移動中のカクつきの原因になる。
+ * MSAAをやめ、輪郭のぎざぎざは処理の軽いFXAAで抑える。
+ */
+function applyLightweightRendering(viewer: Viewer): void {
+  viewer.scene.msaaSamples = 1;
+  viewer.scene.postProcessStages.fxaa.enabled = true;
 }
 
 const GOOGLE_PHOTOREALISTIC_ION_ASSET_ID = 2275207;
@@ -271,6 +299,7 @@ async function createStandardViewer(
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
   viewer.useDefaultRenderLoop = false;
+  applyLightweightRendering(viewer);
 
   viewer.scene.globe.show = true;
   viewer.scene.globe.depthTestAgainstTerrain = true;
@@ -338,6 +367,7 @@ export async function loadGooglePhotorealisticTilesetWithRetry(
   }
   tileset.maximumScreenSpaceError = 24;
   tileset.dynamicScreenSpaceError = true;
+  applyResponsiveTileLoading(tileset);
   return tileset;
 }
 
@@ -351,6 +381,10 @@ async function createHighestPrecisionViewer(
   }
 
   Ion.defaultAccessToken = token;
+  // 2026-10-08: Viewerの生成を待たずに、Google 3Dデータの接続先の解決を先に始める
+  // （起動して3Dが出るまでの待ちを、Viewer生成にかかる時間ぶん短くする）。
+  // 失敗はここでは扱わず、後段の読み込み処理に任せる。
+  void getGooglePhotorealisticIonResource().catch(() => undefined);
 
   const viewer = new Viewer(container, {
     globe: false,
@@ -368,6 +402,7 @@ async function createHighestPrecisionViewer(
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
   });
   viewer.useDefaultRenderLoop = false;
+  applyLightweightRendering(viewer);
 
   let tileset: GooglePhotorealisticTileset;
   try {
