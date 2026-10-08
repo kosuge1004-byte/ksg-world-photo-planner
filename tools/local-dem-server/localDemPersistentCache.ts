@@ -20,7 +20,7 @@ function toArrayBuffer(bytes: Buffer): ArrayBuffer {
 }
 
 export type LocalDemPersistentCache = RuntimeKvNamespace & {
-  validateReady(): Promise<void>;
+  validateReady(): Promise<{ nationwideReady: boolean }>;
 };
 
 /**

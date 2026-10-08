@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory = $true)][string]$ArchiveRoot,
   [Parameter(Mandatory = $true)][string]$OutputRoot,
   [Parameter(Mandatory = $true)][string]$ConverterPath,
+  [Parameter(Mandatory = $true)][string]$FinalizerPath,
   [Parameter(Mandatory = $true)][string]$ManifestPath,
   [Parameter(Mandatory = $true)][string]$ProgressPath,
   [Parameter(Mandatory = $true)][string]$LogPath,
@@ -36,6 +37,25 @@ function Resolve-FullPath([string]$PathValue) {
   return [System.IO.Path]::GetFullPath($PathValue).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
 }
 
+function Test-ReplacementArchives([string]$Root, [string[]]$MissingNames) {
+  $hasZip = {
+    param([string]$Directory)
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return $false }
+    return $null -ne (Get-ChildItem -LiteralPath $Directory -File -Filter '*.zip' | Select-Object -First 1)
+  }
+  $replacementRoot = Join-Path $Root 'mesh-highres-kyushu-okinawa'
+  $dem1 = & $hasZip (Join-Path $replacementRoot 'DEM1A')
+  $dem5a = & $hasZip (Join-Path $replacementRoot 'DEM5A')
+  $dem5b = & $hasZip (Join-Path $replacementRoot 'DEM5B')
+  $dem5c = & $hasZip (Join-Path $replacementRoot 'DEM5C')
+  foreach ($name in $MissingNames) {
+    if ($name -match '^FG-GML-kyushu_okinawa-DEM1-' -and $dem1) { continue }
+    if ($name -match '^FG-GML-kyushu_okinawa-DEM5-' -and $dem5a -and $dem5b -and $dem5c) { continue }
+    return $false
+  }
+  return $true
+}
+
 try {
   Write-ConversionProgress -Status running -Percent 0 -Message '準備中'
 
@@ -44,6 +64,9 @@ try {
   }
   if (-not (Test-Path -LiteralPath $ConverterPath -PathType Leaf)) {
     throw '既存のDEM変換プログラムが見つかりません。'
+  }
+  if (-not (Test-Path -LiteralPath $FinalizerPath -PathType Leaf)) {
+    throw '全国DEM完成検査プログラムが見つかりません。'
   }
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     throw 'Node.jsが見つかりません。'
@@ -73,7 +96,7 @@ try {
     $actualSet = @{}
     foreach ($name in $actualNames) { $actualSet[$name.ToLowerInvariant()] = $true }
     $missing = @($expectedNames | Where-Object { -not $actualSet.ContainsKey($_.ToLowerInvariant()) })
-    if ($missing.Count -gt 0) {
+    if ($missing.Count -gt 0 -and -not (Test-ReplacementArchives $archiveCanonical $missing)) {
       throw "全国分のZIPが揃っていません（$($actualNames.Count)/$($expectedNames.Count)件）。"
     }
   }
@@ -114,6 +137,16 @@ try {
     throw "DEM変換プログラムがエラーで停止しました（終了コード $exitCode）。"
   }
 
+  Write-ConversionProgress -Status running -Percent 99 -Message '完成検査中'
+  & node $FinalizerPath `
+    "--archive-root=$archiveCanonical" `
+    "--output-root=$outputCanonical" `
+    "--download-manifest=$ManifestPath" 2>&1 |
+    ForEach-Object { Add-Content -LiteralPath $LogPath -Value ([string]$_) -Encoding UTF8 }
+  if ($LASTEXITCODE -ne 0) {
+    throw "全国DEM完成検査がエラーで停止しました（終了コード $LASTEXITCODE）。"
+  }
+
   Write-ConversionProgress -Status completed -Percent 100 -Message '終了'
   Add-Content -LiteralPath $LogPath -Value "[$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))] conversion completed" -Encoding UTF8
 }
@@ -133,4 +166,3 @@ finally {
     Remove-Item -LiteralPath $script:temporaryProgressPath -Force -ErrorAction SilentlyContinue
   }
 }
-

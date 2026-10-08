@@ -10,8 +10,15 @@
 - ログ: `E:\AstroSight-GSI-data-20260926\runtime\gsi-dem-converter\conversion.log`
 
 公式ZIPは変更・展開・削除しない。全国275 ZIPが揃っていない場合は変換を
-開始せず、画面に不足件数を表示する。変換処理は既存の
+開始せず、画面に不足件数を表示する。九州・沖縄の旧地方別ZIPについては、
+同範囲の新しいメッシュ単位DEM1/5が揃っている場合だけ正式な代替として扱う。
+変換処理は既存の
 `scripts/prepare-gsi-dem-r2-assets.mjs` を使用するため、cm単位の精度、NoData、
 Shift_JIS/UTF-8、CRC32、SHA-256、atomic write、中断後のjournal再開を維持する。
+
+変換後はmanifestと全inventoryの件数・容量・SHA-256を照合し、合格時だけ
+`gsi-local-dem-v1/nationwide-ready-v1.json`を原子的に作成する。ローカルサービスは
+この完成印がある場合だけ大きな方位バッチを使用し、不完全時は従来の安全な
+小分け処理を維持する。
 
 GitHub、Cloudflare、R2へのアップロードは行わず、ネットワーク通信もしない。

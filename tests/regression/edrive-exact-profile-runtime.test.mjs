@@ -32,12 +32,12 @@ let batchCalls = 0;
 let maximumBearingsPerCall = 0;
 let legacyElevationCalls = 0;
 let demTileCalls = 0;
-let failAtBatchCall = null;
+let failAtBatchCalls = new Set();
 globalThis.fetch = async (input, init = {}) => {
   const url = String(input);
   if (url === "/api/bearing-profile-batch") {
     batchCalls += 1;
-    if (batchCalls === failAtBatchCall) {
+    if (failAtBatchCalls.has(batchCalls)) {
       return Response.json({
         code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
         error: "Eドライブ一時停止",
@@ -93,8 +93,8 @@ test("arbitrary exact coordinates use bounded E-drive batches and never the 54-m
   assert.equal(result.requestedBearings, bearings.length);
   assert.equal(result.successfulBearings, bearings.length);
   assert.equal(result.failedBearings, 0);
-  assert.equal(batchCalls, Math.ceil(bearings.length / 24));
-  assert.equal(maximumBearingsPerCall, 24);
+  assert.equal(batchCalls, Math.ceil(bearings.length / 120));
+  assert.equal(maximumBearingsPerCall, 120);
   assert.equal(legacyElevationCalls, 0);
   assert.equal(demTileCalls, 0);
 });
@@ -102,7 +102,10 @@ test("arbitrary exact coordinates use bounded E-drive batches and never the 54-m
 test("a retry resumes after the last committed E-drive chunk", async () => {
   batchCalls = 0;
   maximumBearingsPerCall = 0;
-  failAtBatchCall = 2;
+  // The 120-bearing request fails first, then its first safe 24-bearing retry
+  // fails as well. This reaches the existing direct fallback only after the
+  // adaptive split has proved that the origin is unavailable.
+  failAtBatchCalls = new Set([2, 3]);
   const subjectPoint = {
     latitude: 35.7111127,
     longitude: 139.8117504,
@@ -133,27 +136,57 @@ test("a retry resumes after the last committed E-drive chunk", async () => {
     return result;
   }), { name: "AbortError" });
   assert.match(fallbackNotice, /Eドライブ一時停止/, "the E-drive miss reason is shown on the per-bearing path");
-  assert.equal(batchCalls, 2);
+  assert.equal(batchCalls, 3);
   assert.equal(legacyElevationCalls, 0);
 
   batchCalls = 0;
-  failAtBatchCall = null;
+  failAtBatchCalls = new Set();
   const resumed = await manager.backfillBearingProfiles({
     subjectId: "edrive-resume-runtime",
     subjectPoint,
     cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
     maxDistanceMeters: 10_000,
   });
-  assert.equal(resumed.requestedBearings, bearings.length - 24);
-  assert.equal(resumed.successfulBearings, bearings.length - 24);
+  assert.equal(resumed.requestedBearings, bearings.length - 120);
+  assert.equal(resumed.successfulBearings, bearings.length - 120);
   assert.equal(resumed.failedBearings, 0);
-  assert.equal(batchCalls, Math.ceil((bearings.length - 24) / 24));
+  assert.equal(batchCalls, Math.ceil((bearings.length - 120) / 120));
   const completedProfiles = await getBearingProfilesMany(
     "edrive-resume-runtime",
     1.6,
     bearings,
   );
   assert.equal(completedProfiles.filter(Boolean).length, bearings.length);
+  assert.equal(legacyElevationCalls, 0);
+  assert.equal(demTileCalls, 0);
+});
+
+test("an oversized miss is recovered by safe chunks before any direct fallback", async () => {
+  batchCalls = 0;
+  maximumBearingsPerCall = 0;
+  failAtBatchCalls = new Set([1]);
+  const subjectPoint = {
+    latitude: 35.7121127,
+    longitude: 139.8127504,
+    height: 12,
+    geoidHeightMeters: 38,
+    label: "押上の分割確認地点",
+  };
+  const bearings = manager.requiredCelestialTripodBearings(subjectPoint.latitude);
+  let fallbackNotice = null;
+  const result = await manager.backfillBearingProfiles({
+    subjectId: "edrive-adaptive-split-runtime",
+    subjectPoint,
+    cameraSettings: { focalLengthMm: 200, lensCenterHeightMeters: 1.6 },
+    maxDistanceMeters: 10_000,
+    onProgress(progress) {
+      fallbackNotice ||= progress.directFallbackNotice ?? null;
+    },
+  });
+  assert.equal(result.successfulBearings, bearings.length);
+  assert.equal(result.failedBearings, 0);
+  assert.equal(fallbackNotice, null);
+  assert.equal(maximumBearingsPerCall, 120);
   assert.equal(legacyElevationCalls, 0);
   assert.equal(demTileCalls, 0);
 });

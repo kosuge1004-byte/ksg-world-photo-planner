@@ -9,6 +9,7 @@
     "prepare:jpgeo2024": "node scripts/prepare-jpgeo2024-local-data.mjs",
     "prepare:gsi-dem-r2": "node scripts/prepare-gsi-dem-r2-assets.mjs",
     "local-dem:prepare": "powershell -ExecutionPolicy Bypass -File tools/local-dem-server/prepare-data.ps1",
+    "local-dem:finalize-nationwide": "node scripts/finalize-nationwide-dem.mjs",
     "local-dem:prepare-fuji-100km-manifest": "node scripts/prepare-landmark-dem-manifest.mjs --radii=100000 --names=富士山 --output-prefix=gsi-landmark-dem-fuji",
     "local-dem:start": "powershell -ExecutionPolicy Bypass -File tools/local-dem-server/start.ps1",
     "local-dem:configure-domainless": "powershell -ExecutionPolicy Bypass -File tools/local-dem-server/configure-domainless-secrets.ps1",

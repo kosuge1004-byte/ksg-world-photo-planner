@@ -154,6 +154,10 @@ import {
 } from "./cesium/tripodSubjectSightLineEntities";
 import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup, setPreviewWireframeMode } from "./cesium/createMapViewer";
 import {
+  attachInteractive3dPerformance,
+  sceneHasPending3dContent,
+} from "./cesium/interactive3dPerformance";
+import {
   calculateKarneyDestinationPoint,
   calculateKarneyLineMetrics,
   calculateKarneySurfaceDistanceMeters,
@@ -926,16 +930,20 @@ function App() {
     // （requestRenderMode）、こちらからの強制描画は0.25秒に1回だけにする。
     // 強制描画を完全にやめないのは、描画要求を出し忘れた更新があっても
     // 0.25秒以内に必ず画面へ反映されるようにするため。
-    const IDLE_FORCED_RENDER_INTERVAL_MS = 250;
-    let lastForcedRenderAt = 0;
+    const ACTIVE_RENDER_INTERVAL_MS = 1000 / 30;
+    const IDLE_RENDER_INTERVAL_MS = 250;
+    const performanceController = attachInteractive3dPerformance(viewer);
+    let lastRenderAt = 0;
     let rafId: number | null = null;
     const renderLoop = (now: number) => {
       if (viewer.isDestroyed()) return;
-      if (now - lastForcedRenderAt >= IDLE_FORCED_RENDER_INTERVAL_MS) {
-        lastForcedRenderAt = now;
+      const active = performanceController.isInteracting() || sceneHasPending3dContent(viewer);
+      const interval = active ? ACTIVE_RENDER_INTERVAL_MS : IDLE_RENDER_INTERVAL_MS;
+      if (now - lastRenderAt >= interval) {
+        lastRenderAt = now;
         viewer.scene.requestRender();
+        viewer.render();
       }
-      viewer.render();
       rafId = requestAnimationFrame(renderLoop);
     };
     rafId = requestAnimationFrame(renderLoop);
@@ -954,6 +962,7 @@ function App() {
       tapHandler.destroy();
       window.removeEventListener("resize", handleWindowResize);
       if (rafId !== null) cancelAnimationFrame(rafId);
+      performanceController.dispose();
       map3DRenderLoopRef.current = null;
       if (!viewer.isDestroyed()) {
         viewer.scene.screenSpaceCameraController.enableInputs = false;
@@ -3869,7 +3878,7 @@ function App() {
           setDynamicSpotUi({
             spot: latest,
             phase: "pending-pc",
-            message: "Eドライブの完成データは保持されています。PC接続後に端末保存を再開します",
+            message: "完成済みデータは保持されています。接続回復後に端末保存を自動再開します",
           });
         }
         return;
@@ -3897,7 +3906,7 @@ function App() {
         setDynamicSpotUi({
           spot: latest,
           phase: "pending-pc",
-          message: "PC/Eドライブ未接続です。検索と撮影計画は利用でき、接続後に生成を再開します",
+          message: "高速地形データを現在利用できません。検索と撮影計画は利用でき、接続回復後に生成を自動再開します",
         });
         await new Promise((resolve) => setTimeout(resolve, 7_000));
       }
@@ -3955,7 +3964,7 @@ function App() {
         setDynamicSpotUi({
           spot: local,
           phase: "pending-pc",
-          message: "PC/Eドライブ未接続です。検索と撮影計画は利用でき、接続後に生成を再開します",
+          message: "高速地形データを現在利用できません。検索と撮影計画は利用でき、接続回復後に生成を自動再開します",
         });
       }
       return;
@@ -6072,8 +6081,8 @@ ${diagnosticMessage}
         : dynamicSpotUi.phase === "complete"
           ? "スポットデータ作成完了"
           : dynamicSpotUi.phase === "pending-pc"
-            ? "PC接続待ち・自動再開"
-            : "PC側で自動再試行中"
+            ? "データ接続待ち・自動再開"
+            : "バックグラウンドで自動再試行中"
     : "";
 
   return (

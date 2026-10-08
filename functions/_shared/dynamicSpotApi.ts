@@ -61,7 +61,7 @@ export async function handleDynamicSpotApi(
       if (action === "register") {
         if (!isDynamicSpotRegistrationInput(body)) return json({ error: "Dynamic Spot登録条件が不正です" }, 400);
         const spot = await registerLocalDynamicSpot(body, context.request.signal);
-        return spot ? json({ spot }, 202) : json({ code: "LOCAL_DYNAMIC_SPOT_UNAVAILABLE", error: "PC/Eドライブへ接続できません。地点検索はそのまま利用できます。" }, 503);
+        return spot ? json({ spot }, 202) : json({ code: "LOCAL_DYNAMIC_SPOT_UNAVAILABLE", error: "高速地形データを現在利用できません。地点検索はそのまま利用できます。" }, 503);
       }
       if (action === "lookup") {
         const value = record(body);

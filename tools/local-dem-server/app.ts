@@ -368,7 +368,8 @@ export function createLocalDemRequestHandler(
   lookupAuto?: LocalDemAutoLookup,
   lookupPrecomputedProfile?: LocalBearingProfileLookup,
   computeProfile?: LocalBearingProfileCompute,
-  dynamicSpots?: DynamicSpotStore
+  dynamicSpots?: DynamicSpotStore,
+  options: { nationwideDemReady?: boolean } = {}
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   const gate = new RequestGate(
     config.maximumConcurrentRequests,
@@ -458,9 +459,16 @@ export function createLocalDemRequestHandler(
       if (requestUrl === COMPUTED_PROFILE_ENDPOINT) {
         if (!computeProfile) throw new HttpError(503, "exact profile calculation is unavailable");
         const profileRequest = parsePrecomputedProfilePayload(body);
+        const nationwideDemReady = options.nationwideDemReady === true;
         const maximumBearings = Math.max(
           1,
-          Math.min(24, Math.floor(240_000 / profileRequest.maxDistanceMeters))
+          Math.min(
+            nationwideDemReady ? 120 : 24,
+            Math.floor(
+              (nationwideDemReady ? 1_200_000 : 240_000) /
+              profileRequest.maxDistanceMeters
+            )
+          )
         );
         if (profileRequest.bearings.length > maximumBearings) {
           throw new HttpError(400, "exact profile bearing batch is too large");

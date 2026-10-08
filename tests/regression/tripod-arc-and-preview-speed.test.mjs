@@ -505,6 +505,10 @@ test("rise-set guide never turns into the search-limit circle when the reference
 test("3D display speed tuning: tiles load while moving, MSAA is off, and the idle map is not redrawn every frame", async () => {
   const viewer = await readFile(new URL("../../src/cesium/createMapViewer.ts", import.meta.url), "utf8");
   const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
+  const interaction = await readFile(
+    new URL("../../src/cesium/interactive3dPerformance.ts", import.meta.url),
+    "utf8"
+  );
   assert.match(viewer, /tileset\.cullRequestsWhileMoving = false;\s*tileset\.foveatedTimeDelay = 0;/);
   assert.match(viewer, /viewer\.scene\.msaaSamples = 1;\s*viewer\.scene\.postProcessStages\.fxaa\.enabled = true;/);
   // Google 3D・標準3Dの両方のViewerと、Google・PLATEAUのタイルセットに適用する。
@@ -512,7 +516,17 @@ test("3D display speed tuning: tiles load while moving, MSAA is off, and the idl
   assert.equal((viewer.match(/applyResponsiveTileLoading\((tileset|buildings)\);/g) ?? []).length, 3);
   // 画質（詳細度）の設定は変えていない。
   assert.match(viewer, /tileset\.maximumScreenSpaceError = 24;/);
-  // 止まっている間の強制描画は0.25秒に1回。完全には止めない。
-  assert.match(app, /IDLE_FORCED_RENDER_INTERVAL_MS = 250;/);
-  assert.match(app, /if \(now - lastForcedRenderAt >= IDLE_FORCED_RENDER_INTERVAL_MS\) \{\s*lastForcedRenderAt = now;\s*viewer\.scene\.requestRender\(\);\s*\}\s*viewer\.render\(\);/);
+  // 操作中は一時的に軽量化し、停止後に元の解像度とSSEへ必ず戻す。
+  assert.match(interaction, /INTERACTION_RESOLUTION_SCALE = 0\.72/);
+  assert.match(interaction, /viewer\.resolutionScale = normalResolutionScale/);
+  assert.match(interaction, /tileset\.maximumScreenSpaceError = maximumScreenSpaceError/);
+  // 描画呼び出し自体を操作・読込中30fps、静止中4fpsへ抑える。
+  assert.match(app, /ACTIVE_RENDER_INTERVAL_MS = 1000 \/ 30/);
+  assert.match(app, /IDLE_RENDER_INTERVAL_MS = 250/);
+  assert.match(app, /sceneHasPending3dContent\(viewer\)/);
+  assert.match(app, /if \(now - lastRenderAt >= interval\)[\s\S]*?viewer\.render\(\)/);
+  // Google root待ちでも地理院地図を先に出し、最初のGoogle tileで切り替える。
+  assert.match(viewer, /Googleタイルモード：地理院地図を表示しました。3Dデータを読み込み中/);
+  assert.match(viewer, /tileset\.tileVisible\.addEventListener/);
+  assert.match(viewer, /viewer\.scene\.globe\.show = false/);
 });

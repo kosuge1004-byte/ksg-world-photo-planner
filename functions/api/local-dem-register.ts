@@ -92,12 +92,12 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
         : ""
     );
     if (!registration) {
-      return response({ error: "Quick Tunnel URLが不正です" }, 400);
+      return response({ error: "データサービスの接続先が不正です" }, 400);
     }
     const originToken = context.env.LOCAL_DEM_ORIGIN_TOKEN?.trim() ?? "";
     if (originToken.length < 32) {
       return response({
-        error: "Eドライブ認証secretが未設定です",
+        error: "データサービスの認証設定が不足しています",
         code: "ORIGIN_TOKEN_UNAVAILABLE",
       }, 503);
     }
@@ -108,7 +108,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
     const verification = await verifyQuickTunnel(registration.endpoint, originToken);
     if (!verification.ok) {
       return response({
-        error: "Quick Tunnelの往復検査に失敗しました",
+        error: "データサービスの接続検査に失敗しました",
         code: verification.code,
       }, 503);
     }

@@ -124,7 +124,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       // unavailable, return a prompt, retryable error.
       return apiJson({
         code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
-        error: "この地点の正確な地形データをEドライブで計算できません。PC・Eドライブ・Cloudflare Tunnelの状態を確認して再実行してください。",
+        error: "この地点の正確な地形データを現在生成できません。接続回復後に自動再試行します。",
       }, 503, "no-store");
     } catch (error) {
       return apiJson(

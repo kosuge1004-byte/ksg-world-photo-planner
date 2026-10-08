@@ -13,6 +13,7 @@ $toolRoot = $PSScriptRoot
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $toolRoot '..\..'))
 $workerPath = Join-Path $toolRoot 'Invoke-NationwideDemConversion.ps1'
 $converterPath = Join-Path $repoRoot 'scripts\prepare-gsi-dem-r2-assets.mjs'
+$finalizerPath = Join-Path $repoRoot 'scripts\finalize-nationwide-dem.mjs'
 $manifestPath = Join-Path $repoRoot 'dem\gsi-dem-download-manifest.json'
 $runtimeRoot = 'E:\AstroSight-GSI-data-20260926\runtime\gsi-dem-converter'
 $progressPath = Join-Path $runtimeRoot 'progress.json'
@@ -117,6 +118,7 @@ $actionButton.Add_Click({
     '-ArchiveRoot', (Quote-ProcessArgument $ArchiveRoot),
     '-OutputRoot', (Quote-ProcessArgument $OutputRoot),
     '-ConverterPath', (Quote-ProcessArgument $converterPath),
+    '-FinalizerPath', (Quote-ProcessArgument $finalizerPath),
     '-ManifestPath', (Quote-ProcessArgument $manifestPath),
     '-ProgressPath', (Quote-ProcessArgument $progressPath),
     '-LogPath', (Quote-ProcessArgument $logPath)
@@ -143,4 +145,3 @@ $window.Add_Closing({
 })
 
 [void]$window.ShowDialog()
-

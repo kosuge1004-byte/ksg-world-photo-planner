@@ -136,12 +136,14 @@ const BEARING_CONCURRENCY = 2;
 // one client/Worker/R2 round trip. Unregistered coordinates receive an explicit
 // 404 and retain the precise direct path below.
 // Immutable registered-spot files are intentionally fetched in one request.
-// An arbitrary exact coordinate is calculated at the E-drive origin in small
-// bounded chunks: real E-drive/GSI measurements show that 32 fresh bearings
-// can approach the 30 second origin deadline, while 24 leaves transport margin
-// and commits each completed chunk before the next one starts.
+// A completed nationwide local DEM can calculate a much larger exact batch
+// without any GSI round trips. Start at 120 bearings for a 10 km profile. An
+// older/partial local service rejects that size; the queue below then retries
+// the same bearings in the proven 24-bearing chunks before considering the
+// direct path. Coordinates, samples and interpolation never change.
 const PRECOMPUTED_BEARING_BATCH_SIZE = 360;
-const EDRIVE_EXACT_BEARING_BATCH_SIZE = 24;
+const EDRIVE_NATIONWIDE_BEARING_BATCH_SIZE = 120;
+const EDRIVE_SAFE_BEARING_BATCH_SIZE = 24;
 // 2026-09-08の実測: 公開APIで1方位352点の直接取得に約25.4秒。
 const DIRECT_PATH_SECONDS_PER_BEARING_ESTIMATE = 25;
 
@@ -396,15 +398,23 @@ export async function backfillBearingProfiles(params: {
     matchingTarget?.maxDistanceMeters === requestedMaxDistanceMeters
       ? matchingTarget
       : null;
+  const safeBearingBatchSize = Math.max(1, Math.min(
+    EDRIVE_SAFE_BEARING_BATCH_SIZE,
+    Math.floor(240_000 / requestedMaxDistanceMeters)
+  ));
   const bearingBatchSize = requiredPrecomputedTarget || params.preferPrecomputed
     ? PRECOMPUTED_BEARING_BATCH_SIZE
     : Math.max(1, Math.min(
-        EDRIVE_EXACT_BEARING_BATCH_SIZE,
-        Math.floor(240_000 / requestedMaxDistanceMeters)
+        EDRIVE_NATIONWIDE_BEARING_BATCH_SIZE,
+        Math.floor(1_200_000 / requestedMaxDistanceMeters)
       ));
+  const bearingBatchQueue: number[][] = [];
   for (let start = 0; start < pendingBearings.length; start += bearingBatchSize) {
+    bearingBatchQueue.push(pendingBearings.slice(start, start + bearingBatchSize));
+  }
+  while (bearingBatchQueue.length > 0) {
     if (signal?.aborted) break;
-    const batchBearings = pendingBearings.slice(start, start + bearingBatchSize);
+    const batchBearings = bearingBatchQueue.shift()!;
     reportProgress({
       totalSteps,
       completedSteps: completedAttempts,
@@ -438,6 +448,16 @@ export async function backfillBearingProfiles(params: {
       }
     }
     if (!outcome.ok) {
+      if (!requiredPrecomputedTarget && !params.preferPrecomputed &&
+        batchBearings.length > safeBearingBatchSize) {
+        const split: number[][] = [];
+        for (let start = 0; start < batchBearings.length; start += safeBearingBatchSize) {
+          split.push(batchBearings.slice(start, start + safeBearingBatchSize));
+        }
+        bearingBatchQueue.unshift(...split);
+        batchFallbackReason = outcome.miss.reason;
+        continue;
+      }
       batchFallbackReason = requiredPrecomputedTarget
         ? `${requiredPrecomputedTarget.name}の計算済み地形データを取得できないため、1方位ずつ取得します。${outcome.miss.reason}`
         : outcome.miss.reason;

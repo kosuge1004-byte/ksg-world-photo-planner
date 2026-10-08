@@ -235,9 +235,9 @@ async function readBoundedJson(
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
     await response.body?.cancel();
-    throw new Error("ローカルDEM APIの応答が大きすぎます");
+    throw new Error("高速地形データサービスの応答が大きすぎます");
   }
-  if (!response.body) throw new Error("ローカルDEM APIの応答本文がありません");
+  if (!response.body) throw new Error("高速地形データサービスの応答本文がありません");
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -249,7 +249,7 @@ async function readBoundedJson(
       length += value.byteLength;
       if (length > maximumBytes) {
         await reader.cancel();
-        throw new Error("ローカルDEM APIの応答が大きすぎます");
+        throw new Error("高速地形データサービスの応答が大きすぎます");
       }
       chunks.push(value);
     }
@@ -360,10 +360,11 @@ export async function computeLocalBearingProfile(
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    controller.abort(createTimeoutError("Eドライブ全方位計算タイムアウト"));
+    controller.abort(createTimeoutError("高速地形データの全方位計算がタイムアウトしました"));
   }, COMPUTED_PROFILE_REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort(createAbortError());
   signal?.addEventListener("abort", onAbort, { once: true });
+  let batchSizeRejected = false;
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -385,21 +386,28 @@ export async function computeLocalBearingProfile(
       signal: controller.signal,
     });
     if (!response.ok) {
+      // A local service without the nationwide completion marker deliberately
+      // keeps the former 24-bearing ceiling. Do not put that healthy endpoint
+      // into cooldown: the client immediately retries the identical bearings
+      // in safe chunks.
+      batchSizeRejected = response.status === 400 && request.bearings.length > 24;
       await response.body?.cancel();
-      throw new Error(`Eドライブ全方位APIがHTTP ${response.status}を返しました`);
+      throw new Error(`高速地形データサービスがHTTP ${response.status}を返しました`);
     }
     const body = await readBoundedJson(response, MAX_PROFILE_RESPONSE_BYTES);
     if (!isPrecomputedBearingProfileResponse(body, request) ||
       body.terrainProfileComplete !== true) {
-      throw new Error("Eドライブ全方位APIの応答形式が不正です");
+      throw new Error("高速地形データサービスの全方位応答形式が不正です");
     }
     blockedComputedProfileEndpoint = null;
     blockedComputedProfileUntil = 0;
     return body;
   } catch {
     if (signal?.aborted && !timedOut) throw createAbortError();
-    blockedComputedProfileEndpoint = endpointKey;
-    blockedComputedProfileUntil = Date.now() + FAILURE_COOLDOWN_MS;
+    if (!batchSizeRejected) {
+      blockedComputedProfileEndpoint = endpointKey;
+      blockedComputedProfileUntil = Date.now() + FAILURE_COOLDOWN_MS;
+    }
     return null;
   } finally {
     clearTimeout(timeout);
@@ -418,7 +426,7 @@ function validatedResults(
     !("results" in body) || !Array.isArray(body.results) ||
     body.results.length !== points.length
   ) {
-    throw new Error("ローカルDEM APIの応答形式が不正です");
+    throw new Error("高速地形データサービスの応答形式が不正です");
   }
 
   const expected = new Set(points.map((point) => point.index));
@@ -431,7 +439,7 @@ function validatedResults(
       !expected.has(result.index) || seen.has(result.index) ||
       !("heightMeters" in result)
     ) {
-      throw new Error("ローカルDEM APIの地点応答が不正です");
+      throw new Error("高速地形データサービスの地点応答が不正です");
     }
     seen.add(result.index);
     if (result.heightMeters === null) continue;
@@ -441,12 +449,12 @@ function validatedResults(
       result.heightMeters < MIN_HEIGHT_METERS ||
       result.heightMeters > MAX_HEIGHT_METERS
     ) {
-      throw new Error("ローカルDEM APIの標高値が不正です");
+      throw new Error("高速地形データサービスの標高値が不正です");
     }
     resolved.set(result.index, result.heightMeters);
   }
   if (seen.size !== expected.size) {
-    throw new Error("ローカルDEM APIの地点数が一致しません");
+    throw new Error("高速地形データサービスの地点数が一致しません");
   }
   return resolved;
 }
@@ -462,7 +470,7 @@ function validatedAutoResults(
     !("results" in body) || !Array.isArray(body.results) ||
     body.results.length !== points.length
   ) {
-    throw new Error("ローカルDEM APIの自動応答形式が不正です");
+    throw new Error("高速地形データサービスの自動応答形式が不正です");
   }
   const expected = new Set(points.map((point) => point.index));
   const seen = new Set<number>();
@@ -474,7 +482,7 @@ function validatedAutoResults(
       !expected.has(result.index as number) || seen.has(result.index as number) ||
       !("heightMeters" in result) || !("source" in result)
     ) {
-      throw new Error("ローカルDEM APIの自動地点応答が不正です");
+      throw new Error("高速地形データサービスの自動地点応答が不正です");
     }
     const source = result.source;
     const heightMeters = result.heightMeters;
@@ -494,12 +502,12 @@ function validatedAutoResults(
         source: source as LocalDemGatewaySource,
       });
     } else {
-      throw new Error("ローカルDEM APIの自動標高値が不正です");
+      throw new Error("高速地形データサービスの自動標高値が不正です");
     }
     seen.add(result.index as number);
   }
   if (seen.size !== expected.size) {
-    throw new Error("ローカルDEM APIの自動地点数が一致しません");
+    throw new Error("高速地形データサービスの自動地点数が一致しません");
   }
   return resolved;
 }
@@ -516,7 +524,7 @@ async function requestChunk(
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    controller.abort(createTimeoutError("ローカルDEM APIタイムアウト"));
+    controller.abort(createTimeoutError("高速地形データサービスがタイムアウトしました"));
   }, REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort(createAbortError());
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -531,7 +539,7 @@ async function requestChunk(
     });
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`ローカルDEM APIがHTTP ${response.status}を返しました`);
+      throw new Error(`高速地形データサービスがHTTP ${response.status}を返しました`);
     }
     return validatedResults(await readBoundedJson(response), source, points);
   } catch (error) {
@@ -554,7 +562,7 @@ async function requestAutoChunk(
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    controller.abort(createTimeoutError("ローカルDEM APIタイムアウト"));
+    controller.abort(createTimeoutError("高速地形データサービスがタイムアウトしました"));
   }, REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort(createAbortError());
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -569,7 +577,7 @@ async function requestAutoChunk(
     });
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`ローカルDEM APIがHTTP ${response.status}を返しました`);
+      throw new Error(`高速地形データサービスがHTTP ${response.status}を返しました`);
     }
     return validatedAutoResults(await readBoundedJson(response), points);
   } catch (error) {

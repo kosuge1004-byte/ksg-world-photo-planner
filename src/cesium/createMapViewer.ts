@@ -374,7 +374,8 @@ export async function loadGooglePhotorealisticTilesetWithRetry(
 async function createHighestPrecisionViewer(
   container: HTMLDivElement,
   token: string,
-  setStatus: (message: string) => void
+  setStatus: (message: string) => void,
+  onSceneContentChanged?: () => void
 ): Promise<Viewer> {
   if (!token) {
     throw new Error("Googleタイルモードの3D地図を開始するためのCesium ion設定が不足しています");
@@ -386,8 +387,16 @@ async function createHighestPrecisionViewer(
   // 失敗はここでは扱わず、後段の読み込み処理に任せる。
   void getGooglePhotorealisticIonResource().catch(() => undefined);
 
+  const baseLayer = new ImageryLayer(new UrlTemplateImageryProvider({
+    url: GSI_STANDARD_TILE_URL,
+    credit: "地理院タイル（国土地理院）",
+    maximumLevel: 18,
+  }));
   const viewer = new Viewer(container, {
-    globe: false,
+    // Show an immediately usable lightweight map while the Google root and its
+    // first visible tile arrive. The globe is hidden as soon as Google content
+    // becomes visible, so the final Photorealistic 3D view is unchanged.
+    baseLayer,
     geocoder: IonGeocodeProviderType.GOOGLE,
     animation: false,
     baseLayerPicker: false,
@@ -403,16 +412,34 @@ async function createHighestPrecisionViewer(
   });
   viewer.useDefaultRenderLoop = false;
   applyLightweightRendering(viewer);
+  viewer.scene.globe.show = true;
+  viewer.scene.globe.depthTestAgainstTerrain = true;
+  setStatus("Googleタイルモード：地理院地図を表示しました。3Dデータを読み込み中…");
 
-  let tileset: GooglePhotorealisticTileset;
-  try {
-    tileset = await loadGooglePhotorealisticTilesetWithRetry(setStatus);
-  } catch (error) {
-    viewer.destroy();
-    throw error;
-  }
-  markAsGoogleTileset(tileset);
-  viewer.scene.primitives.add(tileset);
+  void loadGooglePhotorealisticTilesetWithRetry(setStatus).then((tileset) => {
+    if (viewer.isDestroyed()) {
+      tileset.destroy();
+      return;
+    }
+    markAsGoogleTileset(tileset);
+    let switched = false;
+    const stopWaitingForFirstTile = tileset.tileVisible.addEventListener(() => {
+      if (switched || viewer.isDestroyed()) return;
+      switched = true;
+      stopWaitingForFirstTile();
+      viewer.scene.globe.show = false;
+      setStatus("Googleタイルモード：Google Photorealistic 3D Tiles 表示中");
+      viewer.scene.requestRender();
+      onSceneContentChanged?.();
+    });
+    viewer.scene.primitives.add(tileset);
+    viewer.scene.requestRender();
+  }).catch((error) => {
+    if (viewer.isDestroyed()) return;
+    console.warn("Google 3D tiles could not be loaded; continuing with GSI map.", error);
+    setStatus("Google 3Dデータを取得できないため、地理院地図で表示中");
+    viewer.scene.requestRender();
+  });
 
   return viewer;
 }
@@ -459,7 +486,12 @@ export async function createMapViewer(
   onSceneContentChanged?: () => void
 ): Promise<Viewer> {
   const viewer = accuracyMode === "highest"
-    ? await createHighestPrecisionViewer(container, token ?? "", setStatus)
+    ? await createHighestPrecisionViewer(
+        container,
+        token ?? "",
+        setStatus,
+        onSceneContentChanged
+      )
     : await createStandardViewer(
         container,
         setStatus,
@@ -481,8 +513,5 @@ export async function createMapViewer(
     },
   });
 
-  if (accuracyMode === "highest") {
-    setStatus("Googleタイルモード：Google Photorealistic 3D Tiles 表示中");
-  }
   return viewer;
 }

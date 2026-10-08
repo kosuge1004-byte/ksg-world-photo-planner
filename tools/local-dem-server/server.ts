@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   configureLocalDemMemoryBudgetForPrivateOrigin(512 * 1024 * 1024);
   const persistentCache = await createLocalDemPersistentCache(config.dataRoot);
-  await persistentCache.validateReady();
+  const demReadiness = await persistentCache.validateReady();
   const precomputedProfiles = await createReadOnlyBearingProfileStore(config.dataRoot);
   configureServerRuntime({ persistentCache });
 
@@ -43,7 +43,8 @@ async function main(): Promise<void> {
       ? (request) => precomputedProfiles.lookup(request)
       : undefined,
     computeExactProfile,
-    dynamicSpots
+    dynamicSpots,
+    { nationwideDemReady: demReadiness.nationwideReady }
   );
   const server = createServer((request, response) => {
     void handler(request, response);
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
       port: config.port,
       precomputedProfiles: precomputedProfiles?.entryCount ?? 0,
       dynamicSpotStore: true,
+      nationwideDemReady: demReadiness.nationwideReady,
     }));
     dynamicSpots.resumeIncomplete();
   });

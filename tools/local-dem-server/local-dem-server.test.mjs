@@ -73,9 +73,17 @@ function payload(overrides = {}) {
   return { source: "DEM10B", points: [point()], ...overrides };
 }
 
-async function start(lookup, overrides = {}, lookupAuto, lookupPrecomputedProfile, computeProfile) {
+async function start(
+  lookup,
+  overrides = {},
+  lookupAuto,
+  lookupPrecomputedProfile,
+  computeProfile,
+  handlerOptions = {},
+) {
   const handler = createLocalDemRequestHandler(
-    config(overrides), lookup, lookupAuto, lookupPrecomputedProfile, computeProfile
+    config(overrides), lookup, lookupAuto, lookupPrecomputedProfile, computeProfile,
+    undefined, handlerOptions
   );
   const server = createServer((request, response) => void handler(request, response));
   await new Promise((resolve, reject) => {
@@ -234,6 +242,42 @@ test("computed profile route returns an exact complete profile for an arbitrary 
   });
 });
 
+test("nationwide completion raises only the exact-profile transport limit", async () => {
+  const profileRequest = {
+    subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
+    cameraSettings: { lensCenterHeightMeters: 1.6 },
+    bearings: Array.from({ length: 120 }, (_, index) => index),
+    maxDistanceMeters: 10_000,
+  };
+  const compute = async (actual) => ({
+    version: 2,
+    distancesMeters: [8, 10_000],
+    profiles: actual.bearings.map((bearingDegrees) => ({
+      bearingDegrees,
+      ellipsoidalHeightsMeters: [101, 102],
+      elevationSources: ["DEM1A", "DEM10B"],
+      computedAtIso: "2026-10-08T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: actual.bearings.length,
+    pointCount: actual.bearings.length * 2,
+  });
+  const legacyBase = await start(
+    async () => new Map(), {}, undefined, undefined, compute
+  );
+  assert.equal((await postComputedProfile(legacyBase, profileRequest)).status, 400);
+
+  const nationwideBase = await start(
+    async () => new Map(), {}, undefined, undefined, compute,
+    { nationwideDemReady: true }
+  );
+  const response = await postComputedProfile(nationwideBase, profileRequest);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.requestedBearingCount, 120);
+  assert.equal(body.terrainProfileComplete, true);
+});
+
 test("computed profile route rejects incomplete calculations", async () => {
   const profileRequest = {
     subjectPoint: { latitude: 35.7101127, longitude: 139.8107504, height: 12 },
@@ -370,15 +414,23 @@ test("read-only cache accepts only fixed R2 keys and blocks traversal", async ()
   temporaryDirectories.add(root);
   const assetRoot = path.join(root, "gsi-local-dem-v1");
   await mkdir(path.join(assetRoot, "DEM10B"), { recursive: true });
-  await writeFile(path.join(assetRoot, "manifest.json"), JSON.stringify({
+  const manifestText = JSON.stringify({
     schemaVersion: 1,
     format: "astrosight-gsi-local-dem-v1",
-  }));
+  });
+  await writeFile(path.join(assetRoot, "manifest.json"), manifestText);
   await writeFile(path.join(assetRoot, "DEM10B", "533946.bin.gz"), "asset");
   await writeFile(path.join(root, "secret.txt"), "do-not-read");
 
   const cache = await createReadOnlyDemCache(root);
-  await cache.validateReady();
+  assert.deepEqual(await cache.validateReady(), { nationwideReady: false });
+  await writeFile(path.join(assetRoot, "nationwide-ready-v1.json"), JSON.stringify({
+    schemaVersion: 1,
+    format: "astrosight-nationwide-dem-ready-v1",
+    status: "complete",
+    manifestSha256: createHash("sha256").update(manifestText).digest("hex"),
+  }));
+  assert.deepEqual(await cache.validateReady(), { nationwideReady: true });
   assert.equal(new TextDecoder().decode(await cache.get(
     "gsi-local-dem-v1/DEM10B/533946.bin.gz",
     { type: "arrayBuffer" }

@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { RuntimeKvNamespace } from "../../server/cloudflareRuntime.ts";
 
-const ALLOWED_KEY = /^gsi-local-dem-v1\/(?:manifest\.json|(?:DEM1A|DEM5A|DEM5B|DEM5C)\/\d{8}\.bin\.gz|DEM10B\/\d{6}\.bin\.gz)$/;
+const NATIONWIDE_READY_KEY = "gsi-local-dem-v1/nationwide-ready-v1.json";
+const ALLOWED_KEY = /^gsi-local-dem-v1\/(?:manifest\.json|nationwide-ready-v1\.json|(?:DEM1A|DEM5A|DEM5B|DEM5C)\/\d{8}\.bin\.gz|DEM10B\/\d{6}\.bin\.gz)$/;
 const MAX_MANIFEST_BYTES = 1_048_576;
 const MAX_ASSET_BYTES = 16 * 1_048_576;
 
@@ -18,7 +20,7 @@ function toArrayBuffer(bytes: Buffer): ArrayBuffer {
 
 export type ReadOnlyDemCache = RuntimeKvNamespace & {
   /** The validated manifest is read during startup; no path is exposed. */
-  validateReady(): Promise<void>;
+  validateReady(): Promise<{ nationwideReady: boolean }>;
 };
 
 /**
@@ -93,9 +95,35 @@ export async function createReadOnlyDemCache(configuredRoot: string): Promise<Re
       ) {
         throw new Error("local DEM manifest is invalid");
       }
+      const readyBytes = await readKey(NATIONWIDE_READY_KEY);
+      if (!readyBytes) return { nationwideReady: false };
+      try {
+        const ready = JSON.parse(new TextDecoder().decode(readyBytes)) as {
+          schemaVersion?: unknown;
+          format?: unknown;
+          status?: unknown;
+          manifestSha256?: unknown;
+        };
+        const manifestSha256 = createHash("sha256")
+          .update(new Uint8Array(bytes))
+          .digest("hex");
+        return {
+          nationwideReady:
+            ready.schemaVersion === 1 &&
+            ready.format === "astrosight-nationwide-dem-ready-v1" &&
+            ready.status === "complete" &&
+            ready.manifestSha256 === manifestSha256,
+        };
+      } catch {
+        return { nationwideReady: false };
+      }
     },
   };
   return cache;
 }
 
-export const readOnlyDemCacheInternalsForTests = { isInside, ALLOWED_KEY };
+export const readOnlyDemCacheInternalsForTests = {
+  isInside,
+  ALLOWED_KEY,
+  NATIONWIDE_READY_KEY,
+};
