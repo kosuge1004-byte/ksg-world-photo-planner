@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "Google Maps short link resolves from the redirect without loading the maps page; client outwaits the server",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/google-maps-short-url-fast-path.test.mjs"] },
+  { name: "spot search candidate list, autocomplete, spelling variants and map-centre ranking",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/place-candidates.test.mjs"] },
   { name: "GSI z16 water polygons preserve point order, land, river and lake classification",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/gsi-water-surface.test.mjs"] },
   { name: "water-only client splits failed batches and preserves completed work",

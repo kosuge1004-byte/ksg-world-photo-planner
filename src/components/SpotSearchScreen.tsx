@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 
 import type { GroundPoint } from "../types/points";
 import type { SubjectRecord } from "../subjectStorage";
@@ -7,6 +7,23 @@ import { toUserFacingErrorMessage } from "../errors/userFeedback";
 import { isAbortError } from "../utils/runtimeErrors";
 import type { DownloadedSpotDataRecord } from "../cache/downloadedSpotData";
 import type { DownloadedSpotStorageSummary } from "../cache/downloadedSpotDataStats";
+import type { ResolvedSpotLocation } from "../search/spotPresetSearch";
+import {
+  fetchSpotCandidates,
+  isDirectLocationQuery,
+  shouldSuggestForQuery,
+  type SpotCandidate,
+} from "../search/placeCandidates";
+
+// 入力が止まってから候補を取りに行くまでの待ち時間。公開検索サービスへ
+// 打鍵ごとに問い合わせないための間引き。
+const SUGGEST_DEBOUNCE_MS = 400;
+
+function formatCandidateDistance(distanceKm: number | undefined): string {
+  if (distanceKm === undefined || !Number.isFinite(distanceKm)) return "";
+  if (distanceKm < 1) return "地図中心から1km未満";
+  return `地図中心から${distanceKm < 10 ? distanceKm.toFixed(1) : Math.round(distanceKm).toLocaleString()}km`;
+}
 
 type Props = {
   open: boolean;
@@ -15,8 +32,12 @@ type Props = {
     target: "subject" | "tripod",
     query: string,
     signal: AbortSignal,
-    onProgress: (message: string, percent: number) => void
+    onProgress: (message: string, percent: number) => void,
+    /** 候補一覧から選んだ地点。指定時はqueryを再検索せず、この地点へピンを置く。 */
+    selected?: ResolvedSpotLocation
   ) => Promise<void>;
+  /** 表示中の地図中心。近い候補を上位に並べるために使う。 */
+  searchCenter: { latitude: number; longitude: number } | null;
   currentSubject: GroundPoint | null;
   history: SubjectRecord[];
   /** 現在の被写体が既にダウンロード済みデータとして保存されているか。 */
@@ -44,6 +65,7 @@ export function SpotSearchScreen({
   open,
   onBack,
   onLocatePin,
+  searchCenter,
   currentSubject,
   history,
   currentSubjectIsSaved,
@@ -68,6 +90,19 @@ export function SpotSearchScreen({
   const [progressPercent, setProgressPercent] = useState(0);
   const [selectedDownloadedIds, setSelectedDownloadedIds] = useState<Set<string>>(new Set());
   const controllerRef = useRef<AbortController | null>(null);
+  // 2026-10-08: 候補一覧（入力途中の補完／検索確定時の複数候補）。
+  const [candidates, setCandidates] = useState<SpotCandidate[]>([]);
+  const [candidateMode, setCandidateMode] = useState<"suggest" | "search">("suggest");
+  const [activeCandidateIndex, setActiveCandidateIndex] = useState(-1);
+  // 検索確定・候補選択が済んだ検索語。同じ文字列のまま補完を出し直さない。
+  const settledQueryRef = useRef<string | null>(null);
+  const searchCenterRef = useRef(searchCenter);
+  searchCenterRef.current = searchCenter;
+
+  function clearCandidates(): void {
+    setCandidates([]);
+    setActiveCandidateIndex(-1);
+  }
 
   useEffect(() => {
     if (!justSavedDownloadId) return;
@@ -88,7 +123,40 @@ export function SpotSearchScreen({
     setProgressPercent(0);
     setSubjectListOpen(null);
     setSelectedDownloadedIds(new Set());
+    clearCandidates();
+    // 前回の検索語が残っていても、開いた直後に候補を出さない（入力し直すと出る）。
+    settledQueryRef.current = query;
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    if (!open || isSearching) return;
+    if (settledQueryRef.current === query) return;
+    if (!shouldSuggestForQuery(query)) {
+      clearCandidates();
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetchSpotCandidates(query, {
+        mode: "suggest",
+        center: searchCenterRef.current,
+        signal: controller.signal,
+      }).then((list) => {
+        if (controller.signal.aborted) return;
+        setCandidateMode("suggest");
+        setCandidates(list);
+        setActiveCandidateIndex(-1);
+      }).catch(() => {
+        // 補完は補助機能。失敗しても入力と検索確定は妨げない。
+      });
+    }, SUGGEST_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, open, isSearching]);
 
   function startEditingDownloadedLabel(record: DownloadedSpotDataRecord): void {
     setEditingDownloadedLabelId(record.subjectId);
@@ -101,14 +169,8 @@ export function SpotSearchScreen({
     setEditingDownloadedLabel("");
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const trimmedQuery = query.trim();
-    if (!trimmedQuery) {
-      setMessage("地名またはGoogleマップ共有URLを入力してください");
-      return;
-    }
-
+  /** 地点を確定してピンを置く。selected未指定なら検索語を従来どおり1件に解決する。 */
+  async function runLocate(queryText: string, selected?: ResolvedSpotLocation): Promise<void> {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -116,22 +178,118 @@ export function SpotSearchScreen({
     setProgressPercent(0);
     setMessage(pinTarget === "subject" ? "被写体の場所を検索しています…" : "三脚位置を検索しています…");
     try {
-      await onLocatePin(pinTarget, trimmedQuery, controller.signal, (nextMessage, percent) => {
+      await onLocatePin(pinTarget, queryText, controller.signal, (nextMessage, percent) => {
         if (controller.signal.aborted) return;
         setMessage(nextMessage);
         setProgressPercent(Math.min(100, Math.max(0, percent)));
-      });
+      }, selected);
     } catch (error) {
       if (isAbortError(error)) return;
       setMessage(toUserFacingErrorMessage(
         error,
-        /^https?:\/\//i.test(trimmedQuery) ? "google-maps-url" : "spot-search"
+        /^https?:\/\//i.test(queryText) ? "google-maps-url" : "spot-search"
       ));
     } finally {
       if (controllerRef.current === controller) {
         controllerRef.current = null;
         setIsSearching(false);
       }
+    }
+  }
+
+  function selectCandidate(candidate: SpotCandidate): void {
+    settledQueryRef.current = query;
+    clearCandidates();
+    void runLocate(candidate.name, candidate.location);
+  }
+
+  /** 検索確定: 候補を集め、1件に絞れなければ一覧から選んでもらう。 */
+  async function runCandidateSearch(queryText: string): Promise<void> {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    settledQueryRef.current = query;
+    clearCandidates();
+    setIsSearching(true);
+    setProgressPercent(0);
+    setMessage("候補を検索しています…");
+    let list: SpotCandidate[] | null = null;
+    try {
+      list = await fetchSpotCandidates(queryText, {
+        mode: "search",
+        center: searchCenterRef.current,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (!controller.signal.aborted && !isAbortError(error)) {
+        // 候補検索が使えない場合は、従来の「1件に確定する検索」へ戻す。
+        list = null;
+      }
+    }
+    if (controller.signal.aborted) {
+      // 新しい検索に置き換えられた場合は、その検索が表示状態を管理する。
+      if (controllerRef.current === controller || controllerRef.current === null) setIsSearching(false);
+      if (controllerRef.current === controller) controllerRef.current = null;
+      return;
+    }
+    if (controllerRef.current === controller) controllerRef.current = null;
+
+    if (list === null) {
+      await runLocate(queryText);
+      return;
+    }
+    if (list.length === 1 || list[0]?.exactRegistered) {
+      await runLocate(list[0].name, list[0].location);
+      return;
+    }
+    setIsSearching(false);
+    if (list.length === 0) {
+      setMessage(
+        "該当する場所が見つかりませんでした。\n" +
+        "別の書き方（正式名称・住所）を試すか、Googleマップで場所を開いて「共有」のURLを貼り付けてください。"
+      );
+      return;
+    }
+    setCandidateMode("search");
+    setCandidates(list);
+    setActiveCandidateIndex(-1);
+    setMessage(`候補が${list.length}件あります。場所を選んでください。`);
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      setMessage("地名またはGoogleマップ共有URLを入力してください");
+      return;
+    }
+    // 座標・共有URLは場所が一意に決まるので、候補一覧を挟まない。
+    if (isDirectLocationQuery(trimmedQuery)) {
+      settledQueryRef.current = query;
+      clearCandidates();
+      await runLocate(trimmedQuery);
+      return;
+    }
+    await runCandidateSearch(trimmedQuery);
+  }
+
+  function handleQueryKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    // 日本語入力の変換確定のEnter・矢印は候補操作に使わない。
+    if (event.nativeEvent.isComposing || candidates.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActiveCandidateIndex((current) => {
+        const next = current + step;
+        return next < -1 ? candidates.length - 1 : next >= candidates.length ? -1 : next;
+      });
+    } else if (event.key === "Enter" && activeCandidateIndex >= 0) {
+      event.preventDefault();
+      const candidate = candidates[activeCandidateIndex];
+      if (candidate) selectCandidate(candidate);
+    } else if (event.key === "Escape") {
+      settledQueryRef.current = query;
+      clearCandidates();
     }
   }
 
@@ -210,16 +368,62 @@ export function SpotSearchScreen({
               <input
                 type="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="地名 / Googleマップ共有URL"
+                onChange={(event) => {
+                  settledQueryRef.current = null;
+                  setQuery(event.target.value);
+                }}
+                onKeyDown={handleQueryKeyDown}
+                placeholder="地名・施設名・住所 / Googleマップ共有URL"
                 autoComplete="off"
                 disabled={isSearching}
+                aria-autocomplete="list"
+                aria-controls="spot-candidate-list"
+                aria-expanded={candidates.length > 0}
               />
               <button type="button" className={currentSubjectIsSaved ? "spot-subject-icon active" : "spot-subject-icon"} aria-label={currentSubjectIsSaved ? "保存済みデータを削除" : "この地点の三脚候補データを保存"} disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentSaved}>{currentSubjectIsSaved ? "★" : "☆"}</button>
               <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>◷</button>
               <button type="button" className="spot-subject-icon" aria-label="ダウンロード済みデータを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "downloads" ? null : "downloads")}>⇩</button>
             </div>
           </label>
+
+          {candidates.length > 0 && !isSearching && (
+            <section className="spot-subject-list spot-candidate-list" id="spot-candidate-list" aria-label="検索候補">
+              <header>
+                <strong>{candidateMode === "search" ? `候補 ${candidates.length}件` : "候補"}</strong>
+                <button
+                  type="button"
+                  onClick={() => { settledQueryRef.current = query; clearCandidates(); }}
+                  aria-label="候補を閉じる"
+                >×</button>
+              </header>
+              <div className="spot-candidate-items" role="listbox" aria-label="検索候補">
+                {candidates.map((candidate, index) => {
+                  const subText = [candidate.detail, formatCandidateDistance(candidate.distanceKm)]
+                    .filter(Boolean).join(" ・ ");
+                  return (
+                    <div
+                      className={index === activeCandidateIndex ? "spot-subject-list-item active" : "spot-subject-list-item"}
+                      key={candidate.id}
+                    >
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={index === activeCandidateIndex}
+                        onClick={() => selectCandidate(candidate)}
+                      >
+                        <strong>
+                          {candidate.name}
+                          {candidate.origin === "registered" && <span className="spot-candidate-kind registered">登録スポット</span>}
+                          {candidate.kind && <span className="spot-candidate-kind">{candidate.kind}</span>}
+                        </strong>
+                        {subText && <small>{subText}</small>}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           {subjectListOpen && (
             <section className="spot-subject-list" aria-label={subjectListOpen === "history" ? "検索履歴" : "ダウンロード済みデータ"}>
@@ -318,7 +522,7 @@ export function SpotSearchScreen({
           </div>
         )}
         {message && <p className="spot-search-message" aria-live="polite">{message}</p>}
-        <small className="spot-search-credit">地名検索：© OpenStreetMap contributors / 国土地理院</small>
+        <small className="spot-search-credit">地名検索：© OpenStreetMap contributors（Nominatim・Photon）/ 国土地理院</small>
       </form>
     </section>
   );

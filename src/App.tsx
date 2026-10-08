@@ -4227,11 +4227,16 @@ ${diagnosticMessage}
     target: "subject" | "tripod",
     query: string,
     signal: AbortSignal,
-    onProgress: (message: string, percent: number) => void
+    onProgress: (message: string, percent: number) => void,
+    selected?: ResolvedSpotLocation
   ): Promise<void> {
     const viewer = mapViewerRef.current;
     onProgress(target === "subject" ? "被写体の位置を検索しています…" : "三脚位置を検索しています…", 0);
-    const location = await resolveSpotLocation(query, signal);
+    // 2026-10-08: 候補一覧から選んだ地点は再検索せずそのまま使う。登録スポットを
+    // 指す候補は登録座標へそろえ、計算済み三脚候補データを引けるようにする。
+    const location = selected
+      ? snapSpotLocationToRegisteredLandmark(selected)
+      : await resolveSpotLocation(query, signal);
     if (signal.aborted) throw new DOMException("検索中止", "AbortError");
     if (target === "subject") {
       void rememberUnresolvedDynamicStructure(location).catch((error) => {
@@ -6704,6 +6709,7 @@ ${diagnosticMessage}
           open={spotSearchOpen}
           onBack={() => setSpotSearchOpen(false)}
           onLocatePin={locatePinFromSpotScreen}
+          searchCenter={mapCenter}
           currentSubject={currentSubjectPoint()}
           history={subjectHistory}
           currentSubjectIsSaved={Boolean(subjectPoint) && downloadedSpotData.some((item) => item.subjectId === idFor(subjectPoint!))}

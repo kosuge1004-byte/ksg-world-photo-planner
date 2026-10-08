@@ -246,10 +246,13 @@ test("Google Maps resolver follows the full redirect and rejects viewport coordi
   assert.equal(result.place.placeId, "0x6003a9798f2e0eab:0x2871c3655542c94a");
   assert.equal(result.place.placeIdType, "maps-feature-id");
   assert.equal(result.place.name, "岐阜城");
-  assert.equal(result.place.formattedAddress, "岐阜県岐阜市天主閣18番地");
+  // 2026-10-08: 転送先URLが地点の正式座標（!3d!4d）を含む場合は、Googleマップ
+  // 本体ページを取得せずに確定する（端末側タイムアウトの原因だったため）。
+  // 座標・地点名・地点IDは従来と同じ。住所はページ内にしか無いので補完しない。
+  assert.equal(result.place.formattedAddress, null);
   assert.equal(result.diagnostics.redirectCount, 1);
-  assert.equal(result.diagnostics.extractionSource, "final-url");
-  assert.deepEqual(calls.map((call) => call.redirect), ["manual", "manual"]);
+  assert.equal(result.diagnostics.extractionSource, "redirect-location");
+  assert.deepEqual(calls.map((call) => call.redirect), ["manual"]);
 });
 
 test("Google Maps resolver enriches a Maps Feature ID with a Places API Place ID", async () => {

@@ -10,8 +10,10 @@ import { JAPAN_LANDMARKS, type JapanLandmark } from "../data/japanLandmarks";
 import { landmarkStructureHeightMeters } from "../types/landmarkSubjectSpec";
 import {
   findLocalDynamicSpotByQuery,
+  listLocalDynamicSpots,
   lookupEdriveDynamicSpotByQuery,
 } from "../cache/dynamicSpotData";
+import { normalizedPlaceText } from "../../server/placeTextNormalization.ts";
 import type {
   DynamicSpotHeightSourceType,
   DynamicSpotHeightStatus,
@@ -167,6 +169,10 @@ function resolveStaticJapanLandmark(query: string): ResolvedSpotLocation | null 
   if (!key) return null;
   const exact = landmarkByExactSearchKey.get(key);
   if (!exact) return null;
+  return staticLandmarkLocation(exact);
+}
+
+function staticLandmarkLocation(exact: JapanLandmark): ResolvedSpotLocation {
   const structure = landmarkRequiresStructureRoof(exact);
   return {
     latitude: exact.latitude,
@@ -201,6 +207,55 @@ function resolvedDynamicSpot(
     dynamicSpot: spot,
     locationSource: source,
   };
+}
+
+export type RegisteredSpotMatch = {
+  location: ResolvedSpotLocation;
+  /** 検索語が名称・別名と（表記ゆれを除いて）完全に一致したか。 */
+  exact: boolean;
+  /** 一致した名称（別名で一致した場合はその別名）。 */
+  matchedName: string;
+};
+
+/**
+ * 2026-10-08: スポット検索の候補一覧用。登録スポット（内蔵カタログ）と
+ * 端末に保存済みの動的スポットから、検索語に前方一致・部分一致するものを返す。
+ * 外部通信はしない。完全一致 → 前方一致 → 部分一致の順。
+ */
+export function findRegisteredSpotMatches(query: string, limit = 5): RegisteredSpotMatch[] {
+  const key = normalizedPlaceText(query);
+  if (!key) return [];
+  const matches: Array<RegisteredSpotMatch & { rank: number; order: number }> = [];
+  const consider = (names: readonly string[], build: () => ResolvedSpotLocation): void => {
+    let best: { rank: number; name: string } | null = null;
+    for (const name of names) {
+      const normalized = normalizedPlaceText(name);
+      if (!normalized) continue;
+      const rank = normalized === key ? 0
+        : normalized.startsWith(key) ? 1
+        : key.length >= 2 && normalized.includes(key) ? 2
+        : -1;
+      if (rank >= 0 && (!best || rank < best.rank)) best = { rank, name };
+    }
+    if (!best) return;
+    matches.push({
+      location: build(),
+      exact: best.rank === 0,
+      matchedName: best.name,
+      rank: best.rank,
+      order: matches.length,
+    });
+  };
+  for (const landmark of JAPAN_LANDMARKS) {
+    consider([landmark.name, ...(landmark.aliases ?? [])], () => staticLandmarkLocation(landmark));
+  }
+  for (const spot of listLocalDynamicSpots()) {
+    consider([spot.name, ...spot.aliases], () => resolvedDynamicSpot(spot, "dynamic-local"));
+  }
+  return matches
+    .sort((left, right) => left.rank - right.rank || left.order - right.order)
+    .slice(0, Math.max(0, limit))
+    .map(({ location, exact, matchedName }) => ({ location, exact, matchedName }));
 }
 
 // 2026-09-29: 住所検索（Nominatim/GSI）・Googleマップ共有・古い履歴から
@@ -518,6 +573,12 @@ export async function prefetchSpotLocation(
 // 誘発しうる。進行中のPromiseをクエリ単位で共有し、二重に通信しないようにする。
 const inFlightResolutions = new Map<string, Promise<ResolvedSpotLocation>>();
 
+// 2026-10-08: /api/resolve-google-maps はサーバー側で最大25秒かけて
+// 共有リンクの転送追跡・429の待機再試行を行う。端末側が既定の8秒で打ち切ると、
+// サーバーがまだ処理中でも「signal timed out」で失敗し、結果もR2へ保存されず
+// 再試行のたびに最初からやり直しになっていた。サーバーの上限より長く待つ。
+const GOOGLE_MAPS_RESOLVER_CLIENT_TIMEOUT_MS = 30_000;
+
 export async function resolveSpotLocation(
   query: string,
   signal?: AbortSignal
@@ -582,7 +643,7 @@ async function resolveSpotLocationUncached(
       },
       body: JSON.stringify({ url: googleMapsUrl }),
       signal,
-    });
+    }, GOOGLE_MAPS_RESOLVER_CLIENT_TIMEOUT_MS, 2);
     const data = (await response.json()) as GoogleMapsResolveResponse;
     if (
       !response.ok ||

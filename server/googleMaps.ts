@@ -108,6 +108,22 @@ const EMPTY_PLACE_METADATA: GoogleMapsPlaceMetadata = {
   formattedAddress: null,
 };
 
+/**
+ * 2026-10-08: 転送先URLそのものが「地点の座標」を明示しているかを判定する。
+ * `!3d緯度!4d経度`（登録地点の正式座標）や `?q=緯度,経度`・`/maps/search/緯度,経度`
+ * （落としたピン）が対象。`@緯度,経度,ズーム` は画面中心であって地点ではないため、
+ * これだけの場合は対象外（従来どおりページを取得して正式座標を探す）。
+ */
+function explicitPlaceCoordinatesFromUrl(url: string): GoogleMapsCoordinates | null {
+  const withoutViewport = url.replace(
+    /@-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?(?:,[^/?#]*)?/u,
+    ""
+  );
+  // 画面中心（center）は地点の座標ではない。
+  if (/[?&]center=/iu.test(withoutViewport) && !/!3d-?\d/u.test(withoutViewport)) return null;
+  return extractGoogleMapsCoordinates(withoutViewport);
+}
+
 function makeRequestId(): string {
   try {
     return crypto.randomUUID();
@@ -782,6 +798,28 @@ export async function resolveGoogleMapsSharedUrl(
         diagnostics.redirectCount += 1;
         metadata = mergeMetadata(metadata, extractGoogleMapsPlaceMetadata(nextUrl));
         rememberCoordinates(nextUrl, "redirect-location");
+        // 2026-10-08: 転送先URLが地点の座標を明示していれば、ここで確定する。
+        // 以前はこの後も転送先のGoogleマップ本体ページ（数MB）を取得し、
+        // 地点名の補完まで行っていたため、端末側の待ち時間を超えて
+        // 「signal timed out」になることがあった。座標は既に確定しており、
+        // 後続の処理で座標が変わることはない。
+        const explicitCoordinates = explicitPlaceCoordinatesFromUrl(nextUrl);
+        if (explicitCoordinates) {
+          addAttempt(diagnostics, {
+            stage: "redirect-location",
+            outcome: "success",
+            detail: "転送先URLに地点座標が含まれるため、ページ取得を省略しました",
+            url: nextUrl,
+          });
+          return resolvedResult(
+            explicitCoordinates,
+            nextUrl,
+            metadata,
+            diagnostics,
+            startedAt,
+            "redirect-location"
+          );
+        }
         currentUrl = nextUrl;
         continue;
       }
@@ -939,10 +977,9 @@ export async function resolveGoogleMapsSharedUrl(
       }
     }
 
-    if (
-      metadata.placeQuery &&
-      (!coordinateCandidate || !metadata.placeName || !metadata.formattedAddress)
-    ) {
+    // 2026-10-08: 座標が確定済みなら、表示名の補完だけのために外部検索を
+    // 追加しない（表示名は共有URL内の地点名で足りる。応答時間を優先する）。
+    if (metadata.placeQuery && !coordinateCandidate) {
       try {
         const nominatim = await nominatimPlaceLookup(
           metadata.placeQuery,

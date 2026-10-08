@@ -146,7 +146,9 @@ export async function diagnosticFetch(
   category: string,
   input: string | URL | Request,
   init?: RequestInit,
-  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+  /** 試行回数の上限。サーバー側で十分に再試行済みの長い処理は減らす。 */
+  maxAttempts: number = MAX_ATTEMPTS
 ): Promise<Response> {
   const effectiveInput = typeof input === "string" && input.startsWith("/api/")
     ? apiEndpoint(input)
@@ -158,8 +160,9 @@ export async function diagnosticFetch(
       : effectiveInput.url;
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
 
+  const attemptLimit = Math.max(1, Math.trunc(maxAttempts));
   let lastError: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
     const startedAt = performance.now();
     try {
       const response = await fetch(effectiveInput, {
@@ -179,7 +182,7 @@ export async function diagnosticFetch(
         response.status === 425 ||
         response.status === 429 ||
         response.status >= 500;
-      if (retryableStatus && attempt < MAX_ATTEMPTS) {
+      if (retryableStatus && attempt < attemptLimit) {
         const retryAfterSeconds = Number(response.headers.get("retry-after"));
         const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
           ? Math.min(5_000, retryAfterSeconds * 1_000)
@@ -200,7 +203,7 @@ export async function diagnosticFetch(
       });
       // ユーザー自身によるキャンセル（検索中止等）は再試行しない。
       if (isUserAbort(error, init?.signal)) throw error;
-      if (attempt < MAX_ATTEMPTS) {
+      if (attempt < attemptLimit) {
         await wait(RETRY_BACKOFF_MS[attempt - 1] ?? RETRY_BACKOFF_MS.at(-1)!);
         continue;
       }
