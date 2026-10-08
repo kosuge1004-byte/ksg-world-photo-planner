@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "moon age calendar: per-day moonrise at the displayed map position, select-then-jump, today button",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/moon-calendar.test.mjs"] },
+  { name: "terrain-aware tripod candidate line from bearing sections; guide line fixed and independent of confirmed candidates",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/tripod-terrain-arc.test.mjs"] },
   { name: "Google Maps short link resolves from the redirect without loading the maps page; client outwaits the server",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/google-maps-short-url-fast-path.test.mjs"] },
   { name: "spot search candidate list, autocomplete, spelling variants and map-centre ranking",

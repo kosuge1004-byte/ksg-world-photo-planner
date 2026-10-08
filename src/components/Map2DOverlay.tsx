@@ -12,7 +12,7 @@ import type { GroundPoint } from "../types/points";
 import type { ForegroundObject } from "../types/foreground";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { TripodSearchBaseLine } from "../cesium/tripodSearchLine";
-import type { TripodCandidateRiseSetArc } from "../cesium/tripodCandidateRiseSetArc";
+import { riseSetArcSegments, type TripodCandidateRiseSetArc } from "../cesium/tripodCandidateRiseSetArc";
 import {
   coordinatesAtMapPixel,
   projectCoordinatesToMapPixel,
@@ -146,12 +146,17 @@ export function Map2DOverlayComponent({
   const foregroundPixel = foregroundObject?.enabled
     ? projectCoordinatesToMapPixel(foregroundObject, center, zoom, size)
     : null;
-  const candidateRiseSetArcPixels = candidateRiseSetArcs.map((arc) => ({
-    id: arc.id,
-    points: arc.points.map((candidate) =>
-      projectCoordinatesToMapPixel(candidate, center, zoom, size)
-    ),
-  }));
+  // 2026-10-08: 線は区間ごとに描く。標高を加味した線は、交点が尾根をまたいで別の斜面へ
+  // 移る箇所で途切れる（1本につなぐと実在しない直線ができる）。
+  const candidateRiseSetArcPixels = candidateRiseSetArcs.flatMap((arc) =>
+    riseSetArcSegments(arc).map((segment, segmentIndex) => ({
+      key: `${arc.id}-rise-set-tripod-arc-${segmentIndex}`,
+      terrain: arc.kind === "terrain",
+      points: segment.map((candidate) =>
+        projectCoordinatesToMapPixel(candidate, center, zoom, size)
+      ),
+    }))
+  );
 
 
   return (
@@ -163,8 +168,9 @@ export function Map2DOverlayComponent({
       >
         {candidateRiseSetArcPixels.map((arc) => arc.points.length >= 2 ? (
           <polyline
-            key={`${arc.id}-rise-set-tripod-arc`}
-            className="map-tripod-rise-set-arc"
+            key={arc.key}
+            // 標高を加味した線は実線、地面を平らと仮定した目安の線は破線。
+            className={arc.terrain ? "map-tripod-rise-set-arc terrain" : "map-tripod-rise-set-arc"}
             points={arc.points.map((point) => `${point.x},${point.y}`).join(" ")}
           />
         ) : null)}

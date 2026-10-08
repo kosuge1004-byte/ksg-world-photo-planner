@@ -77,13 +77,13 @@ export function LandmarkHeightAuditPanel({ getViewer }: { getViewer: () => Viewe
   return (
     <section
       role="dialog"
-      aria-label="登録スポット高さ実測"
+      aria-label="内蔵スポット高さ実測"
       style={{
         position: "fixed", inset: "auto 8px 8px 8px", zIndex: 10000, maxHeight: "60vh", overflow: "auto",
         background: "rgba(10,16,28,0.95)", color: "#e8eefc", padding: 12, borderRadius: 8, fontSize: 12,
       }}
     >
-      <strong>登録スポット高さ実測（PLATEAU＋DEM）</strong>
+      <strong>内蔵スポット高さ実測（PLATEAU＋DEM）</strong>
       <p>{status}</p>
       <textarea readOnly value={json} style={{ width: "100%", height: 160, fontFamily: "monospace", fontSize: 11 }} />
       <button type="button" disabled={!done} onClick={() => void navigator.clipboard?.writeText(json)}>

@@ -111,7 +111,6 @@ import {
   calculateCelestialScreenPoints,
   calculateCelestialScreenTracks,
   calculateMilkyWayScreenPath,
-  findHorizonCrossing,
 } from "./cesium/celestial";
 import {
   evaluateCelestialLineOfSight,
@@ -128,10 +127,20 @@ import {
   ABSOLUTE_MIN_DISTANCE_METERS,
 } from "./cesium/tripodCandidates";
 import {
-  alignRiseSetArcToConfirmedCandidates,
+  buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
   type RiseSetCandidateBodyId,
+  type TripodCandidateRiseSetArc,
 } from "./cesium/tripodCandidateRiseSetArc";
+import { findMoonriseOnDate, isDateKey, type MoonriseInput } from "./time/moonrise";
+import {
+  buildTerrainRiseSetArc,
+  requiredTerrainBearings,
+} from "./cesium/tripodCandidateTerrainArc";
+import {
+  loadTerrainSectionLookup,
+  terrainSectionSourcesFor,
+} from "./cache/tripodTerrainSections";
 import {
   loadPersistentTripodSeeds,
   savePersistentTripodSeeds,
@@ -1808,54 +1817,56 @@ function App() {
     previewRefractionWeather,
   ]);
 
-  // 2026-10-06: 月齢カレンダーの日付を押すと、その日の月の出へ移動する。
-  // 月の出の求め方はタイムラインの「月出」ボタンと同じ（観測地点は三脚、無ければ被写体。
-  // その日の0時〜翌0時で最初に昇る時刻）。約1か月に1日ある「月の出が無い日」と、
-  // 地点が未設定の場合は、日付だけ移動して時刻は変えず、理由を通知する。
-  const moonCalendarJumpInputRef = useRef<{
-    location: GroundPoint | null;
-    timeZone: string;
-    calculationMode: CalculationMode;
-    refractionWeather: typeof previewRefractionWeather;
-    dateTimeLocal: string;
+  // 月齢カレンダー: 各日の月の出の時刻を表示し、選んだ日の月の出へ移動する。
+  // 2026-10-09変更:
+  //   - 月の出を求める地点は「カレンダーを開いた時に地図で表示していた場所」（地図の中心）。
+  //     以前は三脚（無ければ被写体）の位置だった。
+  //   - 日付を押しただけでは移動しない。選んでから「この日の月の出へ移動」で移動する。
+  // 求め方はタイムラインの「月出」と同じ（その日の0時〜翌0時で最初に昇る時刻）。
+  // カレンダーの表示と移動先で同じ関数・同じ入力を使う（findMoonriseOnDate）。
+  // 約1か月に1日ある「月の出が無い日」は、日付だけ移動して時刻は変えず、理由を通知する。
+  const [moonCalendarLocation, setMoonCalendarLocation] = useState<{
+    latitude: number;
+    longitude: number;
   } | null>(null);
+  const moonCalendarMoonriseInput = useMemo<MoonriseInput>(() => ({
+    location: moonCalendarLocation
+      ? { ...moonCalendarLocation, height: 0, label: "地図の表示位置" }
+      : null,
+    timeZone,
+    calculationMode,
+    refractionWeather: previewRefractionWeather,
+  }), [moonCalendarLocation, timeZone, calculationMode, previewRefractionWeather]);
+  const moonCalendarJumpInputRef = useRef<{ moonrise: MoonriseInput; dateTimeLocal: string } | null>(null);
   useEffect(() => {
-    moonCalendarJumpInputRef.current = {
-      location: tripodPoint ?? subjectPoint,
-      timeZone,
-      calculationMode,
-      refractionWeather: previewRefractionWeather,
-      dateTimeLocal,
-    };
-  }, [tripodPoint, subjectPoint, timeZone, calculationMode, previewRefractionWeather, dateTimeLocal]);
+    moonCalendarJumpInputRef.current = { moonrise: moonCalendarMoonriseInput, dateTimeLocal };
+  }, [moonCalendarMoonriseInput, dateTimeLocal]);
+  function openMoonAgeCalendar(): void {
+    // 3D表示中は画面中央に見えている地点、2D表示中は地図の中心。
+    const viewer = mapViewerRef.current;
+    const center = mapDisplayMode === "3d" && viewer && !viewer.isDestroyed()
+      ? get3dMapCenter(viewer) ?? mapCenterRef.current
+      : mapCenterRef.current;
+    setMoonCalendarLocation(center
+      ? { latitude: center.latitude, longitude: center.longitude }
+      : null);
+    setMoonAgeCalendarOpen(true);
+  }
   const handleMoonCalendarJump = useCallback((dateKey: string) => {
     const input = moonCalendarJumpInputRef.current;
-    if (!input || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
-    const [year, month, day] = dateKey.split("-").map(Number);
-    const next = new Date(Date.UTC(year, month - 1, day + 1));
-    const nextKey = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
-    const moonrise = input.location
-      ? findHorizonCrossing(
-          "moon",
-          1,
-          input.location,
-          dateFromZonedDateTimeLocal(`${dateKey}T00:00`, input.timeZone),
-          dateFromZonedDateTimeLocal(`${nextKey}T00:00`, input.timeZone),
-          input.calculationMode,
-          input.refractionWeather
-        )
-      : null;
+    if (!input || !isDateKey(dateKey)) return;
+    const moonrise = findMoonriseOnDate(input.moonrise, dateKey);
     if (moonrise) {
-      setDateTimeLocal(zonedDateTimeLocalFromDate(moonrise, input.timeZone));
+      setDateTimeLocal(zonedDateTimeLocalFromDate(moonrise, input.moonrise.timeZone));
     } else {
       const currentTime = input.dateTimeLocal.slice(11, 16) || "00:00";
       setDateTimeLocal(`${dateKey}T${currentTime}`);
       showUserNotice({
         key: "moon-calendar-jump",
         tone: "warning",
-        message: input.location
+        message: input.moonrise.location
           ? `${dateKey.replaceAll("-", "/")}は月の出がありません（月が昇るのは前後の日です）。日付だけ移動しました。`
-          : "被写体・三脚の位置が未設定のため月の出を計算できません。日付だけ移動しました。",
+          : "地図の表示位置を取得できないため月の出を計算できません。日付だけ移動しました。",
       });
     }
     setMoonAgeCalendarOpen(false);
@@ -2051,7 +2062,7 @@ function App() {
     [subjectPoint, tripodCandidateSourcePoints, celestialVisibility]
   );
 
-  // 三脚候補線の高さ基準（確定候補がまだ無い間に使う地表の楕円体高）。
+  // 目安の三脚候補線の高さ基準（三脚を立てる地面とみなす楕円体高）。
   // 2026-10-08修正: 以前は三脚ピンの地表高だけを基準にしていた。三脚ピンが被写体ピンと
   // 同じくらいの高さの場所（離れた丘の上など）にあると、視線がその高さまで降りてこず、
   // 全時刻が検索上限の円周に並んでいた。優先順に複数の基準を用意し、
@@ -2059,12 +2070,16 @@ function App() {
   //   1. 被写体直下の地表（塔・建物の周辺は同じくらいの高さの土地であることが多い）
   //   2. 三脚ピンの地表（山頂など、被写体ピン自体が地表にある場合）
   //   3. 被写体地点の標高0m相当
-  // 確定候補が出た後は、候補自身の高さが優先される（alignRiseSetArcToConfirmedCandidates）。
+  // この線は「地面を平らと仮定した目安の線」。断面データがある地点では、下の
+  // 「標高を加味した三脚候補線」が代わりに表示される。
   const subjectLatitude = subjectPoint?.latitude ?? null;
   const subjectLongitude = subjectPoint?.longitude ?? null;
+  // ellipsoidalHeightMeters が null の場合は「取得を試みたが得られなかった」。
+  // 取得が済む（成否どちらでも）まで目安の線は描かない。先に別の高さ基準で線を出して
+  // おき、地表高が届いた時点で描き直す、という動きをさせないため。
   const [subjectGroundHeight, setSubjectGroundHeight] = useState<{
     key: string;
-    ellipsoidalHeightMeters: number;
+    ellipsoidalHeightMeters: number | null;
   } | null>(null);
   const subjectGroundKey = subjectLatitude !== null && subjectLongitude !== null
     ? `${subjectLatitude.toFixed(6)},${subjectLongitude.toFixed(6)}`
@@ -2072,9 +2087,19 @@ function App() {
   useEffect(() => {
     if (!subjectGroundKey || subjectLatitude === null || subjectLongitude === null) return;
     let cancelled = false;
+    // 地表高の取得が長引いても線を出せるよう、一定時間で「得られなかった」扱いにする。
+    // その後に届いた値では線を描き直さない（高さ基準は固定済み）。
+    const settleTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setSubjectGroundHeight((current) => current?.key === subjectGroundKey
+          ? current
+          : { key: subjectGroundKey, ellipsoidalHeightMeters: null });
+      }
+    }, 6_000);
     void resolveGroundPoint(subjectLatitude, subjectLongitude, "被写体直下の地表")
       .then((ground) => {
         if (!cancelled) {
+          window.clearTimeout(settleTimer);
           setSubjectGroundHeight({
             key: subjectGroundKey,
             ellipsoidalHeightMeters: Math.round(ellipsoidalHeightMeters(ground) * 10) / 10,
@@ -2083,9 +2108,16 @@ function App() {
       })
       .catch(() => {
         // 取得できない場合は、三脚ピン・標高0mの基準で線を描く。
+        if (!cancelled) {
+          window.clearTimeout(settleTimer);
+          setSubjectGroundHeight((current) => current?.key === subjectGroundKey
+            ? current
+            : { key: subjectGroundKey, ellipsoidalHeightMeters: null });
+        }
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; window.clearTimeout(settleTimer); };
   }, [subjectGroundKey, subjectLatitude, subjectLongitude]);
+  const subjectGroundSettled = Boolean(subjectGroundKey) && subjectGroundHeight?.key === subjectGroundKey;
   const subjectGroundEllipsoidalHeight = subjectGroundHeight?.key === subjectGroundKey
     ? subjectGroundHeight.ellipsoidalHeightMeters
     : null;
@@ -2093,14 +2125,31 @@ function App() {
     ? Math.round(ellipsoidalHeightMeters(tripodPoint) * 10) / 10
     : null;
   const subjectGeoidHeight = subjectPoint?.geoidHeightMeters ?? null;
-  const tripodCandidateArcReferenceGroundHeights = useMemo(
-    () => [subjectGroundEllipsoidalHeight, tripodGroundEllipsoidalHeight, subjectGeoidHeight]
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
-    [subjectGroundEllipsoidalHeight, tripodGroundEllipsoidalHeight, subjectGeoidHeight]
-  );
+  // 2026-10-08修正: 目安の線の高さ基準は、被写体ごとに最初に決めた値で固定する。
+  // 以前は三脚ピンを動かすたび（山のように被写体自体が地表にある場合）や、表示中の
+  // 時刻の確定候補が入れ替わるたびに基準が変わり、線全体が動いていた。
+  // 被写体の位置が変わった時だけ決め直す。
+  const frozenArcReferenceRef = useRef<{ key: string; heights: number[] } | null>(null);
+  const tripodCandidateArcReferenceGroundHeights = useMemo(() => {
+    if (!subjectGroundSettled) return null;
+    if (frozenArcReferenceRef.current?.key === subjectGroundKey) {
+      return frozenArcReferenceRef.current.heights;
+    }
+    const heights = [subjectGroundEllipsoidalHeight, tripodGroundEllipsoidalHeight, subjectGeoidHeight]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    frozenArcReferenceRef.current = { key: subjectGroundKey, heights };
+    return heights;
+  }, [
+    subjectGroundSettled,
+    subjectGroundKey,
+    subjectGroundEllipsoidalHeight,
+    tripodGroundEllipsoidalHeight,
+    subjectGeoidHeight,
+  ]);
 
+  // 目安の線（三脚を立てる地面の高さを1つに仮定した線）。確定候補は参照しない。
   const tripodCandidateRiseSetBaseArcs = useMemo(() => {
-    if (!subjectPoint) return [];
+    if (!subjectPoint || !tripodCandidateArcReferenceGroundHeights) return [];
     const ids: RiseSetCandidateBodyId[] = ["sun", "moon", "milkyWay"];
     const maxDistanceMeters = registeredProfileCoverageDistanceMeters(
       subjectPoint.latitude,
@@ -2133,6 +2182,103 @@ function App() {
     previewRefractionWeather,
     tripodCandidateArcReferenceGroundHeights,
   ]);
+
+  // 2026-10-08: 標高を加味した三脚候補線。
+  // 地形の断面（1度刻みの方位ごと）が手元にある地点では、時刻ごとに視線と実際の地形の
+  // 交点を求めて線にする。対象は次の2つで、どちらも新しい地形の計算・取得は起こさない。
+  //   - ダウンロード済みの地点（端末に保存した断面を読む）
+  //   - 内蔵スポットで未ダウンロードの地点（配信済みの計算済みファイルを取得する）
+  // それ以外の地点は目安の線を出し、ダウンロードが完了した時点で自動的に切り替わる
+  // （terrainSectionRevision が変わり、下のeffectが走り直す）。
+  const subjectIdForTerrain = subjectPoint ? idFor(subjectPoint) : "";
+  const terrainSectionRevision = useMemo(() => {
+    const record = downloadedSpotData.find((item) => item.subjectId === subjectIdForTerrain);
+    return record ? `${record.status}:${record.profilePoints}:${record.downloadedAtIso}` : "none";
+  }, [downloadedSpotData, subjectIdForTerrain]);
+  const terrainArcRequest = useMemo(() => {
+    if (!subjectPoint) return null;
+    const ids = (["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[])
+      .filter((id) => celestialVisibility[id]);
+    if (ids.length === 0) return null;
+    const maxDistanceMeters = registeredProfileCoverageDistanceMeters(
+      subjectPoint.latitude,
+      subjectPoint.longitude,
+      precisionSettings.tripodSearchMaxDistanceMeters
+    );
+    return {
+      subject: subjectPoint,
+      ids,
+      dayStart: selectedDayStart,
+      dayEnd: selectedDayEnd,
+      lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
+      calculationMode,
+      maxDistanceMeters,
+      refractionWeather: previewRefractionWeather,
+      revision: terrainSectionRevision,
+      // 断面が得られる見込みがあるか（通信・保存領域を読まずに判定できる範囲）。
+      expectsTerrain: terrainSectionSourcesFor(subjectPoint).length > 0,
+    };
+  }, [
+    subjectPoint,
+    celestialVisibility,
+    selectedDayStart,
+    selectedDayEnd,
+    cameraSettings.lensCenterHeightMeters,
+    calculationMode,
+    precisionSettings.tripodSearchMaxDistanceMeters,
+    previewRefractionWeather,
+    terrainSectionRevision,
+  ]);
+  const [terrainArcResult, setTerrainArcResult] = useState<{
+    request: NonNullable<typeof terrainArcRequest>;
+    arcs: Partial<Record<RiseSetCandidateBodyId, TripodCandidateRiseSetArc>>;
+  } | null>(null);
+  useEffect(() => {
+    if (!terrainArcRequest || !terrainArcRequest.expectsTerrain) return;
+    const request = terrainArcRequest;
+    const controller = new AbortController();
+    void (async () => {
+      const arcs: Partial<Record<RiseSetCandidateBodyId, TripodCandidateRiseSetArc>> = {};
+      try {
+        for (const id of request.ids) {
+          // 時刻ごとの天体方向の計算（数百時刻ぶん）で画面の更新を止めないよう、
+          // いったん描画へ処理を譲ってから始める。
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+          if (controller.signal.aborted) return;
+          const timeline = buildRiseSetArcTimeline({
+            id,
+            subject: request.subject,
+            dayStart: request.dayStart,
+            dayEnd: request.dayEnd,
+            lensCenterHeightMeters: request.lensCenterHeightMeters,
+            calculationMode: request.calculationMode,
+            maxDistanceMeters: request.maxDistanceMeters,
+            refractionWeather: request.refractionWeather,
+            // 地形の起伏を拾えるよう、目安の線（10分刻み）より細かく刻む。
+            sampleMinutes: 2,
+          });
+          if (!timeline) continue;
+          const sections = await loadTerrainSectionLookup({
+            subject: request.subject,
+            lensCenterHeightMeters: request.lensCenterHeightMeters,
+            bearings: requiredTerrainBearings(timeline),
+            revision: request.revision,
+            signal: controller.signal,
+          });
+          if (controller.signal.aborted) return;
+          if (!sections) continue;
+          const arc = await buildTerrainRiseSetArc(timeline, sections.lookup, { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          if (arc) arcs[id] = arc;
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn("標高を加味した三脚候補線を計算できないため、目安の線を表示します", error);
+      }
+      if (!controller.signal.aborted) setTerrainArcResult({ request, arcs });
+    })();
+    return () => controller.abort();
+  }, [terrainArcRequest]);
 
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
   // にしか実装が無く、3D表示中は最初から描画されなかった(仕様漏れ)。
@@ -2173,10 +2319,17 @@ function App() {
       if (!celestialVisibility[point.id] || point.altitudeDegrees <= 0.25) return [];
       const previousCandidates = previousById.get(point.id) ?? [];
       return previousCandidates.map((previous) => {
+        // 2026-10-08修正: 候補の distanceMeters は被写体からの直線距離（視線に沿った
+        // 距離）で、地表に沿った距離より長い。そのまま地表の距離として使うと、太陽が
+        // 高いほど候補点が遠くへずれていた。地表に沿った距離へ直してから写す。
+        const groundDistanceMeters = calculateKarneyLineMetrics(
+          { ...subjectPoint, height: 0 },
+          { latitude: previous.latitude, longitude: previous.longitude, height: 0, label: previous.label }
+        ).distanceMeters;
         const destination = calculateKarneyDestinationPoint(
           subjectPoint,
           (point.azimuthDegrees + 180) % 360,
-          previous.distanceMeters
+          groundDistanceMeters
         );
         return {
           ...previous,
@@ -2199,12 +2352,37 @@ function App() {
     [displayedTripodCandidates]
   );
 
-  const tripodCandidateRiseSetArcs = useMemo(
-    () => tripodCandidateRiseSetBaseArcs.map((arc) =>
-      alignRiseSetArcToConfirmedCandidates(arc, displayedTripodCandidates, selectedDate)
-    ),
-    [tripodCandidateRiseSetBaseArcs, displayedTripodCandidates, selectedDate]
-  );
+  // 画面に出す三脚候補線。確定候補や表示中の時刻では変わらない（1日の中で固定）。
+  //   - 断面が得られる見込みの地点: 計算が終わるまで線を出さず、終わったら標高を加味した線。
+  //     計算できなかった天体は目安の線へ戻す。
+  //   - それ以外の地点: 目安の線。
+  const tripodCandidateRiseSetArcs = useMemo(() => {
+    if (!terrainArcRequest) return [];
+    if (!terrainArcRequest.expectsTerrain) return tripodCandidateRiseSetBaseArcs;
+    const result = terrainArcResult;
+    if (!result) return [];
+    // 計算し直している間（気象データの更新など、線の位置がほぼ変わらない再計算）は、
+    // 同じ被写体・同じ日の直前の線を出したままにして、線が一瞬消えるのを避ける。
+    const sameLine = result.request === terrainArcRequest || (
+      result.request.subject === terrainArcRequest.subject &&
+      result.request.dayStart === terrainArcRequest.dayStart &&
+      result.request.dayEnd === terrainArcRequest.dayEnd &&
+      result.request.lensCenterHeightMeters === terrainArcRequest.lensCenterHeightMeters &&
+      result.request.calculationMode === terrainArcRequest.calculationMode &&
+      result.request.maxDistanceMeters === terrainArcRequest.maxDistanceMeters &&
+      result.request.revision === terrainArcRequest.revision
+    );
+    if (!sameLine) return [];
+    return terrainArcRequest.ids.flatMap((id) => {
+      const arc = result.arcs[id] ?? (
+        // 目安の線へ戻すのは、計算が終わって「標高を加味した線を作れない」と確定した場合だけ。
+        result.request === terrainArcRequest
+          ? tripodCandidateRiseSetBaseArcs.find((candidate) => candidate.id === id)
+          : undefined
+      );
+      return arc ? [arc] : [];
+    });
+  }, [terrainArcRequest, terrainArcResult, tripodCandidateRiseSetBaseArcs]);
 
   // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
   // 対応するCesium Entityが無く、候補計算が正常でも点だけ表示されなかった。
@@ -6104,7 +6282,7 @@ ${diagnosticMessage}
         }}
         onSaveCurrentPlan={saveCurrentComposition}
         onOpenCalendar={() => { setProjects(loadProjects()); setCalendarOpen(true); }}
-        onOpenMoonAgeCalendar={() => setMoonAgeCalendarOpen(true)}
+        onOpenMoonAgeCalendar={openMoonAgeCalendar}
         onOpenArCamera={() => {
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
@@ -6968,6 +7146,7 @@ ${diagnosticMessage}
             open={moonAgeCalendarOpen}
             timeZone={timeZone}
             initialDate={selectedDate}
+            moonriseInput={moonCalendarMoonriseInput}
             onBack={() => setMoonAgeCalendarOpen(false)}
             onJumpToDate={handleMoonCalendarJump}
           />

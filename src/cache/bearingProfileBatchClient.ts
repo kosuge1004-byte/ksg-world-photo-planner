@@ -318,11 +318,16 @@ export async function precomputedBearingProfileStaticPath(
   return `/${PRECOMPUTED_BEARING_PROFILE_DIRECTORY}/${file}`;
 }
 
-export async function fetchStaticPrecomputedBearingProfile(
-  request: BearingProfileBatchRequest,
-  signal?: AbortSignal,
-  fetcher: typeof fetch = fetch
-): Promise<BearingProfileBatchOutcome> {
+type StaticProfileFileOutcome =
+  | { ok: true; json: unknown }
+  | { ok: false; miss: BearingProfileBatchMiss };
+
+/** 静的配信の計算済みファイルを取得し、展開・JSON解析まで行う（内容の検証は呼び出し側）。 */
+async function readStaticPrecomputedProfileFile(
+  request: Pick<BearingProfileBatchRequest, "subjectPoint" | "maxDistanceMeters">,
+  signal: AbortSignal | undefined,
+  fetcher: typeof fetch
+): Promise<StaticProfileFileOutcome> {
   if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(
@@ -330,7 +335,7 @@ export async function fetchStaticPrecomputedBearingProfile(
   ), STATIC_PROFILE_TIMEOUT_MS);
   const onAbort = () => controller.abort(createAbortError("全方位地形取得を中止しました"));
   signal?.addEventListener("abort", onAbort, { once: true });
-  const miss = (reason: string, notPrecomputed = false): BearingProfileBatchOutcome =>
+  const miss = (reason: string, notPrecomputed = false): StaticProfileFileOutcome =>
     ({ ok: false, miss: { notPrecomputed, reason } });
   try {
     const response = await fetcher(apiEndpoint(await precomputedBearingProfileStaticPath(request)), {
@@ -351,11 +356,7 @@ export async function fetchStaticPrecomputedBearingProfile(
         return miss("計算済み地形ファイルが静的配信に配置されていません", true);
       }
     }
-    const normalized = selectPublishedProfileEnvelope(request, JSON.parse(text));
-    if (!normalized) return miss("計算済み地形ファイルの内容を検証できませんでした");
-    const expanded = expandCompactResponse(request, normalized);
-    if (!expanded) return miss("計算済み地形データの展開・検証に失敗しました");
-    return { ok: true, response: expanded };
+    return { ok: true, json: JSON.parse(text) };
   } catch (error) {
     if (signal?.aborted) throw createAbortError("全方位地形取得を中止しました");
     if (isAbortError(error) && controller.signal.reason?.name === "TimeoutError") {
@@ -366,4 +367,80 @@ export async function fetchStaticPrecomputedBearingProfile(
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
   }
+}
+
+export async function fetchStaticPrecomputedBearingProfile(
+  request: BearingProfileBatchRequest,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch
+): Promise<BearingProfileBatchOutcome> {
+  const file = await readStaticPrecomputedProfileFile(request, signal, fetcher);
+  if (!file.ok) return file;
+  const miss = (reason: string): BearingProfileBatchOutcome =>
+    ({ ok: false, miss: { notPrecomputed: false, reason } });
+  const normalized = selectPublishedProfileEnvelope(request, file.json);
+  if (!normalized) return miss("計算済み地形ファイルの内容を検証できませんでした");
+  const expanded = expandCompactResponse(request, normalized);
+  if (!expanded) return miss("計算済み地形データの展開・検証に失敗しました");
+  return { ok: true, response: expanded };
+}
+
+/** 計算済みファイルの中身を、方位ごとの「距離と標高の並び」のまま取り出したもの。 */
+export type StaticPrecomputedTerrainProfile = {
+  /** 被写体からの地表に沿った距離（全方位で共通）。 */
+  distancesMeters: number[];
+  /** 方位（整数度）ごとの楕円体高。distancesMetersと同じ並び。 */
+  heightsByBearing: Map<number, number[]>;
+};
+
+/**
+ * 2026-10-08: 三脚候補線（標高を加味した線）の表示用。
+ * fetchStaticPrecomputedBearingProfile は端末へ保存する形式へ展開するため、
+ * 全点の緯度経度を測地線計算で復元する（10kmで約12万点）。線を求めるだけなら
+ * 距離と標高だけで足りるので、復元せずにそのまま返す。端末へは保存しない。
+ * 未配置・取得失敗・内容不正はnull（呼び出し側は目安の線を使う）。
+ */
+export async function fetchStaticPrecomputedTerrainProfile(
+  request: Pick<BearingProfileBatchRequest, "subjectPoint" | "maxDistanceMeters">,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch
+): Promise<StaticPrecomputedTerrainProfile | null> {
+  const file = await readStaticPrecomputedProfileFile(request, signal, fetcher);
+  if (!file.ok || typeof file.json !== "object" || file.json === null) return null;
+  const content = file.json as Record<string, unknown>;
+  const subject = content.subject as Record<string, unknown> | null | undefined;
+  const response = content.response as Record<string, unknown> | null | undefined;
+  if (
+    content.schemaVersion !== 1 ||
+    content.format !== PRECOMPUTED_BEARING_PROFILE_FORMAT ||
+    typeof content.maxDistanceMeters !== "number" ||
+    Math.abs(content.maxDistanceMeters - request.maxDistanceMeters) > 0.01 ||
+    typeof subject !== "object" || subject === null ||
+    typeof subject.latitude !== "number" || typeof subject.longitude !== "number" ||
+    subject.latitude.toFixed(7) !== request.subjectPoint.latitude.toFixed(7) ||
+    subject.longitude.toFixed(7) !== request.subjectPoint.longitude.toFixed(7) ||
+    typeof response !== "object" || response === null ||
+    response.version !== 2 ||
+    !Array.isArray(response.distancesMeters) || !Array.isArray(response.profiles)
+  ) return null;
+  const distancesMeters = response.distancesMeters as unknown[];
+  if (distancesMeters.length < 2 || distancesMeters.some((distance, index) =>
+    typeof distance !== "number" || !Number.isFinite(distance) || distance < 0 ||
+    (index > 0 && distance <= (distancesMeters[index - 1] as number))
+  )) return null;
+  const heightsByBearing = new Map<number, number[]>();
+  for (const profile of response.profiles as unknown[]) {
+    if (typeof profile !== "object" || profile === null) return null;
+    const { bearingDegrees, ellipsoidalHeightsMeters } = profile as Record<string, unknown>;
+    if (typeof bearingDegrees !== "number" || !Number.isInteger(bearingDegrees) ||
+      bearingDegrees < 0 || bearingDegrees >= 360 ||
+      !Array.isArray(ellipsoidalHeightsMeters) ||
+      ellipsoidalHeightsMeters.length !== distancesMeters.length ||
+      ellipsoidalHeightsMeters.some((height) => typeof height !== "number" || !Number.isFinite(height))) {
+      return null;
+    }
+    heightsByBearing.set(bearingDegrees, ellipsoidalHeightsMeters as number[]);
+  }
+  if (heightsByBearing.size === 0) return null;
+  return { distancesMeters: distancesMeters as number[], heightsByBearing };
 }

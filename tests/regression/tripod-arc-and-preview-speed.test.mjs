@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import {
-  alignRiseSetArcToConfirmedCandidates,
-  buildTripodCandidateRiseSetArc,
-} from "../../src/cesium/tripodCandidateRiseSetArc.ts";
+import { buildTripodCandidateRiseSetArc } from "../../src/cesium/tripodCandidateRiseSetArc.ts";
 import { buildTripodSearchBaseLines } from "../../src/cesium/tripodSearchLine.ts";
 import { selectFarthestVerifiedCandidate } from "../../src/cache/tripodBearingProfileManager.ts";
 
@@ -98,42 +95,6 @@ test("sun, moon and Milky Way rise-to-set guides stay inside the configured sear
   assert.match(app, /candidateRiseSetArcs=\{tripodCandidateRiseSetArcs\}/);
 });
 
-test("the exact current candidate is inserted into the same-time rise-set guide", () => {
-  const arc = {
-    id: "moon",
-    riseAt: new Date("2026-10-03T00:00:00Z"),
-    setAt: new Date("2026-10-03T03:00:00Z"),
-    points: [0, 1, 2].map((hour) => ({
-      id: "moon",
-      label: "月",
-      latitude: 35 + hour * 0.01,
-      longitude: 138,
-      height: 100,
-      distanceMeters: 1_000 + hour,
-      solutionType: "preliminary",
-      timestampMilliseconds: Date.parse(`2026-10-03T0${hour}:00:00Z`),
-    })),
-  };
-  const exact = {
-    id: "moon",
-    label: "月",
-    latitude: 35.123456,
-    longitude: 138.654321,
-    height: 210,
-    distanceMeters: 2_345,
-    solutionType: "aligned",
-  };
-  const aligned = alignRiseSetArcToConfirmedCandidates(
-    arc,
-    [exact],
-    new Date("2026-10-03T01:02:00Z")
-  );
-  assert.equal(aligned.points.length, 3);
-  assert.ok(aligned.points.some((point) =>
-    point.latitude === exact.latitude && point.longitude === exact.longitude
-  ));
-});
-
 test("multiple cached intersections collapse to the same farthest candidate as the authoritative search", () => {
   const candidates = [837, 1_082, 897].map((distanceMeters, index) => ({
     id: "moon",
@@ -153,52 +114,6 @@ test("multiple cached intersections collapse to the same farthest candidate as t
   assert.equal(selected.intersectionCount, 1);
 });
 
-test("rise-set guide inserts only one farthest point and ignores candidates outside its active date interval", () => {
-  const arc = {
-    id: "moon",
-    riseAt: new Date("2026-10-04T15:00:00Z"),
-    setAt: new Date("2026-10-05T05:30:00Z"),
-    points: [0, 1, 2].map((hour) => ({
-      id: "moon",
-      label: "月",
-      latitude: 35 + hour * 0.01,
-      longitude: 138,
-      height: 100,
-      distanceMeters: 900,
-      solutionType: "preliminary",
-      timestampMilliseconds: Date.parse(`2026-10-04T${15 + hour}:00:00Z`),
-    })),
-  };
-  const candidates = [837, 1_082, 897].map((distanceMeters, index) => ({
-    id: "moon",
-    label: "月",
-    latitude: 36 + index * 0.01,
-    longitude: 139,
-    height: 110,
-    distanceMeters,
-    solutionType: "aligned",
-  }));
-
-  const aligned = alignRiseSetArcToConfirmedCandidates(
-    arc,
-    candidates,
-    new Date("2026-10-04T16:08:00Z")
-  );
-  assert.equal(aligned.points.length, arc.points.length);
-  assert.equal(
-    aligned.points.filter((point) => point.distanceMeters === 1_082).length,
-    1,
-    "候補線へは最遠の現在候補1件だけを挿入する"
-  );
-
-  const outside = alignRiseSetArcToConfirmedCandidates(
-    arc,
-    candidates,
-    new Date("2026-10-05T08:00:00Z")
-  );
-  assert.deepEqual(outside, arc, "月没後の古い候補で線を変形しない");
-});
-
 test("rise-set guides use thinner red dashes and 3D adds the white camera sight line", async () => {
   const css = await readFile(new URL("../../src/App.css", import.meta.url), "utf8");
   const candidateEntities = await readFile(
@@ -213,7 +128,8 @@ test("rise-set guides use thinner red dashes and 3D adds the white camera sight 
 
   assert.match(css, /\.map-tripod-rise-set-arc\s*\{[\s\S]*?stroke:\s*rgba\(255, 42, 42, \.98\);[\s\S]*?stroke-width:\s*\.625;[\s\S]*?stroke-dasharray:\s*6 4;/);
   assert.match(candidateEntities, /PolylineDashMaterialProperty/);
-  assert.match(candidateEntities, /width:\s*viewer\.scene\.globe\?\.show === true \? 0\.625 : 2\.5/);
+  // 2026-10-08: 目安の線（破線）の太さは従来どおり。標高を加味した線（実線）だけ少し太い。
+  assert.match(candidateEntities, /width:\s*viewer\.scene\.globe\?\.show === true \? \(arc\.kind === "terrain" \? 1\.25 : 0\.625\) : 2\.5/);
   assert.match(candidateEntities, /Color\.RED\.withAlpha\(0\.98\)/);
   assert.match(sightLine, /Color\.WHITE\.withAlpha/);
   assert.match(sightLine, /PolylineDashMaterialProperty/);
@@ -271,100 +187,6 @@ test("3D rise-set guide is draped on the surface so it cannot slide when the cam
   assert.match(entities, /classificationType:\s*ClassificationType\.BOTH/);
   assert.doesNotMatch(entities, /depthFailMaterial:/);
   assert.doesNotMatch(entities, /fromDegreesArrayHeights/);
-});
-
-test("rise-set guide stays smooth through a confirmed candidate that sits on real terrain", async () => {
-  const { Cartesian3, Cartographic, Math: CesiumMath } = await import("cesium");
-  const { buildCelestialBackwardRay } = await import("../../src/cesium/tripodCandidates.ts");
-  const { calculateCelestialHorizontalCoordinates } = await import("../../src/cesium/celestial.ts");
-
-  // 138タワーパーク付近。地表の楕円体高は約48m（楕円体面より十分高い）。
-  const subject = {
-    latitude: 35.3445, longitude: 136.7870, height: 180,
-    ellipsoidalHeightMeters: 180, label: "塔",
-  };
-  const lens = 1.6;
-  const groundHeight = 48;
-  const arc = buildTripodCandidateRiseSetArc({
-    id: "moon",
-    subject,
-    dayStart: new Date("2026-10-03T15:00:00.000Z"),
-    dayEnd: new Date("2026-10-04T15:00:00.000Z"),
-    lensCenterHeightMeters: lens,
-    calculationMode: "pro",
-    maxDistanceMeters: 30_000,
-  });
-  assert.ok(arc);
-
-  // 月出の約45分後。精密解に相当する「視線レイが実地表+レンズ高へ届く地点」を作る。
-  const now = new Date(arc.riseAt.getTime() + 45 * 60_000);
-  const observer = { ...subject, height: subject.height + lens, ellipsoidalHeightMeters: subject.height + lens };
-  const horizontal = calculateCelestialHorizontalCoordinates("moon", now, observer, "pro");
-  const ray = buildCelestialBackwardRay(
-    subject, horizontal.azimuthDegrees, horizontal.geometricAltitudeDegrees, observer
-  );
-  let low = 0;
-  let high = 100_000;
-  for (let step = 0; step < 60; step += 1) {
-    const middle = (low + high) / 2;
-    const position = Cartesian3.add(
-      ray.origin, Cartesian3.multiplyByScalar(ray.direction, middle, new Cartesian3()), new Cartesian3()
-    );
-    if (Cartographic.fromCartesian(position).height > groundHeight + lens) low = middle;
-    else high = middle;
-  }
-  const hit = Cartographic.fromCartesian(Cartesian3.add(
-    ray.origin, Cartesian3.multiplyByScalar(ray.direction, high, new Cartesian3()), new Cartesian3()
-  ));
-  const confirmed = {
-    id: "moon",
-    label: "月",
-    latitude: CesiumMath.toDegrees(hit.latitude),
-    longitude: CesiumMath.toDegrees(hit.longitude),
-    height: groundHeight,
-    distanceMeters: high,
-    solutionType: "aligned",
-  };
-
-  const aligned = alignRiseSetArcToConfirmedCandidates(arc, [confirmed], now);
-  const index = aligned.points.findIndex((point) => point.solutionType === "aligned");
-  assert.ok(index > 0 && index < aligned.points.length - 1, "確定候補は線の途中へ時刻順に入る");
-  assert.ok(
-    aligned.points.every((point, i) =>
-      i === 0 || point.timestampMilliseconds > aligned.points[i - 1].timestampMilliseconds
-    ),
-    "頂点は時刻順"
-  );
-
-  // 月が昇るほど三脚は被写体へ近づく。確定候補の前後で距離が単調に並ぶこと
-  // （以前は確定候補だけ手前へ引き込まれ、前後の頂点が両方とも遠いV字になっていた）。
-  const before = aligned.points[index - 1];
-  const after = aligned.points[index + 1];
-  assert.ok(before.distanceMeters > confirmed.distanceMeters, "直前の頂点は確定候補より遠い");
-  assert.ok(after.distanceMeters < confirmed.distanceMeters, "直後の頂点は確定候補より近い");
-
-  // 旧実装（楕円体高0m基準の線へ1点だけ差し替え）ではここが成り立たない。
-  const legacyAfter = arc.points.find((point) => point.timestampMilliseconds > now.getTime());
-  assert.ok(legacyAfter.distanceMeters > confirmed.distanceMeters, "旧基準の線は確定候補より遠い側に残る");
-
-  // 方位だけ合わせた確認地点は線の頂点にしない。
-  const directionOnly = alignRiseSetArcToConfirmedCandidates(
-    arc, [{ ...confirmed, solutionType: "direction-only", distanceMeters: 500 }], now
-  );
-  assert.ok(directionOnly.points.every((point) => point.solutionType === "preliminary"));
-});
-
-test("moon age calendar jumps to the tapped day's moonrise using the timeline's own rule", async () => {
-  const calendar = await readFile(new URL("../../src/components/MoonAgeCalendarScreen.tsx", import.meta.url), "utf8");
-  const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
-  assert.match(calendar, /onClick=\{\(\) => \{ setSelectedKey\(day\.key\); onJumpToDate\?\.\(day\.key\); \}\}/);
-  assert.match(app, /onJumpToDate=\{handleMoonCalendarJump\}/);
-  // タイムラインの「月出」と同じく、その日の0時〜翌0時で最初に昇る時刻。
-  assert.match(app, /findHorizonCrossing\(\s*"moon",\s*1,\s*input\.location,\s*dateFromZonedDateTimeLocal\(`\$\{dateKey\}T00:00`, input\.timeZone\),\s*dateFromZonedDateTimeLocal\(`\$\{nextKey\}T00:00`, input\.timeZone\)/);
-  assert.match(app, /setDateTimeLocal\(zonedDateTimeLocalFromDate\(moonrise, input\.timeZone\)\)/);
-  // 月の出が無い日は日付だけ移動し、黙って別の日の月の出へ飛ばない。
-  assert.match(app, /月の出がありません/);
-  assert.match(app, /location: tripodPoint \?\? subjectPoint/);
 });
 
 test("timeline bar is as thick as a 10-minute tick and shows day, golden hour, blue hour and each twilight", async () => {

@@ -168,9 +168,14 @@ export function findHorizonCrossing(
   start: Date,
   end: Date,
   calculationMode: CalculationMode,
-  refractionWeather?: RefractionWeatherContext
+  refractionWeather?: RefractionWeatherContext,
+  /**
+   * 高度の符号が変わる区間を探す走査の刻み。見つけた区間は下の二分法で絞り込むので、
+   * 刻みを粗くしても求まる時刻は変わらない（出と入りが1刻みの中に両方入らない限り）。
+   */
+  scanStepMs: number = 2 * 60_000
 ): Date | null {
-  const step = 2 * 60_000;
+  const step = Math.max(1_000, scanStepMs);
   let previousTime = start.getTime();
   let previousAltitude = calculateCelestialHorizontalCoordinates(
     id,

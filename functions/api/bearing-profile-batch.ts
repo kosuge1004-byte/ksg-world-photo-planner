@@ -116,7 +116,7 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       if (registered) {
         return apiJson({
           code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
-          error: "登録スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
+          error: "内蔵スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
         }, 503, "no-store");
       }
       // Arbitrary coordinates must not fall back to hundreds of device/GSI

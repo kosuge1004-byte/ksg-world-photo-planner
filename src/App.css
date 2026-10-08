@@ -1073,6 +1073,11 @@ button { cursor: pointer; }
   vector-effect: non-scaling-stroke;
   filter: drop-shadow(0 1px 1px #000);
 }
+/* 2026-10-08: 標高を加味した三脚候補線は実線（破線は地面を平らと仮定した目安の線）。 */
+.map-tripod-rise-set-arc.terrain {
+  stroke-dasharray: none;
+  stroke-width: 1;
+}
 .map-tripod-candidate-line { stroke-width: 2.5; stroke-dasharray: 6 4; filter: drop-shadow(0 1px 1px #000); }
 .map-candidate-sun { stroke: rgba(255, 185, 0, .95); }
 .map-candidate-moon { stroke: rgba(37, 191, 255, .95); }

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Body, Illumination, MoonPhase, SearchMoonPhase } from "astronomy-engine";
-import { dateFromZonedDateTimeLocal } from "../time/zonedTime";
+import { dateFromZonedDateTimeLocal, zonedDateTimeLocalFromDate } from "../time/zonedTime";
+import { findMoonriseOnDate, type MoonriseInput } from "../time/moonrise";
 import "./ProjectScreens.css";
 
 const DAY_MS = 86_400_000;
@@ -10,10 +11,16 @@ type Props = {
   open: boolean;
   timeZone: string;
   initialDate: Date;
+  /**
+   * 各日の月の出を求めるための入力。地点は「カレンダーを開いた時に地図で表示していた
+   * 場所」。移動ボタンの移動先（呼び出し側）も同じ入力で求めるので、表示と一致する。
+   */
+  moonriseInput?: MoonriseInput;
   onBack: () => void;
   /**
-   * 日付を押したときに呼ばれる（"YYYY-MM-DD"）。指定されている場合、
-   * その日の月の出へメイン画面を移動する（移動と画面を閉じる処理は呼び出し側）。
+   * 「この日の月の出へ移動」を押したときに呼ばれる（"YYYY-MM-DD"）。
+   * 日付を押しただけでは呼ばれない（2026-10-09: 押すと即移動する動作を廃止）。
+   * 移動と画面を閉じる処理は呼び出し側。
    */
   onJumpToDate?: (dateKey: string) => void;
 };
@@ -25,7 +32,19 @@ type MoonDay = {
   ageDays: number;
   illumination: number;
   phaseName: string;
+  /** その日の月の出（"HH:MM"）。月の出が無い日・地点不明はnull。 */
+  moonriseTime: string | null;
 };
+
+/** アプリのタイムゾーンでの日付（"YYYY-MM-DD"）。 */
+function zonedDateKey(date: Date, timeZone: string): string {
+  return zonedDateTimeLocalFromDate(date, timeZone).slice(0, 10);
+}
+
+function monthStartOf(key: string): Date {
+  const [year, month] = key.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+}
 
 function dateKey(year: number, monthIndex: number, day: number): string {
   return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -82,9 +101,16 @@ function MoonIcon({ phaseDegrees, size = 42 }: { phaseDegrees: number; size?: nu
   );
 }
 
-export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack, onJumpToDate }: Props) {
-  const [month, setMonth] = useState(() => new Date(initialDate.getFullYear(), initialDate.getMonth(), 1));
-  const [selectedKey, setSelectedKey] = useState(() => dateKey(initialDate.getFullYear(), initialDate.getMonth(), initialDate.getDate()));
+export function MoonAgeCalendarScreen({ open, timeZone, initialDate, moonriseInput, onBack, onJumpToDate }: Props) {
+  // 開いた時は、メイン画面で表示中の日付を選んだ状態にする。
+  const [selectedKey, setSelectedKey] = useState(() => zonedDateKey(initialDate, timeZone));
+  const [month, setMonth] = useState(() => monthStartOf(zonedDateKey(initialDate, timeZone)));
+
+  function showToday(): void {
+    const todayKey = zonedDateKey(new Date(), timeZone);
+    setMonth(monthStartOf(todayKey));
+    setSelectedKey(todayKey);
+  }
 
   const days = useMemo(() => {
     const year = month.getFullYear();
@@ -95,6 +121,7 @@ export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack, onJ
       const key = dateKey(year, monthIndex, day);
       const date = dateFromZonedDateTimeLocal(`${key}T12:00`, timeZone);
       const phaseDegrees = ((MoonPhase(date) % 360) + 360) % 360;
+      const moonrise = moonriseInput ? findMoonriseOnDate(moonriseInput, key) : null;
       result.push({
         key,
         day,
@@ -102,38 +129,70 @@ export function MoonAgeCalendarScreen({ open, timeZone, initialDate, onBack, onJ
         ageDays: moonAgeDays(date),
         illumination: Illumination(Body.Moon, date).phase_fraction,
         phaseName: phaseName(phaseDegrees),
+        moonriseTime: moonrise
+          ? zonedDateTimeLocalFromDate(moonrise, moonriseInput?.timeZone ?? timeZone).slice(11, 16)
+          : null,
       });
     }
     return result;
-  }, [month, timeZone]);
+  }, [month, timeZone, moonriseInput]);
 
   if (!open) return null;
   const firstWeekday = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
-  const selected = days.find((day) => day.key === selectedKey) ?? days[0];
+  // 選んだ日が表示中の月に無い場合（月を送った後など）は、下の詳細と移動ボタンを出さない。
+  const selected = days.find((day) => day.key === selectedKey) ?? null;
+  const location = moonriseInput?.location ?? null;
   return (
     <section className="project-screen moon-age-calendar-screen">
       <header><button type="button" className="project-screen-back" onClick={onBack} aria-label="メイン画面へ戻る">‹ 戻る</button><h1>月齢カレンダー</h1><span /></header>
-      <div className="calendar-nav">
-        <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
+      <div className="calendar-nav moon-calendar-nav">
+        <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} aria-label="前の月">‹</button>
         <strong>{month.getFullYear()}年 {month.getMonth() + 1}月</strong>
-        <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
+        <span className="moon-calendar-nav-actions">
+          <button type="button" className="moon-calendar-today" onClick={showToday}>今日</button>
+          <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} aria-label="次の月">›</button>
+        </span>
       </div>
-      <p className="moon-calendar-offline-note">端末内の天文計算で表示・オフライン対応{onJumpToDate ? "／日付を押すとその日の月の出へ移動します" : ""}</p>
+      <p className="moon-calendar-offline-note">
+        {location
+          ? `月の出は地図の表示位置（北緯${location.latitude.toFixed(2)}° 東経${location.longitude.toFixed(2)}°）の時刻`
+          : "端末内の天文計算で表示・オフライン対応"}
+      </p>
       <div className="calendar-week">{["日","月","火","水","木","金","土"].map((label) => <b key={label}>{label}</b>)}</div>
       <div className="moon-calendar-grid">
         {Array(firstWeekday).fill(null).map((_, index) => <span key={`empty-${index}`} />)}
         {days.map((day) => (
-          <button type="button" key={day.key} className={selectedKey === day.key ? "selected" : ""} onClick={() => { setSelectedKey(day.key); onJumpToDate?.(day.key); }} aria-label={`${day.key.replaceAll("-", "/")} 月齢${day.ageDays.toFixed(1)} この日の月の出へ移動`}>
+          <button
+            type="button"
+            key={day.key}
+            className={selectedKey === day.key ? "selected" : ""}
+            aria-pressed={selectedKey === day.key}
+            onClick={() => setSelectedKey(day.key)}
+            aria-label={`${day.key.replaceAll("-", "/")} 月齢${day.ageDays.toFixed(1)} ${day.moonriseTime ? `月の出${day.moonriseTime}` : "月の出なし"}`}
+          >
             <span>{day.day}</span>
-            <MoonIcon phaseDegrees={day.phaseDegrees} size={34} />
+            <MoonIcon phaseDegrees={day.phaseDegrees} size={30} />
             <small>月齢 {day.ageDays.toFixed(1)}</small>
+            {moonriseInput && <small className="moon-rise-time">{day.moonriseTime ? `出 ${day.moonriseTime}` : "出 —"}</small>}
           </button>
         ))}
       </div>
       {selected && (
         <div className="moon-day-detail">
-          <MoonIcon phaseDegrees={selected.phaseDegrees} size={82} />
-          <div><h2>{selected.key.replaceAll("-", "/")}</h2><strong>{selected.phaseName}</strong><p>月齢 {selected.ageDays.toFixed(2)}日</p><p>照明率 {(selected.illumination * 100).toFixed(1)}%</p></div>
+          <MoonIcon phaseDegrees={selected.phaseDegrees} size={38} />
+          <div className="moon-day-detail-text">
+            <strong>{selected.key.replaceAll("-", "/")}</strong>
+            <p>{selected.phaseName}・月齢 {selected.ageDays.toFixed(1)}</p>
+            <p>
+              照明率 {(selected.illumination * 100).toFixed(0)}%
+              {moonriseInput ? `・月の出 ${selected.moonriseTime ?? "なし"}` : ""}
+            </p>
+          </div>
+          {onJumpToDate && (
+            <button type="button" className="moon-day-jump" onClick={() => onJumpToDate(selected.key)}>
+              {selected.moonriseTime ? <>この日の<br />月の出へ移動</> : "この日へ移動"}
+            </button>
+          )}
         </div>
       )}
     </section>

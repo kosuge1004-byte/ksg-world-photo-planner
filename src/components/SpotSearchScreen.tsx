@@ -413,7 +413,7 @@ export function SpotSearchScreen({
                       >
                         <strong>
                           {candidate.name}
-                          {candidate.origin === "registered" && <span className="spot-candidate-kind registered">登録スポット</span>}
+                          {candidate.origin === "registered" && <span className="spot-candidate-kind registered">内蔵スポット</span>}
                           {candidate.kind && <span className="spot-candidate-kind">{candidate.kind}</span>}
                         </strong>
                         {subText && <small>{subText}</small>}

@@ -2,6 +2,7 @@ import {
   Cartesian3,
   ClassificationType,
   Color,
+  ColorMaterialProperty,
   Entity,
   NearFarScalar,
   PolylineDashMaterialProperty,
@@ -9,7 +10,7 @@ import {
 } from "cesium";
 
 import type { CelestialBodyId, TripodCandidate } from "../types/celestial";
-import type { TripodCandidateRiseSetArc } from "./tripodCandidateRiseSetArc";
+import { riseSetArcSegments, type TripodCandidateRiseSetArc } from "./tripodCandidateRiseSetArc";
 
 const ENTITY_ID_PREFIX = "ksg-tripod-candidate";
 
@@ -77,15 +78,17 @@ export function updateTripodCandidateEntities(
     );
   });
 
-  for (const arc of candidateRiseSetArcs) {
-    const positions = arc.points.flatMap((candidate) =>
+  // 2026-10-08: 線は区間ごとに描く。標高を加味した線は、交点が尾根をまたいで別の斜面へ
+  // 移る箇所で途切れる（1本につなぐと実在しない直線ができる）。
+  for (const arc of candidateRiseSetArcs) for (const [segmentIndex, segment] of riseSetArcSegments(arc).entries()) {
+    const positions = segment.flatMap((candidate) =>
       Number.isFinite(candidate.longitude) && Number.isFinite(candidate.latitude)
         ? [candidate.longitude, candidate.latitude]
         : []
     );
     if (positions.length < 4) continue;
     viewer.entities.add(new Entity({
-      id: `${ENTITY_ID_PREFIX}:${arc.id}-rise-set-arc`,
+      id: `${ENTITY_ID_PREFIX}:${arc.id}-rise-set-arc-${segmentIndex}`,
       name: `${arc.points[0]?.label ?? arc.id}の出から入までの三脚候補線`,
       polyline: {
         // 2026-10-05修正: Google Photorealistic 3D（globe無し）では、線を
@@ -102,12 +105,16 @@ export function updateTripodCandidateEntities(
         // 2026-10-06: Google Photorealistic 3D（globe無し）では、0.625pxの
         // 貼り付け線が建物や樹木の細かい凹凸で途切れてほとんど見えなかったため、
         // その表示のときだけ太くする。地形(globe)表示の太さは従来どおり。
-        width: viewer.scene.globe?.show === true ? 0.625 : 2.5,
-        material: new PolylineDashMaterialProperty({
-          color: Color.RED.withAlpha(0.98),
-          dashLength: 12,
-          dashPattern: 255,
-        }),
+        // 実線（標高を加味した線）は破線より細く見えるため、地形表示では少し太くする。
+        width: viewer.scene.globe?.show === true ? (arc.kind === "terrain" ? 1.25 : 0.625) : 2.5,
+        // 標高を加味した線は実線、地面を平らと仮定した目安の線は破線。
+        material: arc.kind === "terrain"
+          ? new ColorMaterialProperty(Color.RED.withAlpha(0.98))
+          : new PolylineDashMaterialProperty({
+              color: Color.RED.withAlpha(0.98),
+              dashLength: 12,
+              dashPattern: 255,
+            }),
       },
     }));
   }

@@ -431,7 +431,7 @@ test("Pages batch endpoint fails registered-profile misses quickly instead of co
   assert.equal(response.headers.get("access-control-allow-origin"), "*");
   assert.deepEqual(await response.json(), {
     code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
-    error: "登録スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
+    error: "内蔵スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
   });
 });
 
