@@ -1307,6 +1307,7 @@ button { cursor: pointer; }
 .spot-preset-result span { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .spot-preset-result small { color: #aeb9c6; font-size: 8px; overflow-wrap: anywhere; }
 .spot-preset-result .spot-result-landmarks { color: #b8dca8; }
+.spot-search-form .spot-search-copy-detail, .spot-search-copy-detail { justify-self: start; min-height: 28px; padding: 4px 10px; color: #cbd4df; border: 1px solid #344253; border-radius: 6px; background: #0d141c; font-size: 9px; }
 .spot-search-credit { color: #7f8b99; font-size: 7px; }
 .pin-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 7px; }
 .pin-button, .subject-google-maps-button, .tripod-candidate-pin-button, .tripod-google-maps-button { min-height: 34px; padding: 4px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 10px; }

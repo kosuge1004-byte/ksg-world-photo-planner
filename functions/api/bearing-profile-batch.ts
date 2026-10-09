@@ -116,15 +116,15 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       if (registered) {
         return apiJson({
           code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
-          error: "内蔵スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
+          error: "この内蔵スポットの計算済み地形データを取得できませんでした。",
         }, 503, "no-store");
       }
       // Arbitrary coordinates must not fall back to hundreds of device/GSI
       // requests. The E-drive origin is the final exact-data path; when it is
       // unavailable, return a prompt, retryable error.
       return apiJson({
-        code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
-        error: "この地点の正確な地形データを現在生成できません。接続回復後に自動再試行します。",
+        code: "PROFILE_SOURCE_UNAVAILABLE",
+        error: "この地点の地形データをまとめて取得できなかったため、1方位ずつ取得します（時間がかかります）。",
       }, 503, "no-store");
     } catch (error) {
       return apiJson(

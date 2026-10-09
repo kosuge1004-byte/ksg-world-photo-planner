@@ -70,6 +70,37 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+// 2026-10-09: 更新のたびに古いアプリ本体（/assets/ のハッシュ付きファイル）が
+// 端末に残り続けていた。いま配信中の版が使うファイルの一覧（ビルド時に作る
+// /asset-manifest.json）に無い /assets/ の保存分を削除する。
+// 一覧を取得できない時（オフライン等）や、複数の画面が開いている時（旧版の画面が
+// まだ分割ファイルを読み込む可能性がある）は何も消さない。
+let shellPruneInFlight = null;
+async function pruneStaleShellAssets() {
+  if (shellPruneInFlight) return shellPruneInFlight;
+  shellPruneInFlight = (async () => {
+    const windows = await self.clients.matchAll({ type: "window" });
+    if (windows.length > 1) return;
+    const response = await fetch("/asset-manifest.json", { cache: "no-store" });
+    if (!response.ok) return;
+    const listed = await response.json();
+    if (!Array.isArray(listed) || listed.length === 0) return;
+    const current = new Set(listed);
+    const cache = await caches.open(SHELL_CACHE);
+    const keys = await cache.keys();
+    await Promise.all(keys.map((request) => {
+      const pathname = new URL(request.url).pathname;
+      if (!pathname.startsWith("/assets/") || current.has(pathname)) return undefined;
+      return cache.delete(request);
+    }));
+  })().catch(() => undefined);
+  try {
+    await shellPruneInFlight;
+  } finally {
+    shellPruneInFlight = null;
+  }
+}
+
 self.addEventListener("message", (event) => {
   if (event.data !== "CLEAR_TILE_CACHE") return;
   event.waitUntil(
@@ -120,6 +151,7 @@ self.addEventListener("fetch", (event) => {
         if (response.ok) {
           const cache = await caches.open(SHELL_CACHE);
           await cache.put("/", response.clone());
+          event.waitUntil(pruneStaleShellAssets());
         }
         return response;
       } catch {

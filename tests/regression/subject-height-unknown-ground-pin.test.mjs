@@ -6,7 +6,7 @@ import {
   SubjectRoofResolutionError,
   selectSubjectSurfacePoint,
 } from "../../src/height/subjectSurfaceResolution.ts";
-import { toUserFacingErrorMessage } from "../../src/errors/userFeedback.ts";
+import { spotSearchErrorDetail, toUserFacingErrorMessage } from "../../src/errors/userFeedback.ts";
 
 const ground = {
   latitude: 35.1, longitude: 136.9, height: 40,
@@ -26,8 +26,9 @@ test("the cause: an unresolved building height used to surface as a network erro
   // この失敗が画面まで届くと、通信に問題が無くても通信エラーの文言になっていた。
   // 一律の文言は残るが、実際の理由が後ろに付く。
   const shown = toUserFacingErrorMessage(thrown, "spot-search");
-  assert.ok(shown.startsWith("必要なデータを通信先から取得できませんでした。通信状態を確認して、もう一度お試しください。"));
-  assert.match(shown, /\n（詳細: ある建物の頂上高度を確認できなかったため、地上には被写体ピンを配置しませんでした。/);
+  assert.equal(shown, "必要なデータを通信先から取得できませんでした。通信状態を確認して、もう一度お試しください。");
+  // 実際の理由は画面に出さず、「詳細をコピー」の中身に入る。
+  assert.match(spotSearchErrorDetail(thrown, "spot-search"), /ある建物の頂上高度を確認できなかったため、地上には被写体ピンを配置しませんでした。/);
 });
 
 test("spot-search errors show the real reason and its cause; other screens are unchanged", () => {
@@ -36,21 +37,31 @@ test("spot-search errors show the real reason and its cause; other screens are u
   const wrapped = new Error("塔 地表の高度を取得できないため計算を中止しました。通信状態を確認して再試行してください。", { cause });
   const shown = toUserFacingErrorMessage(wrapped, "spot-search");
   assert.match(shown, /^必要なデータを通信先から取得できませんでした。/);
-  assert.match(shown, /（詳細: 塔 地表の高度を取得できないため計算を中止しました。通信状態を確認して再試行してください。 ／ 原因: 国土地理院標高APIがタイムアウトしました）$/);
+  assert.doesNotMatch(shown, /詳細|原因|API/);
+  const detail = spotSearchErrorDetail(wrapped, "spot-search");
+  assert.match(detail, /エラー内容: 塔 地表の高度を取得できないため計算を中止しました。/);
+  assert.match(detail, /原因1: 国土地理院標高APIがタイムアウトしました/);
+  // アドレスは接続先の名前だけ残し、経路・条件は伏せる。
+  const withUrl = spotSearchErrorDetail(new Error("failed https://example.com/api/x?lat=35.1&key=abc now"), "spot-search");
+  assert.match(withUrl, /https:\/\/example\.com\/… now/);
+  assert.doesNotMatch(withUrl, /lat=|key=/);
 
   // 通信と無関係な失敗（端末の保存領域が満杯など）も理由が分かる。
   assert.equal(
     toUserFacingErrorMessage(new Error("The quota has been exceeded."), "spot-search"),
-    "スポット検索を完了できませんでした。入力内容と通信状態を確認して、もう一度お試しください。\n（詳細: The quota has been exceeded.）"
+    "スポット検索を完了できませんでした。入力内容と通信状態を確認して、もう一度お試しください。"
   );
+  assert.match(spotSearchErrorDetail(new Error("The quota has been exceeded."), "spot-search"), /The quota has been exceeded\./);
   // 内部メッセージをそのまま出している場合は、同じ文を重ねない。
   assert.equal(
     toUserFacingErrorMessage(new Error("指定したスポットが見つかりませんでした"), "spot-search"),
     "指定したスポットが見つかりませんでした"
   );
+  assert.equal(spotSearchErrorDetail(new Error("指定したスポットが見つかりませんでした"), "spot-search"), null);
   // 長すぎる詳細は切り詰める。メッセージの無いエラーには何も付けない。
-  const long = toUserFacingErrorMessage(new Error("通信" + "あ".repeat(500)), "spot-search");
-  assert.ok(long.length < 400 && long.endsWith("…）"));
+  const long = spotSearchErrorDetail(new Error("通信" + "あ".repeat(5000)), "spot-search");
+  assert.ok(long.length <= 2000);
+  assert.equal(spotSearchErrorDetail(null, "spot-search"), null);
   assert.equal(
     toUserFacingErrorMessage(null, "spot-search"),
     "スポット検索を完了できませんでした。入力内容と通信状態を確認して、もう一度お試しください。"

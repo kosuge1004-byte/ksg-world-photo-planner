@@ -113,10 +113,8 @@ export function buildDiagnosticDetail(
       lines.push(`${key}: ${value}`);
     }
   }
-  return lines.join("\n");
+  return redactUrls(lines.join("\n"));
 }
-
-const SPOT_SEARCH_DETAIL_MAX_LENGTH = 260;
 
 /** エラーと、その原因（cause）をたどった内部メッセージ。重複は除く。 */
 function errorCauseMessages(error: unknown): string[] {
@@ -130,29 +128,35 @@ function errorCauseMessages(error: unknown): string[] {
   return messages;
 }
 
+/** 診断テキストに含まれるアドレスは、接続先の名前だけ残して経路・条件を伏せる。 */
+function redactUrls(text: string): string {
+  return text.replace(/(https?:\/\/[^\/\s"'`)]+)[^\s"'`)]*/giu, "$1/…");
+}
+
 /**
- * 2026-10-09: スポット検索（候補の選択〜ピン設置）のエラーには、原因の詳細を添える。
+ * 2026-10-09: スポット検索（候補の選択〜ピン設置）のエラーの原因。
  *
- * 下の baseUserFacingErrorMessage は、内部メッセージに「通信」「API」等の語が
- * 含まれるだけで一律の通信エラー文言へ置き換える。そのため、建物の高さが不明・
- * 標高値が範囲外・端末の保存領域が満杯といった通信と無関係な失敗まで
- * 「通信先から取得できませんでした」と表示され、利用者にも開発側にも原因が
- * 分からなかった。一律の文言は残したうえで、実際の理由を後ろに付ける。
+ * baseUserFacingErrorMessage は、内部メッセージに「通信」「API」等の語が含まれるだけで
+ * 一律の通信エラー文言へ置き換えるため、通信と無関係な失敗の原因が分からなくなる。
+ * 原因は画面の文章には出さず（内部の情報を表示しない）、利用者が「詳細をコピー」を
+ * 押した時だけ渡す診断テキストに入れる。原因が画面の文章と同じ場合は null。
  */
+export function spotSearchErrorDetail(error: unknown, context: UserErrorContext): string | null {
+  const base = baseUserFacingErrorMessage(error, context);
+  const causes = errorCauseMessages(error);
+  if (causes.length === 0 || (causes.length === 1 && causes[0] === base)) return null;
+  const extra: Record<string, string> = {};
+  causes.slice(1).forEach((cause, index) => {
+    extra[`原因${index + 1}`] = cause;
+  });
+  return redactUrls(buildDiagnosticDetail("スポット検索", error, extra)).slice(0, 2_000);
+}
+
 export function toUserFacingErrorMessage(
   error: unknown,
   context: UserErrorContext
 ): string {
-  const base = baseUserFacingErrorMessage(error, context);
-  if (context !== "spot-search") return base;
-  const causes = errorCauseMessages(error);
-  // 内部メッセージをそのまま表示している場合（「見つかりませんでした」等）は付けない。
-  if (causes.length === 0 || causes.includes(base)) return base;
-  const joined = causes.join(" ／ 原因: ");
-  const detail = joined.length > SPOT_SEARCH_DETAIL_MAX_LENGTH
-    ? `${joined.slice(0, SPOT_SEARCH_DETAIL_MAX_LENGTH)}…`
-    : joined;
-  return `${base}\n（詳細: ${detail}）`;
+  return baseUserFacingErrorMessage(error, context);
 }
 
 function baseUserFacingErrorMessage(

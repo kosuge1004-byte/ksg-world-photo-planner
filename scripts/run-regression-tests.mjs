@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "2026-10-09 audit fixes: old-device abort signals, carried-over moon pass, Photon labels, storage guards, shell cache pruning",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/audit-fixes-20261009.test.mjs"] },
   { name: "spot flow error causes: published data beyond-range fallback, section coverage guard, browser-safe Nominatim headers, history save failure",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/spot-flow-error-causes.test.mjs"] },
   { name: "unknown building height places the subject pin on the ground with a closable notice",
@@ -326,6 +328,7 @@ const cases = [
   },
 ];
 
+const failures = [];
 for (const testCase of cases) {
   const normalized = typeof testCase === "string"
     ? { name: testCase, command: process.execPath, arguments: [testCase] }
@@ -354,11 +357,17 @@ for (const testCase of cases) {
   if (result.error) {
     throw new Error(`${normalized.name}: ${result.error.message}`);
   }
+  // 2026-10-09: 1件失敗しても残りを実行し、最後に失敗した項目をまとめて表示する
+  // （以前は最初の失敗で止まり、後ろのテストが実行されなかった）。
   if (result.status !== 0) {
-    throw new Error(
-      `${normalized.name} failed with exit code ${result.status ?? "unknown"}`,
-    );
+    failures.push(`${normalized.name} (exit code ${result.status ?? "unknown"})`);
+    console.error(`[regression] FAIL: ${normalized.name}`);
   }
 }
 
+if (failures.length > 0) {
+  console.error(`\nRegression suite: FAIL (${failures.length} of ${cases.length} groups)`);
+  for (const failure of failures) console.error(`  - ${failure}`);
+  process.exit(1);
+}
 console.log(`\nRegression suite: PASS (${cases.length} groups)`);

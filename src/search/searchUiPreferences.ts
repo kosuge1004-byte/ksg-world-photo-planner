@@ -1,3 +1,4 @@
+import { saveToLocalStorage } from "../storage/safeLocalStorage";
 import { useEffect, useState } from "react";
 
 import {
@@ -55,7 +56,7 @@ export function useSearchTimeRange(): [
   const [value, setValue] = useState<SearchTimeRange>(loadSearchTimeRange);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(
+    saveToLocalStorage(
       SEARCH_TIME_RANGE_STORAGE_KEY,
       JSON.stringify(value)
     );

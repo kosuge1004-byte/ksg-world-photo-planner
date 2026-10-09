@@ -220,7 +220,7 @@ export async function fetchBearingProfileBatchDetailed(
       // ダウンロードを終わらせず、理由付きのmissとして返す。呼び出し側は
       // 1方位経路（端末内 → R2 → Eドライブ → 国土地理院）で続行する。
       if (response.status === 503 &&
-        (code === "PRECOMPUTED_PROFILE_UNAVAILABLE" || code === "LOCAL_DEM_PROFILE_UNAVAILABLE") && error) {
+        (code === "PRECOMPUTED_PROFILE_UNAVAILABLE" || code === "PROFILE_SOURCE_UNAVAILABLE") && error) {
         return miss(error);
       }
       if (response.status === 404 && code === "PRECOMPUTED_PROFILE_NOT_FOUND") {

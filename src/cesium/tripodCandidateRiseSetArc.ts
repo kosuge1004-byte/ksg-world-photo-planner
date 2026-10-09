@@ -85,6 +85,8 @@ export type TripodCandidateRiseSetArcPoint = TripodCandidate & {
   timestampMilliseconds: number;
 };
 
+export type RiseSetArcPass = "day" | "carryOver";
+
 export type BuildTripodCandidateRiseSetArcInput = {
   id: RiseSetCandidateBodyId;
   subject: GroundPoint;
@@ -95,6 +97,15 @@ export type BuildTripodCandidateRiseSetArcInput = {
   maxDistanceMeters: number;
   refractionWeather?: RefractionWeatherContext;
   sampleMinutes?: number;
+  /**
+   * どの回の「出〜入り」を線にするか。
+   * - "day"（既定）: 選択日のうちに昇る回（無ければ直前に昇った回）。
+   * - "carryOver": 選択日の0時にすでに空に出ている回（前日に昇った月など）。
+   *   その回が無い場合は "day" と同じ。
+   * 2026-10-09: 深夜に前日からの月が出ているのに、線だけ今夜これから昇る月の
+   * ものになっていたため、表示中の時刻が属する回を選べるようにした。
+   */
+  pass?: RiseSetArcPass;
   /**
    * 三脚を立てる地表の楕円体高(m)の目安。確定候補がまだ無い間の線の高さ基準。
    * 優先順に並べた候補を渡す。先頭から試し、実際の交点が2点以上できる最初の高さを使う
@@ -257,6 +268,41 @@ export function buildTripodCandidateRiseSetArc(
 }
 
 /**
+ * 選択日の0時にすでに空に出ている回（前日に昇り、選択日のうちに沈む回）の出・入り時刻。
+ * 0時に地平線下なら null。
+ */
+export function findCarryOverRiseSetPass({
+  id,
+  subject,
+  dayStart,
+  lensCenterHeightMeters,
+  calculationMode,
+  refractionWeather,
+}: Pick<BuildTripodCandidateRiseSetArcInput,
+  "id" | "subject" | "dayStart" | "lensCenterHeightMeters" | "calculationMode" | "refractionWeather"
+>): { riseAt: Date; setAt: Date } | null {
+  if (Number.isNaN(dayStart.getTime())) return null;
+  const observer = withLensCenterHeight(
+    subject, lensCenterHeightMeters, `${RISE_SET_BODY_LABELS[id]}三脚候補線の初期観測点`
+  );
+  const before = new Date(dayStart.getTime() - CROSSING_SEARCH_MARGIN_MS);
+  const riseAt = findLastCrossing(id, 1, observer, before, dayStart, calculationMode, refractionWeather);
+  if (!riseAt) return null;
+  const setAt = findHorizonCrossing(
+    id,
+    -1,
+    observer,
+    new Date(riseAt.getTime() + CROSSING_CURSOR_ADVANCE_MS),
+    new Date(riseAt.getTime() + CROSSING_SEARCH_MARGIN_MS),
+    calculationMode,
+    refractionWeather
+  );
+  // 0時より前に沈んでいれば、0時には空に出ていない。
+  if (!setAt || setAt.getTime() <= dayStart.getTime()) return null;
+  return { riseAt, setAt };
+}
+
+/**
  * 選択日の出から入りまでの時刻と、各時刻の天体方向を求める。地面の高さには依存しない。
  * 目安の線（buildTripodCandidateRiseSetArc）と、地形の断面から求める線
  * （buildTerrainRiseSetArc）の両方がこれを元にする。
@@ -271,6 +317,7 @@ export function buildRiseSetArcTimeline({
   maxDistanceMeters,
   refractionWeather,
   sampleMinutes = DEFAULT_SAMPLE_MINUTES,
+  pass = "day",
 }: Omit<BuildTripodCandidateRiseSetArcInput, "referenceGroundEllipsoidalHeightMeters">): RiseSetArcTimeline | null {
   if (
     Number.isNaN(dayStart.getTime()) || Number.isNaN(dayEnd.getTime()) ||
@@ -279,7 +326,10 @@ export function buildRiseSetArcTimeline({
 
   const label = RISE_SET_BODY_LABELS[id];
   const observer = withLensCenterHeight(subject, lensCenterHeightMeters, `${label}三脚候補線の初期観測点`);
-  const riseAt = findHorizonCrossing(
+  const carryOver = pass === "carryOver"
+    ? findCarryOverRiseSetPass({ id, subject, dayStart, lensCenterHeightMeters, calculationMode, refractionWeather })
+    : null;
+  const riseAt = carryOver?.riseAt ?? findHorizonCrossing(
     id, 1, observer, dayStart, dayEnd, calculationMode, refractionWeather
   ) ?? findLastCrossing(
     id,

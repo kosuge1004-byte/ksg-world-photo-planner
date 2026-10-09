@@ -479,6 +479,19 @@ export default defineConfig(({ command }) => {
     plugins: [
       react(),
       cesium(),
+      // 2026-10-09: いまの版が使う /assets/ のファイル一覧。Service Worker が
+      // 端末に残った古い版のファイルを削除する時の基準にする（public/sw.js）。
+      {
+        name: "astrosight-asset-manifest",
+        apply: "build",
+        generateBundle(_options, bundle) {
+          const files = Object.keys(bundle)
+            .filter((fileName) => fileName.startsWith("assets/"))
+            .map((fileName) => `/${fileName}`)
+            .sort();
+          this.emitFile({ type: "asset", fileName: "asset-manifest.json", source: JSON.stringify(files) });
+        },
+      } satisfies PluginOption,
       ...(command === "serve"
         ? [
             withLocalPreviewApi(localTimezoneApi()),

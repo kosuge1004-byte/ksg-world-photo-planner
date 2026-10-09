@@ -111,7 +111,7 @@ function validateAsset(asset: LocalDemGridAsset): void {
     asset.latitudeStep <= 0 ||
     asset.longitudeStep <= 0
   ) {
-    throw new Error("ローカルDEMグリッドのメタデータが不正です");
+    throw new Error("保存済み地形データグリッドのメタデータが不正です");
   }
   const expectedLatitudeStep = (asset.north - asset.south) / asset.height;
   const expectedLongitudeStep = (asset.east - asset.west) / asset.width;
@@ -120,7 +120,7 @@ function validateAsset(asset: LocalDemGridAsset): void {
     Math.abs(asset.latitudeStep - expectedLatitudeStep) > epsilon ||
     Math.abs(asset.longitudeStep - expectedLongitudeStep) > epsilon
   ) {
-    throw new Error("ローカルDEMグリッドの格子間隔がbboxと一致しません");
+    throw new Error("保存済み地形データグリッドの格子間隔がbboxと一致しません");
   }
 }
 
@@ -168,11 +168,11 @@ export function decodeLocalDemAsset(
     bytes = gunzipSync(bytes);
   }
   if (bytes.byteLength < HEADER_BYTES) {
-    throw new Error("ローカルDEMアセットが短すぎます");
+    throw new Error("保存済み地形データアセットが短すぎます");
   }
   for (let index = 0; index < MAGIC.length; index += 1) {
     if (bytes[index] !== MAGIC[index]) {
-      throw new Error("ローカルDEMアセットの識別子が不正です");
+      throw new Error("保存済み地形データアセットの識別子が不正です");
     }
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -187,7 +187,7 @@ export function decodeLocalDemAsset(
     pointCount > MAX_GRID_POINTS ||
     bytes.byteLength !== HEADER_BYTES + pointCount * Int32Array.BYTES_PER_ELEMENT
   ) {
-    throw new Error("ローカルDEMアセットの寸法または符号化が不正です");
+    throw new Error("保存済み地形データアセットの寸法または符号化が不正です");
   }
   const heightsCentimeters = new Int32Array(pointCount);
   for (let index = 0; index < pointCount; index += 1) {
@@ -308,7 +308,7 @@ function validateAssetIdentity(
   const expectedLength = source === "DEM10A" || source === "DEM10B" ? 6 : 8;
   const bounds = localDemMeshBounds(meshCode);
   if (!bounds || meshCode.length !== expectedLength) {
-    throw new Error(`ローカルDEMのメッシュコードが${source}と一致しません`);
+    throw new Error(`保存済み地形データのメッシュコードが${source}と一致しません`);
   }
   // GML writes repeating fractions to nine decimal places, so compare bounds
   // with a tolerance while still rejecting an asset from any adjacent mesh.
@@ -319,7 +319,7 @@ function validateAssetIdentity(
     Math.abs(asset.north - bounds.north) > toleranceDegrees ||
     Math.abs(asset.east - bounds.east) > toleranceDegrees
   ) {
-    throw new Error(`ローカルDEM ${source}/${meshCode} のbboxがメッシュ範囲と一致しません`);
+    throw new Error(`保存済み地形データ ${source}/${meshCode} のbboxがメッシュ範囲と一致しません`);
   }
 }
 
@@ -702,7 +702,7 @@ async function loadAsset(
       return asset;
     } catch (error) {
       rememberUnavailableAsset(key, INVALID_ASSET_TTL_MS);
-      console.warn(`ローカルDEMアセット ${key} を利用できません`, error);
+      console.warn(`保存済み地形データアセット ${key} を利用できません`, error);
       return null;
     }
   })();

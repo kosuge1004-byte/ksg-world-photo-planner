@@ -47,5 +47,10 @@ export function savePrecisionSettingsToStorage(
   settings: PrecisionSettings,
   storage: Pick<Storage, "setItem"> = localStorage
 ): void {
-  storage.setItem(PRECISION_SETTINGS_STORAGE_KEY, JSON.stringify(normalizePrecisionSettings(settings)));
+  try {
+    storage.setItem(PRECISION_SETTINGS_STORAGE_KEY, JSON.stringify(normalizePrecisionSettings(settings)));
+  } catch (error) {
+    // 空き容量不足・プライベートブラウズ。設定は今回の起動中だけ有効になる。
+    console.warn("精度設定を端末に保存できませんでした", error);
+  }
 }

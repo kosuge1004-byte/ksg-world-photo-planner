@@ -1,3 +1,4 @@
+import { anySignal } from "../network/abortSignals";
 import { createAbortError, createTimeoutError, isAbortError } from "../utils/runtimeErrors";
 import {
   Cartographic,
@@ -1050,7 +1051,7 @@ async function fetchRegionalGeoidHeights(
 
   const heights = new Map<string, number>();
   const controller = new AbortController();
-  const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  const requestSignal = signal ? anySignal([signal, controller.signal]) : controller.signal;
   let completed = 0;
   options.onGeoidProgress?.(0, representativeByRegion.size);
   await Promise.all(Array.from(representativeByRegion.entries()).map(async ([key, point]) => {

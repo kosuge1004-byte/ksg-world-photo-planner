@@ -1,5 +1,6 @@
 export type NetworkDiagnosticKind = "request" | "cache-hit" | "cache-miss" | "deduplicated" | "error";
 
+import { anySignal, timeoutSignal } from "./abortSignals";
 import { isAbortError } from "../utils/runtimeErrors";
 import { apiEndpoint } from "./apiEndpoint";
 
@@ -123,10 +124,8 @@ function combinedSignal(
   timeoutMs: number,
   externalSignal?: AbortSignal | null
 ): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  return externalSignal
-    ? AbortSignal.any([externalSignal, timeoutSignal])
-    : timeoutSignal;
+  const timeout = timeoutSignal(timeoutMs);
+  return externalSignal ? anySignal([externalSignal, timeout]) : timeout;
 }
 
 function isUserAbort(error: unknown, externalSignal?: AbortSignal | null): boolean {

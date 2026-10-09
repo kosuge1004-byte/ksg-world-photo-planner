@@ -1,3 +1,4 @@
+import { saveToLocalStorage } from "../storage/safeLocalStorage";
 import type {
   SerializedSpotPresetResult,
   SpotSearchJob,
@@ -72,7 +73,7 @@ function clientId(): string {
   const existing = localStorage.getItem(CLIENT_ID_KEY);
   if (existing) return existing;
   const created = newId();
-  localStorage.setItem(CLIENT_ID_KEY, created);
+  saveToLocalStorage(CLIENT_ID_KEY, created);
   return created;
 }
 
@@ -85,7 +86,7 @@ export function deviceClientId(): string {
 }
 
 function saveActiveJob(job: ActiveSpotSearchJob): void {
-  localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify(job));
+  saveToLocalStorage(ACTIVE_JOB_KEY, JSON.stringify(job));
 }
 
 export function readActiveSpotSearchJob(): ActiveSpotSearchJob | null {

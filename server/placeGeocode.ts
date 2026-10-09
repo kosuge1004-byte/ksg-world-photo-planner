@@ -653,7 +653,11 @@ async function searchPhoton(
   fetcher: Fetcher,
   options: { limit: number; center: PlaceSearchCenter | null }
 ): Promise<RankedPlace[]> {
+  // 2026-10-09: 数字だけの入力（「138」など）は地名ではなく番地の候補ばかりになるため、
+  // 入力補完用のPhotonへは送らない。
+  if (/^[\d\s\-－ー‐.,]+$/u.test(query)) return [];
   // langは指定しない（公開Photonは ja を受け付けず、既定で現地語名を返す）。
+  // 地域名が英語で返った場合は japaneseRegionName() で表示を補正する。
   const parameters = new URLSearchParams({
     q: query,
     limit: String(options.limit),
@@ -691,8 +695,9 @@ async function searchPhoton(
     if (!name) return [];
     const osmKey = text("osm_key");
     const osmValue = text("osm_value");
-    const region = uniqueTexts([text("state"), text("county"), text("city"), text("district")])
-      .filter((part) => part !== name);
+    const region = uniqueTexts(
+      [text("state"), text("county"), text("city"), text("district")].map(japaneseRegionName)
+    ).filter((part) => part !== name);
     const resolved: ResolvedPlaceName = {
       latitude,
       longitude,
@@ -713,6 +718,30 @@ async function searchPhoton(
       kind: osmKindLabel(osmKey, osmValue),
     }];
   });
+}
+
+const PREFECTURE_NAMES_BY_ENGLISH: Record<string, string> = {
+  hokkaido: "北海道", aomori: "青森県", iwate: "岩手県", miyagi: "宮城県", akita: "秋田県",
+  yamagata: "山形県", fukushima: "福島県", ibaraki: "茨城県", tochigi: "栃木県", gunma: "群馬県",
+  saitama: "埼玉県", chiba: "千葉県", tokyo: "東京都", kanagawa: "神奈川県", niigata: "新潟県",
+  toyama: "富山県", ishikawa: "石川県", fukui: "福井県", yamanashi: "山梨県", nagano: "長野県",
+  gifu: "岐阜県", shizuoka: "静岡県", aichi: "愛知県", mie: "三重県", shiga: "滋賀県",
+  kyoto: "京都府", osaka: "大阪府", hyogo: "兵庫県", nara: "奈良県", wakayama: "和歌山県",
+  tottori: "鳥取県", shimane: "島根県", okayama: "岡山県", hiroshima: "広島県", yamaguchi: "山口県",
+  tokushima: "徳島県", kagawa: "香川県", ehime: "愛媛県", kochi: "高知県", fukuoka: "福岡県",
+  saga: "佐賀県", nagasaki: "長崎県", kumamoto: "熊本県", oita: "大分県", miyazaki: "宮崎県",
+  kagoshima: "鹿児島県", okinawa: "沖縄県",
+};
+
+/**
+ * Photonが地域名を英語で返した場合の表示用の補正。
+ * 都道府県名は日本語へ直し、それ以外の英字だけの地域名は表示から外す（空文字）。
+ */
+function japaneseRegionName(value: string): string {
+  if (!value || !/^[\p{Script=Latin}\s.'-]+$/u.test(value)) return value;
+  const key = value.normalize("NFD").replace(/[\u0300-\u036f]/gu, "").toLowerCase()
+    .replace(/\s*(prefecture|metropolis|-ken|-fu|-to)$/u, "").trim();
+  return PREFECTURE_NAMES_BY_ENGLISH[key] ?? "";
 }
 
 function uniqueTexts(values: string[]): string[] {

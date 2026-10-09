@@ -15,6 +15,7 @@
  * 兼ね合いで、トークンはあえて端末内保存のみとし、他端末とは同期しない。
  */
 
+import { saveToLocalStorage } from "../storage/safeLocalStorage";
 import { apiEndpoint } from "../network/apiEndpoint";
 
 const STORAGE_KEY = "ksg-cesium-ion-connection";
@@ -153,7 +154,7 @@ export function loadCesiumIonConnection(): CesiumIonConnection | null {
 }
 
 function saveCesiumIonConnection(connection: CesiumIonConnection): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(connection));
+  saveToLocalStorage(STORAGE_KEY, JSON.stringify(connection));
 }
 
 export function disconnectCesiumIon(): void {
@@ -269,7 +270,7 @@ function saveUsageRecord(record: UsageRecord): void {
   // カウンターを保存できない状態でGoogle root requestだけを進めると、
   // Cesium公式UsageよりAstroSightが少なくなる危険がある。そのため保存不能時は
   // root requestを開始しない（安全側に停止）。
-  localStorage.setItem(USAGE_COUNT_STORAGE_KEY, JSON.stringify(record));
+  saveToLocalStorage(USAGE_COUNT_STORAGE_KEY, JSON.stringify(record));
 }
 
 export function startCesiumIonRootTilesetRequest<T>(startRequest: () => T): { request: T; count: number } {

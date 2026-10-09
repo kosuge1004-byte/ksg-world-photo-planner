@@ -1,3 +1,4 @@
+import { saveToLocalStorage } from "./storage/safeLocalStorage";
 import {
   lazy,
   Suspense,
@@ -129,6 +130,8 @@ import {
 import {
   buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
+  findCarryOverRiseSetPass,
+  type RiseSetArcPass,
   type RiseSetCandidateBodyId,
   type TripodCandidateRiseSetArc,
 } from "./cesium/tripodCandidateRiseSetArc";
@@ -670,9 +673,9 @@ function App() {
         showUserNotice({
           key: "cesium-ion-connection",
           tone: "error",
-          message: error instanceof Error
-            ? `Cesium ionアカウントの接続に失敗しました（${error.message}）`
-            : "Cesium ionアカウントの接続に失敗しました。",
+          // 内部のエラー文は画面に出さず、「詳細をコピー」の中身にだけ入れる。
+          message: "Cesium ionアカウントの接続に失敗しました。もう一度お試しください。",
+          diagnosticDetail: buildDiagnosticDetail("Cesium ion接続", error),
         });
       });
   }, [showUserNotice]);
@@ -1161,9 +1164,9 @@ function App() {
       `日時: ${new Date().toISOString()}`,
       `所要時間: ${elapsedSeconds}秒`,
       `総確定時間(ms): ${diagnostics.totalElapsedMs !== null ? Math.round(diagnostics.totalElapsedMs) : "計測中"}`,
-      `地形タイルキャッシュ: R2ヒット${diagnostics.cacheHitBatchCount}回・R2ミス${diagnostics.cacheMissBatchCount}回・` +
+      `地形タイルキャッシュ: サーバーヒット${diagnostics.cacheHitBatchCount}回・サーバーミス${diagnostics.cacheMissBatchCount}回・` +
         `メモリヒット${diagnostics.cacheMemoryHitCount}回・同時要求共有${diagnostics.cacheSharedCount}回・` +
-        `R2不使用/障害${diagnostics.cacheBypassCount}回`,
+        `サーバー不使用/障害${diagnostics.cacheBypassCount}回`,
       `端末内タイルキャッシュ（サーバー到達前）: メモリヒット${diagnostics.localTileMemoryHitCount}回・` +
         `IndexedDBヒット${diagnostics.localTileIndexedDbHitCount}回・未収載${diagnostics.localTileDecodeMissCount}回`,
       "天体別内訳:",
@@ -2156,6 +2159,46 @@ function App() {
     subjectGeoidHeight,
   ]);
 
+  // 2026-10-09: 表示中の時刻が属する回の線を出す。
+  // 選択日の0時にすでに空に出ている回（前日に昇った月など）が沈む時刻を天体ごとに求め、
+  // 表示中の時刻がそれより前なら、その回の線にする。回が切り替わる時だけ文字列が変わる
+  // ので、時刻を動かすたびに線を計算し直すことはない。
+  const carryOverPassEndTimes = useMemo(() => {
+    const ends: Partial<Record<RiseSetCandidateBodyId, number>> = {};
+    if (!subjectPoint) return ends;
+    for (const id of ["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[]) {
+      if (!celestialVisibility[id]) continue;
+      const carryOver = findCarryOverRiseSetPass({
+        id,
+        subject: subjectPoint,
+        dayStart: selectedDayStart,
+        lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
+        calculationMode,
+        refractionWeather: previewRefractionWeather,
+      });
+      if (carryOver) ends[id] = carryOver.setAt.getTime();
+    }
+    return ends;
+  }, [
+    subjectPoint,
+    celestialVisibility,
+    selectedDayStart,
+    cameraSettings.lensCenterHeightMeters,
+    calculationMode,
+    previewRefractionWeather,
+  ]);
+  const selectedTimeForArcPass = selectedDate.getTime();
+  const arcPassKey = (["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[])
+    .map((id) => {
+      const end = carryOverPassEndTimes[id];
+      return end !== undefined && selectedTimeForArcPass <= end ? "carryOver" : "day";
+    })
+    .join(",");
+  const arcPassFor = useCallback((id: RiseSetCandidateBodyId): RiseSetArcPass => {
+    const index = ["sun", "moon", "milkyWay"].indexOf(id);
+    return arcPassKey.split(",")[index] === "carryOver" ? "carryOver" : "day";
+  }, [arcPassKey]);
+
   // 目安の線（三脚を立てる地面の高さを1つに仮定した線）。確定候補は参照しない。
   const tripodCandidateRiseSetBaseArcs = useMemo(() => {
     if (!subjectPoint || !tripodCandidateArcReferenceGroundHeights) return [];
@@ -2176,6 +2219,7 @@ function App() {
         calculationMode,
         maxDistanceMeters,
         refractionWeather: previewRefractionWeather,
+        pass: arcPassFor(id),
         referenceGroundEllipsoidalHeightMeters: tripodCandidateArcReferenceGroundHeights,
       });
       return arc ? [arc] : [];
@@ -2190,6 +2234,7 @@ function App() {
     precisionSettings.tripodSearchMaxDistanceMeters,
     previewRefractionWeather,
     tripodCandidateArcReferenceGroundHeights,
+    arcPassFor,
   ]);
 
   // 2026-10-08: 標高を加味した三脚候補線。
@@ -2224,6 +2269,8 @@ function App() {
       maxDistanceMeters,
       refractionWeather: previewRefractionWeather,
       revision: terrainSectionRevision,
+      passKey: ids.map((id) => arcPassFor(id)).join(","),
+      passes: Object.fromEntries(ids.map((id) => [id, arcPassFor(id)])) as Partial<Record<RiseSetCandidateBodyId, RiseSetArcPass>>,
       // 断面が得られる見込みがあるか（通信・保存領域を読まずに判定できる範囲）。
       expectsTerrain: terrainSectionSourcesFor(subjectPoint).length > 0,
     };
@@ -2237,6 +2284,7 @@ function App() {
     precisionSettings.tripodSearchMaxDistanceMeters,
     previewRefractionWeather,
     terrainSectionRevision,
+    arcPassFor,
   ]);
   const [terrainArcResult, setTerrainArcResult] = useState<{
     request: NonNullable<typeof terrainArcRequest>;
@@ -2263,6 +2311,7 @@ function App() {
             calculationMode: request.calculationMode,
             maxDistanceMeters: request.maxDistanceMeters,
             refractionWeather: request.refractionWeather,
+            pass: request.passes[id] ?? "day",
             // 地形の起伏を拾えるよう、目安の線（10分刻み）より細かく刻む。
             sampleMinutes: 2,
           });
@@ -2379,7 +2428,8 @@ function App() {
       result.request.lensCenterHeightMeters === terrainArcRequest.lensCenterHeightMeters &&
       result.request.calculationMode === terrainArcRequest.calculationMode &&
       result.request.maxDistanceMeters === terrainArcRequest.maxDistanceMeters &&
-      result.request.revision === terrainArcRequest.revision
+      result.request.revision === terrainArcRequest.revision &&
+      result.request.passKey === terrainArcRequest.passKey
     );
     if (!sameLine) return [];
     return terrainArcRequest.ids.flatMap((id) => {
@@ -2810,16 +2860,13 @@ function App() {
             // 直前に確定していた候補は消さない。精密計算だけが失敗したことを
             // 明示しつつ、候補確認・再試行のどちらも可能な状態を維持する。
             setTripodCandidateCalculationStatus("error");
-            const isTerrainDataUnavailable =
-              error instanceof Error && error.name === "TerrainDataUnavailableError";
             const isWatchdogTimeout = watchdogTimedOut.current;
             showUserNotice({
               key: "tripod-candidate-calculation",
               tone: "error",
               message: isWatchdogTimeout
                 ? "三脚候補の計算で3分間進捗を確認できなかったため中断しました。通信状態をご確認のうえ再試行してください。"
-                : isTerrainDataUnavailable
-                ? `地形データを取得できず、三脚候補を計算できませんでした（${error.message}）。通信状態を確認して再試行してください。`
+                // 内部のエラー文は画面に出さない（下の「詳細をコピー」の中身にだけ入る）。
                 : "地形データを取得できず、三脚候補を計算できませんでした。通信状態を確認して再試行してください。",
               diagnosticDetail: buildDiagnosticDetail("三脚候補計算", error, {
                 天体: enabledPoints.map((point) => point.id).join(","),
@@ -3113,14 +3160,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
+    saveToLocalStorage(
       "ksg-camera-settings",
       JSON.stringify(cameraSettings)
     );
   }, [cameraSettings]);
 
   useEffect(() => {
-    localStorage.setItem(
+    saveToLocalStorage(
       "ksg-camera-view-correction",
       JSON.stringify(previewViewCorrection)
     );
@@ -3132,7 +3179,7 @@ function App() {
 
 
   useEffect(() => {
-    localStorage.setItem(
+    saveToLocalStorage(
       LAST_MAP_STATE_STORAGE_KEY,
       JSON.stringify({ center: mapCenter, zoom: mapZoom, mapType, displayMode: mapDisplayMode })
     );
@@ -3189,14 +3236,14 @@ function App() {
   ]);
 
   useEffect(() => {
-    localStorage.setItem(
+    saveToLocalStorage(
       "ksg-celestial-visibility",
       JSON.stringify(celestialVisibility)
     );
   }, [celestialVisibility]);
 
   useEffect(() => {
-    localStorage.setItem(
+    saveToLocalStorage(
       "ksg-celestial-datetime",
       dateTimeLocal
     );
@@ -4110,7 +4157,7 @@ function App() {
         spot: latest,
         phase: terminalFailure ? "failed" : "generating",
         message: terminalFailure
-          ? "PC側で未完了方位を自動再試行しています"
+          ? "スポットデータの生成を再試行しています"
           : `スポットデータ生成中 ${completed}/${latest.bearingCount}方位 ${percent}%`,
       });
       await new Promise((resolve) => setTimeout(resolve, terminalFailure ? 10_000 : 3_000));
@@ -6089,11 +6136,12 @@ ${diagnosticMessage}
           );
         } else {
           publishCurrentLocationMessage(
-            `現在地を取得できませんでした：${error.message || "不明なエラー"}`
+            "現在地を取得できませんでした。端末の位置情報を確認して再試行してください"
           );
         }
       } else {
-        publishCurrentLocationMessage(`現在地を取得できませんでした：${error instanceof Error ? error.message : "不明なエラー"}`);
+        console.warn("現在地を取得できませんでした", error);
+        publishCurrentLocationMessage("現在地を取得できませんでした。端末の位置情報を確認して再試行してください");
       }
     } finally {
       if (requestId === currentLocationRequestRef.current) {

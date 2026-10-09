@@ -1,3 +1,4 @@
+import { anySignal, timeoutSignal } from "../network/abortSignals";
 import { createAbortError, isAbortError } from "../utils/runtimeErrors";
 import {
   Body,
@@ -114,7 +115,7 @@ export type ResolvedSpotLocation = {
   heightSourceLabel?: string | null;
   heightStatus?: DynamicSpotHeightStatus;
   dynamicSpot?: DynamicSpotRecord;
-  locationSource?: "static" | "dynamic-local" | "dynamic-edrive" | "search";
+  locationSource?: "static" | "dynamic-local" | "dynamic-remote" | "search";
 };
 
 export type SpotSubjectSurfaceHint = {
@@ -191,7 +192,7 @@ function staticLandmarkLocation(exact: JapanLandmark): ResolvedSpotLocation {
 
 function resolvedDynamicSpot(
   spot: DynamicSpotRecord,
-  source: "dynamic-local" | "dynamic-edrive"
+  source: "dynamic-local" | "dynamic-remote"
 ): ResolvedSpotLocation {
   return {
     latitude: spot.latitude,
@@ -589,7 +590,7 @@ export async function resolveSpotLocation(
   const localDynamic = findLocalDynamicSpotByQuery(normalizedQuery);
   if (localDynamic) return resolvedDynamicSpot(localDynamic, "dynamic-local");
   const edriveDynamic = await lookupEdriveDynamicSpotByQuery(normalizedQuery, signal);
-  if (edriveDynamic) return resolvedDynamicSpot(edriveDynamic, "dynamic-edrive");
+  if (edriveDynamic) return resolvedDynamicSpot(edriveDynamic, "dynamic-remote");
   const cached = readCachedSpotLocation(normalizedQuery);
   if (cached) return snapSpotLocationToRegisteredLandmark(cached);
 
@@ -759,7 +760,7 @@ async function resolveSpotLocationUncached(
       `https://nominatim.openstreetmap.org/search?${parameters}`,
       {
         headers: { Accept: "application/json" },
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+        signal: signal ? anySignal([signal, timeoutSignal(15_000)]) : timeoutSignal(15_000),
       }
     );
   } catch (error) {

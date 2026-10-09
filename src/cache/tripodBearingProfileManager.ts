@@ -1,3 +1,4 @@
+import { saveToLocalStorage } from "../storage/safeLocalStorage";
 import { Cartographic } from "cesium";
 import {
   ABSOLUTE_MAX_DISTANCE_METERS,
@@ -188,7 +189,7 @@ function readOptIns(): BearingProfileOptIn[] {
 }
 
 function writeOptIns(records: BearingProfileOptIn[]): BearingProfileOptIn[] {
-  localStorage.setItem(OPT_IN_STORAGE_KEY, JSON.stringify(records));
+  saveToLocalStorage(OPT_IN_STORAGE_KEY, JSON.stringify(records));
   return records;
 }
 
@@ -557,7 +558,8 @@ export async function backfillBearingProfiles(params: {
       remainingBearings.length * DIRECT_PATH_SECONDS_PER_BEARING_ESTIMATE / BEARING_CONCURRENCY / 60
     ));
     directFallbackNotice =
-      `計算済みデータを使えないため、1方位ずつ直接取得しています（理由: ${batchFallbackReason ?? "計算済みデータの一部が不足"}）。` +
+      // 理由（内部のエラー文）は画面に出さない。下の console.warn にだけ残す。
+      "計算済みデータを使えないため、1方位ずつ直接取得しています。" +
       `1方位ごとに完了して数字が進みます。目安 約${estimatedMinutes}分以上。`;
     console.warn(`[bearing-profile] 直接取得へ切り替え: ${batchFallbackReason ?? "partial"}`);
   }

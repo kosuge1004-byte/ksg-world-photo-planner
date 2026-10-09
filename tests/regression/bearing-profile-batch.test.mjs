@@ -431,7 +431,7 @@ test("Pages batch endpoint fails registered-profile misses quickly instead of co
   assert.equal(response.headers.get("access-control-allow-origin"), "*");
   assert.deepEqual(await response.json(), {
     code: "PRECOMPUTED_PROFILE_UNAVAILABLE",
-    error: "内蔵スポットの計算済み地形データがCloudflare R2に未配置、またはR2を読み出せません。",
+    error: "この内蔵スポットの計算済み地形データを取得できませんでした。",
   });
 });
 
@@ -517,8 +517,8 @@ test("Pages batch endpoint stops arbitrary-coordinate downloads when E-drive is 
   });
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {
-    code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
-    error: "この地点の正確な地形データをEドライブで計算できません。PC・Eドライブ・Cloudflare Tunnelの状態を確認して再実行してください。",
+    code: "PROFILE_SOURCE_UNAVAILABLE",
+    error: "この地点の地形データをまとめて取得できなかったため、1方位ずつ取得します（時間がかかります）。",
   });
 });
 
@@ -797,7 +797,7 @@ test("registered spots are never overwritten by an E-drive write-back", async ()
 
 test("503 from R2/E-drive is a reasoned miss, not a download-ending error", async () => {
   const { fetchBearingProfileBatchDetailed } = await import("../../src/cache/bearingProfileBatchClient.ts");
-  for (const code of ["PRECOMPUTED_PROFILE_UNAVAILABLE", "LOCAL_DEM_PROFILE_UNAVAILABLE"]) {
+  for (const code of ["PRECOMPUTED_PROFILE_UNAVAILABLE", "PROFILE_SOURCE_UNAVAILABLE"]) {
     const outcome = await fetchBearingProfileBatchDetailed(request, undefined, async () =>
       Response.json({ code, error: `理由:${code}` }, { status: 503 })
     );

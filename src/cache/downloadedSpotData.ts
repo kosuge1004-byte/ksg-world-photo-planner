@@ -1,3 +1,4 @@
+import { saveToLocalStorage } from "../storage/safeLocalStorage";
 export type DownloadedSpotDataRecord = {
   subjectId: string;
   label: string;
@@ -33,13 +34,13 @@ export function listDownloadedSpotData(): DownloadedSpotDataRecord[] {
 
 export function upsertDownloadedSpotData(record: DownloadedSpotDataRecord): DownloadedSpotDataRecord[] {
   const next = [record, ...listDownloadedSpotData().filter((item) => item.subjectId !== record.subjectId)];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  saveToLocalStorage(STORAGE_KEY, JSON.stringify(next));
   return next;
 }
 
 export function removeDownloadedSpotData(subjectId: string): DownloadedSpotDataRecord[] {
   const next = listDownloadedSpotData().filter((item) => item.subjectId !== subjectId);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  saveToLocalStorage(STORAGE_KEY, JSON.stringify(next));
   return next;
 }
 
@@ -53,6 +54,6 @@ export function renameDownloadedSpotData(subjectId: string, label: string): Down
   const current = listDownloadedSpotData();
   if (!trimmed) return current;
   const next = current.map((item) => (item.subjectId === subjectId ? { ...item, label: trimmed } : item));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  saveToLocalStorage(STORAGE_KEY, JSON.stringify(next));
   return next;
 }

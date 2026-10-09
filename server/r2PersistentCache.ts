@@ -36,7 +36,7 @@ const R2_ACCESS_TIMEOUT_MS = 5_000;
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error("R2アクセスがタイムアウトしました")), timeoutMs);
+    timeoutId = setTimeout(() => reject(new Error("保存データの読み出しがタイムアウトしました")), timeoutMs);
   });
   try {
     return await Promise.race([promise, timeoutPromise]);

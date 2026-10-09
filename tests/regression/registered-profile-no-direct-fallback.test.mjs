@@ -135,8 +135,9 @@ test("a registered spot continues on the per-bearing path when the static file a
     "a registered spot must no longer end the download with an error");
   assert.ok(batchApiCalls >= 1, "the API is tried after the static file");
   assert.equal(typeof reason, "string", "the per-bearing path must start");
-  assert.match(reason, /東京スカイツリーの計算済み地形データを取得できないため、1方位ずつ取得します/);
-  assert.match(reason, /静的配信に配置されていません/, "the static-file miss reason is shown");
+  // 2026-10-09: 内部の理由は画面の文章に出さない。
+  assert.match(reason, /^計算済みデータを使えないため、1方位ずつ直接取得しています。/);
+  assert.doesNotMatch(reason, /静的配信|理由/);
 });
 
 // 2026-09-30: 契約変更。旧1方位経路は全点をPages Functions経由で取得し約54分

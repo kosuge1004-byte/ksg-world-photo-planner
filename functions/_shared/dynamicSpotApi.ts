@@ -52,7 +52,7 @@ export async function handleDynamicSpotApi(
     // resume are owned by the always-running PC service.
     return json({
       code: "DYNAMIC_SPOT_RETRY_AUTOMATIC",
-      error: "Dynamic SpotはPC側で自動再試行されます",
+      error: "スポットデータの生成は自動で再試行されます",
     }, 409);
   }
   return withCloudflareServerRuntime(context, async () => {

@@ -133,7 +133,7 @@ export function BearingProfileDownloadDialog({ state, onConfirm, onDecline, onCa
             )}
             {progress.lastFailureReason && (
               <p className="project-dialog-note project-dialog-note-warning">
-                直近の失敗理由: {progress.lastFailureReason}
+                一部の方位で取得に失敗しました。
               </p>
             )}
             <div>

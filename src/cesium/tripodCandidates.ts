@@ -182,7 +182,7 @@ export type TripodSearchDiagnostics = {
   cacheMemoryHitCount: number;
   cacheSharedCount: number;
   cacheBypassCount: number;
-  // 2026-09-02追記: 「R2ヒット0・R2ミス0なのに遅い」というパターンの
+  // 2026-09-02追記: 「サーバーヒット0・サーバーミス0なのに遅い」というパターンの
   // 原因切り分けのため、サーバーへ到達する前段（端末内の生DEMタイル
   // デコードキャッシュ）の活動もあわせて記録する。
   localTileMemoryHitCount: number;

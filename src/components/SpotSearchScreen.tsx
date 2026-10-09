@@ -3,7 +3,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 
 import type { GroundPoint } from "../types/points";
 import type { SubjectRecord } from "../subjectStorage";
-import { toUserFacingErrorMessage } from "../errors/userFeedback";
+import { spotSearchErrorDetail, toUserFacingErrorMessage } from "../errors/userFeedback";
 import { isAbortError } from "../utils/runtimeErrors";
 import type { DownloadedSpotDataRecord } from "../cache/downloadedSpotData";
 import type { DownloadedSpotStorageSummary } from "../cache/downloadedSpotDataStats";
@@ -86,6 +86,20 @@ export function SpotSearchScreen({
   const [editingDownloadedLabelId, setEditingDownloadedLabelId] = useState<string | null>(null);
   const [editingDownloadedLabel, setEditingDownloadedLabel] = useState("");
   const [message, setMessage] = useState("");
+  // エラーの原因（内部の情報）は画面に出さず、「詳細をコピー」を押した時だけ渡す。
+  // 表示中の文章がそのエラーのものである間だけボタンを出す。
+  const [errorDetail, setErrorDetailState] = useState<{ forMessage: string; text: string } | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyErrorDetail = async (): Promise<void> => {
+    if (!errorDetail) return;
+    try {
+      await navigator.clipboard.writeText(errorDetail.text);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    window.setTimeout(() => setCopyState("idle"), 3_000);
+  };
   const [isSearching, setIsSearching] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const [selectedDownloadedIds, setSelectedDownloadedIds] = useState<Set<string>>(new Set());
@@ -185,10 +199,11 @@ export function SpotSearchScreen({
       }, selected);
     } catch (error) {
       if (isAbortError(error)) return;
-      setMessage(toUserFacingErrorMessage(
-        error,
-        /^https?:\/\//i.test(queryText) ? "google-maps-url" : "spot-search"
-      ));
+      const errorContext = /^https?:\/\//i.test(queryText) ? "google-maps-url" : "spot-search";
+      const shown = toUserFacingErrorMessage(error, errorContext);
+      const detail = spotSearchErrorDetail(error, errorContext);
+      setMessage(shown);
+      setErrorDetailState(detail ? { forMessage: shown, text: detail } : null);
     } finally {
       if (controllerRef.current === controller) {
         controllerRef.current = null;
@@ -522,6 +537,16 @@ export function SpotSearchScreen({
           </div>
         )}
         {message && <p className="spot-search-message" aria-live="polite">{message}</p>}
+        {message && errorDetail?.forMessage === message && (
+          <button
+            type="button"
+            className="spot-search-copy-detail"
+            onClick={() => void copyErrorDetail()}
+            title="開発者に問題を報告する際に役立つ技術的な情報をコピーします"
+          >
+            {copyState === "copied" ? "コピーしました" : copyState === "failed" ? "コピーできませんでした" : "詳細をコピー"}
+          </button>
+        )}
         <small className="spot-search-credit">地名検索：© OpenStreetMap contributors（Nominatim・Photon）/ 国土地理院</small>
       </form>
     </section>

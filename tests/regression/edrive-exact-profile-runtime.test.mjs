@@ -39,7 +39,7 @@ globalThis.fetch = async (input, init = {}) => {
     batchCalls += 1;
     if (failAtBatchCalls.has(batchCalls)) {
       return Response.json({
-        code: "LOCAL_DEM_PROFILE_UNAVAILABLE",
+        code: "PROFILE_SOURCE_UNAVAILABLE",
         error: "Eドライブ一時停止",
       }, { status: 503 });
     }
@@ -135,7 +135,9 @@ test("a retry resumes after the last committed E-drive chunk", async () => {
     if (result.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
     return result;
   }), { name: "AbortError" });
-  assert.match(fallbackNotice, /Eドライブ一時停止/, "the E-drive miss reason is shown on the per-bearing path");
+  // 2026-10-09: 内部の理由は画面の文章に出さない（遅い経路に入ったことだけ伝える）。
+  assert.match(fallbackNotice, /^計算済みデータを使えないため、1方位ずつ直接取得しています。/);
+  assert.doesNotMatch(fallbackNotice, /Eドライブ|理由/);
   assert.equal(batchCalls, 3);
   assert.equal(legacyElevationCalls, 0);
 
