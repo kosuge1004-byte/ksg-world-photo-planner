@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "free view mode: subject-free fixed-eye camera, sun/moon/milky way tracks, observer search, shared viewer restore, baseline equivalence",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/free-view.test.mjs"] },
   { name: "2026-10-09 audit fixes: old-device abort signals, carried-over moon pass, Photon labels, storage guards, shell cache pruning",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/audit-fixes-20261009.test.mjs"] },
   { name: "spot flow error causes: published data beyond-range fallback, section coverage guard, browser-safe Nominatim headers, history save failure",

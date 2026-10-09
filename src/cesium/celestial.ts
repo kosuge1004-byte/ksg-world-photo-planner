@@ -27,7 +27,6 @@ import { zonedDateParts } from "../time/zonedTime";
 import { createCameraModel } from "./cameraModelFactory";
 import {
   createAstronomyObserver,
-  createAstronomyObserverAtLens,
 } from "../observer/observerFactory";
 import {
   localVectorToVec3,
@@ -271,6 +270,26 @@ export function createCameraProjection(
     right: apparent.localRight,
     up: apparent.localUp,
     forward: apparent.localForward,
+  };
+}
+
+/**
+ * カメラモデル（被写体の有無を問わない）から天体投影用の基底を作る。
+ * 自由ビューモードは createFreeViewCameraModel の結果をここへ渡す。
+ */
+export function cameraProjectionFromModel(model: {
+  horizontalFovDegrees: number;
+  verticalFovDegrees: number;
+  localRight: LocalVector;
+  localUp: LocalVector;
+  localForward: LocalVector;
+}): CameraProjection {
+  return {
+    horizontalFov: model.horizontalFovDegrees,
+    verticalFov: model.verticalFovDegrees,
+    right: model.localRight,
+    up: model.localUp,
+    forward: model.localForward,
   };
 }
 
@@ -575,17 +594,34 @@ export function calculateCelestialScreenPoints(
   viewCorrection?: CameraViewCorrection,
   refractionWeather?: RefractionWeatherContext
 ): CelestialScreenPoint[] {
-  const projection = createCameraProjection(
-    tripod,
-    subject,
-    settings,
-    previewAspectRatio,
+  return calculateCelestialScreenPointsForProjection(
+    date,
+    observerAtLens(tripod, settings),
+    createCameraProjection(
+      tripod,
+      subject,
+      settings,
+      previewAspectRatio,
+      calculationMode,
+      viewCorrection
+    ),
     calculationMode,
-    viewCorrection
+    refractionWeather
   );
+}
 
+/**
+ * 天体の画面位置。レンズ中心の観測点とカメラ投影だけを受け取り、被写体に依存しない
+ * （2026-10-09: calculateCelestialScreenPoints の本体をそのまま切り出した）。
+ */
+export function calculateCelestialScreenPointsForProjection(
+  date: Date,
+  lensObserver: GroundPoint,
+  projection: CameraProjection,
+  calculationMode: CalculationMode,
+  refractionWeather?: RefractionWeatherContext
+): CelestialScreenPoint[] {
   const moon = moonAppearance(date);
-  const lensObserver = observerAtLens(tripod, settings);
 
   const definitions: Array<{
     id: CelestialBodyId;
@@ -701,33 +737,79 @@ export function calculateCelestialScreenTracks(
     calculationMode,
     viewCorrection
   );
-  const lensObserver = observerAtLens(tripod, settings);
+  return projectCelestialTrackSamples(
+    calculateCelestialTrackSamples(
+      observerAtLens(tripod, settings),
+      calculationMode,
+      dayStart,
+      dayEnd,
+      timeZone,
+      celestialTrackSampleMinutes(projection),
+      refractionWeather
+    ),
+    projection
+  );
+}
+
+/** 軌跡1点ぶんの、カメラの向きに依存しない部分（時刻と方位・高度）。 */
+export type CelestialTrackSample = HorizontalCoordinates & {
+  timestampMilliseconds: number;
+  timeLabel: string;
+  showTimeLabel: boolean;
+};
+
+export type CelestialTrackSamples = {
+  id: CelestialBodyId;
+  label: string;
+  samples: CelestialTrackSample[];
+};
+
+/** 長焦点でも軌跡がフレームを飛び越えないよう、画角に応じて1～10分間隔へ細分化する。 */
+export function celestialTrackSampleMinutes(projection: CameraProjection): number {
+  const minimumFovDegrees = Math.min(
+    projection.horizontalFov,
+    projection.verticalFov
+  );
+  return Math.max(
+    1,
+    Math.min(10, Math.floor(minimumFovDegrees))
+  );
+}
+
+/**
+ * 軌跡の各時刻の方位・高度（天体計算）。カメラの向きには依存しない。
+ * 2026-10-09: calculateCelestialScreenTracks の本体を「天体計算」と「画面への投影」に
+ * 分けた。向きだけが変わる自由ビューモードで、天体計算をやり直さずに投影だけを
+ * 更新するため。計算式・刻み・順序は変えていない。
+ */
+export function calculateCelestialTrackSamples(
+  lensObserver: GroundPoint,
+  calculationMode: CalculationMode,
+  dayStart: Date,
+  dayEnd: Date,
+  timeZone: string,
+  sampleMinutes: number,
+  refractionWeather?: RefractionWeatherContext,
+  ids?: readonly CelestialBodyId[]
+): CelestialTrackSamples[] {
   const definitions: Array<{ id: CelestialBodyId; label: string }> = [
     { id: "sun", label: "太陽" },
     { id: "moon", label: "月" },
     { id: "milkyWay", label: "天の川" },
     { id: "polaris", label: "北極星" },
   ];
-
-  // 長焦点でも軌跡がフレームを飛び越えないよう、画角に応じて1～10分間隔へ細分化する。
-  const minimumFovDegrees = Math.min(
-    projection.horizontalFov,
-    projection.verticalFov
-  );
-  const sampleMinutes = Math.max(
-    1,
-    Math.min(10, Math.floor(minimumFovDegrees))
-  );
   const durationMilliseconds = Math.max(
     0,
     dayEnd.getTime() - dayStart.getTime()
   );
   const sampleMilliseconds = sampleMinutes * 60_000;
 
-  return definitions.map(({ id, label }) => ({
+  return definitions
+    .filter(({ id }) => !ids || ids.includes(id))
+    .map(({ id, label }) => ({
     id,
     label,
-    points: Array.from({
+    samples: Array.from({
       length: Math.max(1, Math.floor(durationMilliseconds / sampleMilliseconds) + 1),
     }, (_, index) => {
       const sampleDate = new Date(
@@ -740,20 +822,38 @@ export function calculateCelestialScreenTracks(
         calculationMode,
         refractionWeather
       );
+      const { hour, minute } = zonedDateParts(sampleDate, timeZone);
+      return {
+        ...horizontal,
+        timestampMilliseconds: sampleDate.getTime(),
+        timeLabel: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+        showTimeLabel: minute === 0 && hour % 2 === 0,
+      };
+    }),
+  }));
+}
+
+/** 軌跡の各点を、カメラ投影で画面座標へ変換する。 */
+export function projectCelestialTrackSamples(
+  tracks: readonly CelestialTrackSamples[],
+  projection: CameraProjection
+): CelestialTrack[] {
+  return tracks.map(({ id, label, samples }) => ({
+    id,
+    label,
+    points: samples.map((sample) => {
+      const { azimuthDegrees, altitudeDegrees, timestampMilliseconds, timeLabel, showTimeLabel, ...rest } = sample;
+      const horizontal = { ...rest, azimuthDegrees, altitudeDegrees } as HorizontalCoordinates;
       const screenPoint = projectHorizontalToPreview(horizontal, projection);
-      const projected = {
+      return {
+        ...horizontal,
         xPercent: screenPoint.xPercent,
         yPercent: screenPoint.yPercent,
         inFront: screenPoint.inFront,
         visibleInFrame: screenPoint.visibleInFrame,
-      };
-      const { hour, minute } = zonedDateParts(sampleDate, timeZone);
-      return {
-        ...horizontal,
-        ...projected,
-        timestampMilliseconds: sampleDate.getTime(),
-        timeLabel: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
-        showTimeLabel: minute === 0 && hour % 2 === 0,
+        timestampMilliseconds,
+        timeLabel,
+        showTimeLabel,
       };
     }),
   }));
@@ -805,15 +905,36 @@ export function calculateMilkyWayScreenPath(
   sampleStepDegrees = 5,
   refractionWeather?: RefractionWeatherContext
 ): MilkyWayPathPoint[] {
-  const projection = createCameraProjection(
-    tripod,
-    subject,
-    settings,
-    previewAspectRatio,
+  return calculateMilkyWayScreenPathForProjection(
+    date,
+    observerAtLens(tripod, settings),
+    createCameraProjection(
+      tripod,
+      subject,
+      settings,
+      previewAspectRatio,
+      calculationMode,
+      viewCorrection
+    ),
     calculationMode,
-    viewCorrection
+    sampleStepDegrees,
+    refractionWeather
   );
-  const observer = createAstronomyObserverAtLens(tripod, settings);
+}
+
+/**
+ * その時刻の銀河面の帯。レンズ中心の観測点とカメラ投影だけを受け取り、被写体に
+ * 依存しない（2026-10-09: calculateMilkyWayScreenPath の本体をそのまま切り出した）。
+ */
+export function calculateMilkyWayScreenPathForProjection(
+  date: Date,
+  lensObserver: GroundPoint,
+  projection: CameraProjection,
+  calculationMode: CalculationMode,
+  sampleStepDegrees = 5,
+  refractionWeather?: RefractionWeatherContext
+): MilkyWayPathPoint[] {
+  const observer = createAstronomyObserver(lensObserver);
 
   const path: MilkyWayPathPoint[] = [];
   const safeStep = Math.max(5, Math.min(90, sampleStepDegrees));

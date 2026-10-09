@@ -115,6 +115,58 @@ function buildOrientation(
 }
 
 /**
+ * 36x24mm内接方式の画角。createCameraModel と createFreeViewCameraModel が共有する
+ * 唯一の実装（2026-10-09: createCameraModel 内の式をそのまま切り出した）。
+ */
+function fieldOfViewDegrees(
+  aspectRatio: number,
+  focalLengthMm: number
+): { horizontalFovDegrees: number; verticalFovDegrees: number } {
+  const sensor = sensorDimensionsMm(aspectRatio);
+  const horizontalFovDegrees = 2 * Math.atan(sensor.width / (2 * focalLengthMm)) * 180 / Math.PI;
+  const verticalFovDegrees = 2 * Math.atan(sensor.height / (2 * focalLengthMm)) * 180 / Math.PI;
+  assertFovDegrees(horizontalFovDegrees, "水平画角");
+  assertFovDegrees(verticalFovDegrees, "垂直画角");
+  return { horizontalFovDegrees, verticalFovDegrees };
+}
+
+/**
+ * 自由ビューモード用: 被写体を使わず、視点・方位角・仰角だけからカメラモデルを作る。
+ *
+ * - observerGround: 視点の地表（DEM/ジオイドで解決済み）。レンズ中心高をここで加える。
+ * - headingDegrees: 真北0°・東90°。pitchDegrees: 水平0°・上方が正。rollは0固定。
+ * 被写体への測地線・見かけ仰角の補正は使わない（視線は利用者が指定した向きそのもの）。
+ * 方向基底と画角は createCameraModel と同じ buildOrientation / fieldOfViewDegrees を使う。
+ */
+export function createFreeViewCameraModel(
+  observerGround: GroundPoint,
+  headingDegrees: number,
+  pitchDegrees: number,
+  lensCenterHeightMeters: number,
+  focalLengthMm: number,
+  aspectRatio: number
+): GeometryCameraModel {
+  const observerPoint = withLensCenterHeight(observerGround, lensCenterHeightMeters);
+  const observerEcef = Cartesian3.fromDegrees(
+    observerPoint.longitude,
+    observerPoint.latitude,
+    ellipsoidalHeightMeters(observerPoint)
+  );
+  const azimuthDegrees = normalizeBearingDegrees(headingDegrees);
+  assertEcefPosition(observerEcef, "自由ビュー視点のECEF座標");
+  assertBearingDegrees(azimuthDegrees, "自由ビューの方位角");
+  assertPitchDegrees(pitchDegrees, "自由ビューの仰角");
+  const { horizontalFovDegrees, verticalFovDegrees } = fieldOfViewDegrees(aspectRatio, focalLengthMm);
+  return {
+    observerPoint,
+    observerEcef,
+    horizontalFovDegrees,
+    verticalFovDegrees,
+    ...buildOrientation(azimuthDegrees, pitchDegrees, localBasis(observerEcef)),
+  };
+}
+
+/**
  * CameraModelFactory: heading/pitch/roll/forward/right/up/FOVを生成する唯一の場所。
  * 検索・Cesium実カメラ・天体・人物の全投影はここで作られたモデルだけを参照する。
  *
@@ -153,11 +205,9 @@ export function createCameraModel(
   assertPitchDegrees(geometryAltitudeDegrees, "カメラ幾何仰角");
   assertPitchDegrees(apparentAltitudeDegrees, "カメラ見かけ仰角");
 
-  const sensor = sensorDimensionsMm(aspectRatio);
-  const horizontalFovDegrees = 2 * Math.atan(sensor.width / (2 * settings.focalLengthMm)) * 180 / Math.PI;
-  const verticalFovDegrees = 2 * Math.atan(sensor.height / (2 * settings.focalLengthMm)) * 180 / Math.PI;
-  assertFovDegrees(horizontalFovDegrees, "水平画角");
-  assertFovDegrees(verticalFovDegrees, "垂直画角");
+  const { horizontalFovDegrees, verticalFovDegrees } = fieldOfViewDegrees(
+    aspectRatio, settings.focalLengthMm
+  );
 
   const basis = localBasis(observerEcef);
   const geometry: GeometryCameraModel = {

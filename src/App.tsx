@@ -71,6 +71,8 @@ import {
 } from "./sharing/projectShareCode";
 import { TimelinePanel } from "./components/TimelinePanel";
 import type { ArCameraProjection } from "./components/ArCameraScreen";
+// 2026-10-09: 自由ビューモード（被写体を使わない独立した全画面3D）。開いた時だけ読み込む。
+const FreeViewScreen = lazy(() => import("./components/FreeViewScreen"));
 const ArCameraScreen = lazy(() =>
   import("./components/ArCameraScreen").then((m) => ({ default: m.ArCameraScreen }))
 );
@@ -681,6 +683,21 @@ function App() {
   }, [showUserNotice]);
   const [spotSearchOpen, setSpotSearchOpen] = useState(false);
   const [arCameraOpen, setArCameraOpen] = useState(false);
+  // 2026-10-09: 自由ビューモード。開いている間だけ、共有Cesiumコンテナをこの画面の
+  // ホスト（freeViewHost）へ移す。開いた瞬間の設定を初期値としてコピーして渡し、
+  // 通常画面の三脚ピン・被写体ピン・日時・カメラ設定は自由ビューから変更しない。
+  const [freeViewSession, setFreeViewSession] = useState<{
+    observer: GroundPoint | null;
+    focalLengthMm: number;
+    lensCenterHeightMeters: number;
+    dateTimeLocal: string;
+    timeZone: string;
+    searchCenter: { latitude: number; longitude: number } | null;
+  } | null>(null);
+  const freeViewOpen = freeViewSession !== null;
+  const [freeViewHost, setFreeViewHost] = useState<HTMLDivElement | null>(null);
+  const [freeViewAttached, setFreeViewAttached] = useState(false);
+  const getMapViewer = useCallback(() => mapViewerRef.current, []);
   // 2026-09-02変更: 別画面のモーダルではなく、今の2Dマップ（画面下部の
   // map-section）自体を3D表示へ切り替えられる、永続的な設定にする。
   // 2026-09-04追記: 常に2Dで起動していた不具合を修正し、前回終了時に
@@ -820,10 +837,18 @@ function App() {
   // 挿入する。要素そのものは同一のままホスト先だけ変わるので、Cesium
   // インスタンス・WebGLコンテキストは維持される。
   useEffect(() => {
-    const host = mapDisplayMode === "3d" ? map3DHostRef.current : previewMapHostRef.current;
+    // 2026-10-09: 自由ビューモード中は、同じコンテナをその画面のホストへ移す
+    // （2つ目のViewerは作らない）。閉じると従来のホストへ戻る。
+    const host = freeViewOpen
+      ? freeViewHost
+      : mapDisplayMode === "3d" ? map3DHostRef.current : previewMapHostRef.current;
     const element = mapRef.current;
-    if (!host || !element) return;
+    if (!host || !element) {
+      setFreeViewAttached(false);
+      return;
+    }
     if (element.parentElement !== host) host.appendChild(element);
+    setFreeViewAttached(freeViewOpen);
     // 2026-09-02追記（実機診断より）: appendChildでコンテナを移動しても、
     // Cesiumはキャンバスの実ピクセルサイズ・カメラのアスペクト比を
     // 自動では再計算しない。手動でresize()を呼ばないと、タッチ座標と
@@ -838,7 +863,7 @@ function App() {
         viewer.scene.requestRender();
       });
     }
-  }, [mapDisplayMode, mapReady]);
+  }, [mapDisplayMode, mapReady, freeViewOpen, freeViewHost]);
 
   // 2026-09-02追記: 画面下部の地図を3D表示にしている間だけ、Cesiumの操作
   // （パン/ズーム/回転、既存のダブルタップズームも含む）を有効化し、
@@ -850,7 +875,9 @@ function App() {
   // （useDefaultRenderLoop = false）、3D表示中だけ手動でレンダー
   // ループを回す。
   useEffect(() => {
-    if (mapDisplayMode !== "3d") return;
+    // 自由ビューモード中は、3D地図の操作・タップでのピン配置・描画ループを止める
+    // （同じViewerを自由ビューが使うため）。閉じるとこのeffectが再実行されて元へ戻る。
+    if (mapDisplayMode !== "3d" || freeViewOpen) return;
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
 
@@ -993,6 +1020,7 @@ function App() {
   }, [
     mapDisplayMode,
     mapReady,
+    freeViewOpen,
     subjectPlacementActive,
     tripodPlacementActive,
     foregroundPlacementActive,
@@ -3565,6 +3593,11 @@ function App() {
     // 既存の高精細化タイマーもeffect cleanupで止め、操作停止後に再開する。
     if (timelineInteracting) return;
 
+    // 2026-10-09: 自由ビューモード中は、同じViewerのカメラを自由ビューが使っているため
+    // プレビュー撮影（カメラ移動を伴う）を止める。閉じるとこのeffectが再実行され、
+    // 従来どおり三脚→被写体のプレビューを撮り直す。
+    if (freeViewOpen) return;
+
     // 2026-09-02追記: 画面下部の地図を3D表示にしている間（Googleタイル
     // モード等を対話的に見る、プレビューと同じCesiumインスタンスを共有）
     // は、ユーザーが自由にカメラを操作しているため、プレビュー側が同じ
@@ -3752,6 +3785,7 @@ function App() {
     previewDualViewerActive,
     previewSecondaryViewerReady,
     previewSecondaryViewerStatus,
+    freeViewOpen,
   ]);
 
   function stopPlacementMode() {
@@ -6455,6 +6489,19 @@ ${diagnosticMessage}
           // iOSではDeviceOrientation権限要求をユーザー操作の同期チェーン内で行う必要がある。
           void requestArOrientationPermissionFromUserGesture().finally(() => setArCameraOpen(true));
         }}
+        onOpenFreeView={() => {
+          // 開いた瞬間の設定をコピーして渡す。端末センサーの許可は求めない。
+          setFreeViewSession({
+            observer: tripodPoint,
+            focalLengthMm: cameraSettings.focalLengthMm,
+            lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
+            dateTimeLocal,
+            timeZone,
+            searchCenter: tripodPoint
+              ? { latitude: tripodPoint.latitude, longitude: tripodPoint.longitude }
+              : mapCenterRef.current,
+          });
+        }}
         onOpenMap3D={toggleMapDisplayMode}
         mapDisplayMode={mapDisplayMode}
         precisionSettings={precisionSettings}
@@ -6463,6 +6510,28 @@ ${diagnosticMessage}
         onConnectCesiumIon={requestCesiumIonConnection}
         onDisconnectCesiumIon={handleDisconnectCesiumIon}
       />
+      {freeViewSession && (
+        <Suspense fallback={null}>
+          <FreeViewScreen
+            getViewer={getMapViewer}
+            viewerReady={mapReady}
+            viewerAttached={freeViewAttached}
+            onHostElement={setFreeViewHost}
+            initialObserver={freeViewSession.observer}
+            initialFocalLengthMm={freeViewSession.focalLengthMm}
+            initialLensCenterHeightMeters={freeViewSession.lensCenterHeightMeters}
+            initialDateTimeLocal={freeViewSession.dateTimeLocal}
+            initialTimeZone={freeViewSession.timeZone}
+            calculationMode={calculationMode}
+            searchCenter={freeViewSession.searchCenter}
+            googleRequested={precisionSettings.accuracyMode === "highest"}
+            cesiumIonConnected={cesiumIonConnected}
+            onConnectCesiumIon={requestCesiumIonConnection}
+            mapStatus={status}
+            onClose={() => setFreeViewSession(null)}
+          />
+        </Suspense>
+      )}
       {arCameraOpen && (
         <Suspense fallback={null}>
           <ArCameraScreen

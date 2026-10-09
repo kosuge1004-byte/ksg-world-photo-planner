@@ -35,6 +35,8 @@ type Props = {
   onOpenCalendar: () => void;
   onOpenMoonAgeCalendar: () => void;
   onOpenArCamera: () => void;
+  /** 自由ビューモード（ARとは別系統。端末センサーは使わない）。 */
+  onOpenFreeView: () => void;
   onOpenMap3D: () => void;
   mapDisplayMode: "2d" | "3d";
   precisionSettings: PrecisionSettings;
@@ -52,6 +54,7 @@ export function TopSettingsBar({
   onOpenCalendar,
   onOpenMoonAgeCalendar,
   onOpenArCamera,
+  onOpenFreeView,
   onOpenMap3D,
   mapDisplayMode,
   precisionSettings,
@@ -402,6 +405,12 @@ export function TopSettingsBar({
             onOpenArCamera();
           }}>
             <b>ARカメラ</b><small>実景と3D・天体を重ねて確認</small>
+          </button>
+          <button type="button" onClick={() => {
+            closeMenu();
+            onOpenFreeView();
+          }}>
+            <b>自由ビューモード</b><small>指定した地点に立って360°の景観と天体を確認</small>
           </button>
           {pwaInstall.supported && !pwaInstall.installed && (
             <>

@@ -20,6 +20,12 @@ type Props = {
   discOpacity?: number;
   /** 軌跡線の配色。"yellow"は上部プレビュー用（全天体共通の黄色）。 */
   trackTone?: "body" | "yellow";
+  /**
+   * SVG内のid（月の欠け方のマスク等）に付ける接頭辞。同じ画面に2つ目のオーバーレイ
+   * （自由ビューモード）を重ねる時、idが重複して別の日時の月相を参照しないようにする。
+   * 未指定なら従来と同じid。
+   */
+  idPrefix?: string;
 };
 
 const MOON_MARIA = [
@@ -327,6 +333,7 @@ function CelestialOverlayComponent({
   occlusion,
   discOpacity = 1,
   trackTone = "body",
+  idPrefix = "",
 }: Props) {
   const milkyWaySegments = milkyWayBandSegments(milkyWayPath, true);
   const hiddenMilkyWaySegments = milkyWayBandSegments(milkyWayPath, false);
@@ -494,8 +501,8 @@ function CelestialOverlayComponent({
             ) : point.id === "moon" ? (
               <svg className="celestial-physical-disc moon-disc" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <defs>
-                  <clipPath id="moon-disc-clip"><circle cx="50" cy="50" r="49" /></clipPath>
-                  <mask id="moon-phase-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+                  <clipPath id={`${idPrefix}moon-disc-clip`}><circle cx="50" cy="50" r="49" /></clipPath>
+                  <mask id={`${idPrefix}moon-phase-mask`} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
                     <rect width="100" height="100" fill="black" />
                     <g transform={`rotate(${point.brightLimbAngleDegrees ?? 0} 50 50)`}>
                       <path fill="white" d={moonPhasePath(point)} />
@@ -503,7 +510,7 @@ function CelestialOverlayComponent({
                   </mask>
                 </defs>
                 <circle className="moon-shadow" cx="50" cy="50" r="49" />
-                <g clipPath="url(#moon-disc-clip)" mask="url(#moon-phase-mask)">
+                <g clipPath={`url(#${idPrefix}moon-disc-clip)`} mask={`url(#${idPrefix}moon-phase-mask)`}>
                   <circle className="moon-light-surface" cx="50" cy="50" r="49" />
                   <g transform={`rotate(${(point.moonNorthAngleDegrees ?? -90) + 90} 50 50)`}>
                     {projectedMoonMaria(point).map((mare) => (
