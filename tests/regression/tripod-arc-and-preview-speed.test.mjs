@@ -352,3 +352,19 @@ test("3D display speed tuning: tiles load while moving, MSAA is off, and the idl
   assert.match(viewer, /tileset\.tileVisible\.addEventListener/);
   assert.match(viewer, /viewer\.scene\.globe\.show = false/);
 });
+
+test("2026-10-10 preview speed: tiles advance every frame while loading, and the live 3D view is shown instead of repeated copies", async () => {
+  const preview = await readFile(new URL("../../src/cesium/previewSnapshot.ts", import.meta.url), "utf8");
+  const css = await readFile(new URL("../../src/App.css", import.meta.url), "utf8");
+  // 読み込み待ちの描画間隔は80ミリ秒から16ミリ秒へ（タイルの要求・受け取りが毎フレーム進む）。
+  assert.match(preview, /const PREVIEW_TILE_RENDER_INTERVAL_MS = 16;/);
+  // 3Dの画面がプレビュー枠に重なっている時は、途中経過を写し取らずそのまま見せる。
+  assert.match(preview, /if \(liveRenderer\) \{[\s\S]*?liveRenderer\.classList\.add\(LIVE_RENDERER_CLASS\);\s*previewCanvas\.classList\.add\(LOADING_CANVAS_CLASS\);/);
+  // 終了時（完了・時間切れ・中止のいずれも）は必ず写し取った絵へ戻す。最後の写し取りは従来どおり全解像度で1回。
+  assert.match(preview, /viewer\.resolutionScale = originalResolutionScale;[\s\S]*?copyViewerFrameToPreview\(viewer, previewCanvas, context\);\s*\}[\s\S]*?if \(liveShown\) \{\s*liveRenderer\?\.classList\.remove\(LIVE_RENDERER_CLASS\);\s*previewCanvas\.classList\.remove\(LOADING_CANVAS_CLASS\);/);
+  assert.match(css, /\.preview-renderer-host \.preview-renderer\.preview-renderer-live \{ opacity: 1; \}/);
+  assert.match(css, /\.preview-canvas\.preview-canvas-loading \{ opacity: 0; \}/);
+  // 待ち時間の上限・仕上げの撮り直しは変えていない。
+  assert.match(preview, /PREVIEW_INITIAL_TILE_WAIT_TIMEOUT_MS = 4_000/);
+  assert.match(preview, /PREVIEW_REFINEMENT_TILE_WAIT_TIMEOUT_MS = 2_000/);
+});

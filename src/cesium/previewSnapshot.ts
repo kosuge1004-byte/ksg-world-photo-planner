@@ -23,7 +23,11 @@ type CameraState = {
 const PREVIEW_TILE_WAIT_TIMEOUT_MS = 8_000;
 export const PREVIEW_INITIAL_TILE_WAIT_TIMEOUT_MS = 4_000;
 export const PREVIEW_REFINEMENT_TILE_WAIT_TIMEOUT_MS = 2_000;
-const PREVIEW_TILE_RENDER_INTERVAL_MS = 80;
+// 2026-10-10: 読み込み待ちの間の描画間隔。Cesiumは描画のたびにタイルの要求・受け取り・
+// 展開を進めるので、間隔が長いと読み込みそのものが遅くなる。以前は80ミリ秒（毎秒約12回）で、
+// タイルが届いてから次の階層を要求するまでに最大80ミリ秒ずつ待っていた。通常の3D表示と
+// 同じ程度（毎秒約60回）まで詰める。待ちは最大でも数秒で終わるため、発熱への影響は限定的。
+const PREVIEW_TILE_RENDER_INTERVAL_MS = 16;
 const PREVIEW_FRAME_COPY_INTERVAL_MS = 240;
 
 function previewAbortError(): DOMException {
@@ -169,6 +173,28 @@ function copyViewerFrameToPreview(
 // 自然に解消される。
 const PREVIEW_FAST_RESOLUTION_SCALE = 0.5;
 
+/** 読み込み中だけ3Dの画面をそのまま見せるための目印（App.css）。 */
+const LIVE_RENDERER_CLASS = "preview-renderer-live";
+const LOADING_CANVAS_CLASS = "preview-canvas-loading";
+
+/**
+ * 2026-10-10: 読み込み中は、3Dの画面（WebGL）をそのまま表示する。
+ * 以前は240ミリ秒ごとに3Dの絵を通常のキャンバスへ写し取って見せていたが、写し取りは
+ * GPUの処理待ちを伴い、その間は読み込みも止まる。プレビュー枠の中にある3Dの画面を
+ * 直接見せれば、途中経過は毎フレーム滑らかに見え、写し取りは最後の1回で済む。
+ * 対象は、3Dの画面がプレビュー枠と同じ大きさで重なっている場合（2D地図表示中の通常の
+ * プレビュー）だけ。それ以外（3D地図と同時表示など）は従来どおり写し取って見せる。
+ */
+function liveRendererFor(viewer: Viewer, previewCanvas: HTMLCanvasElement): HTMLElement | null {
+  const container = viewer.container as HTMLElement | undefined;
+  if (!container || !previewCanvas.isConnected) return null;
+  if (!container.classList?.contains("preview-renderer")) return null;
+  const host = container.parentElement;
+  if (!host?.classList.contains("preview-renderer-host")) return null;
+  if (host.parentElement !== previewCanvas.parentElement) return null;
+  return container;
+}
+
 export async function waitForPreviewTiles(
   viewer: Viewer,
   previewCanvas: HTMLCanvasElement,
@@ -181,6 +207,8 @@ export async function waitForPreviewTiles(
   const originalResolutionScale = viewer.resolutionScale;
   viewer.resolutionScale = PREVIEW_FAST_RESOLUTION_SCALE;
   let lastCopiedAt = Number.NEGATIVE_INFINITY;
+  const liveRenderer = liveRendererFor(viewer, previewCanvas);
+  let liveShown = false;
 
   // Cesiumの自動描画ループはAstroSight側で停止している。したがって
   // プレビュー視点へカメラを移しただけでは、その視点に必要な3D Tiles/地形の
@@ -199,9 +227,17 @@ export async function waitForPreviewTiles(
       const now = performance.now();
       const fullyLoaded = visiblePreviewTilesLoaded(viewer);
       const timedOut = now - startedAt >= timeoutMs;
-      // CesiumのLOD更新には短いrender間隔が必要だが、WebGL→2D Canvas転写は
-      // GPU同期を伴う。表示の進捗は保ちつつ転写を3フレームに1回程度へ抑える。
-      if (
+      if (liveRenderer) {
+        // 最初の1フレームを描いてから3Dの画面へ切り替える（描く前の古い絵を見せない）。
+        // 途中経過の写し取りは行わない。
+        if (!liveShown && !fullyLoaded && !timedOut) {
+          liveRenderer.classList.add(LIVE_RENDERER_CLASS);
+          previewCanvas.classList.add(LOADING_CANVAS_CLASS);
+          liveShown = true;
+        }
+      } else if (
+        // CesiumのLOD更新には短いrender間隔が必要だが、WebGL→2D Canvas転写は
+        // GPU同期を伴う。表示の進捗は保ちつつ転写の頻度を抑える。
         now - lastCopiedAt >= PREVIEW_FRAME_COPY_INTERVAL_MS ||
         fullyLoaded ||
         timedOut
@@ -224,6 +260,11 @@ export async function waitForPreviewTiles(
       viewer.scene.requestRender();
       viewer.scene.render();
       copyViewerFrameToPreview(viewer, previewCanvas, context);
+    }
+    // 写し取った絵（または中止時は直前の絵）へ戻す。ピンなどを戻す前に必ず隠す。
+    if (liveShown) {
+      liveRenderer?.classList.remove(LIVE_RENDERER_CLASS);
+      previewCanvas.classList.remove(LOADING_CANVAS_CLASS);
     }
   }
 }
