@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "precision first: per-point geoid, no stored-section shortcut, fallback terrain never confirmed",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/precision-first-20261010.test.mjs"] },
+  { name: "tripod crossings are searched and refined on the 1 m terrain data; no candidate stuck on a 10 m sample",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/terrain-detail-mismatch-refinement.test.mjs"] },
   { name: "free view mode: subject-free fixed-eye camera, sun/moon/milky way tracks, observer search, shared viewer restore, baseline equivalence",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/free-view.test.mjs"] },
   { name: "2026-10-09 audit fixes: old-device abort signals, carried-over moon pass, Photon labels, storage guards, shell cache pruning",

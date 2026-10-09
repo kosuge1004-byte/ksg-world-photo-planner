@@ -101,7 +101,9 @@ type TerrainCacheRecord = {
   height: number;
   geoidHeightMeters?: number;
   source?: TerrainDataSource;
-  datum: "ellipsoidal-v1";
+  // v2（2026-10-10）: 楕円体高への変換に、格子の代表値ではなく地点ごとのジオイド高を使う。
+  // v1で保存した値（代表値で変換）は読み込まない。
+  datum: "ellipsoidal-v2";
   updatedAt: number;
 };
 
@@ -291,7 +293,7 @@ async function readTerrainCache(
           const record = request.result as TerrainCacheRecord | undefined;
           if (
             record &&
-            record.datum === "ellipsoidal-v1" &&
+            record.datum === "ellipsoidal-v2" &&
             Date.now() - record.updatedAt <= TERRAIN_CACHE_MAX_AGE_MS &&
             Number.isFinite(record.height)
           ) {
@@ -335,7 +337,7 @@ async function writeTerrainCache(
         height: point.height,
         source: terrainDataSource(point),
         geoidHeightMeters: geoidHeightBySample.get(point),
-        datum: "ellipsoidal-v1" as const,
+        datum: "ellipsoidal-v2" as const,
         updatedAt: Date.now(),
       }]
     : []);
@@ -439,7 +441,7 @@ async function sampleTerrainCached(
         sample !== null && sample.heightMeters !== null ? localIndex : -1
       )
       .filter((localIndex) => localIndex >= 0);
-    const localGeoidByRegion = await fetchRegionalGeoidHeights(
+    const localGeoidByIndex = await fetchGeoidHeightsForPoints(
       missingPoints,
       localResolvedIndexes,
       signal,
@@ -453,8 +455,7 @@ async function sampleTerrainCached(
         networkLocalIndexes.push(localIndex);
         return;
       }
-      const point = missingPoints[localIndex];
-      const geoidHeightMeters = localGeoidByRegion.get(geoidRegionKey(point));
+      const geoidHeightMeters = localGeoidByIndex.get(localIndex);
       if (!Number.isFinite(geoidHeightMeters)) {
         // Never reinterpret orthometric H as ellipsoidal h. If N is unavailable,
         // fall through to the authoritative network path instead.
@@ -601,8 +602,8 @@ async function fetchGsiElevations(
       key: "gsi-dem-fallback",
       tone: "warning",
       message: allFailed
-        ? "国土地理院の詳細地形データを取得できないため、別の地形データで計算を続けています。"
-        : `国土地理院の詳細地形データを一部取得できなかったため、${unresolvedCount}地点だけ別の地形データで補完しています。`,
+        ? "国土地理院の詳細地形データを取得できませんでした。精度の低い別の地形データで求めた地点は、三脚候補として確定しません。通信状態を確認して、もう一度お試しください。"
+        : `国土地理院の詳細地形データを一部（${unresolvedCount}地点）取得できませんでした。その地点は精度の低い別の地形データで補っているため、三脚候補として確定しません。`,
     });
   }
   return samples.map((sample) => sample ?? { heightMeters: null, source: null });
@@ -941,6 +942,11 @@ export async function fetchGsiGeoidHeight(
   abortIfRequested(signal);
   const latitude = CesiumMath.toDegrees(point.latitude);
   const longitude = CesiumMath.toDegrees(point.longitude);
+  // 2026-10-10（精度最優先）: 端末内のJPGEO2024で求められる地点は、約2.8km格子の
+  // 代表値ではなく、その地点自身の値を返す（通信なし）。
+  const pointSpecific = await localGeoidHeight(latitude, longitude, true);
+  abortIfRequested(signal);
+  if (pointSpecific !== null) return pointSpecific;
   const key = geoidRegionKey(point);
   const cached = readMemoryCache(geoidHeightCache, key);
   if (cached !== undefined) return cached;
@@ -1034,6 +1040,48 @@ export function geoidHeightMetersForTerrainSample(sample: Cartographic): number 
  */
 export function __setGeoidHeightForTesting(sample: Cartographic, geoidHeightMeters: number): void {
   geoidHeightBySample.set(sample, geoidHeightMeters);
+}
+
+/**
+ * 2026-10-10（精度最優先）: 地点ごとのジオイド高（h = H + N の N）。
+ *
+ * 以前は約2.8km四方（0.025度格子）ごとに代表1点のジオイド高を使い回していた。
+ * 往復回数を減らすための措置だったが、国内のジオイド高は端末に同梱したJPGEO2024で
+ * 通信なしに求められるようになったため、代表値にする理由が無くなっていた。
+ * 代表値のままだと、被写体と三脚候補が別の格子に入った時に高さの基準へ段差が生じ、
+ * 視線の仰角（合否の基準は0.002度。1.7km先で約6cm）へそのまま乗る。
+ * 各地点の緯度経度そのものでJPGEO2024を引く。同梱モデルの範囲外など、端末内で
+ * 求められない地点だけ従来の代表値を使う。
+ */
+async function fetchGeoidHeightsForPoints(
+  points: Cartographic[],
+  eligibleIndexes: number[],
+  signal?: AbortSignal,
+  options: TerrainSamplingOptions = {}
+): Promise<Map<number, number>> {
+  const heights = new Map<number, number>();
+  const regionalIndexes: number[] = [];
+  await Promise.all(eligibleIndexes.map(async (index) => {
+    const point = points[index];
+    const local = await localGeoidHeight(
+      CesiumMath.toDegrees(point.latitude),
+      CesiumMath.toDegrees(point.longitude),
+      true
+    );
+    if (local !== null) heights.set(index, local);
+    else regionalIndexes.push(index);
+  }));
+  abortIfRequested(signal);
+  if (regionalIndexes.length === 0) {
+    options.onGeoidProgress?.(1, 1);
+    return heights;
+  }
+  const regional = await fetchRegionalGeoidHeights(points, regionalIndexes, signal, options);
+  for (const index of regionalIndexes) {
+    const height = regional.get(geoidRegionKey(points[index]));
+    if (typeof height === "number" && Number.isFinite(height)) heights.set(index, height);
+  }
+  return heights;
 }
 
 async function fetchRegionalGeoidHeights(
@@ -1340,7 +1388,7 @@ async function sampleTerrainWithGsiPriority(
       ? index
       : -1
   ).filter((index) => index >= 0);
-  const geoidHeightByRegion = await fetchRegionalGeoidHeights(
+  const geoidHeightByIndex = await fetchGeoidHeightsForPoints(
     result,
     gsiEligibleIndexes,
     signal,
@@ -1350,7 +1398,7 @@ async function sampleTerrainWithGsiPriority(
   const unresolvedIndexes: number[] = [];
   for (let index = 0; index < result.length; index += 1) {
     const gsi = gsiSamples[index];
-    const geoidHeightMeters = geoidHeightByRegion.get(geoidRegionKey(result[index]));
+    const geoidHeightMeters = geoidHeightByIndex.get(index);
     if (
       authoritativeGsiNoDataBySample.has(result[index]) &&
       typeof geoidHeightMeters === "number"
@@ -1367,7 +1415,7 @@ async function sampleTerrainWithGsiPriority(
       Number.isFinite(gsi.heightMeters) &&
       typeof geoidHeightMeters === "number"
     ) {
-      // GSI標高（平均海面基準）へ地域ごとのジオイド高を加え、楕円体高へ統一する。
+      // GSI標高（平均海面基準）へその地点のジオイド高を加え、楕円体高へ統一する。
       result[index].height = gsi.heightMeters + geoidHeightMeters;
       terrainSourceBySample.set(result[index], GSI_SOURCE_NAMES[gsi.source]);
       geoidHeightBySample.set(result[index], geoidHeightMeters);
@@ -1381,7 +1429,7 @@ async function sampleTerrainWithGsiPriority(
 
   if (options.allowWorldTerrainFallback === false) {
     const missingGeoid = unresolvedIndexes.filter((index) =>
-      gsiEligibleIndexes.includes(index) && !geoidHeightByRegion.has(geoidRegionKey(result[index]))
+      gsiEligibleIndexes.includes(index) && !geoidHeightByIndex.has(index)
     ).length;
     throw new Error(`高精度地形を取得できません（DEM未取得 ${unresolvedIndexes.length - missingGeoid}点・ジオイド高未取得 ${missingGeoid}点 / ${result.length}点）。通信状態を確認して再実行してください`);
   }
@@ -1412,6 +1460,14 @@ export async function sampleTerrainLineOfSightProfile(
     distance <= 2_000 ? "1m" as const : distance <= 20_000 ? "5m" as const : "10m" as const
   );
   return sampleTerrainCached(points, details, signal);
+}
+
+/**
+ * 国土地理院のデータを取得できず、代替の地形データ（World Terrain）で高さを決めた
+ * 標本か。出典が記録されていない標本（テスト用の地形など）は対象にしない。
+ */
+export function isLowPrecisionFallbackTerrainSample(sample: Cartographic): boolean {
+  return terrainSourceBySample.get(sample) === "CESIUM_WORLD_TERRAIN";
 }
 
 export function terrainDataSource(sample: Cartographic): TerrainDataSource {

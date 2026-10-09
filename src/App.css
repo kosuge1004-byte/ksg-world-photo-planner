@@ -3719,28 +3719,23 @@ body.pseudo-fullscreen-active {
 }
 
 /* ===== 2026-10-09: 自由ビューモード（独立した全画面3D） =====
-   上から「ヘッダー／案内／景観（3D＋天体の重ね描き）／操作パネル」。
-   操作パネルは景観の外に置くので、景観の下端に出るGoogle・Cesiumのロゴと
+   画面は「景観（3D＋天体の重ね描き）」と、その下の「時間軸」だけ。
+   景観の上に重ねる操作は、戻る・天体選択・スポット検索の3つ。
+   時間軸は景観の外に置くので、景観の下端に出るGoogle・Cesiumのロゴと
    データ提供元の表示を覆わない。 */
 .free-view-screen {
   position: fixed; z-index: 10000; inset: 0;
-  display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: grid; grid-template-rows: minmax(0, 1fr) auto;
   width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   box-sizing: border-box; color: #fff; background: #020305;
-  /* touch-action は祖先との共通部分になる。ここで none にすると操作パネルや検索候補を
-     指でスクロールできなくなるため、景観の上のジェスチャー層だけを none にする。 */
+  /* touch-action は祖先との共通部分になる。ここで none にすると検索候補を指で
+     スクロールできなくなるため、景観の上のジェスチャー層だけを none にする。 */
   overscroll-behavior: none;
 }
-.free-view-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 4px 6px; background: #0b1118; border-bottom: 1px solid #233041; }
-.free-view-header button, .free-view-controls button, .free-view-empty button, .free-view-search button, .free-view-notices button {
-  min-height: 32px; padding: 4px 9px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #121820; font-size: 11px;
+.free-view-screen button {
+  min-height: 34px; padding: 4px 10px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: rgba(18,24,32,.88); font-size: 12px;
 }
-.free-view-title { display: grid; min-width: 0; text-align: center; line-height: 1.2; }
-.free-view-title strong { font-size: 11px; }
-.free-view-title span { overflow: hidden; color: #aeb9c6; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.free-view-notices { display: grid; gap: 2px; padding: 3px 6px; background: #2a2208; border-bottom: 1px solid #5a4a12; }
-.free-view-notices p { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; color: #ffe9a8; font-size: 9px; line-height: 1.4; }
 .free-view-stage { position: relative; min-height: 0; overflow: hidden; background: #05080c; }
 .free-view-host { position: absolute; inset: 0; z-index: 0; }
 /* 共有コンテナは通常 opacity:0（プレビュー撮影専用）。この画面の中だけ表示する。
@@ -3751,40 +3746,29 @@ body.pseudo-fullscreen-active {
 /* 下端の帯（ロゴ・提供元の表示）はジェスチャーで覆わない。 */
 .free-view-gesture-layer { position: absolute; z-index: 22; inset: 0 0 30px 0; touch-action: none; cursor: grab; }
 .free-view-gesture-layer:active { cursor: grabbing; }
-.free-view-hud { position: absolute; z-index: 23; top: 5px; left: 5px; display: flex; flex-wrap: wrap; gap: 3px 8px; max-width: calc(100% - 10px); padding: 3px 6px; color: #eef3f8; border-radius: 5px; background: rgba(0,0,0,.55); font-size: 9px; font-variant-numeric: tabular-nums; pointer-events: none; }
-.free-view-loading { position: absolute; z-index: 23; top: 5px; right: 5px; padding: 3px 6px; color: #cbd4df; border-radius: 5px; background: rgba(0,0,0,.6); font-size: 9px; pointer-events: none; }
-.free-view-empty { position: absolute; z-index: 24; inset: 0; display: grid; place-content: center; gap: 8px; padding: 16px; text-align: center; background: rgba(2,3,5,.86); font-size: 11px; }
-.free-view-empty p { margin: 0; }
-.free-view-search { position: absolute; z-index: 30; top: 0; right: 0; left: 0; display: grid; gap: 5px; max-height: 100%; padding: 6px; overflow-y: auto; background: rgba(9,14,20,.96); border-bottom: 1px solid #344253; box-sizing: border-box; touch-action: pan-y; }
-.free-view-search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; }
-.free-view-search-form input { min-width: 0; min-height: 32px; padding: 4px 8px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #0c131b; font-size: 16px; }
-.free-view-search-message { margin: 0; padding: 6px; color: #cbd4df; border-radius: 6px; background: #0d141c; font-size: 10px; line-height: 1.5; }
-.free-view-search-retry { justify-self: start; }
-.free-view-search-candidates { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.free-view-search-candidates button { display: grid; gap: 2px; width: 100%; min-height: 40px; text-align: left; }
-.free-view-search-candidates strong { color: #ffe064; font-size: 11px; }
-.free-view-search-candidates span { color: #aeb9c6; font-size: 9px; }
-.free-view-search-credit { color: #7f8b99; font-size: 7px; }
-.free-view-controls { background: #0b1118; border-top: 1px solid #233041; touch-action: manipulation; }
-.free-view-controls-toggle { width: 100%; min-height: 26px !important; border: 0 !important; border-radius: 0 !important; background: #0f1721 !important; font-size: 10px !important; }
-.free-view-controls-body { display: grid; gap: 5px; max-height: 42dvh; padding: 5px 6px 7px; overflow-y: auto; }
-.free-view-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.free-view-top { position: absolute; z-index: 24; top: 6px; right: 6px; left: 6px; display: flex; gap: 6px; align-items: center; justify-content: space-between; pointer-events: none; }
+.free-view-top > * { pointer-events: auto; }
 .free-view-segment { display: flex; }
 .free-view-segment button { border-radius: 0; }
 .free-view-segment button:first-child { border-radius: 6px 0 0 6px; }
 .free-view-segment button:last-child { border-radius: 0 6px 6px 0; }
 .free-view-segment button.active { color: #111; border-color: #ffe064; background: #ffe064; font-weight: 700; }
-.free-view-check, .free-view-number { display: inline-flex; gap: 3px; align-items: center; font-size: 10px; }
-.free-view-controls input[type="date"], .free-view-controls input[type="time"], .free-view-number input { min-height: 30px; padding: 2px 5px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #0c131b; font-size: 16px; }
-.free-view-number input { width: 5.2em; }
-.free-view-time-slider, .free-view-focal-slider { width: 100%; min-width: 120px; flex: 1; }
-.free-view-timezone, .free-view-observer-info, .free-view-footnote { color: #94a0ae; font-size: 8px; line-height: 1.4; }
-/* 横向きの小さい画面: 操作パネルを右側に置き、景観の高さを削らない。 */
-@media (orientation: landscape) and (max-height: 520px) {
-  .free-view-screen { grid-template-columns: minmax(0, 1fr) minmax(240px, 38vw); grid-template-rows: auto auto minmax(0, 1fr); }
-  .free-view-header, .free-view-notices { grid-column: 1 / -1; }
-  .free-view-stage { grid-column: 1; grid-row: 3; }
-  .free-view-controls { grid-column: 2; grid-row: 3; min-height: 0; overflow-y: auto; border-top: 0; border-left: 1px solid #233041; }
-  .free-view-controls-body { max-height: none; overflow: visible; }
-  .free-view-controls:not(.open) { align-self: start; }
-}
+.free-view-notices { position: absolute; z-index: 23; top: 48px; right: 6px; left: 6px; display: grid; gap: 2px; padding: 4px 6px; border: 1px solid #5a4a12; border-radius: 6px; background: rgba(42,34,8,.92); }
+.free-view-notices p { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; color: #ffe9a8; font-size: 10px; line-height: 1.4; }
+.free-view-loading { position: absolute; z-index: 23; right: 6px; bottom: 34px; padding: 3px 6px; color: #cbd4df; border-radius: 5px; background: rgba(0,0,0,.6); font-size: 10px; pointer-events: none; }
+.free-view-empty { position: absolute; z-index: 23; inset: 0; display: grid; place-content: center; gap: 8px; padding: 16px; text-align: center; background: rgba(2,3,5,.86); font-size: 12px; pointer-events: none; }
+.free-view-empty > * { pointer-events: auto; }
+.free-view-empty p { margin: 0; }
+.free-view-timeline { min-width: 0; background: #0b1118; border-top: 1px solid #233041; }
+/* 検索は画面全体に重ねる。 */
+.free-view-search { position: fixed; z-index: 10500; inset: 0; display: grid; align-content: start; gap: 8px; padding: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left)); overflow-y: auto; background: #090e14; box-sizing: border-box; touch-action: pan-y; }
+.free-view-search-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 13px; }
+.free-view-search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; }
+.free-view-search-form input { min-width: 0; min-height: 40px; padding: 4px 10px; color: #fff; border: 1px solid #4c5664; border-radius: 6px; background: #0c131b; font-size: 16px; }
+.free-view-search-message { margin: 0; padding: 8px; color: #cbd4df; border-radius: 6px; background: #0d141c; font-size: 12px; line-height: 1.5; }
+.free-view-search-retry { justify-self: start; }
+.free-view-search-candidates { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.free-view-search-candidates button { display: grid; gap: 2px; width: 100%; min-height: 44px; text-align: left; }
+.free-view-search-candidates strong { color: #ffe064; font-size: 13px; }
+.free-view-search-candidates span { color: #aeb9c6; font-size: 10px; }
+.free-view-search-credit { color: #7f8b99; font-size: 8px; }

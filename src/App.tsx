@@ -71,6 +71,8 @@ import {
 } from "./sharing/projectShareCode";
 import { TimelinePanel } from "./components/TimelinePanel";
 import type { ArCameraProjection } from "./components/ArCameraScreen";
+/** 精度最優先: 三脚候補は常に全範囲の本探索で求める（保存済み断面による近道を使わない）。 */
+const PRECISION_FIRST_FULL_SEARCH: boolean = true;
 // 2026-10-09: 自由ビューモード（被写体を使わない独立した全画面3D）。開いた時だけ読み込む。
 const FreeViewScreen = lazy(() => import("./components/FreeViewScreen"));
 const ArCameraScreen = lazy(() =>
@@ -1206,8 +1208,6 @@ function App() {
           `（地形取得${entry.terrainRequestedPoints}点中${entry.terrainFailedPoints}点失敗=${failRate}）` +
           `（距離ヒント: ${entry.distanceHintUsed ? "使用" : "未使用"}` +
           `${entry.distanceHintMeters !== undefined ? `・${Math.round(entry.distanceHintMeters)}m` : ""}）` +
-          `（探索範囲: ${entry.usedWideFallbackScan ? "広域(二次)" : "狭域(一次)"}` +
-          `${entry.primaryScanMaxMeters !== undefined ? `・一次上限${Math.round(entry.primaryScanMaxMeters)}m` : ""}）` +
           `（通信: ${entry.terrainRoundTripCount}回・` +
           `合計${(entry.terrainRoundTripTotalMs / 1000).toFixed(1)}秒・` +
           `平均${entry.terrainRoundTripCount > 0 ? Math.round(entry.terrainRoundTripTotalMs / entry.terrainRoundTripCount) : 0}ms/回）` +
@@ -2684,7 +2684,12 @@ function App() {
           // 保存し、高度（＝時刻）に関わらずどのパターンでも使い回す」方式。
           // 日付・時刻には一切依存しない。合わなければ即座に下のtry本体
           // （既存の通常探索）へフォールバックするだけの安全設計。
-          const bearingProfileResult = await tryUseBearingProfileCache(
+          // 2026-10-10（精度最優先）: 保存済みの断面（方位1度刻み・30m間隔）で当たりを付け、
+          // その前後だけを本探索する高速経路は使わない。断面に現れない重なり位置（実際の
+          // 方位は保存方位から最大0.5度ずれる。10km先で約87m横）を探さずに確定してしまう
+          // ため。常に全範囲の本探索を行う。ダウンロード済みの地形データそのものは、
+          // 本探索が端末内から読むので引き続き使われる。
+          const bearingProfileResult = PRECISION_FIRST_FULL_SEARCH ? null : await tryUseBearingProfileCache(
             subjectPoint,
             enabledPoints,
             cameraSettings,

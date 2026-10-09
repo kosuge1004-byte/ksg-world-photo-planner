@@ -3,8 +3,8 @@ const terrain = fs.readFileSync('src/cesium/worldTerrain.ts', 'utf8');
 const tripod = fs.readFileSync('src/cesium/tripodCandidates.ts', 'utf8');
 const checks = [
   [terrain.includes('ksg-world-photo-planner-terrain-v3'), 'terrain cache namespace bumped to v3'],
-  [terrain.includes('datum: "ellipsoidal-v1"'), 'cache records carry explicit ellipsoidal datum marker'],
-  [terrain.includes('record.datum === "ellipsoidal-v1"'), 'legacy/untyped terrain cache records are rejected'],
+  [terrain.includes('datum: "ellipsoidal-v2"'), 'cache records carry explicit ellipsoidal datum marker'],
+  [terrain.includes('record.datum === "ellipsoidal-v2"'), 'legacy/untyped terrain cache records are rejected'],
   [/result\[originalIndex\]\.height\s*=\s*sample\.heightMeters\s*\+\s*\(geoidHeightMeters as number\)/.test(terrain), 'device DEM H is converted to ellipsoidal h = H + N'],
   [terrain.includes('geoidHeightBySample.set(result[originalIndex], geoidHeightMeters as number)'), 'device-cache samples retain the N used for conversion'],
   [terrain.includes('geoidHeightBySample.set(result[index], geoidHeightMeters)'), 'network GSI samples retain the N used for conversion'],

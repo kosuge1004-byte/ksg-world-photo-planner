@@ -349,7 +349,18 @@ test("FV-01/02/03/07/12/13: independent screen, no subject, no device sensors, o
 
   // ロゴ・提供元の表示を操作パネルやジェスチャーで覆わない。
   const css = await read("src/App.css");
-  assert.match(css, /\.free-view-screen \{[\s\S]*?grid-template-rows: auto auto minmax\(0, 1fr\) auto;/);
+  // 画面は「景観」と「時間軸」の2段だけ。時間軸は景観の外（下）。検索は画面全体に重ねる。
+  assert.match(css, /\.free-view-screen \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\) auto;/);
+  assert.match(css, /\.free-view-search \{ position: fixed; z-index: 10500; inset: 0;/);
+  // 操作は 戻る・天体選択・スポット検索・メイン画面と同じ時間軸 だけ（方位・仰角などの数値欄は置かない）。
+  assert.match(screen, /className="free-view-back" onClick=\{onClose\}>戻る</);
+  assert.match(screen, /className="free-view-search-open" onClick=\{\(\) => setSearchOpen\(true\)\}>/);
+  assert.match(screen, /<TimelinePanel\s+dateTimeLocal=\{dateTimeLocal\}\s+location=\{observer\}/);
+  assert.doesNotMatch(screen, /<input|type="number"|方位 |仰角 /);
+  // 時間軸の「天体通過日時検索」ボタンは、渡した画面（メイン・AR）にだけ出る。
+  const timeline = await read("src/components/TimelinePanel.tsx");
+  assert.match(timeline, /\{onOpenTransitSearch && \(/);
+  assert.match(app, /onOpenTransitSearch=\{openCelestialTransitSearch\}/);
   assert.match(css, /\.free-view-host \.cesium-widget-credits \{ opacity: 1; pointer-events: auto; \}/);
   assert.match(css, /\.free-view-gesture-layer \{[^}]*inset: 0 0 30px 0;/);
 });

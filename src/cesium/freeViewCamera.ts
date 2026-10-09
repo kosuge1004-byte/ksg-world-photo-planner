@@ -10,6 +10,7 @@ import { Cartesian3, PerspectiveFrustum, type Viewer } from "cesium";
 
 import type { CameraSettings } from "../types/camera";
 import type { GroundPoint } from "../types/points";
+import { orientationOffsetFromSwipe } from "../ar/orientationCalibration";
 import { applyPreviewFocalLength } from "./camera";
 import { createFreeViewCameraModel, type GeometryCameraModel } from "./cameraModelFactory";
 
@@ -42,11 +43,11 @@ export function clampFreeViewFocalLengthMm(value: number): number {
 }
 
 /**
- * 1本指ドラッグ後の向き。
- * 景色が指に付いてくる向き（Google Earthと同じ）: 指を左へ動かすと景色が左へ流れ、
- * 視線は右（方位が増える側）へ回る。指を下へ動かすと視線は上を向く。
- * 回転量は「画面の幅＝水平画角」「画面の高さ＝垂直画角」の比で決めるので、
- * 望遠（画角が狭い）ほど同じ指の移動でも回転は小さくなり、景色と指がずれない。
+ * 指で画面をスライドした後の向き。ARカメラの手動合わせと同じ操作感にするため、
+ * ARカメラが使っている換算（orientationOffsetFromSwipe）をそのまま使う。
+ * - 指を左へ動かすと景色が左へ流れ、視線は右（方位が増える側）へ回る。
+ * - 指を下へ動かすと視線は上を向く（景色が指に付いてくる）。
+ * 回転量は「画面の幅＝水平画角」「画面の高さ＝垂直画角」の比なので、望遠ほど小さくなる。
  */
 export function freeViewPoseAfterDrag(
   start: FreeViewPose,
@@ -55,15 +56,19 @@ export function freeViewPoseAfterDrag(
   viewport: { widthPixels: number; heightPixels: number },
   fov: { horizontalFovDegrees: number; verticalFovDegrees: number }
 ): FreeViewPose {
-  const width = Math.max(1, viewport.widthPixels);
-  const height = Math.max(1, viewport.heightPixels);
+  const moved = orientationOffsetFromSwipe({
+    startX: 0,
+    startY: 0,
+    currentX: deltaXPixels,
+    currentY: deltaYPixels,
+    stageWidth: viewport.widthPixels,
+    stageHeight: viewport.heightPixels,
+    startOffset: { headingOffsetDegrees: start.headingDegrees, pitchOffsetDegrees: start.pitchDegrees },
+    projection: { horizontalFovDeg: fov.horizontalFovDegrees, verticalFovDeg: fov.verticalFovDegrees },
+  });
   return {
-    headingDegrees: normalizeFreeViewHeadingDegrees(
-      start.headingDegrees - (deltaXPixels / width) * fov.horizontalFovDegrees
-    ),
-    pitchDegrees: clampFreeViewPitchDegrees(
-      start.pitchDegrees + (deltaYPixels / height) * fov.verticalFovDegrees
-    ),
+    headingDegrees: normalizeFreeViewHeadingDegrees(moved.headingOffsetDegrees),
+    pitchDegrees: clampFreeViewPitchDegrees(moved.pitchOffsetDegrees),
   };
 }
 

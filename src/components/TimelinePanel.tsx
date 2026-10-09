@@ -33,7 +33,8 @@ type Props = {
   calculationMode: CalculationMode;
   refractionWeather?: RefractionWeatherContext;
   onChangeDateTime: (value: string) => void;
-  onOpenTransitSearch: () => void;
+  /** 未指定なら「天体通過日時検索」ボタンを出さない（自由ビューモード用）。 */
+  onOpenTransitSearch?: () => void;
   onInteractionChange?: (interacting: boolean) => void;
 };
 
@@ -557,17 +558,19 @@ function TimelinePanelComponent({
         </div>
 
         <div className="timeline-date-actions timeline-date-actions-right">
-          <button
-            type="button"
-            className="timeline-transit-search-button"
-            onClick={onOpenTransitSearch}
-            aria-label="天体通過日時検索"
-            title="天体通過日時検索"
-          >
-            <span aria-hidden="true">🕐</span>
-            <span aria-hidden="true">検</span>
-            <span aria-hidden="true">索</span>
-          </button>
+          {onOpenTransitSearch && (
+            <button
+              type="button"
+              className="timeline-transit-search-button"
+              onClick={onOpenTransitSearch}
+              aria-label="天体通過日時検索"
+              title="天体通過日時検索"
+            >
+              <span aria-hidden="true">🕐</span>
+              <span aria-hidden="true">検</span>
+              <span aria-hidden="true">索</span>
+            </button>
+          )}
         </div>
       </div>
 

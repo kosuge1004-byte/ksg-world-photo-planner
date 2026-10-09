@@ -155,7 +155,11 @@ export function FreeViewSpotSearch({ center, onObserverResolved, onClose, canClo
   }
 
   return (
-    <div className="free-view-search" role="dialog" aria-label="自由ビューの視点を検索">
+    <div className="free-view-search" role="dialog" aria-modal="true" aria-label="立つ場所を検索">
+      <div className="free-view-search-head">
+        <strong>スポット検索（立つ場所）</strong>
+        {canClose && <button type="button" onClick={onClose}>閉じる</button>}
+      </div>
       <form
         className="free-view-search-form"
         onSubmit={(event) => {
@@ -182,9 +186,7 @@ export function FreeViewSpotSearch({ center, onObserverResolved, onClose, canClo
               setMessage("検索を中止しました");
             }}
           >中止</button>
-        ) : canClose && (
-          <button type="button" onClick={onClose}>閉じる</button>
-        )}
+        ) : null}
       </form>
       {message && <p className="free-view-search-message" aria-live="polite">{message}</p>}
       {retryLocation && !busy && (

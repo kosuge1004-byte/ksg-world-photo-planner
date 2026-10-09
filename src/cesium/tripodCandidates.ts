@@ -23,6 +23,7 @@ import {
 import {
   fetchGsiGeoidHeightPointSpecific,
   geoidHeightMetersForTerrainSample,
+  isLowPrecisionFallbackTerrainSample,
   sampleWorldTerrain,
   terrainDataSource,
 } from "./worldTerrain";
@@ -110,6 +111,25 @@ export function maximumTerrainProfileSamples(maxDistanceMeters: number): number 
 // 取得点数は最大575点→62点程度となり、通信負荷と一時失敗率を大幅に下げる。
 const DEFAULT_ROOT_REFINEMENT_PASSES = 2;
 const DEFAULT_ROOT_REFINEMENT_SEGMENTS = 32;
+// 2026-10-10（精度最優先）: 交点探索を1mの地形データで行うための設定。
+/**
+ * 10mデータでレイとの高さの差がこの値以内の範囲を、1mデータで測り直す。
+ * 1mデータ上の交点は「10mデータと1mデータの食い違い」＋「粗探索の点と点の間（最大30m）
+ * での地形の変化」の合計がこの値以内なら必ず範囲に入る。15mでは急斜面で不足しうるため
+ * 50mにした（取得点数は増える）。
+ */
+export const FINE_RESCAN_NEAR_METERS = 50;
+/** 1mデータで測り直す刻み。 */
+export const FINE_RESCAN_STEP_METERS = 1;
+/**
+ * 1回の探索で測り直す点数の合計の上限。1m刻みで合計60kmぶん。これを超える場合だけ
+ * （地面すれすれの視線で範囲が数十kmに及ぶ場合）、全範囲の刻みを同じ比率で広げる。
+ */
+export const FINE_RESCAN_MAX_TOTAL_STEPS = 60_000;
+/** 絞り込みの回数の上限（32等分×6回で区間の幅は10億分の1になる。通常は2〜3回で終わる）。 */
+const ROOT_REFINEMENT_MAX_PASSES = 6;
+/** 区間の幅がこれ未満になったら絞り込みを終える。 */
+const ROOT_REFINEMENT_MIN_WIDTH_METERS = 0.001;
 // 収束判定の角度は、探索エンジン自身がどこでも「収束」と扱っている許容誤差
 // （0.002度）に揃える。従来の0.0001度（0.36秒角）は1mメッシュDEMの実測精度
 // より20倍以上厳しく、データの精度を超えた桁を追いかけて3回目の反復（＝
@@ -1355,7 +1375,194 @@ async function scanTerrainDistanceRange(
  * 必要範囲へ絞り、解が無い場合に限って残りを拡張する。誤差の意味は
  * 「仰角差（度）」ではなく「レイ高と地形高の差（m）」。
  */
-async function scanRayTerrainIntersections(
+type TerrainMeasured = { distance: number; sample: Cartographic; error: number };
+type TerrainRefinementState = {
+  lowDistance: number;
+  highDistance: number;
+  lowError: number;
+  highError: number;
+  best: TerrainSolution;
+  done: boolean;
+};
+/** 高さ差（m）の収束しきい値。最終的な合否は後段の確認（仰角・方位0.002度）が下す。 */
+const CONVERGED_HEIGHT_METERS = 0.01;
+
+function terrainStateFromBracket(low: TerrainMeasured, high: TerrainMeasured): TerrainRefinementState {
+  const best = Math.abs(low.error) <= Math.abs(high.error) ? low : high;
+  return {
+    lowDistance: low.distance,
+    highDistance: high.distance,
+    lowError: low.error,
+    highError: high.error,
+    best: { cartographic: best.sample, distanceMeters: best.distance, altitudeErrorDegrees: best.error },
+    done: false,
+  };
+}
+
+/** 並んだ標本の中で、レイとの高さの差の符号が変わる隣り合う2点の組。 */
+function terrainSignChanges(items: TerrainMeasured[]): TerrainRefinementState[] {
+  const found: TerrainRefinementState[] = [];
+  let previous: TerrainMeasured | null = null;
+  for (const item of items) {
+    if (!Number.isFinite(item.error)) continue;
+    if (previous && (previous.error === 0 || item.error === 0 || previous.error * item.error < 0)) {
+      found.push(terrainStateFromBracket(previous, item));
+    }
+    previous = item;
+  }
+  return found;
+}
+
+/**
+ * 符号の変わる区間を、1mの地形データで交点まで絞り込む（scanRayTerrainIntersections と
+ * scanRayTerrainNearDistance が共有する唯一の実装）。
+ */
+async function refineTerrainBrackets(
+  ray: CelestialSubjectRay,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal: AbortSignal | undefined,
+  states: TerrainRefinementState[],
+  refinementPasses: number,
+  refinementSegments: number
+): Promise<TerrainSolution[]> {
+  // 区間を refinementSegments 等分して符号の変わる小区間へ絞る操作を、高さの差が
+  // 0.01m以内になるか、区間の幅が1mm未満になるまで繰り返す（回数の上限は安全弁）。
+  // 以前は2回で打ち切っていたため、区間が広いと合否の基準ぎりぎりの精度で止まっていた。
+  const maximumPasses = refinementPasses === 0 ? 0 : Math.max(refinementPasses, ROOT_REFINEMENT_MAX_PASSES);
+  for (let pass = 0; pass < maximumPasses; pass += 1) {
+    abortIfRequested(signal);
+    const pending = states
+      .map((state, stateIndex) => ({ state, stateIndex }))
+      .filter(({ state }) => !state.done);
+    if (pending.length === 0) break;
+
+    const requests: Array<{ stateIndex: number; distance: number }> = [];
+    for (const { state, stateIndex } of pending) {
+      const step = (state.highDistance - state.lowDistance) / refinementSegments;
+      for (let index = 1; index < refinementSegments; index += 1) {
+        requests.push({ stateIndex, distance: state.lowDistance + step * index });
+      }
+    }
+    const refinementDistances = requests.map((request) => request.distance);
+    const { samples: refinementSamples, errors: refinementErrors } = await sampleRayTerrainErrors(
+      ray,
+      lensCenterHeightMeters,
+      terrainSampler,
+      signal,
+      refinementDistances,
+      "1m"
+    );
+
+    for (const { state, stateIndex } of pending) {
+      const indices = requests
+        .map((request, requestIndex) => ({ request, requestIndex }))
+        .filter(({ request }) => request.stateIndex === stateIndex);
+      const localDistances = indices.map(({ request }) => request.distance);
+      const localSamples = indices.map(({ requestIndex }) => refinementSamples[requestIndex]);
+      const localErrors = indices.map(({ requestIndex }) => refinementErrors[requestIndex]);
+
+      for (let index = 0; index < localErrors.length; index += 1) {
+        const error = localErrors[index];
+        if (Number.isFinite(error) && Math.abs(error) < Math.abs(state.best.altitudeErrorDegrees)) {
+          state.best = {
+            cartographic: localSamples[index],
+            distanceMeters: localDistances[index],
+            altitudeErrorDegrees: error,
+          };
+        }
+      }
+      if (Math.abs(state.best.altitudeErrorDegrees) <= CONVERGED_HEIGHT_METERS) {
+        state.done = true;
+        continue;
+      }
+
+      const sectionDistances = [state.lowDistance, ...localDistances, state.highDistance];
+      const sectionErrors = [state.lowError, ...localErrors, state.highError];
+      let nextSection = -1;
+      for (let index = 1; index < sectionErrors.length; index += 1) {
+        const previous = sectionErrors[index - 1];
+        const current = sectionErrors[index];
+        if (Number.isFinite(previous) && Number.isFinite(current) && previous * current <= 0) {
+          nextSection = index;
+          break;
+        }
+      }
+      if (nextSection < 1) {
+        state.done = true;
+        continue;
+      }
+      state.lowDistance = sectionDistances[nextSection - 1];
+      state.highDistance = sectionDistances[nextSection];
+      state.lowError = sectionErrors[nextSection - 1];
+      state.highError = sectionErrors[nextSection];
+      if (state.highDistance - state.lowDistance < ROOT_REFINEMENT_MIN_WIDTH_METERS) state.done = true;
+    }
+  }
+
+  const solutions: TerrainSolution[] = [];
+  for (const state of states) {
+    if (!Number.isFinite(state.best.cartographic.height)) continue;
+    const duplicate = solutions.some((solution) => Math.abs(solution.distanceMeters - state.best.distanceMeters) < 0.5);
+    if (!duplicate) solutions.push(state.best);
+  }
+
+  // ユーザーが遠い候補から確認できるよう距離降順。候補は自動除外しない（仕様3-D）。
+  return solutions.sort((a, b) => b.distanceMeters - a.distanceMeters);
+}
+
+/** 再収束で、前回の交点の前後を1mデータで直接調べる幅（片側）。 */
+export const NEAR_RESCAN_HALF_WIDTH_METERS = 40;
+
+/**
+ * 2026-10-10: 再収束（候補地点から見た天体方向でレイを引き直した後の再探索）用の近道。
+ *
+ * 再収束では、引き直したレイと地形の交点のうち「前回の交点に最も近いもの」だけを使う。
+ * レイの変化はごく小さいので、その交点は前回の交点のすぐ近くにある。そこで、前回の交点の
+ * 前後40mを最初から1mデータ・1m刻みで調べる。この範囲に交点があれば、それが前回の交点に
+ * 最も近い交点である（範囲の外の交点は必ずそれより遠い）ので、周辺全体（距離の±18%）を
+ * 10mデータで走査してから測り直す通常の手順と同じ交点が得られる。通信の往復は
+ * 「10mの走査＋1mの測り直し＋絞り込み」から「1mの測り直し＋絞り込み」に減る。
+ * この範囲に交点が無い場合は null を返し、呼び出し側が通常の手順で探す（結果は変わらない）。
+ */
+export async function scanRayTerrainNearDistance(
+  ray: CelestialSubjectRay,
+  lensCenterHeightMeters: number,
+  terrainSampler: TerrainSampler,
+  signal: AbortSignal | undefined,
+  centerDistanceMeters: number,
+  distanceRange: TripodDistanceRange,
+  searchProfile: TripodSearchProfile | undefined
+): Promise<TerrainSolution[] | null> {
+  const from = Math.max(distanceRange.minMeters, centerDistanceMeters - NEAR_RESCAN_HALF_WIDTH_METERS);
+  const to = Math.min(distanceRange.maxMeters, centerDistanceMeters + NEAR_RESCAN_HALF_WIDTH_METERS);
+  if (!(to > from)) return null;
+  const refinementPasses = Math.max(0, Math.floor(
+    searchProfile?.refinementPasses ?? DEFAULT_ROOT_REFINEMENT_PASSES
+  ));
+  if (refinementPasses === 0) return null;
+  const steps = Math.max(2, Math.ceil((to - from) / FINE_RESCAN_STEP_METERS));
+  const distances = Array.from({ length: steps + 1 }, (_, step) => from + (to - from) * (step / steps));
+  const { samples, errors } = await sampleRayTerrainErrors(
+    ray, lensCenterHeightMeters, terrainSampler, signal, distances, "1m"
+  );
+  const states = terrainSignChanges(distances.map((distance, index) => ({
+    distance, sample: samples[index], error: errors[index],
+  })));
+  if (states.length === 0) return null;
+  return refineTerrainBrackets(
+    ray,
+    lensCenterHeightMeters,
+    terrainSampler,
+    signal,
+    states,
+    refinementPasses,
+    Math.max(2, Math.floor(searchProfile?.refinementSegments ?? DEFAULT_ROOT_REFINEMENT_SEGMENTS))
+  );
+}
+
+/** テストからも呼ぶ（探索の中核。外部の挙動は変えない）。 */
+export async function scanRayTerrainIntersections(
   ray: CelestialSubjectRay,
   lensCenterHeightMeters: number,
   terrainSampler: TerrainSampler,
@@ -1457,57 +1664,14 @@ async function scanRayTerrainIntersections(
     }
   }
 
-  const brackets: Array<{ lowIndex: number; highIndex: number }> = [];
-  for (let index = 1; index < errors.length; index += 1) {
-    const previous = errors[index - 1];
-    const current = errors[index];
-    if (!Number.isFinite(previous) || !Number.isFinite(current)) continue;
-    if (previous === 0 || current === 0 || previous * current < 0) {
-      brackets.push({ lowIndex: index - 1, highIndex: index });
-    }
-  }
   // 診断専用: 精密化前の粗探索サンプル（距離・レイ高との差[m]）を記録する。
-  // 2026-08-29修正: 一次の全域探索（recordDiagnosticSamples=true）の
-  // データだけを記録し、各初期交点候補ごとの局所再探索（false）では
-  // 上書きしないようにする。詳細は関数シグネチャのrecordDiagnosticSamples
-  // 引数コメント参照。
+  // 一次の全域探索（recordDiagnosticSamples=true）のデータだけを記録し、各初期交点
+  // 候補ごとの局所再探索（false）では上書きしない。
   if (recordDiagnosticSamples) {
     lastCoarseScanSamples = distances.map((distance, index) => ({
       distanceMeters: distance,
       heightErrorMeters: errors[index],
     }));
-  }
-  if (brackets.length === 0) {
-    // 2026-08-29修正（2026-08-07頃の旧実装との比較検証により判明）:
-    // 現行方式は「符号が反転する交点（明確な交差）が1つも見つからなければ
-    // 候補ゼロ」という設計だった。しかし2026-08-07頃の実装
-    // （ECEFレイ・複数交点対応への書き直し以前のもの）は、交差が見つから
-    // なくても「その時点で最も0に近かったサンプル」をそのまま後段の精密化
-    // （手動ピン相当の詳細探索）へ渡し、そこから真の解へ近づける設計に
-        // なっていた。実際に、その旧実装を今回問題になっている実地形パターン
-    // （被写体からの距離1050〜1511mの実測データに968m付近の地形起伏を
-    // 加えたもの）で再現テストしたところ、この「見つからなくても最も近い
-    // 点から精密化する」設計のおかげで、密度の調整を一切行わなくても
-    // 968m付近の正しい交点を発見・確定できることを確認した。
-    // この安全策は、後のECEFレイ・複数交点対応への書き直しのどこかで
-    // 失われていた。
-    // 粗探索の密度不足（30m間隔化で対応済み）を補う、独立した二重の
-    // 安全策として復元する。以降の精密化・round-trip判定条件（0.5%
-    // 許容誤差）は一切変更していないため、ここで見つかった「最も近い点」
-    // が実際には不正解であれば、従来どおり最終判定で正しく棄却される
-    // （偽陽性を許すものではない）。
-    const finiteIndexes = errors
-      .map((error, index) => ({ error, index }))
-      .filter(({ error }) => Number.isFinite(error));
-    if (finiteIndexes.length === 0) return [];
-    const closest = finiteIndexes.reduce((best, current) =>
-      Math.abs(current.error) < Math.abs(best.error) ? current : best
-    );
-    return [{
-      cartographic: sampled[closest.index],
-      distanceMeters: distances[closest.index],
-      altitudeErrorDegrees: closest.error,
-    }];
   }
 
   const refinementPasses = Math.max(0, Math.floor(
@@ -1516,11 +1680,8 @@ async function scanRayTerrainIntersections(
   const refinementSegments = Math.max(2, Math.floor(
     searchProfile?.refinementSegments ?? DEFAULT_ROOT_REFINEMENT_SEGMENTS
   ));
-  // 高さ差（m）の収束しきい値。DEMの実測精度（1mメッシュ）に対して十分小さく、
-  // かつ最終的な合否は仕様3-Gのround-trip検証（角度・スクリーン座標）が
-  // 別途下すため、ここでは交点位置を十分絞り込む役割に留める。
-  const CONVERGED_HEIGHT_METERS = 0.01;
 
+  type Measured = { distance: number; sample: Cartographic; error: number };
   type RefinementState = {
     lowDistance: number;
     highDistance: number;
@@ -1529,95 +1690,139 @@ async function scanRayTerrainIntersections(
     best: TerrainSolution;
     done: boolean;
   };
-  const states: RefinementState[] = brackets.map((bracket) => {
-    const lowDistance = distances[bracket.lowIndex];
-    const highDistance = distances[bracket.highIndex];
-    const lowError = errors[bracket.lowIndex];
-    const highError = errors[bracket.highIndex];
-    const best = Math.abs(lowError) <= Math.abs(highError)
-      ? { cartographic: sampled[bracket.lowIndex], distanceMeters: lowDistance, altitudeErrorDegrees: lowError }
-      : { cartographic: sampled[bracket.highIndex], distanceMeters: highDistance, altitudeErrorDegrees: highError };
-    return { lowDistance, highDistance, lowError, highError, best, done: false };
-  });
-
-  for (let pass = 0; pass < refinementPasses; pass += 1) {
-    abortIfRequested(signal);
-    const pending = states
-      .map((state, stateIndex) => ({ state, stateIndex }))
-      .filter(({ state }) => !state.done);
-    if (pending.length === 0) break;
-
-    const requests: Array<{ stateIndex: number; distance: number }> = [];
-    for (const { state, stateIndex } of pending) {
-      const step = (state.highDistance - state.lowDistance) / refinementSegments;
-      for (let index = 1; index < refinementSegments; index += 1) {
-        requests.push({ stateIndex, distance: state.lowDistance + step * index });
-      }
-    }
-    const refinementDistances = requests.map((request) => request.distance);
-    const { samples: refinementSamples, errors: refinementErrors } = await sampleRayTerrainErrors(
-      ray,
-      lensCenterHeightMeters,
-      terrainSampler,
-      signal,
-      refinementDistances,
-      "1m"
+  const stateFromBracket = (low: Measured, high: Measured): RefinementState => {
+    const best = Math.abs(low.error) <= Math.abs(high.error) ? low : high;
+    return {
+      lowDistance: low.distance,
+      highDistance: high.distance,
+      lowError: low.error,
+      highError: high.error,
+      best: { cartographic: best.sample, distanceMeters: best.distance, altitudeErrorDegrees: best.error },
+      done: false,
+    };
+  };
+  const coarse: Measured[] = distances.map((distance, index) => ({
+    distance, sample: sampled[index], error: errors[index],
+  }));
+  const closestOf = (items: Measured[]): TerrainSolution[] => {
+    const finite = items.filter((item) => Number.isFinite(item.error));
+    if (finite.length === 0) return [];
+    const closest = finite.reduce((best, current) =>
+      Math.abs(current.error) < Math.abs(best.error) ? current : best
     );
+    return [{
+      cartographic: closest.sample,
+      distanceMeters: closest.distance,
+      altitudeErrorDegrees: closest.error,
+    }];
+  };
+  const signChanges = (items: Measured[]): RefinementState[] => {
+    const found: RefinementState[] = [];
+    let previous: Measured | null = null;
+    for (const item of items) {
+      if (!Number.isFinite(item.error)) continue;
+      if (previous && (previous.error === 0 || item.error === 0 || previous.error * item.error < 0)) {
+        found.push(stateFromBracket(previous, item));
+      }
+      previous = item;
+    }
+    return found;
+  };
 
-    for (const { state, stateIndex } of pending) {
-      const indices = requests
-        .map((request, requestIndex) => ({ request, requestIndex }))
-        .filter(({ request }) => request.stateIndex === stateIndex);
-      const localDistances = indices.map(({ request }) => request.distance);
-      const localSamples = indices.map(({ requestIndex }) => refinementSamples[requestIndex]);
-      const localErrors = indices.map(({ requestIndex }) => refinementErrors[requestIndex]);
+  let states: RefinementState[];
+  if (refinementPasses === 0) {
+    // 精密化なしの指定: 粗探索の交点をそのまま返す（従来どおり）。
+    states = signChanges(coarse);
+    if (states.length === 0) return closestOf(coarse);
+  } else {
+    // 2026-10-10（精度最優先）: 交点を探す段階から、最も細かい地形データ（1m）で行う。
+    //
+    // 以前は「10mデータで符号が変わる区間を見つけ、その中だけを1mデータで絞り込む」
+    // 方式だった。同じ場所でも10mデータと1mデータの高さは食い違う（川・堤防・段差・
+    // 急斜面）。そのため
+    //   - 絞り込みの最良点が10mデータの端の点に張り付いたまま動かず、実在する候補が
+    //     最終確認（仰角0.002度）で棄却される（実機診断: 1703.91mのまま、仰角差0.043度）
+    //   - 10mデータでは符号が変わらないが1mデータでは交差している候補を見落とす
+    //   - 食い違いが大きいと、交点が隣の区間へ移って追えない
+    // という取りこぼしがあった。
+    //
+    // 10mデータは「どのあたりを詳しく調べるか」を決めるためだけに使う。10mデータで
+    // レイとの高さの差が FINE_RESCAN_NEAR_METERS 以内に入る範囲（符号が変わる区間を
+    // 必ず含む）を、前後1区間ずつ広げて、1mデータで FINE_RESCAN_STEP_METERS 刻みに
+    // 測り直す。符号の変化・最良点・候補地点の高さは、すべて1mデータだけで決める。
+    // 合否の基準（最終確認）は変えない。
+    const interesting = new Array<boolean>(coarse.length).fill(false);
+    for (let index = 0; index < coarse.length; index += 1) {
+      const error = coarse[index].error;
+      if (!Number.isFinite(error)) continue;
+      if (Math.abs(error) <= FINE_RESCAN_NEAR_METERS) interesting[index] = true;
+      const previous = index > 0 ? coarse[index - 1].error : Number.NaN;
+      if (Number.isFinite(previous) && (previous === 0 || error === 0 || previous * error < 0)) {
+        interesting[index - 1] = true;
+        interesting[index] = true;
+      }
+    }
+    // 連続する範囲にまとめ、両側へ1区間ずつ広げる。
+    const zones: Array<{ from: number; to: number }> = [];
+    for (let index = 0; index < coarse.length; index += 1) {
+      if (!interesting[index]) continue;
+      const from = coarse[Math.max(0, index - 1)].distance;
+      let end = index;
+      while (end + 1 < coarse.length && interesting[end + 1]) end += 1;
+      const to = coarse[Math.min(coarse.length - 1, end + 1)].distance;
+      const last = zones.at(-1);
+      if (last && from <= last.to) last.to = Math.max(last.to, to);
+      else zones.push({ from, to });
+      index = end;
+    }
 
-      for (let index = 0; index < localErrors.length; index += 1) {
-        const error = localErrors[index];
-        if (Number.isFinite(error) && Math.abs(error) < Math.abs(state.best.altitudeErrorDegrees)) {
-          state.best = {
-            cartographic: localSamples[index],
-            distanceMeters: localDistances[index],
-            altitudeErrorDegrees: error,
-          };
-        }
+    const fineDistances: number[] = [];
+    const zoneOfDistance: number[] = [];
+    const totalLength = zones.reduce((sum, zone) => sum + Math.max(0, zone.to - zone.from), 0);
+    // 通常は1m刻み。合計が上限を超える場合だけ、全範囲の刻みを同じ比率で広げる。
+    const stepMeters = Math.max(FINE_RESCAN_STEP_METERS, totalLength / FINE_RESCAN_MAX_TOTAL_STEPS);
+    zones.forEach((zone, zoneIndex) => {
+      const length = zone.to - zone.from;
+      if (!(length > 0)) return;
+      const steps = Math.max(2, Math.ceil(length / stepMeters));
+      for (let step = 0; step <= steps; step += 1) {
+        fineDistances.push(zone.from + length * (step / steps));
+        zoneOfDistance.push(zoneIndex);
       }
-      if (Math.abs(state.best.altitudeErrorDegrees) <= CONVERGED_HEIGHT_METERS) {
-        state.done = true;
-        continue;
-      }
+    });
 
-      const sectionDistances = [state.lowDistance, ...localDistances, state.highDistance];
-      const sectionErrors = [state.lowError, ...localErrors, state.highError];
-      let nextSection = -1;
-      for (let index = 1; index < sectionErrors.length; index += 1) {
-        const previous = sectionErrors[index - 1];
-        const current = sectionErrors[index];
-        if (Number.isFinite(previous) && Number.isFinite(current) && previous * current <= 0) {
-          nextSection = index;
-          break;
-        }
-      }
-      if (nextSection < 1) {
-        state.done = true;
-        continue;
-      }
-      state.lowDistance = sectionDistances[nextSection - 1];
-      state.highDistance = sectionDistances[nextSection];
-      state.lowError = sectionErrors[nextSection - 1];
-      state.highError = sectionErrors[nextSection];
+    states = [];
+    const fineAll: Measured[] = [];
+    if (fineDistances.length > 0) {
+      const { samples: fineSamples, errors: fineErrors } = await sampleRayTerrainErrors(
+        ray,
+        lensCenterHeightMeters,
+        terrainSampler,
+        signal,
+        fineDistances,
+        "1m"
+      );
+      const perZone = new Map<number, Measured[]>();
+      fineDistances.forEach((distance, index) => {
+        const item = { distance, sample: fineSamples[index], error: fineErrors[index] };
+        fineAll.push(item);
+        const list = perZone.get(zoneOfDistance[index]) ?? [];
+        list.push(item);
+        perZone.set(zoneOfDistance[index], list);
+      });
+      // 範囲をまたいだ符号の変化は数えない（範囲の間は10mデータでレイから遠い）。
+      for (const items of perZone.values()) states.push(...signChanges(items));
+    }
+    if (states.length === 0) {
+      // 交差が1つも無い場合は、従来どおり「最もレイに近い点」を後段の確認へ渡す
+      // （不正解なら最終確認で棄却される）。近い点も1mデータから選ぶ。
+      return closestOf(fineAll.some((item) => Number.isFinite(item.error)) ? fineAll : coarse);
     }
   }
 
-  const solutions: TerrainSolution[] = [];
-  for (const state of states) {
-    if (!Number.isFinite(state.best.cartographic.height)) continue;
-    const duplicate = solutions.some((solution) => Math.abs(solution.distanceMeters - state.best.distanceMeters) < 0.5);
-    if (!duplicate) solutions.push(state.best);
-  }
-
-  // ユーザーが遠い候補から確認できるよう距離降順。候補は自動除外しない（仕様3-D）。
-  return solutions.sort((a, b) => b.distanceMeters - a.distanceMeters);
+  return refineTerrainBrackets(
+    ray, lensCenterHeightMeters, terrainSampler, signal, states, refinementPasses, refinementSegments
+  );
 }
 
 
@@ -2235,7 +2440,20 @@ async function calculateOneCandidates(
         minMeters: Math.max(ABSOLUTE_MIN_DISTANCE_METERS, solution.distanceMeters - span),
         maxMeters: Math.min(ABSOLUTE_MAX_DISTANCE_METERS, solution.distanceMeters + span),
       };
-      const localSolutions = await scanRayTerrainIntersections(
+      // 前回の解が実際の交点（高さの差が収束しきい値以内）の時だけ近道を試す。前回の解が
+      // 「交点は無いが最もレイに近い点」だった場合は、近くに交点がある見込みが無く、
+      // 近道の1往復が無駄になるため、最初から通常の手順で探す。
+      const previousIsCrossing = Math.abs(solution.altitudeErrorDegrees) <= CONVERGED_HEIGHT_METERS;
+      const nearSolutions = !previousIsCrossing ? null : await scanRayTerrainNearDistance(
+        refinedRay,
+        lensCenterHeightMeters,
+        terrainSampler,
+        signal,
+        solution.distanceMeters,
+        localRange,
+        searchProfile
+      );
+      const localSolutions = nearSolutions ?? await scanRayTerrainIntersections(
         refinedRay,
         lensCenterHeightMeters,
         terrainSampler,
@@ -2305,6 +2523,17 @@ async function calculateOneCandidates(
       finalAzimuthError > CONVERGED_HORIZONTAL_DEGREES
     ) {
       reject("final-horizontal-not-converged", {
+        distanceMeters: solution.distanceMeters,
+        altitudeErrorDegrees: finalAltitudeError,
+        azimuthErrorDegrees: finalAzimuthError,
+      });
+      return null;
+    }
+    // 2026-10-10（精度最優先）: 国土地理院の標高データを取得できず、精度の低い代替の
+    // 地形データで求めた地点は、候補として確定しない（通信が回復してから探索し直せば、
+    // 国土地理院のデータで求められる）。
+    if (isLowPrecisionFallbackTerrainSample(solution.cartographic)) {
+      reject("terrain-low-precision-source", {
         distanceMeters: solution.distanceMeters,
         altitudeErrorDegrees: finalAltitudeError,
         azimuthErrorDegrees: finalAzimuthError,

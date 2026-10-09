@@ -8,7 +8,7 @@ const checks=[
  ['terrain batch read bounded',/boundedTerrainCacheOperation\([\s\S]*Promise\.all\(missing\.map/],
  ['invalid read transaction fails open',/InvalidStateError\/TransactionInactiveError[\s\S]*terrainCacheDatabasePromise = null/],
  ['terrain write bounded',/await boundedTerrainCacheOperation\([\s\S]*database\.transaction\(TERRAIN_CACHE_STORE, "readwrite"\)/],
- ['datum marker remains enforced',/record\.datum === "ellipsoidal-v1"/],
+ ['datum marker remains enforced',/record\.datum === "ellipsoidal-v2"/],
  ['device DEM datum conversion remains',/sample\.heightMeters \+ \(geoidHeightMeters as number\)/],
 ];
 let n=0; for(const [name,re] of checks){if(!re.test(s)){console.error('FAIL:',name);process.exitCode=1}else{console.log('PASS:',name);n++}}
