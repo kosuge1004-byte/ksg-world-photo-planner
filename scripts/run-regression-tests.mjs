@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "spot flow error causes: published data beyond-range fallback, section coverage guard, browser-safe Nominatim headers, history save failure",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/spot-flow-error-causes.test.mjs"] },
+  { name: "unknown building height places the subject pin on the ground with a closable notice",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/subject-height-unknown-ground-pin.test.mjs"] },
   { name: "moon age calendar: per-day moonrise at the displayed map position, select-then-jump, today button",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/moon-calendar.test.mjs"] },
   { name: "terrain-aware tripod candidate line from bearing sections; guide line fixed and independent of confirmed candidates",

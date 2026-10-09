@@ -116,7 +116,46 @@ export function buildDiagnosticDetail(
   return lines.join("\n");
 }
 
+const SPOT_SEARCH_DETAIL_MAX_LENGTH = 260;
+
+/** エラーと、その原因（cause）をたどった内部メッセージ。重複は除く。 */
+function errorCauseMessages(error: unknown): string[] {
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const message = technicalMessage(current).trim();
+    if (message && !messages.includes(message)) messages.push(message);
+    current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return messages;
+}
+
+/**
+ * 2026-10-09: スポット検索（候補の選択〜ピン設置）のエラーには、原因の詳細を添える。
+ *
+ * 下の baseUserFacingErrorMessage は、内部メッセージに「通信」「API」等の語が
+ * 含まれるだけで一律の通信エラー文言へ置き換える。そのため、建物の高さが不明・
+ * 標高値が範囲外・端末の保存領域が満杯といった通信と無関係な失敗まで
+ * 「通信先から取得できませんでした」と表示され、利用者にも開発側にも原因が
+ * 分からなかった。一律の文言は残したうえで、実際の理由を後ろに付ける。
+ */
 export function toUserFacingErrorMessage(
+  error: unknown,
+  context: UserErrorContext
+): string {
+  const base = baseUserFacingErrorMessage(error, context);
+  if (context !== "spot-search") return base;
+  const causes = errorCauseMessages(error);
+  // 内部メッセージをそのまま表示している場合（「見つかりませんでした」等）は付けない。
+  if (causes.length === 0 || causes.includes(base)) return base;
+  const joined = causes.join(" ／ 原因: ");
+  const detail = joined.length > SPOT_SEARCH_DETAIL_MAX_LENGTH
+    ? `${joined.slice(0, SPOT_SEARCH_DETAIL_MAX_LENGTH)}…`
+    : joined;
+  return `${base}\n（詳細: ${detail}）`;
+}
+
+function baseUserFacingErrorMessage(
   error: unknown,
   context: UserErrorContext
 ): string {

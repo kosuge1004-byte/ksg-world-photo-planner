@@ -9,7 +9,11 @@ const runner=read('scripts/run-regression-tests.mjs');
 const checks=[
  ['DEM refs union existing + new', dem.includes('new Set(previous?.tileKeys ?? [])') && dem.includes('tileKeys.forEach((key) => merged.add(key))')],
  // 2026-09-30: 保存完了済みの更新は全再取得、「一部不足」の更新は保存済み方位を残して不足分だけ取得する。
-  ['refresh explicitly forceRefresh', /forceRefresh: record\.status === "complete"/.test(app) && /forceRefresh,\s*onProgress/.test(app)],
+  ['refresh explicitly forceRefresh', /forceRefresh: record\.status === "complete"/.test(app) &&
+   // 2026-10-09: 取得呼び出しをrunBackfillへまとめた（内蔵スポットで探索距離が計算済みデータの
+   // 範囲を超える場合の段階取得のため）。更新時のforceRefreshは従来どおり取得処理へ渡る。
+   /forceRefresh: options\.forceRefresh,[\s\S]{0,200}?onProgress/.test(app) &&
+   /runBackfill\(\{ maxDistanceMeters: requestedMaxDistanceMeters, forceRefresh \}\)/.test(app)],
  ['force refresh rebuilds all bearings', /if \(forceRefresh\) return true/.test(mgr)],
  ['complete requires live DEM', /dem\.referencedTiles === 0[\s\S]*dem\.liveTiles === 0/.test(stats)],
  // 2026-09-09追記: サーバー側ジョブ化を差し戻し、水面・河川情報とOSM周辺

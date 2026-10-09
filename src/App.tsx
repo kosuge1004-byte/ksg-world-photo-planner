@@ -283,7 +283,10 @@ import {
   type ResolvedSpotLocation,
   type SpotSubjectSurfaceHint,
 } from "./search/spotPresetSearch";
-import { registeredProfileCoverageDistanceMeters } from "./data/precomputedBearingProfileTargets";
+import {
+  findPrecomputedBearingProfileTarget,
+  registeredProfileCoverageDistanceMeters,
+} from "./data/precomputedBearingProfileTargets";
 import {
   anchorToRegisteredCoordinates,
   rememberStructureHeight,
@@ -717,7 +720,13 @@ function App() {
   // オブジェクトなので、参照ではなく真偽値だけをuseEffectの依存に使う
   // （そうしないと進捗が動くたびに他のエフェクトが再実行されてしまう）。
   const isBearingProfileDownloadActive = bearingProfileDialog?.progress != null;
-  const bearingProfilePendingRef = useRef<{ record: SubjectRecord; subjectPoint: GroundPoint; forceRefresh?: boolean } | null>(null);
+  const bearingProfilePendingRef = useRef<{
+    record: SubjectRecord;
+    subjectPoint: GroundPoint;
+    forceRefresh?: boolean;
+    /** 計算済みデータの範囲を超える分を、時間のかかる1方位ずつの直接取得で集めてよい。 */
+    allowSlowDirectDownload?: boolean;
+  } | null>(null);
   const bearingProfileAbortRef = useRef<AbortController | null>(null);
   // 2026-09-09追記: 「保存済みか」はdownloadedSpotDataだけを唯一の情報源とする
   // ようにしたため、UI専用に保持していたbearingProfileEnabledIdsは廃止した。
@@ -2605,7 +2614,13 @@ function App() {
             calculationMode,
             previewRefractionWeather,
             initialDirectionObserver,
-            controller.signal
+            controller.signal,
+            // 通常探索と同じ探索上限。保存済みの断面がここまで届いていない場合は使わない。
+            registeredProfileCoverageDistanceMeters(
+              subjectPoint.latitude,
+              subjectPoint.longitude,
+              precisionSettings.tripodSearchMaxDistanceMeters
+            )
           );
           if (cancelled || controller.signal.aborted) return;
           // 方位プロファイルは高速化専用。空配列を「正常完了」と扱うと、
@@ -3924,11 +3939,38 @@ function App() {
           if (!(retryError instanceof SubjectRoofResolutionError)) throw retryError;
         }
       }
-      // 登録外の地点は従来どおり「地上には置かない」。
-      if (!registeredAnchor) throw error;
-      console.warn(`${label}の頂上高度をPLATEAU/OSMで確定できないため、学習済み高さを確認します`);
-      return resolveRegisteredStructureWithoutLiveHeight(registeredAnchor, groundPoint, label);
+      if (registeredAnchor) {
+        console.warn(`${label}の頂上高度をPLATEAU/OSMで確定できないため、学習済み高さを確認します`);
+        try {
+          return resolveRegisteredStructureWithoutLiveHeight(registeredAnchor, groundPoint, label);
+        } catch (learnedError) {
+          if (!(learnedError instanceof SubjectRoofResolutionError)) throw learnedError;
+        }
+      }
+      // 2026-10-09変更: 高さがわからない建物・塔は、地上に被写体ピンを置き、その旨を
+      // 通知する。以前は「地上には置かない」として処理を中止していたが、通信が良好でも
+      // ピンを置けず、しかも画面には通信エラーとして表示されていた（内部メッセージに
+      // 「通信状態」という語が含まれ、一律の通信エラー文言へ置き換えられていたため）。
+      // 高さを推測で補うことはしない。置いたピンは「地表」として扱い、建物の頂上と
+      // して保存しない（次に選び直したときは、もう一度高さの確認を試みる）。
+      return placeSubjectOnGroundBecauseHeightUnknown(groundPoint, label);
     }
+  }
+
+  function placeSubjectOnGroundBecauseHeightUnknown(groundPoint: GroundPoint, label: string): GroundPoint {
+    const shortLabel = label.split(/[,、]/u)[0]?.trim() || "この地点";
+    // 通知は×ボタンでいつでも閉じられる（一定時間でも自動的に消える）。
+    showUserNotice({
+      key: "subject-height-unknown",
+      tone: "warning",
+      message: `「${shortLabel}」の高さを確認できなかったため、地上に被写体ピンを置きました（建物・塔の頂上の位置ではありません）。`,
+    });
+    return {
+      ...groundPoint,
+      label,
+      subjectSurfaceTarget: "terrain",
+      structureHeightMeters: undefined,
+    };
   }
 
   function dynamicHeightProvenance(
@@ -4741,7 +4783,7 @@ ${diagnosticMessage}
       setBearingProfileDialog(null);
       return;
     }
-    const { record, subjectPoint: downloadPoint, forceRefresh = false } = pending;
+    const { record, subjectPoint: downloadPoint, forceRefresh = false, allowSlowDirectDownload = false } = pending;
     const controller = new AbortController();
     bearingProfileAbortRef.current = controller;
     setBearingProfileDialog({
@@ -4798,17 +4840,23 @@ ${diagnosticMessage}
         const previous = listDownloadedSpotData().find((item) => item.subjectId === record.id);
         if (previous) setDownloadedSpotData(upsertDownloadedSpotData({ ...previous, status: "partial" }));
       }
-      const backfillResult = await backfillBearingProfiles({
+      const requestedMaxDistanceMeters = registeredProfileCoverageDistanceMeters(
+        downloadPoint.latitude,
+        downloadPoint.longitude,
+        precisionSettings.tripodSearchMaxDistanceMeters
+      );
+      const runBackfill = (options: {
+        maxDistanceMeters: number;
+        forceRefresh: boolean;
+        allowDirectFallback?: boolean;
+      }) => backfillBearingProfiles({
         subjectId: record.id,
         subjectPoint: downloadPoint,
         cameraSettings,
-        maxDistanceMeters: registeredProfileCoverageDistanceMeters(
-          downloadPoint.latitude,
-          downloadPoint.longitude,
-          precisionSettings.tripodSearchMaxDistanceMeters
-        ),
+        maxDistanceMeters: options.maxDistanceMeters,
         signal: controller.signal,
-        forceRefresh,
+        forceRefresh: options.forceRefresh,
+        allowDirectFallback: options.allowDirectFallback,
         onProgress: (progress) => {
           if (bearingProfileAbortRef.current !== controller || controller.signal.aborted) return;
           setBearingProfileDialog({
@@ -4817,6 +4865,50 @@ ${diagnosticMessage}
           });
         },
       });
+      // 2026-10-09修正: 内蔵スポットの計算済みデータは決まった範囲（10km、富士山のみ100km）で
+      // 作ってある。探索距離の設定がそれより大きいと、以前は計算済みデータを一切使わず、
+      // PC側（Eドライブ）で計算できなければ1方位ずつの直接取得（約1時間以上）へ進んでいた。
+      // 設定距離ぶんをサーバーから得られない場合は、まず計算済みデータ（配信済みの範囲）を
+      // 保存する。設定距離まで直接取得するかどうかは、その後で利用者が選ぶ。
+      const precomputedTarget = findPrecomputedBearingProfileTarget(
+        downloadPoint.latitude,
+        downloadPoint.longitude
+      );
+      const precomputedRangeMeters = precomputedTarget &&
+        requestedMaxDistanceMeters > precomputedTarget.maxDistanceMeters + 0.01
+        ? precomputedTarget.maxDistanceMeters
+        : null;
+      let savedRangeLimitedToMeters: number | null = null;
+      let backfillResult: Awaited<ReturnType<typeof backfillBearingProfiles>>;
+      if (precomputedRangeMeters !== null && !allowSlowDirectDownload) {
+        backfillResult = await runBackfill({
+          maxDistanceMeters: requestedMaxDistanceMeters,
+          forceRefresh,
+          allowDirectFallback: false,
+        });
+        if (
+          !controller.signal.aborted && !backfillResult.aborted &&
+          backfillResult.storageWriteFailures === 0 && backfillResult.failedBearings > 0
+        ) {
+          // 上の試行で設定距離ぶんを保存できた方位は、そのまま残す（forceRefreshしない）。
+          const withinPrecomputedRange = await runBackfill({
+            maxDistanceMeters: precomputedRangeMeters,
+            forceRefresh: false,
+            allowDirectFallback: false,
+          });
+          const savedAllBearings = withinPrecomputedRange.failedBearings === 0 &&
+            withinPrecomputedRange.successfulBearings === withinPrecomputedRange.requestedBearings;
+          if (withinPrecomputedRange.aborted || withinPrecomputedRange.storageWriteFailures > 0 || savedAllBearings) {
+            backfillResult = withinPrecomputedRange;
+            if (savedAllBearings) savedRangeLimitedToMeters = precomputedRangeMeters;
+          } else {
+            // 計算済みデータも得られない場合は、従来どおり直接取得で設定距離ぶんを集める。
+            backfillResult = await runBackfill({ maxDistanceMeters: requestedMaxDistanceMeters, forceRefresh: false });
+          }
+        }
+      } else {
+        backfillResult = await runBackfill({ maxDistanceMeters: requestedMaxDistanceMeters, forceRefresh });
+      }
       if (bearingProfileAbortRef.current === controller && !controller.signal.aborted) {
         if (backfillResult.storageWriteFailures > 0) {
           setSearchMessage(`${record.label || "この地点"}の保存中に端末ストレージへの書き込みが${backfillResult.storageWriteFailures}件失敗しました。保存完了にはしていません。空き容量を確認して再実行してください。`);
@@ -4871,7 +4963,35 @@ ${diagnosticMessage}
           justSavedDownloadTokenRef.current += 1;
           setJustSavedDownload({ token: justSavedDownloadTokenRef.current, id: record.id });
         }
-        setSearchMessage(`${record.label || "この地点"}の高精度周辺データを保存しました`);
+        if (savedRangeLimitedToMeters !== null) {
+          const savedKm = Math.round(savedRangeLimitedToMeters / 1000);
+          const settingKm = Math.round(requestedMaxDistanceMeters / 1000);
+          const message =
+            `${record.label || "この地点"}の計算済みデータ（${savedKm}kmまで）を保存しました。` +
+            `探索距離の設定は${settingKm}kmですが、${savedKm}kmより先のデータは現在サーバーから取得できません。` +
+            `${savedKm}kmより遠い三脚候補は、通常の計算で求めます。`;
+          setSearchMessage(message);
+          showUserNotice({
+            key: `bearing-profile-range:${record.id}`,
+            tone: "warning",
+            message,
+            actionLabel: `${settingKm}kmまで直接取得する（時間がかかります）`,
+            onAction: () => {
+              if (bearingProfileAbortRef.current) return;
+              bearingProfilePendingRef.current = {
+                record,
+                subjectPoint: downloadPoint,
+                allowSlowDirectDownload: true,
+              };
+              setBearingProfileDialog({
+                subjectLabel: record.label || "この地点",
+                progress: null,
+              });
+            },
+          });
+        } else {
+          setSearchMessage(`${record.label || "この地点"}の高精度周辺データを保存しました`);
+        }
       }
     } catch (error) {
       if (bearingProfileAbortRef.current === controller && !controller.signal.aborted && !isAbortError(error)) {

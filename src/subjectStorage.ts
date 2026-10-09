@@ -23,7 +23,15 @@ function read(key: string): SubjectRecord[] {
 }
 
 function write(key: string, records: SubjectRecord[]): SubjectRecord[] {
-  localStorage.setItem(key, JSON.stringify(records));
+  // 2026-10-09修正: 履歴は補助機能。端末の保存領域が満杯・保存不可（プライベート
+  // ブラウズ等）のときに例外を出すと、ピン自体は置けているのに「スポット検索を完了
+  // できませんでした」と表示され、後続の処理（画面を閉じる・ダウンロードの案内）も
+  // 行われなかった。保存できなくても、この回の履歴は呼び出し側へそのまま返す。
+  try {
+    localStorage.setItem(key, JSON.stringify(records));
+  } catch (error) {
+    console.warn("検索履歴を端末へ保存できませんでした（今回の操作は続行します）", error);
+  }
   return records;
 }
 

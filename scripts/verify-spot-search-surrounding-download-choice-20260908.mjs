@@ -20,7 +20,9 @@ const checks = [
   ["dialog no longer exposes a favorite/spot-search mode", !dialog.includes('mode: "favorite" | "spot-search"') && !dialog.includes("onConfirmAndFavorite")],
   ["favorite storage functions were removed (unified into downloadedSpotData)", !subjectStorage.includes("export function addFavoriteSubject") && !subjectStorage.includes("export function toggleFavoriteSubject")],
   ["downloaded spot data owns rename, taking over the favorite label-edit feature", downloadedSpotData.includes("export function renameDownloadedSpotData")],
-  ["pending download stores exact searched point", app.includes("bearingProfilePendingRef = useRef<{ record: SubjectRecord; subjectPoint: GroundPoint; forceRefresh?: boolean } | null>") && app.includes("subjectPoint: downloadPoint")],
+  ["pending download stores exact searched point", // 2026-10-09: 直接取得の許可フラグ（allowSlowDirectDownload）を追加したため型の書式が変わった。
+   // 検索した地点そのもの（subjectPoint）を保持する点は同じ。
+   /bearingProfilePendingRef = useRef<\{\s*record: SubjectRecord;\s*subjectPoint: GroundPoint;\s*forceRefresh\?: boolean;/.test(app) && app.includes("subjectPoint: downloadPoint")],
   ["confirm no longer takes a registerFavorite flag", app.includes("async function confirmBearingProfileDownload() {")],
   ["save toggle is driven by downloadedSpotData membership, not a separate favorites list", app.includes("downloadedSpotData.some((item) => item.subjectId === subjectId)")],
   ["screen no longer renders a separate favorites tab", !screen.includes('"favorites"') && !screen.includes("お気に入りを表示")],

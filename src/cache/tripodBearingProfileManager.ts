@@ -881,6 +881,21 @@ export function selectFarthestVerifiedCandidate(
 }
 
 /**
+ * 保存済みの断面が、探索上限の距離まで届いているか。
+ * 探索上限が未指定の場合は従来どおり届いているものとして扱う。
+ */
+export function bearingProfilesCoverSearchRange(
+  profiles: ReadonlyArray<Pick<BearingProfileEntry, "points"> | null>,
+  searchMaxDistanceMeters: number | undefined
+): boolean {
+  if (typeof searchMaxDistanceMeters !== "number" || !Number.isFinite(searchMaxDistanceMeters)) return true;
+  return profiles.every((profile) => {
+    const lastDistanceMeters = profile?.points[profile.points.length - 1]?.distanceMeters ?? 0;
+    return lastDistanceMeters + 0.01 >= searchMaxDistanceMeters;
+  });
+}
+
+/**
  * 2026-09-05追記: ライブ検索（App.tsx）から呼ぶ、方位プロファイル
  * キャッシュの読み出し。
  *
@@ -908,7 +923,13 @@ export async function tryUseBearingProfileCache(
   calculationMode: CalculationMode,
   refractionWeather: RefractionWeatherContext | undefined,
   initialDirectionObserver: GroundPoint | undefined,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /**
+   * 通常探索の探索上限（m）。保存済みの断面がこの距離まで届いていない場合、断面の
+   * 範囲内で見つかった交点より遠くに本来の候補（最も遠い交点）がある可能性を否定
+   * できない。その場合は高速経路を使わず、通常探索へ進める。
+   */
+  searchMaxDistanceMeters?: number
 ): Promise<TripodCandidate[] | null> {
   if (enabledPoints.length === 0) return null;
   if (Number.isNaN(selectedDate.getTime())) return null;
@@ -937,6 +958,10 @@ export async function tryUseBearingProfileCache(
     tripodBearings
   );
   if (profiles.some((profile) => profile === null)) return null;
+  // 2026-10-09: 断面の範囲が探索上限に届かない場合は使わない（ダウンロードの
+  // 保存済み判定と同じ基準）。例: 10kmぶん保存した後で探索距離を20kmに変えた場合、
+  // 内蔵スポットで計算済みデータ（10km）だけを保存した場合。
+  if (!bearingProfilesCoverSearchRange(profiles, searchMaxDistanceMeters)) return null;
 
   for (let pointIndex = 0; pointIndex < enabledPoints.length; pointIndex += 1) {
     const point = enabledPoints[pointIndex];

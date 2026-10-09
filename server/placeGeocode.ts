@@ -233,11 +233,7 @@ async function searchNominatim(
   const response = await fetcher(
     `https://nominatim.openstreetmap.org/search?${parameters}`,
     {
-      headers: {
-        Accept: "application/json",
-        "Accept-Language": "ja-JP,ja;q=0.9",
-        "User-Agent": "AstroSight/1.0",
-      },
+      headers: nominatimRequestHeaders(),
       signal: providerSignal(parentSignal),
     }
   );
@@ -321,6 +317,25 @@ async function searchGsi(
         }]
       : [];
   });
+}
+
+/**
+ * 2026-10-09修正: この検索は、サーバー（Pages Functions）からも端末のブラウザからも
+ * 実行される（候補一覧の取得でサーバーが使えないときの予備経路）。
+ * ブラウザから User-Agent を指定すると、SafariやFirefoxでは「事前確認が必要な
+ * リクエスト」になり、Nominatim側がそのヘッダーを許可していないため通信ごと拒否
+ * される。ブラウザは自身の User-Agent と参照元を自動で送るので、指定はサーバー
+ * 実行時だけにする（Nominatimの利用方針が求めるアプリの識別）。
+ */
+export function nominatimRequestHeaders(
+  runsInBrowser = typeof (globalThis as { document?: unknown }).document !== "undefined"
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Accept-Language": "ja-JP,ja;q=0.9",
+  };
+  if (!runsInBrowser) headers["User-Agent"] = "AstroSight/1.0";
+  return headers;
 }
 
 function nominatimPrimaryName(place: NominatimPlace): string | null {
