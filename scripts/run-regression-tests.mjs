@@ -1,6 +1,14 @@
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  { name: "PLATEAU building ingest tool: real sample files, exact roof faces, partial fetch, CRC check, resume",
+    arguments: ["--test", "./tools/plateau-building-ingest/plateau-building-ingest.test.mjs"] },
+  { name: "PLATEAU building survey tool: zip directory over partial requests, ZIP64, per-folder totals",
+    arguments: ["--test", "./tools/plateau-size-survey/plateau-bldg-survey.test.mjs"] },
+  { name: "PLATEAU size survey tool: catalogue paging, size probes, newest-year-per-city totals",
+    arguments: ["--test", "./tools/plateau-size-survey/plateau-size-survey.test.mjs"] },
+  { name: "pin placement: provisional pin while the height resolves, no internal error text, no needless OSM wait",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/pin-placement-feedback-20261010.test.mjs"] },
   { name: "precision first: per-point geoid, no stored-section shortcut, fallback terrain never confirmed",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/precision-first-20261010.test.mjs"] },
   { name: "tripod crossings are searched and refined on the 1 m terrain data; no candidate stuck on a 10 m sample",

@@ -26,6 +26,11 @@ type Props = {
   size: MapSize;
   subject: GroundPoint | null;
   tripod: GroundPoint | null;
+  /**
+   * 高さを確定している間だけ出す仮のピン（タップした場所がすぐ分かるようにする）。
+   * 確定したら本来のピンに置き換わる。計算には一切使わない。
+   */
+  pendingPin?: { kind: "subject" | "tripod"; latitude: number; longitude: number } | null;
   tripodSubjectDistanceMeters: number | null;
   points: CelestialScreenPoint[];
   tracks: CelestialTrack[];
@@ -124,6 +129,7 @@ export function Map2DOverlayComponent({
   size,
   subject,
   tripod,
+  pendingPin,
   tripodSubjectDistanceMeters,
   visibility,
   candidates,
@@ -142,6 +148,9 @@ export function Map2DOverlayComponent({
     : null;
   const tripodPixel = tripod
     ? projectCoordinatesToMapPixel(tripod, center, zoom, size)
+    : null;
+  const pendingPinPixel = pendingPin
+    ? projectCoordinatesToMapPixel(pendingPin, center, zoom, size)
     : null;
   const foregroundPixel = foregroundObject?.enabled
     ? projectCoordinatesToMapPixel(foregroundObject, center, zoom, size)
@@ -290,7 +299,20 @@ export function Map2DOverlayComponent({
           )}
         </div>
       )}
-    
+      {pendingPin && pendingPinPixel && isInside(pendingPinPixel, size) && (
+        <div
+          className={`map-2d-pin map-2d-pending-pin ${pendingPin.kind === "tripod" ? "map-2d-tripod-pin" : "map-2d-subject-pin"}`}
+          style={pinStyle(pendingPinPixel)}
+          role="status"
+          aria-label={pendingPin.kind === "tripod" ? "三脚ピンの高さを確認中" : "被写体ピンの高さを確認中"}
+        >
+          <svg viewBox="0 0 28 40">
+            <path d="M14 39C11 32 2 24 2 14A12 12 0 0 1 26 14c0 10-9 18-12 25Z" />
+            <circle cx="14" cy="14" r="4.5" />
+          </svg>
+        </div>
+      )}
+
       {/* 2D map always uses the fixed-size person pin, regardless of zoom or distance. */}
       {foregroundPixel && isInside(foregroundPixel, size) && (
         <button

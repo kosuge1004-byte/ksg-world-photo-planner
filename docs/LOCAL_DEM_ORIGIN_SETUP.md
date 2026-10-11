@@ -96,6 +96,7 @@ npm.cmd run local-dem:install-autostart
 - `POST /v1/elevation/batch`
 - `POST /v1/bearing-profile/precomputed`
 - `POST /v1/bearing-profile/compute`
+- `POST /v1/plateau/roof`
 - 内容を持たない `GET /health`
 - オリジントークンを要求する内容を持たない `GET /v1/health`
 

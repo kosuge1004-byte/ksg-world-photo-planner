@@ -7,7 +7,6 @@ import {
   auditLandmarkHeights,
   type LandmarkHeightAuditResult,
 } from "../audit/landmarkHeightAudit";
-import { ensureHiddenPlateauBuildingsForHeightLookup } from "../cesium/createMapViewer";
 import { resolvePlateauRoofGroundPoint } from "../cesium/plateauBuildingVerification";
 import { sampleWorldTerrainNeutral } from "../cesium/worldTerrain";
 import { JAPAN_LANDMARKS } from "../data/japanLandmarks";
@@ -47,7 +46,6 @@ export function LandmarkHeightAuditPanel({ getViewer }: { getViewer: () => Viewe
       .filter((landmark) => landmark.heightStatus === "unverified")
       .map((landmark) => ({ name: landmark.name, latitude: landmark.latitude, longitude: landmark.longitude }));
     setStatus(`PLATEAU建物を読み込んでいます…（対象${targets.length}件）`);
-    await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
     const output = await auditLandmarkHeights(targets, {
       resolveGround: (target) => resolveGroundPoint(target.latitude, target.longitude, target.name),
       resolvePlateauTop: async (target) => {

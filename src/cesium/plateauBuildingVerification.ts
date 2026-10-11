@@ -2,12 +2,16 @@ import { Cartesian3, Cartographic, Ellipsoid, Ray, type Scene, type Viewer } fro
 
 import { fetchGsiGeoidHeight, groundPointFromCoordinates } from "./worldTerrain";
 import { collectGoogleTilesetsToExclude } from "./googleTilesetMarker";
+import { ensureHiddenPlateauBuildingsForHeightLookup } from "./createMapViewer";
 import { clampToHeightWithTimeout } from "./clampToHeightWithTimeout";
 import { withOverallTimeout } from "../utils/withOverallTimeout";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
 import { MIN_STRUCTURE_CLEARANCE_METERS } from "../height/subjectSurfaceResolution";
+import { diagnosticFetch } from "../network/networkDiagnostics";
+import { isPlateauRoofLookupResponse } from "../types/plateauRoof";
+import { withAbortableTimeout } from "../utils/abortableSemaphore";
 
 // 2026-09-02追記（ユーザー提案により）: 屋根合わせ（clampToHeightMostDetailed
 // による複数段階のPLATEAU建物探索）は、DEM標高のようにサーバー側R2へ
@@ -78,7 +82,7 @@ type RoofCacheRecord = {
 // 候補選定ロジック（highestOf・ringCandidatesの候補構成等）を変更した
 // 場合は、この値を必ずインクリメントする。既存キャッシュはTTL内でも
 // 無効化され、次回検索時に新しいロジックで再計算される。
-const ROOF_CACHE_ALGORITHM_VERSION = 4;
+const ROOF_CACHE_ALGORITHM_VERSION = 5;
 
 let roofCacheDatabasePromise: Promise<KsgIdbDatabase | null> | null = null;
 
@@ -439,6 +443,51 @@ function highestOf(candidates: ClampedCandidate[]): ClampedCandidate | null {
   );
 }
 
+async function resolveStoredPlateauRoofPoint(
+  latitude: number,
+  longitude: number,
+  label: string,
+  signal?: AbortSignal
+): Promise<ResolvedGroundPoint | null> {
+  try {
+    return await withAbortableTimeout(async (requestSignal) => {
+      const response = await diagnosticFetch("plateau-roof", "/api/plateau-roof", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ latitude, longitude }),
+        cache: "no-store",
+        signal: requestSignal,
+      }, 4_000, 1);
+      if (!response.ok) {
+        await response.body?.cancel();
+        return null;
+      }
+      const body: unknown = await response.json();
+      if (!isPlateauRoofLookupResponse(body) || !body.candidate) return null;
+      const candidate = body.candidate;
+      const cartographic = Cartographic.fromDegrees(candidate.longitude, candidate.latitude);
+      const geoidHeightMeters = await fetchGsiGeoidHeight(cartographic, requestSignal);
+      const ellipsoidalHeight = candidate.orthometricHeightMeters + geoidHeightMeters;
+      const point: ResolvedGroundPoint = {
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+        height: ellipsoidalHeight,
+        ellipsoidalHeightMeters: ellipsoidalHeight,
+        orthometricHeightMeters: candidate.orthometricHeightMeters,
+        geoidHeightMeters,
+        heightSource: "3d-picked",
+        subjectSurfaceTarget: "structure-roof",
+        label,
+      };
+      return isResolvedGroundPoint(point) ? point : null;
+    }, 5_000, `${label}の建物屋根データ取得がタイムアウトしました`, signal);
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    console.warn(`${label}の保存済み建物屋根データを利用できませんでした`, error);
+    return null;
+  }
+}
+
 /**
  * 標準・Googleタイルいずれのモードでも、被写体地点にPLATEAU建物（オープン
  * データ）があれば、その建物・構造物の頂上へ被写体ピンそのものを移動する
@@ -476,13 +525,32 @@ export async function resolvePlateauRoofGroundPoint(
   label: string,
   signal?: AbortSignal
 ): Promise<ResolvedGroundPoint | null> {
-  if (viewer.isDestroyed()) return null;
-  const scene = viewer.scene as ClampHeightScene;
-  if (typeof scene.clampToHeightMostDetailed !== "function") return null;
-
   const cacheKey = roofCacheKey(latitude, longitude);
   const cached = await readRoofPersistentCache(cacheKey).catch(() => null);
   if (cached) return cached;
+
+  // Prepared PLATEAU CityGML is queried before loading or sampling 3D Tiles.
+  // Only explicit LOD2+ roof surfaces are returned by the private origin;
+  // ambiguous LOD1 boxes are deliberately treated as a miss and continue to
+  // the established Cesium path below, preserving the existing precision.
+  const stored = await resolveStoredPlateauRoofPoint(latitude, longitude, label, signal);
+  if (stored) {
+    void writeRoofPersistentCache(cacheKey, stored);
+    return stored;
+  }
+
+  if (viewer.isDestroyed()) return null;
+  if (collectGoogleTilesetsToExclude(viewer).length > 0) {
+    try {
+      await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
+    } catch (error) {
+      console.warn(`${label}の建物屋根探索用データを準備できませんでした`, error);
+      return null;
+    }
+    if (viewer.isDestroyed()) return null;
+  }
+  const scene = viewer.scene as ClampHeightScene;
+  if (typeof scene.clampToHeightMostDetailed !== "function") return null;
 
   // 2026-09-01追記（実機診断より）: 東京タワー等、隣接する低い建物が
   // Stage 2局所探索で先に見つかるケースでは、Stage 2局所→Stage 3精密化→

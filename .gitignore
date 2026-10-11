@@ -43,3 +43,4 @@ coverage/
 
 # Generated at prebuild
 public/__astro_internal_geo_tz/
+tools/plateau-building-ingest/ingest-settings.json

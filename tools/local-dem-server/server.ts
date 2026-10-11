@@ -14,6 +14,7 @@ import { loadConfig } from "./config.ts";
 import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
 import { createLocalDemPersistentCache } from "./localDemPersistentCache.ts";
 import { createDynamicSpotStore } from "./dynamicSpotStore.ts";
+import { createPlateauBuildingStore } from "./plateauBuildingStore.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -34,6 +35,10 @@ async function main(): Promise<void> {
       nowIso: () => new Date().toISOString(),
     });
   const dynamicSpots = await createDynamicSpotStore(config.dataRoot, computeExactProfile);
+  // Building data is an optional acceleration path. A missing or damaged
+  // building index must never prevent the established DEM/profile service
+  // from starting; the browser then uses its existing PLATEAU fallback.
+  const plateauBuildings = await createPlateauBuildingStore(config.dataRoot).catch(() => null);
 
   const handler = createLocalDemRequestHandler(
     config,
@@ -44,7 +49,12 @@ async function main(): Promise<void> {
       : undefined,
     computeExactProfile,
     dynamicSpots,
-    { nationwideDemReady: demReadiness.nationwideReady }
+    {
+      nationwideDemReady: demReadiness.nationwideReady,
+      plateauRoofLookup: plateauBuildings
+        ? (latitude, longitude) => plateauBuildings.lookup(latitude, longitude)
+        : undefined,
+    }
   );
   const server = createServer((request, response) => {
     void handler(request, response);
@@ -60,6 +70,7 @@ async function main(): Promise<void> {
       port: config.port,
       precomputedProfiles: precomputedProfiles?.entryCount ?? 0,
       dynamicSpotStore: true,
+      plateauBuildingEntries: plateauBuildings?.entryCount ?? 0,
       nationwideDemReady: demReadiness.nationwideReady,
     }));
     dynamicSpots.resumeIncomplete();

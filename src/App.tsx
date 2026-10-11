@@ -168,7 +168,7 @@ import {
   clearTripodSubjectSightLineEntity,
   updateTripodSubjectSightLineEntity,
 } from "./cesium/tripodSubjectSightLineEntities";
-import { createMapViewer, ensureHiddenPlateauBuildingsForHeightLookup, setPreviewWireframeMode } from "./cesium/createMapViewer";
+import { createMapViewer, setPreviewWireframeMode } from "./cesium/createMapViewer";
 import {
   attachInteractive3dPerformance,
   sceneHasPending3dContent,
@@ -195,7 +195,8 @@ import {
   setTripodPin,
   setTripodPinFromCoordinates,
 } from "./cesium/tripodPin";
-import { resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
+import { HeightResolutionError, resolveGroundPoint, resolveGroundPointFrom3dSurface } from "./height/heightResolver";
+import { ValidationError } from "./validation/validationService";
 import { isResolvedGroundPoint } from "./types/points";
 import { resolvePlateauRoofGroundPoint } from "./cesium/plateauBuildingVerification";
 import { LandmarkHeightAuditPanel } from "./components/LandmarkHeightAuditPanel";
@@ -780,8 +781,16 @@ function App() {
   const [qrShareProjectName, setQrShareProjectName] = useState("");
   const [qrScanOpen, setQrScanOpen] = useState(false);
   const [pendingPlacement, setPendingPlacement] = useState<
-    { kind: "subject" | "tripod" | "person"; commit: (offsetMeters: number) => Promise<void> } | null
+    {
+      kind: "subject" | "tripod" | "person";
+      commit: (offsetMeters: number) => Promise<void>;
+      /** 2D地図でタップした場所。確定するまで仮のピンを出す。 */
+      coordinates?: { latitude: number; longitude: number };
+    } | null
   >(null);
+  // 2026-10-10: 配置モードを使わない直接タップ（三脚の優先配置）で、高さを確定している間の仮のピン。
+  const [directTapPendingPin, setDirectTapPendingPin] =
+    useState<{ kind: "tripod"; latitude: number; longitude: number } | null>(null);
   const [pendingPlacementOffsetMeters, setPendingPlacementOffsetMeters] = useState(0);
   const [pendingPlacementBusy, setPendingPlacementBusy] = useState(false);
   const [pendingPlacementError, setPendingPlacementError] = useState<string | null>(null);
@@ -3814,11 +3823,21 @@ function App() {
    * 地図クリックで即配置せず、確認ダイアログ（高度オフセット入力つき）を挟む。
    * commitには「はい」が押された後の実際の高度解決・ピン確定処理を渡す。
    */
+  // 2D地図に出す仮のピン: 直接タップの三脚、または配置モードでタップして確定待ちの地点。
+  const pendingPin2d = useMemo(() => {
+    if (directTapPendingPin) return directTapPendingPin;
+    if (pendingPlacement?.coordinates && pendingPlacement.kind !== "person") {
+      return { kind: pendingPlacement.kind, ...pendingPlacement.coordinates };
+    }
+    return null;
+  }, [directTapPendingPin, pendingPlacement]);
+
   function openPlacementConfirm(
     kind: "subject" | "tripod" | "person",
-    commit: (offsetMeters: number) => Promise<void>
+    commit: (offsetMeters: number) => Promise<void>,
+    coordinates?: { latitude: number; longitude: number }
   ): void {
-    setPendingPlacement({ kind, commit });
+    setPendingPlacement({ kind, commit, coordinates });
     setPendingPlacementOffsetMeters(0);
     setPendingPlacementError(null);
     setPendingPlacementBusy(false);
@@ -3844,8 +3863,10 @@ function App() {
       stopPlacementMode();
     } catch (error) {
       console.warn("配置を確定できませんでした", error);
+      // 利用者向けに書かれた文言（高さの解決・入力値の検証）だけをそのまま表示する。
+      // それ以外の内部のエラー文は画面に出さない（上の console.warn にだけ残す）。
       setPendingPlacementError(
-        error instanceof Error && error.message
+        (error instanceof HeightResolutionError || error instanceof ValidationError) && error.message
           ? error.message
           : "高度を取得できませんでした。通信状態を確認して再試行するか、キャンセルしてください"
       );
@@ -3909,10 +3930,6 @@ function App() {
     const roofPointPromise: Promise<GroundPoint | null> = (async () => {
       if (!viewer || viewer.isDestroyed()) return null;
       try {
-        if (precisionSettings.accuracyMode === "highest") {
-          await ensureHiddenPlateauBuildingsForHeightLookup(viewer);
-          if (viewer.isDestroyed()) return null;
-        }
         return await resolvePlateauRoofGroundPoint(viewer, latitude, longitude, label, signal);
       } catch (error) {
         console.warn("被写体地点の建物屋根への合わせ込みに失敗しました", error);
@@ -3943,11 +3960,40 @@ function App() {
       console.warn("被写体地点のOSM高さ推定に失敗しました", error);
       return { isStructure: false, heightHint: null };
     });
-    const [groundPoint, firstRoofPoint, osmInspection] = await Promise.all([
+    // 2026-10-10: OSMの結果を待たなくても答えが変わらない場合は、待たずに進む。
+    // 保存済みスポット（dynamicHeightPriority）は「屋根の実測 → 無ければOSM」の順で
+    // 採用するので、屋根の実測が得られた時点でOSMは使われない。その場合に限り、
+    // 最大6秒のOSM待ちを省く。採用する高さの優先順位は変えていない。
+    // 3つの取得は従来どおり同時に開始している（待つ対象だけを減らす）。
+    const [groundPoint, firstRoofPoint] = await Promise.all([
       groundPointPromise,
       roofPointPromise,
-      osmInspectionPromise,
     ]);
+    if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
+    const roofDecidesAlone = (() => {
+      if (!surfaceHint.dynamicHeightPriority || !firstRoofPoint) return false;
+      if (
+        ellipsoidalHeightMeters(firstRoofPoint) - ellipsoidalHeightMeters(groundPoint) <
+        MIN_STRUCTURE_CLEARANCE_METERS
+      ) return false;
+      try {
+        // 屋根だけで「建物の頂上」として成立するか（OSMが建物と判定した場合と同じ条件で確認）。
+        selectSubjectSurfacePoint({
+          groundPoint,
+          roofPoint: firstRoofPoint,
+          osmPoint: null,
+          requireStructureRoof: true,
+          label,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    if (roofDecidesAlone) void osmInspectionPromise.catch(() => undefined);
+    const osmInspection = roofDecidesAlone
+      ? { isStructure: false, heightHint: null }
+      : await osmInspectionPromise;
     if (signal?.aborted) throw new DOMException("検索中止", "AbortError");
     const osmPoint = osmInspection.heightHint
       ? applyOsmSubjectHeightHint(groundPoint, osmInspection.heightHint, label)
@@ -5824,6 +5870,11 @@ ${diagnosticMessage}
       setSearchMessage("三脚候補計算を一時中断し、タップした三脚位置を優先して確定しています…");
     }
 
+    // タップした場所にすぐ仮のピンを出す（高さを取得している間、何も起きていないように
+    // 見えないようにする）。三脚ピンそのもの（計算に使う値）は高さが確定してから置く。
+    const pending = { kind: "tripod" as const, latitude: coordinates.latitude, longitude: coordinates.longitude };
+    setDirectTapPendingPin(pending);
+    setSearchMessage("タップした場所の高さを確認しています…");
     try {
       const point = viewer && !viewer.isDestroyed()
         ? await setTripodPinFromCoordinates(
@@ -5846,6 +5897,8 @@ ${diagnosticMessage}
       console.warn("2D地図タップ位置へ三脚ピンを配置できませんでした", error);
       setSearchMessage("三脚ピンの高度を取得できませんでした。通信状態を確認して再試行してください");
     } finally {
+      // 連続でタップした場合、後のタップの仮ピンを消さない。
+      setDirectTapPendingPin((current) => (current === pending ? null : current));
       if (candidateCalculationWasRunning) {
         // setTripodPointの反映後に新しい手動三脚位置を初期方向ヒントとして
         // 精密候補計算を再開させる。計算精度・探索式は変更しない。
@@ -5923,7 +5976,7 @@ ${diagnosticMessage}
         setSearchMessage(
           `被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
         );
-      });
+      }, coordinates);
     } else {
       openPlacementConfirm("tripod", async (offsetMeters) => {
         const rawPoint = viewer && !viewer.isDestroyed()
@@ -5952,7 +6005,7 @@ ${diagnosticMessage}
         setSearchMessage(
           `三脚ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
         );
-      });
+      }, coordinates);
     }
   }
 
@@ -6817,6 +6870,7 @@ ${diagnosticMessage}
               size={mapSize}
               subject={subjectPoint}
               tripod={tripodPoint}
+              pendingPin={pendingPin2d}
               tripodSubjectDistanceMeters={metrics?.distanceMeters ?? null}
               points={celestialPoints}
               tracks={celestialTracks}

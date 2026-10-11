@@ -95,7 +95,8 @@ assert.match(app, /record\.mode === ["']auto["']/);
 assert.match(app, /complete:\s*true/);
 assert.match(elevation, /lookupLocalDemGatewayAuto\(gatewayPoints, signal\)/);
 assert.match(bearingManager, /const PRECOMPUTED_BEARING_BATCH_SIZE = 360/);
-assert.match(bearingManager, /const EDRIVE_EXACT_BEARING_BATCH_SIZE = 24/);
+assert.match(bearingManager, /const EDRIVE_NATIONWIDE_BEARING_BATCH_SIZE = 120/);
+assert.match(bearingManager, /const EDRIVE_SAFE_BEARING_BATCH_SIZE = 24/);
 assert.match(bearingManager, /usesCompleteServerTerrainProfile/);
 
 assert.match(runtime, /new AsyncLocalStorage<RuntimeConfiguration>/);

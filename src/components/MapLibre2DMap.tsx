@@ -222,11 +222,9 @@ export function MapLibre2DMap({
         const handleError = (event?: unknown) => {
           const typedEvent = event as MapLibreErrorEvent | undefined;
           const detail = typedEvent?.error?.message || typedEvent?.message;
-          onErrorRef.current?.(
-            detail
-              ? `2D地図を読み込めませんでした：${String(detail)}`
-              : "2D地図を読み込めませんでした"
-          );
+          // 内部のエラー文（取得先のアドレスを含む）は画面に出さない。
+          if (detail) console.warn("2D地図の読み込みエラー", detail);
+          onErrorRef.current?.("2D地図を読み込めませんでした。通信状態を確認してください");
         };
 
         map.on("load", handleLoad);

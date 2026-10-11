@@ -17,6 +17,10 @@ import {
   isQuickTunnelElevationEndpoint,
   readRegisteredLocalDemEndpoint,
 } from "./localDemEndpointRegistry.ts";
+import {
+  isPlateauRoofLookupResponse,
+  type PlateauRoofCandidate,
+} from "../src/types/plateauRoof.ts";
 
 export type LocalDemGatewaySource =
   | "DEM1A"
@@ -150,6 +154,59 @@ function dynamicSpotEndpointUrl(
   const elevationEndpoint = endpointUrl(configuration);
   if (!elevationEndpoint) return null;
   return new URL(`/v1/dynamic-spot/${action}`, elevationEndpoint);
+}
+
+function plateauRoofEndpointUrl(configuration: LocalDemGatewayConfiguration): URL | null {
+  const elevationEndpoint = endpointUrl(configuration);
+  if (!elevationEndpoint) return null;
+  return new URL("/v1/plateau/roof", elevationEndpoint);
+}
+
+export async function lookupLocalPlateauRoof(
+  latitude: number,
+  longitude: number,
+  signal?: AbortSignal
+): Promise<PlateauRoofCandidate | null> {
+  if (!isJapanPoint({ latitude, longitude })) return null;
+  const configuration = await resolvedGatewayConfiguration();
+  if (!configuration) return null;
+  const endpoint = plateauRoofEndpointUrl(configuration);
+  if (!endpoint) return null;
+  if (signal?.aborted) throw createAbortError();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createTimeoutError("建物屋根データAPIタイムアウト"));
+  }, REQUEST_TIMEOUT_MS);
+  const onAbort = () => controller.abort(createAbortError());
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: gatewayHeaders(configuration),
+      body: JSON.stringify({ latitude, longitude }),
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (response.status === 404) {
+      await response.body?.cancel();
+      return null;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      return null;
+    }
+    const value = await readBoundedJson(response);
+    return isPlateauRoofLookupResponse(value) ? value.candidate : null;
+  } catch {
+    if (signal?.aborted && !timedOut) throw createAbortError();
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 async function requestDynamicSpot(

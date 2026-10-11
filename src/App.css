@@ -1103,6 +1103,9 @@ button { cursor: pointer; }
 .map-2d-pin > svg { display: block; width: 14px; height: 20px; overflow: visible; }
 .map-2d-pin path { fill: #e53935; stroke: #fff; stroke-width: 2; }
 .map-2d-pin circle { fill: #fff; }
+/* 2026-10-10: 高さを確定している間の仮のピン（半透明で点滅）。確定後は通常のピンに置き換わる。 */
+.map-2d-pending-pin { z-index: 9; opacity: .6; animation: map-2d-pending-pin-pulse .9s ease-in-out infinite alternate; }
+@keyframes map-2d-pending-pin-pulse { from { opacity: .35; } to { opacity: .8; } }
 /* 2026-09-05追記: 被写体・三脚どちらのピンも同じ赤色になっており、
    地図上で見分けが付かなかった（体系的なclassName総点検で判明）。
    三脚ピンは青系に変えて区別できるようにする。 */

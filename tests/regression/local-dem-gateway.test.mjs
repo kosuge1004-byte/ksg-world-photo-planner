@@ -9,6 +9,7 @@ import { computeBearingProfileBatch } from "../../server/bearingProfileBatch.ts"
 import { lookupGsiElevations } from "../../server/gsiElevation.ts";
 import {
   computeLocalBearingProfile,
+  lookupLocalPlateauRoof,
   lookupLocalDemGatewayAuto,
   lookupLocalDemGatewayForSource,
   resetLocalDemGatewayForTests,
@@ -83,6 +84,28 @@ test("gateway sends fixed authentication headers and validates aligned results",
   );
   assert.equal(calls, 1);
   assert.deepEqual([...result], [[9, 44.25]]);
+});
+
+test("prepared PLATEAU roof lookup uses the authenticated fixed origin route and validates its result", async () => {
+  configureServerRuntime({ localDemGateway: gatewayConfiguration });
+  const candidate = {
+    dataset: "plateau-13103-minato-ku-2025", year: 2025, buildingId: "tower", lod: 2,
+    latitude: 35.65858857159358, longitude: 139.74544604103193,
+    orthometricHeightMeters: 350.514, buildingMinHeightMeters: 18.391,
+    buildingMaxHeightMeters: 350.514, installationMaxHeightMeters: null,
+    measuredHeightMeters: 332.1, badCoordinatePolygons: 0,
+  };
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://dem-origin.example.test/v1/plateau/roof");
+    assert.deepEqual(JSON.parse(init.body), { latitude: 35.65858, longitude: 139.74543 });
+    const headers = new Headers(init.headers);
+    assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
+    return Response.json({ candidate });
+  };
+  assert.deepEqual(await lookupLocalPlateauRoof(35.65858, 139.74543), candidate);
+
+  globalThis.fetch = async () => Response.json({ candidate: { ...candidate, lod: 1 } });
+  assert.equal(await lookupLocalPlateauRoof(35.65858, 139.74543), null);
 });
 
 test("named gateway is disabled when the Access credential pair is incomplete", async () => {

@@ -11,6 +11,7 @@ import {
 } from "../../src/types/dynamicSpot.ts";
 import type { LocalDemServerConfig } from "./config.ts";
 import type { DynamicSpotStore } from "./dynamicSpotStore.ts";
+import type { PlateauRoofCandidate } from "../../src/types/plateauRoof.ts";
 
 const ENDPOINT = "/v1/elevation/batch";
 const AUTHENTICATED_HEALTH_ENDPOINT = "/v1/health";
@@ -19,6 +20,7 @@ const COMPUTED_PROFILE_ENDPOINT = "/v1/bearing-profile/compute";
 const DYNAMIC_SPOT_LOOKUP_ENDPOINT = "/v1/dynamic-spot/lookup";
 const DYNAMIC_SPOT_REGISTER_ENDPOINT = "/v1/dynamic-spot/register";
 const DYNAMIC_SPOT_STATUS_ENDPOINT = "/v1/dynamic-spot/status";
+const PLATEAU_ROOF_ENDPOINT = "/v1/plateau/roof";
 const JAPAN_BOUNDS = Object.freeze({ south: 20, north: 46.5, west: 122, east: 154 });
 const SOURCES = new Set<Exclude<LocalGsiDemSource, "DEM10A">>([
   "DEM1A", "DEM5A", "DEM5B", "DEM5C", "DEM10B",
@@ -48,6 +50,11 @@ export type LocalBearingProfileCompute = (
   request: BearingProfileBatchRequest,
   signal: AbortSignal
 ) => Promise<BearingProfileBatchResponseV2>;
+export type LocalPlateauRoofLookup = (
+  latitude: number,
+  longitude: number,
+  signal: AbortSignal
+) => Promise<PlateauRoofCandidate | null>;
 
 class HttpError extends Error {
   readonly status: number;
@@ -362,6 +369,18 @@ function parseDynamicSpotRegistrationPayload(bytes: Buffer): DynamicSpotRegistra
   return value;
 }
 
+function parsePlateauRoofPayload(bytes: Buffer): { latitude: number; longitude: number } {
+  const value = parseJsonObject(bytes);
+  if (Object.keys(value).some((key) => key !== "latitude" && key !== "longitude") ||
+    typeof value.latitude !== "number" || !Number.isFinite(value.latitude) ||
+    typeof value.longitude !== "number" || !Number.isFinite(value.longitude) ||
+    value.latitude < JAPAN_BOUNDS.south || value.latitude > JAPAN_BOUNDS.north ||
+    value.longitude < JAPAN_BOUNDS.west || value.longitude > JAPAN_BOUNDS.east) {
+    throw new HttpError(400, "building roof lookup is invalid");
+  }
+  return { latitude: value.latitude, longitude: value.longitude };
+}
+
 export function createLocalDemRequestHandler(
   config: LocalDemServerConfig,
   lookup: LocalDemLookup,
@@ -369,7 +388,10 @@ export function createLocalDemRequestHandler(
   lookupPrecomputedProfile?: LocalBearingProfileLookup,
   computeProfile?: LocalBearingProfileCompute,
   dynamicSpots?: DynamicSpotStore,
-  options: { nationwideDemReady?: boolean } = {}
+  options: {
+    nationwideDemReady?: boolean;
+    plateauRoofLookup?: LocalPlateauRoofLookup;
+  } = {}
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   const gate = new RequestGate(
     config.maximumConcurrentRequests,
@@ -413,7 +435,8 @@ export function createLocalDemRequestHandler(
         requestUrl !== COMPUTED_PROFILE_ENDPOINT &&
         requestUrl !== DYNAMIC_SPOT_LOOKUP_ENDPOINT &&
         requestUrl !== DYNAMIC_SPOT_REGISTER_ENDPOINT &&
-        requestUrl !== DYNAMIC_SPOT_STATUS_ENDPOINT) {
+        requestUrl !== DYNAMIC_SPOT_STATUS_ENDPOINT &&
+        requestUrl !== PLATEAU_ROOF_ENDPOINT) {
         throw new HttpError(404, "not found");
       }
       if (request.method !== "POST") throw new HttpError(405, "method not allowed");
@@ -425,6 +448,17 @@ export function createLocalDemRequestHandler(
       }
 
       const body = await readBody(request, config.maximumBodyBytes, controller.signal);
+      if (requestUrl === PLATEAU_ROOF_ENDPOINT) {
+        if (!options.plateauRoofLookup) throw new HttpError(404, "building roof data is unavailable");
+        const point = parsePlateauRoofPayload(body);
+        pointCount = 1;
+        release = await gate.acquire(controller.signal);
+        const candidate = await options.plateauRoofLookup(point.latitude, point.longitude, controller.signal);
+        if (controller.signal.aborted) throw new HttpError(504, "request deadline exceeded");
+        responseStatus = 200;
+        writeJson(response, 200, { candidate });
+        return;
+      }
       if (requestUrl === DYNAMIC_SPOT_LOOKUP_ENDPOINT || requestUrl === DYNAMIC_SPOT_STATUS_ENDPOINT) {
         if (!dynamicSpots) throw new HttpError(503, "dynamic spot store is unavailable");
         const lookup = parseDynamicSpotLookupPayload(body);
@@ -561,6 +595,8 @@ export function createLocalDemRequestHandler(
                   ? DYNAMIC_SPOT_REGISTER_ENDPOINT
                   : request.url === DYNAMIC_SPOT_STATUS_ENDPOINT
                     ? DYNAMIC_SPOT_STATUS_ENDPOINT
+                    : request.url === PLATEAU_ROOF_ENDPOINT
+                      ? PLATEAU_ROOF_ENDPOINT
               : request.url === AUTHENTICATED_HEALTH_ENDPOINT
                 ? AUTHENTICATED_HEALTH_ENDPOINT
             : request.url === "/health" ? "/health" : "other",
@@ -578,6 +614,7 @@ export const localDemAppInternalsForTests = {
   parsePrecomputedProfilePayload,
   parseDynamicSpotLookupPayload,
   parseDynamicSpotRegistrationPayload,
+  parsePlateauRoofPayload,
   secretEquals,
   JAPAN_BOUNDS,
 };

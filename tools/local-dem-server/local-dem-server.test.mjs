@@ -10,6 +10,7 @@ import { createLocalDemRequestHandler } from "./app.ts";
 import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore.ts";
 import { createReadOnlyDemCache } from "./readOnlyDemCache.ts";
 import { createLocalDemPersistentCache } from "./localDemPersistentCache.ts";
+import { createPlateauBuildingStore } from "./plateauBuildingStore.ts";
 import {
   PRECOMPUTED_BEARING_PROFILE_FORMAT,
   precomputedBearingProfileIdentity,
@@ -134,6 +135,18 @@ function post(base, value, options = {}) {
   });
 }
 
+function postPlateauRoof(base, value, options = {}) {
+  return fetch(`${base}/v1/plateau/roof`, {
+    method: "POST",
+    headers: {
+      "x-astrosight-origin-token": TOKEN,
+      "content-type": "application/json",
+      ...options.headers,
+    },
+    body: JSON.stringify(value),
+  });
+}
+
 test("authenticated batch returns aligned results and null for missing data", async () => {
   const base = await start(async (source, points) => {
     assert.equal(source, "DEM10B");
@@ -173,6 +186,31 @@ test("automatic batch returns final source decisions including authoritative NoD
       { index: 9, heightMeters: null, source: null },
     ],
   });
+});
+
+test("PLATEAU roof route is authenticated, bounded and returns the prepared candidate", async () => {
+  const candidate = {
+    dataset: "plateau-test-2026", year: 2026, buildingId: "b1", lod: 2,
+    latitude: 35.1, longitude: 139.1, orthometricHeightMeters: 130,
+    buildingMinHeightMeters: 100, buildingMaxHeightMeters: 130,
+    installationMaxHeightMeters: null, measuredHeightMeters: 30,
+    badCoordinatePolygons: 0,
+  };
+  const base = await start(
+    async () => new Map(), {}, undefined, undefined, undefined,
+    { plateauRoofLookup: async (latitude, longitude) => {
+      assert.equal(latitude, 35.1);
+      assert.equal(longitude, 139.1);
+      return candidate;
+    } }
+  );
+  assert.equal((await postPlateauRoof(base, { latitude: 35.1, longitude: 139.1 }, {
+    headers: { "x-astrosight-origin-token": "wrong" },
+  })).status, 401);
+  assert.equal((await postPlateauRoof(base, { latitude: 35.1, longitude: 139.1, path: "x" })).status, 400);
+  const response = await postPlateauRoof(base, { latitude: 35.1, longitude: 139.1 });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { candidate });
 });
 
 test("precomputed profile route is authenticated and returns one complete compact response", async () => {
@@ -470,6 +508,58 @@ test("local persistent cache writes only fixed decoded-tile keys", async () => {
     cache.put("gsi-local-dem-v1/manifest.json", payload),
     /invalid decoded DEM tile key/
   );
+});
+
+test("prepared PLATEAU store returns only explicit LOD2+ roof surfaces and ignores special data", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "astrosight-plateau-store-"));
+  temporaryDirectories.add(root);
+  const plateauRoot = path.join(root, "plateau-buildings");
+  const dataset = "plateau-12345-test-2026";
+  const entry = "x/udx/bldg/52397519_bldg_6697_op.gml";
+  const relative = `buildings/${dataset}/52397519_bldg_6697_op.gml.ndjson.gz`;
+  const file = path.join(plateauRoot, ...relative.split("/"));
+  await mkdir(path.dirname(file), { recursive: true });
+  const ring = [
+    35, 139, 130,
+    35, 139.001, 130,
+    35.001, 139.001, 130,
+    35.001, 139, 130,
+    35, 139, 130,
+  ];
+  const content = [
+    { type: "header", schema: 1, dataset, entry },
+    {
+      id: "lod1-must-not-win", bad: 0, b: [35, 139, 35.001, 139.001],
+      l: { "1": { z: [100, 250], t: [[ring.map((value, index) => index % 3 === 2 ? 250 : value)]] } },
+    },
+    {
+      id: "verified-lod2", mh: 30, bad: 0, b: [35, 139, 35.001, 139.001],
+      l: { "2": { z: [100, 130], t: [[ring]], zi: [100, 135], ti: [] } },
+    },
+  ].map((value) => JSON.stringify(value)).join("\n") + "\n";
+  const compressed = gzipSync(Buffer.from(content));
+  await writeFile(file, compressed);
+  const rows = [
+    {
+      dataset, year: 2026, cityCode: "12345", special: false, entry,
+      file: relative, bbox: [35, 139, 35.001, 139.001], storedBytes: compressed.length,
+    },
+    {
+      dataset: "plateau-special", year: 2027, cityCode: null, special: true,
+      entry: "s/udx/bldg/52397519_bldg_6697_op.gml", file: "buildings/plateau-special/52397519_bldg_6697_op.gml.ndjson.gz",
+      bbox: [35, 139, 35.001, 139.001], storedBytes: 1,
+    },
+  ];
+  await writeFile(path.join(plateauRoot, "manifest.ndjson"), rows.map(JSON.stringify).join("\n") + "\n");
+  const store = await createPlateauBuildingStore(root);
+  assert.ok(store);
+  assert.equal(store.entryCount, 1);
+  const candidate = await store.lookup(35.0002, 139.0002);
+  assert.ok(candidate);
+  assert.equal(candidate.buildingId, "verified-lod2");
+  assert.equal(candidate.lod, 2);
+  assert.equal(candidate.orthometricHeightMeters, 130);
+  assert.equal(candidate.installationMaxHeightMeters, 135);
 });
 
 test("read-only precomputed store verifies manifest, checksum and selects requested bearings", async () => {
