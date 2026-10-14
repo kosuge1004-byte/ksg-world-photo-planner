@@ -1638,7 +1638,7 @@ button { cursor: pointer; }
   min-width: 0;
   height: 40px;
   padding: 0;
-  font-size: 18px;
+  font-size: 14px;
 }
 
 /* Celestial transit search belongs beside the timeline date control, not on the preview. */
