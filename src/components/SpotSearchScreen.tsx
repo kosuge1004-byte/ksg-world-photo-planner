@@ -395,9 +395,9 @@ export function SpotSearchScreen({
                 aria-controls="spot-candidate-list"
                 aria-expanded={candidates.length > 0}
               />
-              <button type="button" className={currentSubjectIsSaved ? "spot-subject-icon active" : "spot-subject-icon"} aria-label={currentSubjectIsSaved ? "保存済みデータを削除" : "この地点の三脚候補データを保存"} disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentSaved}>{currentSubjectIsSaved ? "★" : "☆"}</button>
-              <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>◷</button>
-              <button type="button" className="spot-subject-icon" aria-label="ダウンロード済みデータを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "downloads" ? null : "downloads")}>⇩</button>
+              <button type="button" className={currentSubjectIsSaved ? "spot-subject-icon active" : "spot-subject-icon"} aria-label={currentSubjectIsSaved ? "保存済みデータを削除" : "この地点の三脚候補データを保存"} disabled={pinTarget !== "subject" || !currentSubject} onClick={onToggleCurrentSaved}>被写体保存</button>
+              <button type="button" className="spot-subject-icon" aria-label="検索履歴を表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "history" ? null : "history")}>検索履歴</button>
+              <button type="button" className="spot-subject-icon" aria-label="ダウンロード済みデータを表示" disabled={pinTarget !== "subject"} onClick={() => setSubjectListOpen((value) => value === "downloads" ? null : "downloads")}>保存一覧</button>
             </div>
           </label>
 
