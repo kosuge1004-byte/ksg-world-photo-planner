@@ -3011,6 +3011,73 @@ body.pseudo-fullscreen-active {
   font-size: 11px;
 }
 
+/* 2026-10-15: カメラ焦点距離補正。ほとんど使わないため、ボタンは小さく端に置く。 */
+.ar-focal-correction-button {
+  position: absolute;
+  z-index: 70;
+  top: calc(96px + env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  min-height: 24px;
+  padding: 3px 7px;
+  color: #d8dee8;
+  border: 1px solid rgba(255,255,255,.28);
+  border-radius: 6px;
+  background: rgba(2,5,9,.72);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  touch-action: manipulation;
+}
+.ar-focal-correction-button:active { background: rgba(2,5,9,.5); }
+
+.ar-focal-correction-panel {
+  position: absolute;
+  z-index: 85;
+  top: calc(96px + env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  display: grid;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 212, 90, .7);
+  border-radius: 8px;
+  background: rgba(2,5,9,.88);
+  color: #fff;
+}
+.ar-focal-correction-panel > span { color: #d8dee8; font-size: 10px; line-height: 1.35; }
+.ar-focal-correction-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ar-focal-correction-row button {
+  min-width: 40px;
+  min-height: 36px;
+  padding: 0 10px;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 7px;
+  background: #11161d;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.ar-focal-correction-row strong {
+  min-width: 64px;
+  color: #ffd45a;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.ar-focal-correction-row .ar-focal-correction-decide {
+  margin-left: 4px;
+  color: #111;
+  border-color: #ffd45a;
+  background: #ffd45a;
+  font-size: 14px;
+}
+
 .ar-camera-map-opacity-control input {
   min-width: 92px;
   margin: 0;

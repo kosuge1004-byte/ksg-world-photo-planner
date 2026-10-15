@@ -132,9 +132,13 @@ function applyCameraFov(viewer: Viewer, projection: ArCameraProjection | null): 
   if (!projection) return;
   const frustum = viewer.camera.frustum;
   if (!(frustum instanceof PerspectiveFrustum)) return;
-  const vertical = projection.verticalFovDeg;
-  if (!Number.isFinite(vertical) || vertical <= 1 || vertical >= 175) return;
-  frustum.fov = CesiumMath.toRadians(vertical);
+  // 2026-10-15: Cesiumは画面が縦長（幅/高さ<=1）ならfovを縦の画角、横長なら横の画角と
+  // して扱う。以前は常に縦の画角を入れていたため、横長の画面では大きさが合わなかった。
+  const canvas = viewer.canvas;
+  const aspect = canvas.clientHeight > 0 ? canvas.clientWidth / canvas.clientHeight : 1;
+  const degrees = aspect <= 1 ? projection.verticalFovDeg : projection.horizontalFovDeg;
+  if (!Number.isFinite(degrees) || degrees <= 1 || degrees >= 175) return;
+  frustum.fov = CesiumMath.toRadians(degrees);
 }
 
 function resolveObserverAltitude(
@@ -482,6 +486,8 @@ export function ArCesiumOverlay({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed() || !ready) return;
+    // 画面サイズが変わった直後でもCesium側のキャンバス寸法と揃えてから画角を入れる。
+    viewer.resize();
     applyCameraFov(viewer, projection);
     viewer.scene.requestRender();
   }, [projection, ready]);

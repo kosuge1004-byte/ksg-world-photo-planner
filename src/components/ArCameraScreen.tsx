@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { resolveGroundPoint } from "../height/heightResolver";
 import type { CalculationMode } from "../types/camera";
@@ -7,10 +7,19 @@ import type { GroundPoint } from "../types/points";
 import type { AccuracyMode } from "../types/precision";
 import type { RefractionWeatherContext } from "../search/refractionWeatherModel";
 import {
-  computeCameraFovDegrees,
   getAndroidRearCameraInfo,
   matchAndroidCameraFromLabel,
 } from "../ar/nativeCameraInfo";
+import {
+  AR_DEFAULT_FOCAL_LENGTH_MM,
+  AR_FOCAL_LENGTH_STEP_MM,
+  displayedFieldOfViewDegrees,
+  equivalentFocalLengthFromSensor,
+  loadArFocalLength,
+  roundFocalLengthMm,
+  saveArFocalLength,
+  type ArFocalLengthSource,
+} from "../ar/cameraFocalLength";
 import { startEnvironmentCamera, stopCameraStream } from "../ar/cameraSession";
 import { loadArOrientationOffset, saveArOrientationOffset } from "../ar/orientationOffset";
 import { orientationOffsetFromSwipe } from "../ar/orientationCalibration";
@@ -27,10 +36,18 @@ import { ArCesiumOverlay } from "./ArCesiumOverlay";
 import { TimelinePanel } from "./TimelinePanel";
 
 export type ArCameraProjection = {
+  /** 画面に見えている範囲の横・縦の画角（度）。 */
   horizontalFovDeg: number;
   verticalFovDeg: number;
+  /** 35mm判換算の焦点距離（対角線基準）。 */
   focalLengthMm: number;
-  source: "android-camera2";
+  source: ArFocalLengthSource;
+};
+
+const FOCAL_SOURCE_LABELS: Record<ArFocalLengthSource, string> = {
+  manual: "補正済み",
+  "android-camera2": "端末のレンズ情報から自動計算",
+  default: "推定値・未補正",
 };
 
 type Props = {
@@ -97,7 +114,30 @@ export function ArCameraScreen({
   const [cameraStatus, setCameraStatus] = useState("カメラを準備しています…");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraDetail, setCameraDetail] = useState<string | null>(null);
-  const [cameraProjection, setCameraProjection] = useState<ArCameraProjection | null>(null);
+  // 2026-10-15: カメラ焦点距離補正。焦点距離（35mm判換算）と、映像・画面の寸法から
+  // 画面に見えている画角を求め、3D表示へ渡す（src/ar/cameraFocalLength.ts）。
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState<{ width: number; height: number } | null>(null);
+  const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  const [cameraLabel, setCameraLabel] = useState<string | null>(null);
+  const [focal, setFocal] = useState<{ mm: number; source: ArFocalLengthSource } | null>(null);
+  // 補正中は、カメラ映像と3D表示を押した瞬間の状態で止める。
+  const [focalAdjusting, setFocalAdjusting] = useState(false);
+  const [frozenTracking, setFrozenTracking] = useState<{
+    location: ArDeviceLocation | null;
+    orientation: ArDeviceOrientation | null;
+  } | null>(null);
+  const cameraProjection = useMemo<ArCameraProjection | null>(() => {
+    if (!focal || !stageSize) return null;
+    const fov = displayedFieldOfViewDegrees({
+      focalLengthMm: focal.mm,
+      videoWidth: videoSize?.width ?? null,
+      videoHeight: videoSize?.height ?? null,
+      viewWidth: stageSize.width,
+      viewHeight: stageSize.height,
+    });
+    return { ...fov, focalLengthMm: focal.mm, source: focal.source };
+  }, [focal, stageSize, videoSize]);
   // 2026-08-27追記: 方位センサーは磁気干渉等でズレることがあるため、
   // 画面を指でスワイプして、実際のカメラ映像と3D表示を手動で合わせられる
   // ようにする（詳細はsrc/ar/orientationOffset.tsのコメント参照）。
@@ -111,6 +151,7 @@ export function ArCameraScreen({
     offset: typeof orientationOffset;
   } | null>(null);
   const handleCalibrationPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (focalAdjusting) return;
     if (!event.isPrimary || event.button !== 0) return;
     const target = event.target;
     if (target instanceof Element && target.closest("button, input, select, label, a")) return;
@@ -171,8 +212,11 @@ export function ArCameraScreen({
       generationRef.current += 1;
       stopCameraStream(streamRef.current);
       streamRef.current = null;
-      setCameraProjection(null);
-      onCameraProjectionChange?.(null);
+      setFocal(null);
+      setCameraLabel(null);
+      setVideoSize(null);
+      setFocalAdjusting(false);
+      setFrozenTracking(null);
       setCameraReady(false);
       return;
     }
@@ -189,8 +233,8 @@ export function ArCameraScreen({
       setCameraStatus("背面カメラへの接続を確認しています…");
       stopCameraStream(streamRef.current);
       streamRef.current = null;
-      setCameraProjection(null);
-      onCameraProjectionChange?.(null);
+      setFocal(null);
+      setCameraLabel(null);
 
       try {
         const state = await startEnvironmentCamera();
@@ -211,35 +255,45 @@ export function ArCameraScreen({
         setCameraReady(true);
         const sizeText = state.width && state.height ? `${state.width}×${state.height}` : "解像度取得不可";
         setCameraStatus(`カメラ映像 ${sizeText}`);
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          setVideoSize({ width: video.videoWidth, height: video.videoHeight });
+        }
+
+        // 焦点距離の優先順位: 利用者が補正して保存した値 → 端末のレンズ情報 → 推定値。
+        const label = state.label;
+        setCameraLabel(label);
+        const saved = loadArFocalLength(label);
+        setFocal(saved !== null
+          ? { mm: saved, source: "manual" }
+          : { mm: AR_DEFAULT_FOCAL_LENGTH_MM, source: "default" });
 
         const rearCameras = await getAndroidRearCameraInfo();
         if (disposed || generation !== generationRef.current) return;
-        const matched = matchAndroidCameraFromLabel(state.label, rearCameras);
+        const matched = matchAndroidCameraFromLabel(label, rearCameras);
         if (!matched) {
           setCameraDetail(
             rearCameras.length > 0
-              ? "Camera2情報は取得済みですが、WebView映像のカメラIDを安全に特定できないため画角の自動適用は保留しています。"
-              : "この環境では実焦点距離のネイティブ情報を取得できません。カメラ映像はそのまま利用できます。"
+              ? "端末のレンズ情報は取得済みですが、使用中のカメラを特定できないため推定値を使っています。"
+              : "この環境では端末のレンズ情報を取得できないため、推定値を使っています。"
           );
           return;
         }
 
-        const fov = computeCameraFovDegrees(matched);
-        if (!fov) {
-          setCameraDetail("使用中カメラは特定できましたが、画角計算に必要なCamera2情報が不足しています。");
+        const equivalent = equivalentFocalLengthFromSensor({
+          focalLengthMm: matched.focalLengthsMm[0],
+          sensorWidthMm: matched.sensorWidthMm,
+          sensorHeightMm: matched.sensorHeightMm,
+        });
+        if (equivalent === null) {
+          setCameraDetail("使用中のカメラは特定できましたが、画角の計算に必要なレンズ情報が不足しているため推定値を使っています。");
           return;
         }
-        const projection: ArCameraProjection = {
-          horizontalFovDeg: fov.horizontal,
-          verticalFovDeg: fov.vertical,
-          focalLengthMm: fov.focalLengthMm,
-          source: "android-camera2",
-        };
-        setCameraProjection(projection);
-        onCameraProjectionChange?.(projection);
         setCameraDetail(
-          `Camera2同期: ${fov.focalLengthMm.toFixed(2)}mm / 水平FOV ${fov.horizontal.toFixed(1)}° / 垂直FOV ${fov.vertical.toFixed(1)}°`
+          `端末のレンズ情報: 実焦点距離 ${matched.focalLengthsMm[0].toFixed(2)}mm（35mm判換算 ${roundFocalLengthMm(equivalent).toFixed(1)}mm）`
         );
+        if (saved === null) {
+          setFocal({ mm: roundFocalLengthMm(equivalent), source: "android-camera2" });
+        }
       } catch (error) {
         if (disposed || generation !== generationRef.current) return;
         const name = error instanceof DOMException ? error.name : "";
@@ -261,10 +315,72 @@ export function ArCameraScreen({
       streamRef.current = null;
       const video = videoElement;
       if (video) video.srcObject = null;
-      setCameraProjection(null);
-      onCameraProjectionChange?.(null);
+      setFocal(null);
     };
-  }, [open, onCameraProjectionChange]);
+  }, [open]);
+
+  useEffect(() => {
+    onCameraProjectionChange?.(open ? cameraProjection : null);
+  }, [open, cameraProjection, onCameraProjectionChange]);
+
+  // 映像の寸法（縦持ち・横持ちで入れ替わる）と、表示枠の寸法を追跡する。
+  useEffect(() => {
+    if (!open) return;
+    const video = videoRef.current;
+    const stage = stageRef.current;
+    const updateVideo = () => {
+      if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+        setVideoSize((current) =>
+          current && current.width === video.videoWidth && current.height === video.videoHeight
+            ? current
+            : { width: video.videoWidth, height: video.videoHeight }
+        );
+      }
+    };
+    const updateStage = () => {
+      if (!stage) return;
+      const width = stage.clientWidth;
+      const height = stage.clientHeight;
+      if (width <= 0 || height <= 0) return;
+      setStageSize((current) =>
+        current && current.width === width && current.height === height ? current : { width, height }
+      );
+    };
+    video?.addEventListener("loadedmetadata", updateVideo);
+    video?.addEventListener("resize", updateVideo);
+    updateVideo();
+    updateStage();
+    const observer = typeof ResizeObserver === "function" && stage ? new ResizeObserver(updateStage) : null;
+    if (observer && stage) observer.observe(stage);
+    return () => {
+      video?.removeEventListener("loadedmetadata", updateVideo);
+      video?.removeEventListener("resize", updateVideo);
+      observer?.disconnect();
+    };
+  }, [open]);
+
+  const startFocalAdjust = () => {
+    if (!focal) return;
+    swipeStartRef.current = null;
+    setFrozenTracking({ location: arLocation, orientation: arOrientation });
+    videoRef.current?.pause();
+    setFocalAdjusting(true);
+  };
+  const stepFocal = (direction: 1 | -1) => {
+    setFocal((current) => current
+      ? { ...current, mm: roundFocalLengthMm(current.mm + direction * AR_FOCAL_LENGTH_STEP_MM) }
+      : current);
+  };
+  const decideFocal = () => {
+    if (focal) {
+      saveArFocalLength(focal.mm, cameraLabel ?? "");
+      setFocal({ mm: focal.mm, source: "manual" });
+    }
+    setFocalAdjusting(false);
+    setFrozenTracking(null);
+    const video = videoRef.current;
+    if (video) void video.play().catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!open) {
@@ -362,6 +478,7 @@ export function ArCameraScreen({
   return (
     <section className="ar-camera-screen" aria-label="ARカメラ">
       <div
+        ref={stageRef}
         className="ar-camera-stage"
         onPointerDown={handleCalibrationPointerDown}
         onPointerMove={handleCalibrationPointerMove}
@@ -379,8 +496,8 @@ export function ArCameraScreen({
         />
         <ArCesiumOverlay
           active={open}
-          location={arLocation}
-          orientation={arOrientation}
+          location={focalAdjusting && frozenTracking ? frozenTracking.location : arLocation}
+          orientation={focalAdjusting && frozenTracking ? frozenTracking.orientation : arOrientation}
           projection={cameraProjection}
           subjectPoint={subjectPoint}
           accuracyMode={accuracyMode}
@@ -396,7 +513,27 @@ export function ArCameraScreen({
           pitchOffsetDegrees={orientationOffset.pitchOffsetDegrees}
           onStatusChange={setArMapStatus}
         />
-        {(orientationOffset.headingOffsetDegrees !== 0 || orientationOffset.pitchOffsetDegrees !== 0) && (
+        {cameraReady && focal && !focalAdjusting && (
+          <button
+            type="button"
+            className="ar-focal-correction-button"
+            onClick={startFocalAdjust}
+          >
+            カメラ焦点距離補正
+          </button>
+        )}
+        {focalAdjusting && focal && (
+          <div className="ar-focal-correction-panel" role="group" aria-label="カメラ焦点距離補正">
+            <span>停止中：3Dの大きさを景色に合わせてください（35mm判換算）</span>
+            <div className="ar-focal-correction-row">
+              <button type="button" aria-label="焦点距離を0.1mm短くする" onClick={() => stepFocal(-1)}>−</button>
+              <strong aria-live="polite">{focal.mm.toFixed(1)}mm</strong>
+              <button type="button" aria-label="焦点距離を0.1mm長くする" onClick={() => stepFocal(1)}>＋</button>
+              <button type="button" className="ar-focal-correction-decide" onClick={decideFocal}>決定</button>
+            </div>
+          </div>
+        )}
+        {!focalAdjusting && (orientationOffset.headingOffsetDegrees !== 0 || orientationOffset.pitchOffsetDegrees !== 0) && (
           <button
             type="button"
             className="ar-calibration-reset"
@@ -449,6 +586,11 @@ export function ArCameraScreen({
 
         <div className="ar-camera-camera-status" role="status" aria-live="polite">
           <strong>{cameraStatus}</strong>
+          {cameraProjection && (
+            <span>
+              焦点距離 {cameraProjection.focalLengthMm.toFixed(1)}mm（35mm判換算・{FOCAL_SOURCE_LABELS[cameraProjection.source]}）／表示画角 横{cameraProjection.horizontalFovDeg.toFixed(1)}° 縦{cameraProjection.verticalFovDeg.toFixed(1)}°
+            </span>
+          )}
           {cameraDetail && <span>{cameraDetail}</span>}
           <span>{trackingMessage}</span>
           <span>{arMapStatus}</span>
