@@ -25,6 +25,8 @@ const cases = [
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/moon-calendar.test.mjs"] },
   { name: "AR camera focal length correction: 35mm-equivalent focal length to the on-screen view, per-camera saved value",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/ar-camera-focal-length.test.mjs"] },
+  { name: "person placement keeps working when the map is tapped (pin menu closed like subject/tripod placement)",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/foreground-placement-map-tool.test.mjs"] },
   { name: "terrain-aware tripod candidate line from bearing sections; guide line fixed and independent of confirmed candidates",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/tripod-terrain-arc.test.mjs"] },
   { name: "Google Maps short link resolves from the redirect without loading the maps page; client outwaits the server",

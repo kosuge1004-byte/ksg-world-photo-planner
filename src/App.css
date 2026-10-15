@@ -2194,8 +2194,6 @@ button { cursor: pointer; }
 
 
 /* Fullscreen control layout: keep the same control sizes and relative placement as split view. */
-.preview-section:fullscreen .fullscreen-exit-button,
-.preview-section:-webkit-full-screen .fullscreen-exit-button,
 .map-section:fullscreen .fullscreen-exit-button,
 .map-section:-webkit-full-screen .fullscreen-exit-button {
   top: auto;
@@ -2328,11 +2326,27 @@ body.pseudo-fullscreen-active {
   border-radius: 0 !important;
   background: #05070a;
 }
-.preview-section.ios-pseudo-fullscreen .fullscreen-exit-button,
+.preview-section.ios-pseudo-fullscreen .fullscreen-exit-button {
+  display: flex;
+}
 .map-section.ios-pseudo-fullscreen .fullscreen-exit-button {
   display: flex;
   top: auto;
   bottom: calc(8px + env(safe-area-inset-bottom));
+}
+
+/* 2026-10-15: プレビュー全画面の「全画面を終了」は上部中央（天体透明度の真下）に置く。
+   下端はAndroidのChromeが全画面の案内（「全画面表示を終了するには…」）を出す位置で、
+   iPhoneもホームバーがあるため。上はiPhoneの時計・ノッチ（safe-area）を避ける。
+   左上のフレームメニュー（x≦約142px）と右上の天体の一覧（右端から98px）は
+   開くと下へ伸びるため、その間の中央にする。 */
+.preview-section:fullscreen .preview-fullscreen-exit,
+.preview-section:-webkit-full-screen .preview-fullscreen-exit,
+.preview-section.ios-pseudo-fullscreen .preview-fullscreen-exit {
+  top: calc(env(safe-area-inset-top, 0px) + 48px);
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%);
 }
 .map-section.ios-pseudo-fullscreen .map-left-controls {
   top: max(6px, env(safe-area-inset-top));

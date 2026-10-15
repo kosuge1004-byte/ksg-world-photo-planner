@@ -5814,7 +5814,10 @@ ${diagnosticMessage}
       return;
     }
     stopAllEditModes();
-    setMapTool("pin");
+    // 2026-10-16: 被写体・三脚の配置開始と同じく、ピン設定メニューを閉じた状態にする。
+    // "pin"のままだと「メニューの外を押したら配置をやめる」処理が働き、地図に触れた
+    // 瞬間に人物配置が解除され、同じタップが三脚の配置として処理されていた。
+    setMapTool("none");
     placementModeRef.current = "foreground";
     setForegroundPlacementActive(true);
     setSearchMessage("人物を配置する場所をタップしてください。配置後は人物をドラッグして移動できます");
