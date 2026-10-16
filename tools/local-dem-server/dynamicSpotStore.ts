@@ -62,6 +62,11 @@ export type DynamicSpotProfileCompute = (
 type DynamicSpotStoreOptions = {
   autoRetryBaseMs?: number;
   autoRetryMaxMs?: number;
+  /**
+   * 2026-10-16: 記録を保存した後に呼ぶ（登録スポット候補の一覧を作り直すため）。
+   * ここでの失敗は登録・生成に影響させない。
+   */
+  onRecordPersisted?: (changed: DynamicSpotRecord, records: DynamicSpotRecord[]) => Promise<void> | void;
 };
 
 function isInside(root: string, target: string): boolean {
@@ -151,6 +156,8 @@ async function atomicWrite(
 
 export type DynamicSpotStore = {
   root: string;
+  /** 2026-10-16: 保存済みの全記録（登録スポット候補の一覧づくり用）。 */
+  listRecords(): DynamicSpotRecord[];
   register(input: DynamicSpotRegistrationInput): Promise<DynamicSpotRecord>;
   lookupByQuery(query: string): DynamicSpotRecord | null;
   lookupByCoordinate(latitude: number, longitude: number): DynamicSpotRecord | null;
@@ -218,6 +225,13 @@ export async function createDynamicSpotStore(
       });
     });
     await persistenceQueue;
+    if (options.onRecordPersisted) {
+      try {
+        await options.onRecordPersisted(record, Object.values(records));
+      } catch {
+        // 候補一覧は補助的な出力。書けなくても登録・生成は続ける。
+      }
+    }
   };
 
   const profileDirectory = (record: DynamicSpotRecord): string => {
@@ -575,6 +589,7 @@ export async function createDynamicSpotStore(
 
   return {
     root,
+    listRecords: () => Object.values(records),
     register,
     lookupByQuery,
     lookupByCoordinate,

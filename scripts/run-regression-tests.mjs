@@ -27,6 +27,8 @@ const cases = [
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/ar-camera-focal-length.test.mjs"] },
   { name: "person placement keeps working when the map is tapped (pin menu closed like subject/tripod placement)",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/foreground-placement-map-tool.test.mjs"] },
+  { name: "spot candidate monthly lists on the data drive; registrations kept in D1 while the data service is unreachable and pulled later",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/spot-candidate-list-and-pending-queue.test.mjs"] },
   { name: "terrain-aware tripod candidate line from bearing sections; guide line fixed and independent of confirmed candidates",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/tripod-terrain-arc.test.mjs"] },
   { name: "Google Maps short link resolves from the redirect without loading the maps page; client outwaits the server",

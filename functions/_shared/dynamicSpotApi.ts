@@ -6,6 +6,7 @@ import {
   readLocalDynamicSpotStatus,
   registerLocalDynamicSpot,
 } from "../../server/localDemGateway.ts";
+import { enqueueDynamicSpotRegistration } from "../../server/dynamicSpotPendingQueue.ts";
 import { withCloudflareServerRuntime, type CloudflareEnv } from "./env.ts";
 import { errorMessage, jsonResponse, readJsonRequest, requestErrorStatus } from "./http.ts";
 
@@ -61,7 +62,23 @@ export async function handleDynamicSpotApi(
       if (action === "register") {
         if (!isDynamicSpotRegistrationInput(body)) return json({ error: "Dynamic Spot登録条件が不正です" }, 400);
         const spot = await registerLocalDynamicSpot(body, context.request.signal);
-        return spot ? json({ spot }, 202) : json({ code: "LOCAL_DYNAMIC_SPOT_UNAVAILABLE", error: "高速地形データを現在利用できません。地点検索はそのまま利用できます。" }, 503);
+        if (spot) return json({ spot }, 202);
+        // 2026-10-16: データサービスにつながらない間の登録はD1に貯めておき、
+        // データサービス側が後で受け取る（/api/dynamic-spot-queue）。
+        // 貯められなくても検索・撮影計画はそのまま使えるので、失敗は返答に影響させない。
+        let queued = false;
+        if (context.env.R2_WRITE_BUDGET_DB) {
+          try {
+            queued = await enqueueDynamicSpotRegistration(context.env.R2_WRITE_BUDGET_DB, body) === "queued";
+          } catch {
+            queued = false;
+          }
+        }
+        return json({
+          code: queued ? "LOCAL_DYNAMIC_SPOT_QUEUED" : "LOCAL_DYNAMIC_SPOT_UNAVAILABLE",
+          queued,
+          error: "高速地形データを現在利用できません。地点検索はそのまま利用できます。",
+        }, 503);
       }
       if (action === "lookup") {
         const value = record(body);

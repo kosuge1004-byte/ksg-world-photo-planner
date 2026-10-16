@@ -15,6 +15,8 @@ import { createReadOnlyBearingProfileStore } from "./readOnlyBearingProfileStore
 import { createLocalDemPersistentCache } from "./localDemPersistentCache.ts";
 import { createDynamicSpotStore } from "./dynamicSpotStore.ts";
 import { createPlateauBuildingStore } from "./plateauBuildingStore.ts";
+import { createSpotCandidateListWriter, type SpotCandidateListWriter } from "./spotCandidateList.ts";
+import { createPendingSpotPuller } from "./pendingSpotPuller.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -34,7 +36,23 @@ async function main(): Promise<void> {
       lookupGeoidHeights: lookupBearingProfileGeoidHeights,
       nowIso: () => new Date().toISOString(),
     });
-  const dynamicSpots = await createDynamicSpotStore(config.dataRoot, computeExactProfile);
+  // 2026-10-16: 自動登録スポットが保存されるたびに、その月の「登録スポット候補」
+  // 一覧（登録スポット候補\登録スポットYYYYMM一覧.txt）を作り直す。
+  let candidateLists: SpotCandidateListWriter | null = null;
+  const dynamicSpots = await createDynamicSpotStore(config.dataRoot, computeExactProfile, {
+    onRecordPersisted: (changed, records) => candidateLists?.writeMonthOf(changed, records),
+  });
+  candidateLists = createSpotCandidateListWriter(dynamicSpots.root);
+  // 起動時に全月分を作り直す（今ある自動登録スポットも月ごとの一覧になる）。
+  await candidateLists.writeAll(dynamicSpots.listRecords()).catch(() => {
+    console.error(JSON.stringify({ event: "spot-candidate-list-write-failed" }));
+  });
+  // 2026-10-16: データサービスにつながらなかった間にCloudflareへ貯められた登録を受け取る。
+  const pendingSpots = createPendingSpotPuller({
+    registrationToken: process.env.LOCAL_DEM_REGISTRATION_TOKEN,
+    registerUrl: process.env.ASTROSIGHT_LOCAL_DEM_REGISTER_URL,
+    register: (input) => dynamicSpots.register(input),
+  });
   // Building data is an optional acceleration path. A missing or damaged
   // building index must never prevent the established DEM/profile service
   // from starting; the browser then uses its existing PLATEAU fallback.
@@ -74,6 +92,7 @@ async function main(): Promise<void> {
       nationwideDemReady: demReadiness.nationwideReady,
     }));
     dynamicSpots.resumeIncomplete();
+    pendingSpots.start();
   });
 
   let stopping = false;
