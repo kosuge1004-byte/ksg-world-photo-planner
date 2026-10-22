@@ -75,6 +75,20 @@ export function normalizeDynamicSpotSearchText(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("ja");
 }
 
+/** Nominatim/Dynamic Spotのcategory/typeから、地表扱いにしてはいけない種別を判定する。 */
+export function dynamicSpotCategoryRequiresStructure(categoryValue: string | undefined): boolean {
+  const [category = "", type = ""] = (categoryValue ?? "").toLocaleLowerCase().split("/", 2);
+  return category === "building" ||
+    (category === "man_made" && [
+      "tower", "communications_tower", "mast", "lighthouse", "chimney", "water_tower", "obelisk",
+      "windmill",
+    ].includes(type)) ||
+    (category === "historic" && ["castle", "fort", "monument"].includes(type)) ||
+    (category === "amenity" && type === "place_of_worship") ||
+    (category === "tourism" && ["hotel", "museum"].includes(type)) ||
+    (category === "leisure" && type === "stadium");
+}
+
 function finiteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }

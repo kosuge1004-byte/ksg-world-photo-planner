@@ -72,6 +72,12 @@ export async function createPendingLocalDynamicSpot(
   const coordinateKey = dynamicSpotCoordinateKey(input.latitude, input.longitude);
   const existing = findLocalDynamicSpotByCoordinate(input.latitude, input.longitude);
   const now = new Date().toISOString();
+  const sameCompletedSubject = existing?.demProfileStatus === "complete" &&
+    existing.subjectSurface === input.subjectSurface &&
+    (input.subjectSurface === "terrain" ||
+      (input.structureHeightMeters !== null &&
+        existing.structureHeightMeters === input.structureHeightMeters &&
+        input.heightSourceType !== "unknown" && input.heightStatus !== "unknown"));
   return {
     schemaVersion: DYNAMIC_SPOT_SCHEMA_VERSION,
     id: existing?.id ?? `dynamic-${(await sha256Hex(coordinateKey)).slice(0, 32)}`,
@@ -86,21 +92,21 @@ export async function createPendingLocalDynamicSpot(
     heightSourceUrl: input.heightSourceUrl,
     heightSourceLabel: input.heightSourceLabel,
     heightStatus: input.heightStatus,
-    demProfileStatus: existing?.demProfileStatus === "complete" ? "complete" : "pending",
+    demProfileStatus: sameCompletedSubject ? "complete" : "pending",
     maxDistanceMeters: DYNAMIC_SPOT_MAX_DISTANCE_METERS,
     bearingCount: DYNAMIC_SPOT_BEARING_COUNT,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     coordinateKey,
     profileVersion: DYNAMIC_SPOT_PROFILE_VERSION,
-    completedBearings: existing?.completedBearings ?? 0,
-    failedBearings: existing?.failedBearings ?? 0,
-    currentStage: existing?.currentStage ?? "waiting",
-    generationStartedAt: existing?.generationStartedAt ?? null,
-    generationElapsedMs: existing?.generationElapsedMs ?? 0,
-    lastError: existing?.lastError ?? null,
-    profileBytes: existing?.profileBytes,
-    profileSha256: existing?.profileSha256 ?? null,
+    completedBearings: sameCompletedSubject ? existing?.completedBearings ?? 0 : 0,
+    failedBearings: sameCompletedSubject ? existing?.failedBearings ?? 0 : 0,
+    currentStage: sameCompletedSubject ? existing?.currentStage ?? "complete" : "waiting",
+    generationStartedAt: sameCompletedSubject ? existing?.generationStartedAt ?? null : null,
+    generationElapsedMs: sameCompletedSubject ? existing?.generationElapsedMs ?? 0 : 0,
+    lastError: null,
+    profileBytes: sameCompletedSubject ? existing?.profileBytes : undefined,
+    profileSha256: sameCompletedSubject ? existing?.profileSha256 ?? null : null,
   };
 }
 
@@ -147,7 +153,55 @@ export function registerEdriveDynamicSpot(
   input: DynamicSpotRegistrationInput,
   signal?: AbortSignal
 ): Promise<DynamicSpotRecord | null> {
-  return requestSpot("/api/dynamic-spot-register", input, WRITE_TIMEOUT_MS, signal);
+  return registerEdriveDynamicSpotDetailed(input, signal).then((outcome) => outcome.spot);
+}
+
+export type DynamicSpotRegistrationOutcome = {
+  spot: DynamicSpotRecord | null;
+  queued: boolean;
+  code: string | null;
+};
+
+/**
+ * 503でもD1への登録待ちキュー投入が成功している場合がある。従来はresponse.okだけを
+ * 見て本文を捨てていたため、端末が監視を終了して0/360のままに見えていた。
+ */
+export async function registerEdriveDynamicSpotDetailed(
+  input: DynamicSpotRegistrationInput,
+  signal?: AbortSignal
+): Promise<DynamicSpotRegistrationOutcome> {
+  if (signal?.aborted) throw new DOMException("Dynamic Spot処理を中止しました", "AbortError");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WRITE_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(apiEndpoint("/api/dynamic-spot-register"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    const value = contentType.includes("application/json")
+      ? await response.json() as Record<string, unknown>
+      : {};
+    if (isDynamicSpotRecord(value.spot)) {
+      upsertLocalDynamicSpot(value.spot);
+      return { spot: value.spot, queued: false, code: null };
+    }
+    return {
+      spot: null,
+      queued: value.queued === true,
+      code: typeof value.code === "string" ? value.code : null,
+    };
+  } catch {
+    if (signal?.aborted) throw new DOMException("Dynamic Spot処理を中止しました", "AbortError");
+    return { spot: null, queued: false, code: null };
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 export function readEdriveDynamicSpotStatus(

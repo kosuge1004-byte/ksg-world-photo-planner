@@ -22,15 +22,13 @@ import {
  * 地面の高さは同じ」と仮定して並べる。実際の地面は場所ごとに高さが違うため、起伏の
  * ある方向では本当の候補位置から外れる。
  *
- * ここでは、被写体から1度刻みの方位ごとに保存してある地形の断面
- * （tripodBearingProfileCache.ts／内蔵スポットの計算済みファイル）と、時刻ごとの
+ * ここでは、時刻ごとの正確な天体方位に対して取得した地形の断面と、時刻ごとの
  * 視線を突き合わせ、視線がレンズの高さで地面に届く場所を時刻ごとに求める。
  * 確定候補の計算（calculateTripodCandidates）と同じく、交点が複数ある場合は最も遠い
- * 交点を採る。通信はしない。
+ * 交点を採る。必要な断面の取得は呼び出し側が一括で済ませ、この計算自体は配列参照だけで行う。
  *
- * 断面は1度刻みなので、時刻ごとの方位に最も近い断面を使う（最大0.5度のずれ）。
- * 方位をまたいだ補間はしない（別地点の標高を混ぜない）。頂点の位置そのものは
- * 実際の方位の視線上に置くため、確定候補と横方向にずれることはない。
+ * 方位は小数6桁まで保持する。1度刻みの保存済み断面へ丸めると10km先で最大約87m
+ * 別の地形を参照してしまうため、確定候補と同じ正確な方位の断面だけを使う。
  */
 
 /** 1方位ぶんの地形の断面。距離は被写体からの地表に沿った距離（測地線長）。 */
@@ -56,10 +54,11 @@ const SEGMENT_BREAK_RATIO = 0.35;
 // 「検索上限より遠くに候補がある」とみなして検索上限の円周へ収める。
 const SECTION_COVERS_RANGE_RATIO = 0.99;
 
-/** 天体の方位角から、三脚側（反対側）の断面の方位（1度刻み）を求める。 */
+/** 天体の方位角から、三脚側（反対側）の正確な断面方位を求める。 */
 export function terrainSectionBearing(celestialAzimuthDegrees: number): number {
   const tripodBearing = (((celestialAzimuthDegrees + 180) % 360) + 360) % 360;
-  return Math.round(tripodBearing) % 360;
+  // JSON往復後もMapのキーが安定するように丸める。誤差は10km先で0.1mm未満。
+  return Math.round(tripodBearing * 1_000_000) / 1_000_000;
 }
 
 function sampleHasRay(sample: RiseSetArcSample): boolean {
@@ -73,6 +72,54 @@ export function requiredTerrainBearings(timeline: RiseSetArcTimeline): number[] 
     if (sampleHasRay(sample)) bearings.add(terrainSectionBearing(sample.azimuthDegrees));
   }
   return [...bearings].sort((left, right) => left - right);
+}
+
+/** 同一天体に複数交点がある場合、赤線と同じ最遠交点だけを表示対象にする。 */
+export function farthestTripodCandidatesByBody(
+  candidates: readonly import("../types/celestial").TripodCandidate[]
+): import("../types/celestial").TripodCandidate[] {
+  const farthest = new Map<string, import("../types/celestial").TripodCandidate>();
+  for (const candidate of candidates) {
+    const current = farthest.get(candidate.id);
+    if (!current || candidate.distanceMeters > current.distanceMeters) {
+      farthest.set(candidate.id, candidate);
+    }
+  }
+  return [...farthest.values()];
+}
+
+/**
+ * 選択時刻の精密候補を赤線の最寄り時刻頂点へ反映する。
+ * 線は2分刻み、候補点は選択時刻そのものなので、この反映が無いと地形急変部では
+ * 同じ計算式でも線分補間と点が離れて見える。3分より遠い頂点は別の出入り回として
+ * 扱い、誤って線を移動しない。
+ */
+export function alignTerrainArcToExactCandidate(
+  arc: TripodCandidateRiseSetArc,
+  candidate: import("../types/celestial").TripodCandidate | undefined,
+  timestampMilliseconds: number,
+  maximumTimeDeltaMs = 3 * 60_000
+): TripodCandidateRiseSetArc {
+  if (arc.kind !== "terrain" || !candidate || candidate.id !== arc.id ||
+    !Number.isFinite(timestampMilliseconds)) return arc;
+  let nearest: TripodCandidateRiseSetArcPoint | null = null;
+  let nearestDelta = Number.POSITIVE_INFINITY;
+  for (const point of arc.points) {
+    const delta = Math.abs(point.timestampMilliseconds - timestampMilliseconds);
+    if (delta < nearestDelta) {
+      nearest = point;
+      nearestDelta = delta;
+    }
+  }
+  if (!nearest || nearestDelta > maximumTimeDeltaMs) return arc;
+  const replacement: TripodCandidateRiseSetArcPoint = {
+    ...candidate,
+    timestampMilliseconds: nearest.timestampMilliseconds,
+  };
+  const replace = (point: TripodCandidateRiseSetArcPoint) =>
+    point === nearest ? replacement : point;
+  const segments = (arc.segments ?? [arc.points]).map((segment) => segment.map(replace));
+  return { ...arc, points: segments.flat(), segments };
 }
 
 type SampleGeometry = {
@@ -286,8 +333,7 @@ function yieldToEventLoop(): Promise<void> {
 
 /**
  * 出から入りまでの全時刻について地形との交点を求め、標高を加味した線を作る。
- * 必要な方位の断面が1つでも無い場合、または線にできる区間が無い場合はnull
- * （呼び出し側は目安の線を使う）。
+ * 必要な方位の断面が1つでも無い場合、または線にできる区間が無い場合はnull。
  */
 export async function buildTerrainRiseSetArc(
   timeline: RiseSetArcTimeline,

@@ -29,7 +29,7 @@ const cases = [
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/foreground-placement-map-tool.test.mjs"] },
   { name: "spot candidate monthly lists on the data drive; registrations kept in D1 while the data service is unreachable and pulled later",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/spot-candidate-list-and-pending-queue.test.mjs"] },
-  { name: "terrain-aware tripod candidate line from bearing sections; guide line fixed and independent of confirmed candidates",
+  { name: "terrain-aware tripod candidate line from exact bearings; selected candidate stays on the line",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/tripod-terrain-arc.test.mjs"] },
   { name: "Google Maps short link resolves from the redirect without loading the maps page; client outwaits the server",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/google-maps-short-url-fast-path.test.mjs"] },

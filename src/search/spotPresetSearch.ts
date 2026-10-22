@@ -20,6 +20,7 @@ import type {
   DynamicSpotHeightStatus,
   DynamicSpotRecord,
 } from "../types/dynamicSpot";
+import { dynamicSpotCategoryRequiresStructure } from "../types/dynamicSpot";
 
 import type { CalculationMode, CameraSettings } from "../types/camera";
 import type {
@@ -344,9 +345,10 @@ export function snapSpotLocationToRegisteredLandmark<T extends ResolvedSpotLocat
  */
 export function subjectSurfaceHintForSpotLocation(
   location: Pick<ResolvedSpotLocation, "latitude" | "longitude" | "label" | "subjectSurfaceTarget" |
-    "structureHeightMeters" | "heightSourceType" | "locationSource">
+    "structureHeightMeters" | "heightSourceType" | "locationSource" | "category">
 ): SpotSubjectSurfaceHint {
-  if (location.subjectSurfaceTarget === "structure-roof") {
+  if (location.subjectSurfaceTarget === "structure-roof" ||
+    dynamicSpotCategoryRequiresStructure(location.category)) {
     return {
       requireStructureRoof: true,
       knownStructureHeightMeters: Number.isFinite(location.structureHeightMeters)
@@ -461,15 +463,8 @@ function searchResultSubjectSurfaceMetadata(
   "category" | "heightSourceType" | "heightSourceLabel" | "heightSourceUrl" | "heightStatus"> {
   const category = result.category ?? "";
   const type = result.type ?? "";
-  const isStructure = category === "building" ||
-    (category === "man_made" && [
-      "tower", "communications_tower", "mast", "lighthouse", "chimney", "water_tower", "obelisk",
-    ].includes(type)) ||
-    (category === "historic" && ["castle", "fort", "monument"].includes(type)) ||
-    (category === "amenity" && type === "place_of_worship") ||
-    (category === "tourism" && ["hotel", "museum"].includes(type)) ||
-    (category === "leisure" && type === "stadium");
   const resultCategory = [category, type].filter(Boolean).join("/") || "unknown";
+  const isStructure = dynamicSpotCategoryRequiresStructure(resultCategory);
   if (!isStructure) return { category: resultCategory };
   const mappedHeight = Number.parseFloat(String(result.extratags?.height ?? ""));
   const levels = Number.parseFloat(String(result.extratags?.["building:levels"] ?? ""));

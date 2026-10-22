@@ -19,6 +19,26 @@ const RADIANS_TO_DEGREES = 180 / Math.PI;
 
 export type RiseSetCandidateBodyId = Extract<CelestialBodyId, "sun" | "moon" | "milkyWay">;
 
+const RISE_SET_CANDIDATE_BODY_IDS: readonly RiseSetCandidateBodyId[] = [
+  "sun",
+  "moon",
+  "milkyWay",
+];
+
+/**
+ * 表示中の天体を最初にし、残りを固定順で返す。
+ *
+ * UIは天体を常に1つだけ表示するが、非表示の天体も1つずつ後から先読みしておくと、
+ * プルダウンを切り替えた時に同じ被写体・同じ日の線を再取得せずに表示できる。
+ * 北極星には出入りの三脚候補線が無いため、preferred が null の場合は何も計算しない。
+ */
+export function prioritizedRiseSetCandidateBodyIds(
+  preferred: RiseSetCandidateBodyId | null
+): RiseSetCandidateBodyId[] {
+  if (!preferred) return [];
+  return [preferred, ...RISE_SET_CANDIDATE_BODY_IDS.filter((id) => id !== preferred)];
+}
+
 export const RISE_SET_BODY_LABELS: Record<RiseSetCandidateBodyId, string> = {
   sun: "太陽",
   moon: "月",

@@ -64,10 +64,13 @@ export const onRequest: PagesFunction<CloudflareEnv> = async (context) => {
       if (!isBearingProfileBatchRequest(body)) {
         return apiJson({ error: "全方位地形の取得条件が不正です" }, 400);
       }
-      const compressed = await readR2PrecomputedBearingProfileCompressed(
-        body,
-        context.request.signal
-      );
+      // R2の登録スポットファイルは整数1度刻み。小数方位を要求する三脚候補線へ
+      // そのまま返すと、候補点とは別の地形断面になり最大0.5度ずれる。小数方位は
+      // R2を迂回し、下のEドライブ正確方位計算へ送る。
+      const integerBearingRequest = body.bearings.every(Number.isInteger);
+      const compressed = integerBearingRequest
+        ? await readR2PrecomputedBearingProfileCompressed(body, context.request.signal)
+        : null;
       if (compressed) {
         return new Response(compressed.bytes, {
           status: 200,

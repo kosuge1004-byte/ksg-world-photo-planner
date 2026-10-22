@@ -3,6 +3,7 @@ import type { TerrainSection, TerrainSectionLookup } from "../cesium/tripodCandi
 import { findPrecomputedBearingProfileTarget } from "../data/precomputedBearingProfileTargets";
 import { idFor } from "../subjectStorage";
 import {
+  fetchBearingProfileBatch,
   fetchStaticPrecomputedTerrainProfile,
   type StaticPrecomputedTerrainProfile,
 } from "./bearingProfileBatchClient";
@@ -13,13 +14,15 @@ import { isBearingProfileEnabled } from "./tripodBearingProfileManager";
 /**
  * 2026-10-08: 三脚候補線（標高を加味した線）に使う地形の断面の読み込み。
  *
- * 取得元は2つだけ。どちらも新しい地形の計算・取得は起こさない。
+ * 1度刻みの保存済み断面は従来の表示には利用できるが、赤線には最大0.5度の
+ * 横ずれを生む。赤線は exact 取得元を使い、候補点と同じ小数方位をEドライブの
+ * 全国DEMからまとめて計算する。
  *   device      : ダウンロード済みの地点。端末に保存した方位ごとの断面を読む（通信なし）。
  *   precomputed : 内蔵スポットで未ダウンロードの地点。配信済みの計算済みファイルを1回取得し、
  *                 表示用にメモリへ持つだけで端末には保存しない。
- * どちらにも無い地点（地図へ直接置いたピンなど）は対象外で、呼び出し側が目安の線を出す。
+ *   exact       : 全国DEMから小数方位をまとめて取得する。取得できない場合は誤差のある線を出さない。
  */
-export type TerrainSectionSource = "device" | "precomputed";
+export type TerrainSectionSource = "device" | "precomputed" | "exact";
 
 /** 通信・保存領域を読まずに判定できる「この地点で使える見込みの取得元」。優先順。 */
 export function terrainSectionSourcesFor(
@@ -33,6 +36,8 @@ export function terrainSectionSourcesFor(
     listDownloadedSpotData().some((record) => record.subjectId === subjectId && record.profilePoints > 0)
   ) sources.push("device");
   if (findPrecomputedBearingProfileTarget(subject.latitude, subject.longitude)) sources.push("precomputed");
+  if (subject.latitude >= 20 && subject.latitude <= 46.5 &&
+    subject.longitude >= 122 && subject.longitude <= 154) sources.push("exact");
   return sources;
 }
 
@@ -115,6 +120,55 @@ async function loadPrecomputedSections(
   };
 }
 
+const EXACT_REQUEST_BEARING_LIMIT = 360;
+let exactCache: { key: string; sections: Map<number, TerrainSection> } | null = null;
+
+function exactBearingKey(bearing: number): number {
+  return Math.round(bearing * 1_000_000) / 1_000_000;
+}
+
+async function loadExactSections(
+  subject: GroundPoint,
+  lensCenterHeightMeters: number,
+  maxDistanceMeters: number,
+  bearings: readonly number[],
+  revision: string,
+  signal: AbortSignal | undefined
+): Promise<TerrainSectionLookup | null> {
+  const key = `${idFor(subject)}|${maxDistanceMeters}|${revision}`;
+  if (exactCache?.key !== key) exactCache = { key, sections: new Map() };
+  const cache = exactCache;
+  const normalizedBearings = [...new Set(bearings.map(exactBearingKey))];
+  const missing = normalizedBearings.filter((bearing) => !cache.sections.has(bearing));
+  for (let start = 0; start < missing.length; start += EXACT_REQUEST_BEARING_LIMIT) {
+    if (signal?.aborted) return null;
+    const batch = missing.slice(start, start + EXACT_REQUEST_BEARING_LIMIT);
+    const response = await fetchBearingProfileBatch({
+      subjectPoint: subject,
+      cameraSettings: { lensCenterHeightMeters },
+      bearings: batch,
+      maxDistanceMeters,
+    }, signal);
+    if (!response || response.failedBearings.length > 0 || response.profiles.length !== batch.length) {
+      return null;
+    }
+    for (const profile of response.profiles) {
+      if (!profile.points || profile.points.length < 2) return null;
+      const profileKey = exactBearingKey(profile.bearingDegrees);
+      if (!batch.includes(profileKey)) return null;
+      const distancesMeters = new Float64Array(profile.points.length);
+      const ellipsoidalHeightsMeters = new Float64Array(profile.points.length);
+      profile.points.forEach((point, index) => {
+        distancesMeters[index] = point.distanceMeters;
+        ellipsoidalHeightsMeters[index] = point.ellipsoidalHeightMeters;
+      });
+      cache.sections.set(profileKey, { distancesMeters, ellipsoidalHeightsMeters });
+    }
+    if (batch.some((bearing) => !cache.sections.has(bearing))) return null;
+  }
+  return (bearing) => cache.sections.get(exactBearingKey(bearing)) ?? null;
+}
+
 /**
  * 必要な方位の断面をすべて揃えて返す。揃わなければnull。
  * revision はダウンロード済みデータの状態を表す文字列。ダウンロードの完了・更新・削除で
@@ -123,14 +177,30 @@ async function loadPrecomputedSections(
 export async function loadTerrainSectionLookup(input: {
   subject: GroundPoint;
   lensCenterHeightMeters: number;
+  maxDistanceMeters: number;
   bearings: readonly number[];
   revision: string;
   signal?: AbortSignal;
 }): Promise<{ source: TerrainSectionSource; lookup: TerrainSectionLookup } | null> {
   if (input.bearings.length === 0) return null;
-  for (const source of terrainSectionSourcesFor(input.subject)) {
+  // 小数方位は1度保存データへ丸めない。exactが得られない場合は誤った赤線を
+  // 出さずnullにして、候補点との不一致を見せない。
+  const exactRequired = input.bearings.some((bearing) => !Number.isInteger(bearing));
+  const sources = exactRequired
+    ? (["exact"] as const)
+    : terrainSectionSourcesFor(input.subject);
+  for (const source of sources) {
     if (input.signal?.aborted) return null;
-    const lookup = source === "device"
+    const lookup = source === "exact"
+      ? await loadExactSections(
+          input.subject,
+          input.lensCenterHeightMeters,
+          input.maxDistanceMeters,
+          input.bearings,
+          input.revision,
+          input.signal
+        )
+      : source === "device"
       ? await loadDeviceSections(
           input.subject, input.lensCenterHeightMeters, input.bearings, input.revision, input.signal
         )
@@ -144,4 +214,5 @@ export async function loadTerrainSectionLookup(input: {
 export function resetTerrainSectionMemoryForTests(): void {
   deviceCache = null;
   precomputedCache.clear();
+  exactCache = null;
 }

@@ -5,11 +5,13 @@ import test from "node:test";
 import {
   buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
+  prioritizedRiseSetCandidateBodyIds,
   riseSetArcSegments,
 } from "../../src/cesium/tripodCandidateRiseSetArc.ts";
-import * as riseSetArcModule from "../../src/cesium/tripodCandidateRiseSetArc.ts";
 import {
+  alignTerrainArcToExactCandidate,
   buildTerrainRiseSetArc,
+  farthestTripodCandidatesByBody,
   requiredTerrainBearings,
   terrainIntersectionForSample,
   terrainSectionBearing,
@@ -54,16 +56,30 @@ const section = (heightAt) => ({
 const groundDistance = (point) =>
   calculateKarneyLineMetrics({ ...subject, height: 0 }, { ...point, height: 0, label: "" }).distanceMeters;
 
-test("the guide line no longer consumes confirmed candidates or the displayed time", async () => {
-  // 以前の不具合の入口だった「確定候補へ線を合わせる」処理そのものを無くした。
-  assert.equal("alignRiseSetArcToConfirmedCandidates" in riseSetArcModule, false);
+test("rise/set terrain lines prioritize the displayed body and then process one body at a time", () => {
+  assert.deepEqual(prioritizedRiseSetCandidateBodyIds("moon"), ["moon", "sun", "milkyWay"]);
+  assert.deepEqual(prioritizedRiseSetCandidateBodyIds("milkyWay"), ["milkyWay", "sun", "moon"]);
+  assert.deepEqual(prioritizedRiseSetCandidateBodyIds(null), []);
+});
+
+test("the selected exact candidate is the single displayed point and lies on the terrain line", async () => {
   const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
-  assert.doesNotMatch(app, /alignRiseSetArcToConfirmedCandidates/);
-  // 画面に出す線は、確定候補（displayedTripodCandidates）にも表示中の時刻（selectedDate）にも依存しない。
-  const memo = app.match(/const tripodCandidateRiseSetArcs = useMemo\(\(\) => \{[\s\S]*?\n  \}, \[([^\]]*)\]\);/);
-  assert.ok(memo, "tripodCandidateRiseSetArcs memo");
-  assert.equal(memo[1].replaceAll(/\s/g, ""), "terrainArcRequest,terrainArcResult,tripodCandidateRiseSetBaseArcs");
-  assert.doesNotMatch(memo[0], /displayedTripodCandidates|selectedDate\b/);
+  assert.match(app, /alignTerrainArcToExactCandidate\([\s\S]*?exactCandidates\.get\(id\),[\s\S]*?selectedDate\.getTime\(\)/);
+  assert.match(app, /farthestTripodCandidatesByBody\(tripodCandidates\)/);
+  const candidates = farthestTripodCandidatesByBody([
+    { id: "moon", label: "月", latitude: 35, longitude: 136, height: 10, distanceMeters: 100 },
+    { id: "moon", label: "月", latitude: 35.1, longitude: 136.1, height: 20, distanceMeters: 300 },
+  ]);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].distanceMeters, 300);
+  const timeline = buildRiseSetArcTimeline({ ...day, sampleMinutes: 2 });
+  const terrain = await buildTerrainRiseSetArc(timeline, () => section(() => GROUND), { yieldEverySamples: 0 });
+  const target = terrain.points[Math.floor(terrain.points.length / 2)];
+  const exact = { ...target, latitude: target.latitude + 0.0001, longitude: target.longitude - 0.0001 };
+  const aligned = alignTerrainArcToExactCandidate(terrain, exact, target.timestampMilliseconds);
+  const replaced = aligned.points.find((point) => point.timestampMilliseconds === target.timestampMilliseconds);
+  assert.equal(replaced.latitude, exact.latitude);
+  assert.equal(replaced.longitude, exact.longitude);
   // 目安の線の高さ基準は被写体ごとに固定し、三脚ピンの移動では決め直さない。
   assert.match(app, /frozenArcReferenceRef\.current\?\.key === subjectGroundKey/);
   const flat = buildTripodCandidateRiseSetArc({ ...day, referenceGroundEllipsoidalHeightMeters: [GROUND] });
@@ -201,10 +217,11 @@ test("the line is cut where the intersection jumps to another slope, and kept wh
 test("a missing bearing section or an aborted run yields no terrain line", async () => {
   const timeline = buildRiseSetArcTimeline(day);
   const bearings = requiredTerrainBearings(timeline);
-  assert.ok(bearings.length > 60 && bearings.every((bearing) => Number.isInteger(bearing) && bearing >= 0 && bearing < 360));
-  assert.equal(terrainSectionBearing(0.4), 180);
-  assert.equal(terrainSectionBearing(179.6), 0);
-  assert.equal(terrainSectionBearing(359.7), 180);
+  assert.ok(bearings.length > 60 && bearings.every((bearing) => Number.isFinite(bearing) && bearing >= 0 && bearing < 360));
+  assert.ok(bearings.some((bearing) => !Number.isInteger(bearing)));
+  assert.equal(terrainSectionBearing(0.4), 180.4);
+  assert.equal(terrainSectionBearing(179.6), 359.6);
+  assert.equal(terrainSectionBearing(359.7), 179.7);
   const missingOne = (bearing) => bearing === bearings[5] ? null : section(() => GROUND);
   assert.equal(await buildTerrainRiseSetArc(timeline, missingOne, { yieldEverySamples: 0 }), null);
   const controller = new AbortController();
@@ -247,10 +264,10 @@ test("built-in spots read the published file once, keep it in memory only, and r
   const target = PRECOMPUTED_BEARING_PROFILE_TARGETS.find((item) => item.maxDistanceMeters === 10_000);
   const builtIn = { latitude: target.latitude, longitude: target.longitude, height: 100, label: target.name };
 
-  // 取得元の見込み: 内蔵スポットは計算済みファイル、地図へ直接置いた地点は対象外。
-  assert.deepEqual(terrainSectionSourcesFor(builtIn), ["precomputed"]);
+  // 整数断面には従来の計算済みファイル、小数方位には全国DEMのexact経路がある。
+  assert.deepEqual(terrainSectionSourcesFor(builtIn), ["precomputed", "exact"]);
   const arbitrary = { latitude: target.latitude + 0.0123, longitude: target.longitude, height: 100, label: "ピン" };
-  assert.deepEqual(terrainSectionSourcesFor(arbitrary), []);
+  assert.deepEqual(terrainSectionSourcesFor(arbitrary), ["exact"]);
 
   let calls = 0;
   globalThis.fetch = async (input) => {
@@ -259,32 +276,73 @@ test("built-in spots read the published file once, keep it in memory only, and r
     return new Response(JSON.stringify(precomputedFile(target)), { status: 200 });
   };
   const loaded = await loadTerrainSectionLookup({
-    subject: builtIn, lensCenterHeightMeters: LENS, bearings: [0, 90, 359], revision: "none",
+    subject: builtIn, lensCenterHeightMeters: LENS, maxDistanceMeters: MAX, bearings: [0, 90, 359], revision: "none",
   });
   assert.equal(loaded.source, "precomputed");
   assert.deepEqual(Array.from(loaded.lookup(90).distancesMeters), [8, 100, 1000, 5000, 10_000]);
   assert.equal(loaded.lookup(90).ellipsoidalHeightsMeters[2], 40 + 9 + 1);
   // 日付や天体を変えて別の方位が要るようになっても、同じファイルを取り直さない。
   const again = await loadTerrainSectionLookup({
-    subject: builtIn, lensCenterHeightMeters: LENS, bearings: [10, 200], revision: "none",
+    subject: builtIn, lensCenterHeightMeters: LENS, maxDistanceMeters: MAX, bearings: [10, 200], revision: "none",
   });
   assert.equal(again.source, "precomputed");
   assert.equal(calls, 1);
-  // 対象外の地点では通信しない。
-  assert.equal(await loadTerrainSectionLookup({
-    subject: arbitrary, lensCenterHeightMeters: LENS, bearings: [0], revision: "none",
-  }), null);
-  assert.equal(calls, 1);
-
-  // 未配置（404）は目安の線へ戻すためnull。失敗は覚えず、次回はもう一度試す。
+  // 未配置（404）はnull。失敗は覚えず、次回はもう一度試す。
   resetTerrainSectionMemoryForTests();
   calls = 0;
   globalThis.fetch = async () => { calls += 1; return new Response("not found", { status: 404 }); };
-  const request = { subject: builtIn, lensCenterHeightMeters: LENS, bearings: [0], revision: "none" };
+  const request = { subject: builtIn, lensCenterHeightMeters: LENS, maxDistanceMeters: MAX, bearings: [0], revision: "none" };
   assert.equal(await loadTerrainSectionLookup(request), null);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(await loadTerrainSectionLookup(request), null);
-  assert.equal(calls, 2);
+  // 各試行で静的ファイル→exact APIの順に試すため2回ずつ。
+  assert.equal(calls, 4);
+});
+
+test("fractional bearings are fetched exactly in one batch and cached", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; resetTerrainSectionMemoryForTests(); });
+  resetTerrainSectionMemoryForTests();
+  const arbitrary = { latitude: 35.4, longitude: 136.7, height: 100, label: "任意地点" };
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    calls += 1;
+    assert.match(String(input), /\/api\/bearing-profile-batch$/u);
+    const request = JSON.parse(init.body);
+    assert.deepEqual(request.bearings, [12.345678, 98.765432]);
+    const distances = [8, 1000, 10_000];
+    return new Response(JSON.stringify({
+      version: 1,
+      terrainProfileComplete: true,
+      profiles: request.bearings.map((bearingDegrees) => ({
+        bearingDegrees,
+        points: distances.map((distanceMeters) => ({
+          distanceMeters,
+          latitude: 35.4,
+          longitude: 136.7,
+          ellipsoidalHeightMeters: 50 + bearingDegrees / 100,
+          elevationSource: "DEM5A",
+        })),
+        computedAtIso: "2026-10-20T00:00:00.000Z",
+      })),
+      failedBearings: [],
+      requestedBearingCount: request.bearings.length,
+      pointCount: request.bearings.length * distances.length,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const input = {
+    subject: arbitrary,
+    lensCenterHeightMeters: LENS,
+    maxDistanceMeters: MAX,
+    bearings: [12.345678, 98.765432],
+    revision: "none",
+  };
+  const loaded = await loadTerrainSectionLookup(input);
+  assert.equal(loaded.source, "exact");
+  assert.equal(loaded.lookup(12.345678).ellipsoidalHeightsMeters.length, 3);
+  const again = await loadTerrainSectionLookup(input);
+  assert.equal(again.source, "exact");
+  assert.equal(calls, 1);
 });
 
 test("a published file for another place, range or with broken heights is rejected", async () => {
@@ -317,7 +375,7 @@ test("a published file for another place, range or with broken heights is reject
   ), null);
 });
 
-test("app wiring: terrain line when sections exist, level-ground guide otherwise, auto switch after download", async () => {
+test("app wiring: exact terrain line, exact candidate anchor, and no rounded fallback", async () => {
   const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
   const map2d = await readFile(new URL("../../src/components/Map2DOverlay.tsx", import.meta.url), "utf8");
   const entities = await readFile(new URL("../../src/cesium/tripodCandidateEntities.ts", import.meta.url), "utf8");
@@ -327,9 +385,17 @@ test("app wiring: terrain line when sections exist, level-ground guide otherwise
   // ダウンロードの完了・更新・削除で読み直す（＝自動で切り替わる）。
   assert.match(app, /terrainSectionRevision = useMemo\(\(\) => \{[\s\S]*?downloadedSpotData\.find/);
   assert.match(app, /revision: terrainSectionRevision,/);
-  // 被写体ピンを置いただけでは新しい地形の取得・計算を始めない（読むのは保存済みか配信済みだけ）。
+  // 小数方位はまとめAPIから正確な断面を取得し、1度断面へフォールバックしない。
   const sections = await readFile(new URL("../../src/cache/tripodTerrainSections.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(sections, /backfillBearingProfiles|fetchBearingProfileBatch\b|fetchBearingProfileBatchDetailed|setBearingProfile\(/);
+  assert.match(sections, /fetchBearingProfileBatch\(/);
+  assert.match(sections, /const sources = exactRequired[\s\S]*?\["exact"\]/);
+  assert.match(app, /maxDistanceMeters: request\.maxDistanceMeters,[\s\S]*?bearings: requiredTerrainBearings/);
+  assert.match(app, /const ids = prioritizedRiseSetCandidateBodyIds\(priorityId\);/);
+  assert.match(app, /if \(arc\) arcs\[id\] = arc;[\s\S]*?completed\[id\] = true;[\s\S]*?publish\(\);/);
+  assert.match(app, /id !== request\.priorityId &&[\s\S]*?tripodCandidateCalculationStatus === "calculating"/);
+  assert.match(app, /terrainArcRequest\.ids\.flatMap\(\(id\) => \{\s*if \(!celestialVisibility\[id\]\) return \[\];/);
+  assert.match(app, /function commitManuallyPlacedSubject[\s\S]*?lastConfirmedTripodCandidatesRef\.current = \[\];[\s\S]*?setTripodCandidates\(\[\]\);/);
+  assert.equal((app.match(/commitManuallyPlacedSubject\(point\);/g) ?? []).length, 3);
   // ドラッグ中の仮の候補点は、地表に沿った距離で写す（直線距離をそのまま使わない）。
   assert.match(app, /groundDistanceMeters = calculateKarneyLineMetrics\([\s\S]*?\)\.distanceMeters;[\s\S]*?calculateKarneyDestinationPoint\([\s\S]*?groundDistanceMeters\s*\)/);
   // 区間ごとに描き、標高を加味した線は実線・目安の線は破線。

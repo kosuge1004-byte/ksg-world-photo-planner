@@ -135,13 +135,16 @@ import {
   buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
   findCarryOverRiseSetPass,
+  prioritizedRiseSetCandidateBodyIds,
   type RiseSetArcPass,
   type RiseSetCandidateBodyId,
   type TripodCandidateRiseSetArc,
 } from "./cesium/tripodCandidateRiseSetArc";
 import { findMoonriseOnDate, isDateKey, type MoonriseInput } from "./time/moonrise";
 import {
+  alignTerrainArcToExactCandidate,
   buildTerrainRiseSetArc,
+  farthestTripodCandidatesByBody,
   requiredTerrainBearings,
 } from "./cesium/tripodCandidateTerrainArc";
 import {
@@ -262,6 +265,7 @@ import {
   createPendingLocalDynamicSpot,
   readEdriveDynamicSpotStatus,
   registerEdriveDynamicSpot,
+  registerEdriveDynamicSpotDetailed,
   upsertLocalDynamicSpot,
 } from "./cache/dynamicSpotData";
 import type {
@@ -941,7 +945,7 @@ function App() {
               point
             );
           }
-          setSubjectPoint(point);
+          commitManuallyPlacedSubject(point);
           const center = { latitude: point.latitude, longitude: point.longitude };
           mapCenterRef.current = center;
           setMapCenter(center);
@@ -1149,6 +1153,20 @@ function App() {
   const tripodHintSubjectRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const [tripodCandidateCalculationStatus, setTripodCandidateCalculationStatus] =
     useState<"idle" | "calculating" | "complete" | "no-solution" | "error" | "paused">("idle");
+
+  /**
+   * 手動で被写体ピンを置き直す時は、旧座標で確定した点を新座標の結果として
+   * 一瞬でも表示しない。旧候補の距離は10m以内なら次の精密探索の初期ヒントに
+   * だけ使われ、必ず新座標で検証される。DEMタイルのキャッシュもそのまま再利用する。
+   */
+  function commitManuallyPlacedSubject(point: GroundPoint): void {
+    tripodCalculationAbortRef.current?.abort();
+    lastConfirmedTripodCandidatesRef.current = [];
+    lastConfirmedTripodSubjectRef.current = null;
+    setTripodCandidates([]);
+    setTripodCandidateCalculationStatus("idle");
+    setSubjectPoint(point);
+  }
 
   // 2026-08-26追記: インストール型アプリ環境（PWA/専用アプリ）では
   // ブラウザの開発者ツールが使えないため、「計算中のまま何分も動かない」
@@ -1588,7 +1606,7 @@ function App() {
         position,
         "プレビュー3D指定地点"
       );
-      setSubjectPoint(point);
+      commitManuallyPlacedSubject(point);
       setMapCenter({ latitude: point.latitude, longitude: point.longitude });
       setPreviewSubjectPicking(false);
       setSearchMessage(
@@ -2204,7 +2222,6 @@ function App() {
     const ends: Partial<Record<RiseSetCandidateBodyId, number>> = {};
     if (!subjectPoint) return ends;
     for (const id of ["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[]) {
-      if (!celestialVisibility[id]) continue;
       const carryOver = findCarryOverRiseSetPass({
         id,
         subject: subjectPoint,
@@ -2218,7 +2235,6 @@ function App() {
     return ends;
   }, [
     subjectPoint,
-    celestialVisibility,
     selectedDayStart,
     cameraSettings.lensCenterHeightMeters,
     calculationMode,
@@ -2288,8 +2304,9 @@ function App() {
   }, [downloadedSpotData, subjectIdForTerrain]);
   const terrainArcRequest = useMemo(() => {
     if (!subjectPoint) return null;
-    const ids = (["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[])
-      .filter((id) => celestialVisibility[id]);
+    const priorityId = (["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[])
+      .find((id) => celestialVisibility[id]) ?? null;
+    const ids = prioritizedRiseSetCandidateBodyIds(priorityId);
     if (ids.length === 0) return null;
     const maxDistanceMeters = registeredProfileCoverageDistanceMeters(
       subjectPoint.latitude,
@@ -2298,6 +2315,7 @@ function App() {
     );
     return {
       subject: subjectPoint,
+      priorityId,
       ids,
       dayStart: selectedDayStart,
       dayEnd: selectedDayEnd,
@@ -2306,7 +2324,9 @@ function App() {
       maxDistanceMeters,
       refractionWeather: previewRefractionWeather,
       revision: terrainSectionRevision,
-      passKey: ids.map((id) => arcPassFor(id)).join(","),
+      passKey: (["sun", "moon", "milkyWay"] as RiseSetCandidateBodyId[])
+        .map((id) => `${id}:${arcPassFor(id)}`)
+        .join(","),
       passes: Object.fromEntries(ids.map((id) => [id, arcPassFor(id)])) as Partial<Record<RiseSetCandidateBodyId, RiseSetArcPass>>,
       // 断面が得られる見込みがあるか（通信・保存領域を読まずに判定できる範囲）。
       expectsTerrain: terrainSectionSourcesFor(subjectPoint).length > 0,
@@ -2323,18 +2343,55 @@ function App() {
     terrainSectionRevision,
     arcPassFor,
   ]);
-  const [terrainArcResult, setTerrainArcResult] = useState<{
+  type TerrainArcCalculationResult = {
     request: NonNullable<typeof terrainArcRequest>;
     arcs: Partial<Record<RiseSetCandidateBodyId, TripodCandidateRiseSetArc>>;
-  } | null>(null);
+    completed: Partial<Record<RiseSetCandidateBodyId, true>>;
+  };
+  const [terrainArcResult, setTerrainArcResult] = useState<TerrainArcCalculationResult | null>(null);
+  const terrainArcResultRef = useRef<TerrainArcCalculationResult | null>(null);
   useEffect(() => {
     if (!terrainArcRequest || !terrainArcRequest.expectsTerrain) return;
     const request = terrainArcRequest;
     const controller = new AbortController();
     void (async () => {
-      const arcs: Partial<Record<RiseSetCandidateBodyId, TripodCandidateRiseSetArc>> = {};
-      try {
-        for (const id of request.ids) {
+      const previous = terrainArcResultRef.current;
+      const reusable = previous !== null &&
+        previous.request.subject === request.subject &&
+        previous.request.dayStart === request.dayStart &&
+        previous.request.dayEnd === request.dayEnd &&
+        previous.request.lensCenterHeightMeters === request.lensCenterHeightMeters &&
+        previous.request.calculationMode === request.calculationMode &&
+        previous.request.maxDistanceMeters === request.maxDistanceMeters &&
+        previous.request.refractionWeather === request.refractionWeather &&
+        previous.request.revision === request.revision &&
+        previous.request.passKey === request.passKey;
+      const arcs: Partial<Record<RiseSetCandidateBodyId, TripodCandidateRiseSetArc>> = reusable && previous
+        ? { ...previous.arcs }
+        : {};
+      const completed: Partial<Record<RiseSetCandidateBodyId, true>> = reusable && previous
+        ? { ...previous.completed }
+        : {};
+      const publish = () => {
+        if (controller.signal.aborted) return;
+        const result: TerrainArcCalculationResult = {
+          request,
+          arcs: { ...arcs },
+          completed: { ...completed },
+        };
+        terrainArcResultRef.current = result;
+        setTerrainArcResult(result);
+      };
+      publish();
+      for (const id of request.ids) {
+        if (completed[id]) continue;
+        // 精密な候補点を計算中は、表示中の線を先に完成させた後で負荷を譲る。
+        // 候補点の計算が終わると依存値が変わり、残りの天体をここから再開する。
+        if (
+          id !== request.priorityId &&
+          tripodCandidateCalculationStatus === "calculating"
+        ) break;
+        try {
           // 時刻ごとの天体方向の計算（数百時刻ぶん）で画面の更新を止めないよう、
           // いったん描画へ処理を譲ってから始める。
           await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
@@ -2352,28 +2409,40 @@ function App() {
             // 地形の起伏を拾えるよう、目安の線（10分刻み）より細かく刻む。
             sampleMinutes: 2,
           });
-          if (!timeline) continue;
-          const sections = await loadTerrainSectionLookup({
-            subject: request.subject,
-            lensCenterHeightMeters: request.lensCenterHeightMeters,
-            bearings: requiredTerrainBearings(timeline),
-            revision: request.revision,
-            signal: controller.signal,
-          });
+          if (!timeline) {
+            completed[id] = true;
+            publish();
+            continue;
+          }
+          let sections: Awaited<ReturnType<typeof loadTerrainSectionLookup>> = null;
+          for (let attempt = 0; attempt < 3 && !sections; attempt += 1) {
+            sections = await loadTerrainSectionLookup({
+              subject: request.subject,
+              lensCenterHeightMeters: request.lensCenterHeightMeters,
+              maxDistanceMeters: request.maxDistanceMeters,
+              bearings: requiredTerrainBearings(timeline),
+              revision: request.revision,
+              signal: controller.signal,
+            });
+            if (!sections && attempt < 2) {
+              await new Promise<void>((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+            }
+          }
           if (controller.signal.aborted) return;
           if (!sections) continue;
           const arc = await buildTerrainRiseSetArc(timeline, sections.lookup, { signal: controller.signal });
           if (controller.signal.aborted) return;
           if (arc) arcs[id] = arc;
+          completed[id] = true;
+          publish();
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          console.warn(`${id}の標高を加味した三脚候補線を計算できませんでした`, error);
         }
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        console.warn("標高を加味した三脚候補線を計算できないため、目安の線を表示します", error);
       }
-      if (!controller.signal.aborted) setTerrainArcResult({ request, arcs });
     })();
     return () => controller.abort();
-  }, [terrainArcRequest]);
+  }, [terrainArcRequest, tripodCandidateCalculationStatus]);
 
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
   // にしか実装が無く、3D表示中は最初から描画されなかった(仕様漏れ)。
@@ -2400,39 +2469,36 @@ function App() {
       // のみとする。以前はここで暫定候補を補って先行表示していたが、
       // 候補が見つかるたびに地図の描画が頻繁に更新される負荷の原因にも
       // なっていたため、確定時の1回だけ描画する形にする。
-      return tripodCandidates;
+      return farthestTripodCandidatesByBody(tripodCandidates);
     }
-    const previousById = new Map<TripodCandidate["id"], TripodCandidate[]>();
-    for (const candidate of lastConfirmedTripodCandidatesRef.current) {
-      const list = previousById.get(candidate.id) ?? [];
-      list.push(candidate);
-      previousById.set(candidate.id, list);
-    }
+    const previousById = new Map(
+      farthestTripodCandidatesByBody(lastConfirmedTripodCandidatesRef.current)
+        .map((candidate) => [candidate.id, candidate] as const)
+    );
     // ドラッグ中は通信を伴うDEM探索を行わず、直前に確定した全交点の距離を
-    // 現在時刻の天体方位へ再投影する。複数候補を1件へ潰さない。
+    // 現在時刻の天体方位へ再投影する。赤線と同じ最遠交点だけを表示する。
     return tripodCandidateSourcePoints.flatMap((point) => {
       if (!celestialVisibility[point.id] || point.altitudeDegrees <= 0.25) return [];
-      const previousCandidates = previousById.get(point.id) ?? [];
-      return previousCandidates.map((previous) => {
-        // 2026-10-08修正: 候補の distanceMeters は被写体からの直線距離（視線に沿った
-        // 距離）で、地表に沿った距離より長い。そのまま地表の距離として使うと、太陽が
-        // 高いほど候補点が遠くへずれていた。地表に沿った距離へ直してから写す。
-        const groundDistanceMeters = calculateKarneyLineMetrics(
-          { ...subjectPoint, height: 0 },
-          { latitude: previous.latitude, longitude: previous.longitude, height: 0, label: previous.label }
-        ).distanceMeters;
-        const destination = calculateKarneyDestinationPoint(
-          subjectPoint,
-          (point.azimuthDegrees + 180) % 360,
-          groundDistanceMeters
-        );
-        return {
-          ...previous,
-          label: point.label,
-          latitude: destination.latitude,
-          longitude: destination.longitude,
-        };
-      });
+      const previous = previousById.get(point.id);
+      if (!previous) return [];
+      // 2026-10-08修正: 候補の distanceMeters は被写体からの直線距離（視線に沿った
+      // 距離）で、地表に沿った距離より長い。そのまま地表の距離として使うと、太陽が
+      // 高いほど候補点が遠くへずれていた。地表に沿った距離へ直してから写す。
+      const groundDistanceMeters = calculateKarneyLineMetrics(
+        { ...subjectPoint, height: 0 },
+        { latitude: previous.latitude, longitude: previous.longitude, height: 0, label: previous.label }
+      ).distanceMeters;
+      const destination = calculateKarneyDestinationPoint(
+        subjectPoint,
+        (point.azimuthDegrees + 180) % 360,
+        groundDistanceMeters
+      );
+      return [{
+        ...previous,
+        label: point.label,
+        latitude: destination.latitude,
+        longitude: destination.longitude,
+      }];
     });
   }, [
     celestialVisibility,
@@ -2447,10 +2513,8 @@ function App() {
     [displayedTripodCandidates]
   );
 
-  // 画面に出す三脚候補線。確定候補や表示中の時刻では変わらない（1日の中で固定）。
-  //   - 断面が得られる見込みの地点: 計算が終わるまで線を出さず、終わったら標高を加味した線。
-  //     計算できなかった天体は目安の線へ戻す。
-  //   - それ以外の地点: 目安の線。
+  // 画面に出す三脚候補線。小数方位の正確な断面が揃った場合だけ表示する。
+  // 選択時刻は精密候補そのものを最寄り頂点へ反映し、赤線と点を同じ解にする。
   const tripodCandidateRiseSetArcs = useMemo(() => {
     if (!terrainArcRequest) return [];
     if (!terrainArcRequest.expectsTerrain) return tripodCandidateRiseSetBaseArcs;
@@ -2465,20 +2529,32 @@ function App() {
       result.request.lensCenterHeightMeters === terrainArcRequest.lensCenterHeightMeters &&
       result.request.calculationMode === terrainArcRequest.calculationMode &&
       result.request.maxDistanceMeters === terrainArcRequest.maxDistanceMeters &&
+      result.request.refractionWeather === terrainArcRequest.refractionWeather &&
       result.request.revision === terrainArcRequest.revision &&
       result.request.passKey === terrainArcRequest.passKey
     );
     if (!sameLine) return [];
+    const exactCandidates = new Map(
+      farthestTripodCandidatesByBody(displayedTripodCandidates)
+        .map((candidate) => [candidate.id, candidate] as const)
+    );
     return terrainArcRequest.ids.flatMap((id) => {
-      const arc = result.arcs[id] ?? (
-        // 目安の線へ戻すのは、計算が終わって「標高を加味した線を作れない」と確定した場合だけ。
-        result.request === terrainArcRequest
-          ? tripodCandidateRiseSetBaseArcs.find((candidate) => candidate.id === id)
-          : undefined
-      );
-      return arc ? [arc] : [];
+      if (!celestialVisibility[id]) return [];
+      const arc = result.arcs[id];
+      return arc ? [alignTerrainArcToExactCandidate(
+        arc,
+        exactCandidates.get(id),
+        selectedDate.getTime()
+      )] : [];
     });
-  }, [terrainArcRequest, terrainArcResult, tripodCandidateRiseSetBaseArcs]);
+  }, [
+    terrainArcRequest,
+    terrainArcResult,
+    tripodCandidateRiseSetBaseArcs,
+    displayedTripodCandidates,
+    selectedDate,
+    celestialVisibility,
+  ]);
 
   // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
   // 対応するCesium Entityが無く、候補計算が正常でも点だけ表示されなかった。
@@ -4265,6 +4341,59 @@ function App() {
     }
   }
 
+  async function waitForDynamicSpotPoll(milliseconds: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const timer = window.setTimeout(done, milliseconds);
+      function done(): void {
+        window.clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        resolve();
+      }
+      signal.addEventListener("abort", done, { once: true });
+    });
+  }
+
+  /** D1待ちを失敗扱いせず、PC側が受け取った後の状態へ自動的に追従する。 */
+  async function followQueuedDynamicSpotRegistration(
+    input: DynamicSpotRegistrationInput,
+    local: DynamicSpotRecord,
+    subject: GroundPoint,
+    controller: AbortController
+  ): Promise<void> {
+    let registerCountdown = 0;
+    while (!controller.signal.aborted) {
+      const status = await readEdriveDynamicSpotStatus(
+        local.latitude,
+        local.longitude,
+        controller.signal
+      );
+      if (status) {
+        await followDynamicSpotGeneration(status, subject, controller);
+        return;
+      }
+      // キュー自体が一時的に使えなかった場合にも、接続回復後に登録されるよう
+      // 60秒ごとに同じ冪等な登録を再送する。生成と再試行の所有者はPC側のまま。
+      if (registerCountdown <= 0) {
+        const outcome = await registerEdriveDynamicSpotDetailed(input, controller.signal);
+        if (outcome.spot) {
+          await followDynamicSpotGeneration(outcome.spot, subject, controller);
+          return;
+        }
+        registerCountdown = 6;
+      }
+      if (!controller.signal.aborted) {
+        setDynamicSpotUi({
+          spot: local,
+          phase: "pending-pc",
+          message: "スポットデータを準備しています。接続回復後に自動で続行します",
+        });
+      }
+      registerCountdown -= 1;
+      await waitForDynamicSpotPoll(10_000, controller.signal);
+    }
+  }
+
   async function ensureDynamicSpot(
     location: ResolvedSpotLocation,
     subject: GroundPoint,
@@ -4272,12 +4401,19 @@ function App() {
   ): Promise<void> {
     if (location.locationSource === "static" ||
       registeredLandmarkAtExactPoint(location.latitude, location.longitude)) return;
-    const subjectSurface = subject.subjectSurfaceTarget === "structure-roof" ? "structure" : "terrain";
+    const surfaceHint = subjectSurfaceHintForSpotLocation(location);
+    const intendedStructure = surfaceHint.requireStructureRoof ||
+      location.dynamicSpot?.subjectSurface === "structure" ||
+      subject.subjectSurfaceTarget === "structure-roof";
+    const subjectSurface = intendedStructure ? "structure" : "terrain";
     const measuredStructureHeight = subjectSurface === "structure"
-      ? subject.structureHeightMeters ??
-        (ellipsoidalHeightMeters(subject) - ellipsoidalHeightMeters(subjectGround))
+      ? subject.subjectSurfaceTarget === "structure-roof"
+        ? subject.structureHeightMeters ??
+          (ellipsoidalHeightMeters(subject) - ellipsoidalHeightMeters(subjectGround))
+        : location.structureHeightMeters ?? null
       : 0;
     const validStructureHeight = subjectSurface === "structure" &&
+      typeof measuredStructureHeight === "number" &&
       Number.isFinite(measuredStructureHeight) && measuredStructureHeight >= MIN_STRUCTURE_CLEARANCE_METERS
       ? measuredStructureHeight
       : subjectSurface === "structure" ? null : 0;
@@ -4310,18 +4446,32 @@ function App() {
       phase: "generating",
       message: "スポットデータ生成を準備しています",
     });
-    const registered = await registerEdriveDynamicSpot(input, controller.signal);
-    if (!registered) {
+    const registration = await registerEdriveDynamicSpotDetailed(input, controller.signal);
+    if (subjectSurface === "structure" && validStructureHeight === null) {
+      if (registration.spot) upsertLocalDynamicSpot(registration.spot);
       if (!controller.signal.aborted) {
         setDynamicSpotUi({
-          spot: local,
+          spot: registration.spot ?? local,
           phase: "pending-pc",
-          message: "高速地形データを現在利用できません。検索と撮影計画は利用でき、接続回復後に生成を自動再開します",
+          message: "構造物の高さを確認中です。確認できるまで完成扱いにしません",
         });
       }
       return;
     }
-    await followDynamicSpotGeneration(registered, subject, controller);
+    if (!registration.spot) {
+      if (!controller.signal.aborted) {
+        setDynamicSpotUi({
+          spot: local,
+          phase: "pending-pc",
+          message: registration.queued
+            ? "スポットデータの作成待ちです。自動で開始します"
+            : "スポットデータを準備しています。接続回復後に自動で続行します",
+        });
+      }
+      await followQueuedDynamicSpotRegistration(input, local, subject, controller);
+      return;
+    }
+    await followDynamicSpotGeneration(registration.spot, subject, controller);
   }
 
   async function rememberUnresolvedDynamicStructure(location: ResolvedSpotLocation): Promise<void> {
@@ -5975,7 +6125,7 @@ ${diagnosticMessage}
             point
           );
         }
-        setSubjectPoint(point);
+        commitManuallyPlacedSubject(point);
         setSearchMessage(
           `被写体ピンを配置しました：${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`
         );

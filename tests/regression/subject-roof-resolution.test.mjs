@@ -274,3 +274,19 @@ test("castle ruins and low temple precincts stated as terrain do not require a r
     assert.equal(subjectSurfaceHintForSpotLocation(location).requireStructureRoof, false);
   }
 });
+
+test("dynamic structural categories cannot silently fall back to a completed terrain subject", () => {
+  for (const category of ["historic/castle", "man_made/tower", "tourism/hotel", "building/yes"]) {
+    const hint = subjectSurfaceHintForSpotLocation({
+      latitude: 35.1,
+      longitude: 136.1,
+      label: "動的構造物",
+      subjectSurfaceTarget: "terrain",
+      structureHeightMeters: undefined,
+      heightSourceType: "unknown",
+      locationSource: "dynamic",
+      category,
+    });
+    assert.equal(hint.requireStructureRoof, true, category);
+  }
+});

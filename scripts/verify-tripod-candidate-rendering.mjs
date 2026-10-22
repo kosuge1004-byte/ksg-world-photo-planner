@@ -10,7 +10,7 @@ const map2d = fs.readFileSync(new URL('../src/components/Map2DOverlay.tsx', impo
 // 「撤去されている」ことを確認する内容へ全面的に書き換える。
 const checks = [
   ['preliminary candidate state removed from App.tsx (display path no longer builds/tracks it)', !app.includes('preliminaryTripodCandidates')],
-  ['displayed candidates come only from confirmed tripodCandidates while idle', /if \(!timelineInteracting \|\| !subjectPoint\) \{[\s\S]{0,400}return tripodCandidates;/.test(app)],
+  ['displayed candidates use the farthest confirmed candidate per body while idle', /if \(!timelineInteracting \|\| !subjectPoint\) \{[\s\S]{0,600}return farthestTripodCandidatesByBody\(tripodCandidates\);/.test(app)],
   ['last-confirmed candidates persist through a calculation error (no partial/unconfirmed markers reintroduced)', /if \(canReuseLastConfirmed\) \{[\s\S]*tripodCandidatesRef\.current = lastConfirmedTripodCandidatesRef\.current;/.test(app)],
   ['completed celestial bodies publish confirmed candidates progressively', /\(resolvedId, resolvedCandidates\) =>[\s\S]*setTripodCandidates\(\(current\)/.test(app)],
   ['only the farthest candidate per body is returned by the search itself', fs.readFileSync(new URL('../src/cesium/tripodCandidates.ts', import.meta.url), 'utf8').includes('return unique.slice(0, 1);')],

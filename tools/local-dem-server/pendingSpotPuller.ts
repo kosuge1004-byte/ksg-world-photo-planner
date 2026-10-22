@@ -2,7 +2,7 @@
  * 2026-10-16: データサービスにつながらなかった間にCloudflare（D1）へ貯められた
  * 自動登録スポットを受け取り、この端末の登録データへ入れる。
  *
- * - 起動直後に1回、その後は一定間隔（既定30分）で受け取る。
+ * - 起動直後に1回、その後は一定間隔（既定1分）で受け取る。
  * - 1回に20件ずつ、残りが無くなるまで（最大10回）続ける。
  * - 登録できた地点だけを「受け取り済み」としてCloudflareから消す。
  *   失敗した地点は残り、次回また受け取る。
@@ -12,7 +12,7 @@
 import type { DynamicSpotRegistrationInput, DynamicSpotRecord } from "../../src/types/dynamicSpot.ts";
 import { isDynamicSpotRegistrationInput } from "../../src/types/dynamicSpot.ts";
 
-export const PENDING_SPOT_PULL_INTERVAL_MS = 30 * 60 * 1_000;
+export const PENDING_SPOT_PULL_INTERVAL_MS = 60 * 1_000;
 const TAKE_LIMIT = 20;
 const MAX_ROUNDS_PER_PULL = 10;
 const REQUEST_TIMEOUT_MS = 15_000;

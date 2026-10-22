@@ -133,6 +133,39 @@ test("D unresolved structure is recorded without invented zero height and never 
   assert.equal(counter.calls, 0);
 });
 
+test("a completed terrain record is invalidated when the same exact place is identified as a structure", async () => {
+  const root = await temporaryDataRoot();
+  const store = await createDynamicSpotStore(root, successfulCompute());
+  const created = await store.register(input({ category: "historic/castle" }));
+  await waitFor(store, created.latitude, created.longitude,
+    (record) => record.demProfileStatus === "complete");
+  const corrected = await store.register(input({
+    category: "historic/castle",
+    subjectSurface: "structure",
+    structureHeightMeters: null,
+    heightSourceType: "unknown",
+    heightStatus: "unknown",
+  }));
+  assert.equal(corrected.subjectSurface, "structure");
+  assert.equal(corrected.structureHeightMeters, null);
+  assert.equal(corrected.demProfileStatus, "pending");
+  assert.equal(corrected.completedBearings, 0);
+});
+
+test("startup repairs legacy completed terrain records whose category is definitively structural", async () => {
+  const root = await temporaryDataRoot();
+  const first = await createDynamicSpotStore(root, successfulCompute());
+  const created = await first.register(input({ category: "historic/castle" }));
+  await waitFor(first, created.latitude, created.longitude,
+    (record) => record.demProfileStatus === "complete");
+  const reopened = await createDynamicSpotStore(root, successfulCompute());
+  const repaired = reopened.lookupByCoordinate(created.latitude, created.longitude);
+  assert.equal(repaired.subjectSurface, "structure");
+  assert.equal(repaired.structureHeightMeters, null);
+  assert.equal(repaired.demProfileStatus, "pending");
+  assert.equal(repaired.completedBearings, 0);
+});
+
 test("E/H completed data is reused without external recalculation", async () => {
   const root = await temporaryDataRoot();
   const counter = { calls: 0 };
@@ -268,6 +301,26 @@ test("G PC unavailable keeps the local Dynamic Spot usable and pending", async (
   } finally {
     if (originalStorage === undefined) delete globalThis.localStorage;
     else globalThis.localStorage = originalStorage;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a queued 503 registration is exposed to the client instead of being discarded as a failure", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    code: "LOCAL_DYNAMIC_SPOT_QUEUED",
+    queued: true,
+    error: "queued",
+  }), { status: 503, headers: { "content-type": "application/json" } });
+  try {
+    const dynamicCache = await import("../../src/cache/dynamicSpotData.ts");
+    const outcome = await dynamicCache.registerEdriveDynamicSpotDetailed(input());
+    assert.deepEqual(outcome, {
+      spot: null,
+      queued: true,
+      code: "LOCAL_DYNAMIC_SPOT_QUEUED",
+    });
+  } finally {
     globalThis.fetch = originalFetch;
   }
 });

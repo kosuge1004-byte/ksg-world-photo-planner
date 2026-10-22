@@ -8,6 +8,7 @@ import {
   DYNAMIC_SPOT_MAX_DISTANCE_METERS,
   DYNAMIC_SPOT_PROFILE_VERSION,
   DYNAMIC_SPOT_SCHEMA_VERSION,
+  dynamicSpotCategoryRequiresStructure,
   dynamicSpotCoordinateKey,
   isDynamicSpotRecord,
   normalizeDynamicSpotSearchText,
@@ -530,6 +531,43 @@ export async function createDynamicSpotStore(
     const now = new Date().toISOString();
     const existing = records[coordinateKey];
     const betterHeight = !existing || heightQuality({ heightStatus: input.heightStatus }) >= heightQuality(existing);
+    // 同じ正確座標で一度構造物と判定された記録を、屋根高の解決失敗によってterrainへ
+    // 戻さない。構造物→terrainの上書きが「建物なのに地上ピン」とcomplete誤登録の原因だった。
+    const subjectSurface = existing?.subjectSurface === "structure" || input.subjectSurface === "structure"
+      ? "structure"
+      : "terrain";
+    const structureHeightMeters = subjectSurface === "terrain"
+      ? 0
+      : betterHeight
+        ? input.subjectSurface === "structure" ? input.structureHeightMeters : existing?.structureHeightMeters ?? null
+        : existing?.structureHeightMeters ?? null;
+    const heightSourceType = subjectSurface === "terrain"
+      ? "unknown" as const
+      : betterHeight && input.subjectSurface === "structure"
+        ? input.heightSourceType
+        : existing?.heightSourceType ?? "unknown";
+    const heightSourceUrl = subjectSurface === "terrain"
+      ? null
+      : betterHeight && input.subjectSurface === "structure"
+        ? input.heightSourceUrl
+        : existing?.heightSourceUrl ?? null;
+    const heightSourceLabel = subjectSurface === "terrain"
+      ? null
+      : betterHeight && input.subjectSurface === "structure"
+        ? input.heightSourceLabel
+        : existing?.heightSourceLabel ?? null;
+    const heightStatus = subjectSurface === "terrain"
+      ? "unknown" as const
+      : betterHeight && input.subjectSurface === "structure"
+        ? input.heightStatus
+        : existing?.heightStatus ?? "unknown";
+    const keepComplete = existing?.demProfileStatus === "complete" &&
+      existing.subjectSurface === subjectSurface &&
+      (subjectSurface === "terrain" || (
+        structureHeightMeters !== null &&
+        existing.structureHeightMeters === structureHeightMeters &&
+        heightSourceType !== "unknown" && heightStatus !== "unknown"
+      ));
     const aliases = Array.from(new Set([
       ...(existing?.aliases ?? []), input.name, ...input.aliases,
     ].map((value) => value.trim()).filter(Boolean))).slice(0, 20);
@@ -541,27 +579,27 @@ export async function createDynamicSpotStore(
       latitude: input.latitude,
       longitude: input.longitude,
       category: input.category || existing?.category || "unknown",
-      subjectSurface: input.subjectSurface,
-      structureHeightMeters: betterHeight ? input.structureHeightMeters : existing?.structureHeightMeters ?? null,
-      heightSourceType: betterHeight ? input.heightSourceType : existing?.heightSourceType ?? "unknown",
-      heightSourceUrl: betterHeight ? input.heightSourceUrl : existing?.heightSourceUrl ?? null,
-      heightSourceLabel: betterHeight ? input.heightSourceLabel : existing?.heightSourceLabel ?? null,
-      heightStatus: betterHeight ? input.heightStatus : existing?.heightStatus ?? "unknown",
-      demProfileStatus: existing?.demProfileStatus === "complete" ? "complete" : existing?.demProfileStatus ?? "pending",
+      subjectSurface,
+      structureHeightMeters,
+      heightSourceType,
+      heightSourceUrl,
+      heightSourceLabel,
+      heightStatus,
+      demProfileStatus: keepComplete ? "complete" : "pending",
       maxDistanceMeters: DYNAMIC_SPOT_MAX_DISTANCE_METERS,
       bearingCount: DYNAMIC_SPOT_BEARING_COUNT,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       coordinateKey,
       profileVersion: DYNAMIC_SPOT_PROFILE_VERSION,
-      completedBearings: existing?.completedBearings ?? 0,
-      failedBearings: existing?.failedBearings ?? 0,
-      currentStage: existing?.currentStage ?? "waiting",
-      generationStartedAt: existing?.generationStartedAt ?? null,
-      generationElapsedMs: existing?.generationElapsedMs ?? 0,
-      lastError: existing?.lastError ?? null,
-      profileBytes: existing?.profileBytes,
-      profileSha256: existing?.profileSha256 ?? null,
+      completedBearings: keepComplete ? existing?.completedBearings ?? 0 : 0,
+      failedBearings: keepComplete ? existing?.failedBearings ?? 0 : 0,
+      currentStage: keepComplete ? existing?.currentStage ?? "complete" : "waiting",
+      generationStartedAt: keepComplete ? existing?.generationStartedAt ?? null : null,
+      generationElapsedMs: keepComplete ? existing?.generationElapsedMs ?? 0 : 0,
+      lastError: null,
+      profileBytes: keepComplete ? existing?.profileBytes : undefined,
+      profileSha256: keepComplete ? existing?.profileSha256 ?? null : null,
     };
     await persistRecord(record);
     if (record.demProfileStatus !== "complete" && heightReady(record)) enqueue(coordinateKey);
@@ -586,6 +624,33 @@ export async function createDynamicSpotStore(
     const selected = selectPrecomputedBearingProfiles(complete.response, request.bearings);
     return selected && isPrecomputedBearingProfileResponse(selected, request) ? selected : null;
   };
+
+  // 旧実装が屋根高を解決できなかった際にterrain/0mでcompleteにした構造物を、
+  // 起動時に安全側へ戻す。高さは捏造せずunknown/pendingとし、次回の無料PLATEAU/OSM
+  // 解決まで既存の誤ったcompleteを配信しない。座標別の方位ファイル自体は削除しない。
+  for (const legacy of Object.values(records)) {
+    if (legacy.subjectSurface !== "terrain" ||
+      !dynamicSpotCategoryRequiresStructure(legacy.category)) continue;
+    await persistRecord({
+      ...legacy,
+      subjectSurface: "structure",
+      structureHeightMeters: null,
+      heightSourceType: "unknown",
+      heightSourceUrl: null,
+      heightSourceLabel: null,
+      heightStatus: "unknown",
+      demProfileStatus: "pending",
+      completedBearings: 0,
+      failedBearings: 0,
+      currentStage: "waiting",
+      generationStartedAt: null,
+      generationElapsedMs: 0,
+      lastError: null,
+      profileBytes: undefined,
+      profileSha256: null,
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   return {
     root,
