@@ -89,10 +89,11 @@ export function farthestTripodCandidatesByBody(
 }
 
 /**
- * 選択時刻の精密候補を赤線の最寄り時刻頂点へ反映する。
+ * 選択時刻の精密候補を候補線の最寄り時刻頂点へ反映する。
  * 線は2分刻み、候補点は選択時刻そのものなので、この反映が無いと地形急変部では
  * 同じ計算式でも線分補間と点が離れて見える。3分より遠い頂点は別の出入り回として
  * 扱い、誤って線を移動しない。
+ * 正確な地形線の取得待ちに表示する目安線にも同じ処理を適用する。
  */
 export function alignTerrainArcToExactCandidate(
   arc: TripodCandidateRiseSetArc,
@@ -100,7 +101,7 @@ export function alignTerrainArcToExactCandidate(
   timestampMilliseconds: number,
   maximumTimeDeltaMs = 3 * 60_000
 ): TripodCandidateRiseSetArc {
-  if (arc.kind !== "terrain" || !candidate || candidate.id !== arc.id ||
+  if (!candidate || candidate.id !== arc.id ||
     !Number.isFinite(timestampMilliseconds)) return arc;
   let nearest: TripodCandidateRiseSetArcPoint | null = null;
   let nearestDelta = Number.POSITIVE_INFINITY;
@@ -120,6 +121,23 @@ export function alignTerrainArcToExactCandidate(
     point === nearest ? replacement : point;
   const segments = (arc.segments ?? [arc.points]).map((segment) => segment.map(replace));
   return { ...arc, points: segments.flat(), segments };
+}
+
+/**
+ * 正確な地形線を優先し、取得中・一時失敗中は目安線を途切れさせず表示する。
+ * どちらを使う場合も選択時刻の確定候補を同じ時刻の頂点へ反映するため、
+ * 三脚候補点だけが線から離れて見える状態を作らない。
+ */
+export function selectTripodCandidateRiseSetArc(
+  terrainArc: TripodCandidateRiseSetArc | undefined,
+  fallbackArc: TripodCandidateRiseSetArc | undefined,
+  candidate: import("../types/celestial").TripodCandidate | undefined,
+  timestampMilliseconds: number
+): TripodCandidateRiseSetArc | null {
+  const arc = terrainArc ?? fallbackArc;
+  return arc
+    ? alignTerrainArcToExactCandidate(arc, candidate, timestampMilliseconds)
+    : null;
 }
 
 type SampleGeometry = {

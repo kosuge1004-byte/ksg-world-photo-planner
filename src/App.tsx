@@ -142,10 +142,10 @@ import {
 } from "./cesium/tripodCandidateRiseSetArc";
 import { findMoonriseOnDate, isDateKey, type MoonriseInput } from "./time/moonrise";
 import {
-  alignTerrainArcToExactCandidate,
   buildTerrainRiseSetArc,
   farthestTripodCandidatesByBody,
   requiredTerrainBearings,
+  selectTripodCandidateRiseSetArc,
 } from "./cesium/tripodCandidateTerrainArc";
 import {
   loadTerrainSectionLookup,
@@ -2350,10 +2350,16 @@ function App() {
   };
   const [terrainArcResult, setTerrainArcResult] = useState<TerrainArcCalculationResult | null>(null);
   const terrainArcResultRef = useRef<TerrainArcCalculationResult | null>(null);
+  const [terrainArcRetrySequence, setTerrainArcRetrySequence] = useState(0);
+  const terrainArcRetryStateRef = useRef<{
+    request: NonNullable<typeof terrainArcRequest> | null;
+    attempt: number;
+  }>({ request: null, attempt: 0 });
   useEffect(() => {
     if (!terrainArcRequest || !terrainArcRequest.expectsTerrain) return;
     const request = terrainArcRequest;
     const controller = new AbortController();
+    let retryTimerId: number | undefined;
     void (async () => {
       const previous = terrainArcResultRef.current;
       const reusable = previous !== null &&
@@ -2383,6 +2389,7 @@ function App() {
         setTerrainArcResult(result);
       };
       publish();
+      let needsRetry = false;
       for (const id of request.ids) {
         if (completed[id]) continue;
         // 精密な候補点を計算中は、表示中の線を先に完成させた後で負荷を譲る。
@@ -2429,7 +2436,10 @@ function App() {
             }
           }
           if (controller.signal.aborted) return;
-          if (!sections) continue;
+          if (!sections) {
+            needsRetry = true;
+            continue;
+          }
           const arc = await buildTerrainRiseSetArc(timeline, sections.lookup, { signal: controller.signal });
           if (controller.signal.aborted) return;
           if (arc) arcs[id] = arc;
@@ -2437,12 +2447,35 @@ function App() {
           publish();
         } catch (error) {
           if (controller.signal.aborted) return;
+          needsRetry = true;
           console.warn(`${id}の標高を加味した三脚候補線を計算できませんでした`, error);
         }
       }
+      if (needsRetry && !controller.signal.aborted) {
+        // 一時的なTunnel/API障害を、日付変更や再検索などの別操作が起きるまで
+        // 放置しない。目安線を表示したまま、現在の被写体について間隔を延ばしながら
+        // 自動再試行する（永続障害時に無料枠の通信を浪費しない）。
+        const retryState = terrainArcRetryStateRef.current;
+        if (retryState.request !== request) {
+          retryState.request = request;
+          retryState.attempt = 0;
+        }
+        const retryDelaysMs = [5_000, 15_000, 60_000, 300_000] as const;
+        const retryDelayMs = retryDelaysMs[Math.min(retryState.attempt, retryDelaysMs.length - 1)];
+        retryState.attempt += 1;
+        retryTimerId = window.setTimeout(
+          () => setTerrainArcRetrySequence((current) => current + 1),
+          retryDelayMs
+        );
+      } else if (!controller.signal.aborted) {
+        terrainArcRetryStateRef.current = { request, attempt: 0 };
+      }
     })();
-    return () => controller.abort();
-  }, [terrainArcRequest, tripodCandidateCalculationStatus]);
+    return () => {
+      controller.abort();
+      if (retryTimerId !== undefined) window.clearTimeout(retryTimerId);
+    };
+  }, [terrainArcRequest, tripodCandidateCalculationStatus, terrainArcRetrySequence]);
 
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
   // にしか実装が無く、3D表示中は最初から描画されなかった(仕様漏れ)。
@@ -2513,16 +2546,15 @@ function App() {
     [displayedTripodCandidates]
   );
 
-  // 画面に出す三脚候補線。小数方位の正確な断面が揃った場合だけ表示する。
-  // 選択時刻は精密候補そのものを最寄り頂点へ反映し、赤線と点を同じ解にする。
+  // 画面に出す三脚候補線。正確な小数方位の断面を優先し、取得待ち・一時失敗中は
+  // 目安線を表示する。どちらも選択時刻の精密候補を最寄り頂点へ反映し、
+  // 赤線が消える状態と、赤線から候補点だけが離れる状態を作らない。
   const tripodCandidateRiseSetArcs = useMemo(() => {
     if (!terrainArcRequest) return [];
-    if (!terrainArcRequest.expectsTerrain) return tripodCandidateRiseSetBaseArcs;
     const result = terrainArcResult;
-    if (!result) return [];
     // 計算し直している間（気象データの更新など、線の位置がほぼ変わらない再計算）は、
     // 同じ被写体・同じ日の直前の線を出したままにして、線が一瞬消えるのを避ける。
-    const sameLine = result.request === terrainArcRequest || (
+    const sameLine = result !== null && (result.request === terrainArcRequest || (
       result.request.subject === terrainArcRequest.subject &&
       result.request.dayStart === terrainArcRequest.dayStart &&
       result.request.dayEnd === terrainArcRequest.dayEnd &&
@@ -2532,20 +2564,23 @@ function App() {
       result.request.refractionWeather === terrainArcRequest.refractionWeather &&
       result.request.revision === terrainArcRequest.revision &&
       result.request.passKey === terrainArcRequest.passKey
-    );
-    if (!sameLine) return [];
+    ));
     const exactCandidates = new Map(
       farthestTripodCandidatesByBody(displayedTripodCandidates)
         .map((candidate) => [candidate.id, candidate] as const)
     );
+    const fallbackArcs = new Map(
+      tripodCandidateRiseSetBaseArcs.map((arc) => [arc.id, arc] as const)
+    );
     return terrainArcRequest.ids.flatMap((id) => {
       if (!celestialVisibility[id]) return [];
-      const arc = result.arcs[id];
-      return arc ? [alignTerrainArcToExactCandidate(
-        arc,
+      const arc = selectTripodCandidateRiseSetArc(
+        terrainArcRequest.expectsTerrain && sameLine ? result?.arcs[id] : undefined,
+        fallbackArcs.get(id),
         exactCandidates.get(id),
         selectedDate.getTime()
-      )] : [];
+      );
+      return arc ? [arc] : [];
     });
   }, [
     terrainArcRequest,

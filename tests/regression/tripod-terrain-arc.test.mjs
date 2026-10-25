@@ -13,6 +13,7 @@ import {
   buildTerrainRiseSetArc,
   farthestTripodCandidatesByBody,
   requiredTerrainBearings,
+  selectTripodCandidateRiseSetArc,
   terrainIntersectionForSample,
   terrainSectionBearing,
 } from "../../src/cesium/tripodCandidateTerrainArc.ts";
@@ -65,7 +66,7 @@ test("rise/set terrain lines prioritize the displayed body and then process one 
 
 test("the selected exact candidate is the single displayed point and lies on the terrain line", async () => {
   const app = await readFile(new URL("../../src/App.tsx", import.meta.url), "utf8");
-  assert.match(app, /alignTerrainArcToExactCandidate\([\s\S]*?exactCandidates\.get\(id\),[\s\S]*?selectedDate\.getTime\(\)/);
+  assert.match(app, /selectTripodCandidateRiseSetArc\([\s\S]*?fallbackArcs\.get\(id\),[\s\S]*?exactCandidates\.get\(id\),[\s\S]*?selectedDate\.getTime\(\)/);
   assert.match(app, /farthestTripodCandidatesByBody\(tripodCandidates\)/);
   const candidates = farthestTripodCandidatesByBody([
     { id: "moon", label: "月", latitude: 35, longitude: 136, height: 10, distanceMeters: 100 },
@@ -86,6 +87,22 @@ test("the selected exact candidate is the single displayed point and lies on the
   const flat = buildTripodCandidateRiseSetArc({ ...day, referenceGroundEllipsoidalHeightMeters: [GROUND] });
   assert.equal(flat.kind, "flat");
   assert.equal(riseSetArcSegments(flat).length, 1);
+  const flatTarget = flat.points[Math.floor(flat.points.length / 2)];
+  const flatExact = { ...flatTarget, latitude: flatTarget.latitude + 0.0002 };
+  const selectedFallback = selectTripodCandidateRiseSetArc(
+    undefined, flat, flatExact, flatTarget.timestampMilliseconds
+  );
+  assert.ok(selectedFallback, "exact terrain取得待ちでも目安線を返す");
+  assert.equal(
+    selectedFallback.points.find((point) => point.timestampMilliseconds === flatTarget.timestampMilliseconds).latitude,
+    flatExact.latitude,
+    "目安線も選択時刻の確定候補と交差する"
+  );
+  assert.equal(
+    selectTripodCandidateRiseSetArc(terrain, flat, exact, target.timestampMilliseconds).kind,
+    "terrain",
+    "exact terrain取得後は正確な地形線へ置き換える"
+  );
 });
 
 test("on perfectly level ground the terrain line coincides with the level-ground guide", async () => {
@@ -470,8 +487,10 @@ test("app wiring: exact terrain line, exact candidate anchor, and no rounded fal
   const map2d = await readFile(new URL("../../src/components/Map2DOverlay.tsx", import.meta.url), "utf8");
   const entities = await readFile(new URL("../../src/cesium/tripodCandidateEntities.ts", import.meta.url), "utf8");
   const css = await readFile(new URL("../../src/App.css", import.meta.url), "utf8");
-  // 断面が得られる見込みが無い地点は、すぐ目安の線を出す。
-  assert.match(app, /if \(!terrainArcRequest\.expectsTerrain\) return tripodCandidateRiseSetBaseArcs;/);
+  // 正確な断面が取得待ち・一時失敗でも目安線を途切れさせず、裏で自動再試行する。
+  assert.match(app, /fallbackArcs\.get\(id\)/);
+  assert.match(app, /setTerrainArcRetrySequence/);
+  assert.match(app, /retryDelaysMs = \[5_000, 15_000, 60_000, 300_000\]/);
   // ダウンロードの完了・更新・削除で読み直す（＝自動で切り替わる）。
   assert.match(app, /terrainSectionRevision = useMemo\(\(\) => \{[\s\S]*?downloadedSpotData\.find/);
   assert.match(app, /revision: terrainSectionRevision,/);
