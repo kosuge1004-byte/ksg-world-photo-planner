@@ -36,6 +36,7 @@ import {
   setBearingProfile,
   type BearingProfileEntry,
 } from "./tripodBearingProfileCache";
+import { localDemExactBearingBatchLimit } from "../../server/localDemProfileLimits.ts";
 
 /**
  * 2026-09-05追記（全面設計変更）: 「方位ごとに実測地形プロファイルを保存し、
@@ -143,8 +144,6 @@ const BEARING_CONCURRENCY = 2;
 // the same bearings in the proven 24-bearing chunks before considering the
 // direct path. Coordinates, samples and interpolation never change.
 const PRECOMPUTED_BEARING_BATCH_SIZE = 360;
-const EDRIVE_NATIONWIDE_BEARING_BATCH_SIZE = 120;
-const EDRIVE_SAFE_BEARING_BATCH_SIZE = 24;
 // 2026-09-08の実測: 公開APIで1方位352点の直接取得に約25.4秒。
 const DIRECT_PATH_SECONDS_PER_BEARING_ESTIMATE = 25;
 
@@ -399,16 +398,13 @@ export async function backfillBearingProfiles(params: {
     matchingTarget?.maxDistanceMeters === requestedMaxDistanceMeters
       ? matchingTarget
       : null;
-  const safeBearingBatchSize = Math.max(1, Math.min(
-    EDRIVE_SAFE_BEARING_BATCH_SIZE,
-    Math.floor(240_000 / requestedMaxDistanceMeters)
-  ));
+  const safeBearingBatchSize = localDemExactBearingBatchLimit(
+    requestedMaxDistanceMeters,
+    false
+  );
   const bearingBatchSize = requiredPrecomputedTarget || params.preferPrecomputed
     ? PRECOMPUTED_BEARING_BATCH_SIZE
-    : Math.max(1, Math.min(
-        EDRIVE_NATIONWIDE_BEARING_BATCH_SIZE,
-        Math.floor(1_200_000 / requestedMaxDistanceMeters)
-      ));
+    : localDemExactBearingBatchLimit(requestedMaxDistanceMeters, true);
   const bearingBatchQueue: number[][] = [];
   for (let start = 0; start < pendingBearings.length; start += bearingBatchSize) {
     bearingBatchQueue.push(pendingBearings.slice(start, start + bearingBatchSize));

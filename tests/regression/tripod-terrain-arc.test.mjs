@@ -28,6 +28,7 @@ import {
   terrainSectionSourcesFor,
 } from "../../src/cache/tripodTerrainSections.ts";
 import { PRECOMPUTED_BEARING_PROFILE_TARGETS } from "../../src/data/precomputedBearingProfileTargets.ts";
+import { localDemExactBearingBatchLimit } from "../../server/localDemProfileLimits.ts";
 
 const LENS = 1.5;
 const MAX = 10_000;
@@ -343,6 +344,95 @@ test("fractional bearings are fetched exactly in one batch and cached", async (t
   const again = await loadTerrainSectionLookup(input);
   assert.equal(again.source, "exact");
   assert.equal(calls, 1);
+});
+
+function exactProfileResponse(request) {
+  const distances = [8, 1000, 10_000];
+  return {
+    version: 1,
+    terrainProfileComplete: true,
+    profiles: request.bearings.map((bearingDegrees) => ({
+      bearingDegrees,
+      points: distances.map((distanceMeters) => ({
+        distanceMeters,
+        latitude: request.subjectPoint.latitude,
+        longitude: request.subjectPoint.longitude,
+        ellipsoidalHeightMeters: 50 + bearingDegrees / 100,
+        elevationSource: "DEM5A",
+      })),
+      computedAtIso: "2026-10-25T00:00:00.000Z",
+    })),
+    failedBearings: [],
+    requestedBearingCount: request.bearings.length,
+    pointCount: request.bearings.length * distances.length,
+  };
+}
+
+test("real-size celestial terrain lines obey the shared 120-bearing contract and stay cached", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; resetTerrainSectionMemoryForTests(); });
+  resetTerrainSectionMemoryForTests();
+  assert.equal(localDemExactBearingBatchLimit(10_000, true), 120);
+  assert.equal(localDemExactBearingBatchLimit(10_000, false), 24);
+  assert.equal(localDemExactBearingBatchLimit(100_000, true), 12);
+  assert.equal(localDemExactBearingBatchLimit(100_000, false), 2);
+
+  const bearings = Array.from({ length: 323 }, (_, index) => 0.123456 + index * 0.5);
+  const requestSizes = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(init.body);
+    requestSizes.push(request.bearings.length);
+    return new Response(JSON.stringify(exactProfileResponse(request)), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const input = {
+    subject: { latitude: 35.4, longitude: 136.7, height: 100, label: "実数試験地点" },
+    lensCenterHeightMeters: LENS,
+    maxDistanceMeters: MAX,
+    bearings,
+    revision: "real-count",
+  };
+  const loaded = await loadTerrainSectionLookup(input);
+  assert.equal(loaded.source, "exact");
+  assert.deepEqual(requestSizes, [120, 120, 83]);
+  for (const bearing of bearings) assert.ok(loaded.lookup(bearing));
+  const again = await loadTerrainSectionLookup(input);
+  assert.equal(again.source, "exact");
+  assert.deepEqual(requestSizes, [120, 120, 83], "second render reads the completed memory cache");
+});
+
+test("an older local DEM service is retried in safe 24-bearing chunks without losing exactness", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; resetTerrainSectionMemoryForTests(); });
+  resetTerrainSectionMemoryForTests();
+  const bearings = Array.from({ length: 121 }, (_, index) => 0.234567 + index * 0.5);
+  const requestSizes = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(init.body);
+    requestSizes.push(request.bearings.length);
+    if (request.bearings.length > 24) {
+      return new Response(JSON.stringify({ error: "exact profile bearing batch is too large" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify(exactProfileResponse(request)), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const loaded = await loadTerrainSectionLookup({
+    subject: { latitude: 35.4, longitude: 136.7, height: 100, label: "旧サービス試験地点" },
+    lensCenterHeightMeters: LENS,
+    maxDistanceMeters: MAX,
+    bearings,
+    revision: "safe-retry",
+  });
+  assert.equal(loaded.source, "exact");
+  assert.deepEqual(requestSizes, [120, 24, 24, 24, 24, 24, 1]);
+  for (const bearing of bearings) assert.ok(loaded.lookup(bearing));
 });
 
 test("a published file for another place, range or with broken heights is rejected", async () => {

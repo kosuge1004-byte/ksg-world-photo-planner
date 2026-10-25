@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isBearingProfileBatchRequest } from "../../server/bearingProfileBatch.ts";
+import { localDemExactBearingBatchLimit } from "../../server/localDemProfileLimits.ts";
 import { isPrecomputedBearingProfileResponse } from "../../server/precomputedBearingProfiles.ts";
 import type { GsiElevationRequestPoint, GsiElevationSample } from "../../server/gsiElevation.ts";
 import type { LocalDemLookupRequest, LocalGsiDemSource } from "../../server/gsiLocalDem.ts";
@@ -494,15 +495,9 @@ export function createLocalDemRequestHandler(
         if (!computeProfile) throw new HttpError(503, "exact profile calculation is unavailable");
         const profileRequest = parsePrecomputedProfilePayload(body);
         const nationwideDemReady = options.nationwideDemReady === true;
-        const maximumBearings = Math.max(
-          1,
-          Math.min(
-            nationwideDemReady ? 120 : 24,
-            Math.floor(
-              (nationwideDemReady ? 1_200_000 : 240_000) /
-              profileRequest.maxDistanceMeters
-            )
-          )
+        const maximumBearings = localDemExactBearingBatchLimit(
+          profileRequest.maxDistanceMeters,
+          nationwideDemReady
         );
         if (profileRequest.bearings.length > maximumBearings) {
           throw new HttpError(400, "exact profile bearing batch is too large");

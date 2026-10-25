@@ -314,6 +314,11 @@ test("nationwide completion raises only the exact-profile transport limit", asyn
   const body = await response.json();
   assert.equal(body.requestedBearingCount, 120);
   assert.equal(body.terrainProfileComplete, true);
+  const oversized = {
+    ...profileRequest,
+    bearings: Array.from({ length: 121 }, (_, index) => index),
+  };
+  assert.equal((await postComputedProfile(nationwideBase, oversized)).status, 400);
 });
 
 test("computed profile route rejects incomplete calculations", async () => {

@@ -10,6 +10,7 @@ import {
 import { listDownloadedSpotData } from "./downloadedSpotData";
 import { getBearingProfilesMany, roundCameraHeightForCacheKey } from "./tripodBearingProfileCache";
 import { isBearingProfileEnabled } from "./tripodBearingProfileManager";
+import { localDemExactBearingBatchLimit } from "../../server/localDemProfileLimits.ts";
 
 /**
  * 2026-10-08: 三脚候補線（標高を加味した線）に使う地形の断面の読み込み。
@@ -120,7 +121,6 @@ async function loadPrecomputedSections(
   };
 }
 
-const EXACT_REQUEST_BEARING_LIMIT = 360;
 let exactCache: { key: string; sections: Map<number, TerrainSection> } | null = null;
 
 function exactBearingKey(bearing: number): number {
@@ -140,9 +140,16 @@ async function loadExactSections(
   const cache = exactCache;
   const normalizedBearings = [...new Set(bearings.map(exactBearingKey))];
   const missing = normalizedBearings.filter((bearing) => !cache.sections.has(bearing));
-  for (let start = 0; start < missing.length; start += EXACT_REQUEST_BEARING_LIMIT) {
+  const preferredBatchSize = localDemExactBearingBatchLimit(maxDistanceMeters, true);
+  const safeBatchSize = localDemExactBearingBatchLimit(maxDistanceMeters, false);
+  const queue: number[][] = [];
+  for (let start = 0; start < missing.length; start += preferredBatchSize) {
+    queue.push(missing.slice(start, start + preferredBatchSize));
+  }
+
+  while (queue.length > 0) {
     if (signal?.aborted) return null;
-    const batch = missing.slice(start, start + EXACT_REQUEST_BEARING_LIMIT);
+    const batch = queue.shift()!;
     const response = await fetchBearingProfileBatch({
       subjectPoint: subject,
       cameraSettings: { lensCenterHeightMeters },
@@ -150,22 +157,34 @@ async function loadExactSections(
       maxDistanceMeters,
     }, signal);
     if (!response || response.failedBearings.length > 0 || response.profiles.length !== batch.length) {
+      if (batch.length > safeBatchSize) {
+        const split: number[][] = [];
+        for (let start = 0; start < batch.length; start += safeBatchSize) {
+          split.push(batch.slice(start, start + safeBatchSize));
+        }
+        queue.unshift(...split);
+        continue;
+      }
       return null;
     }
+    const batchKeys = new Set(batch);
+    const completed = new Map<number, TerrainSection>();
     for (const profile of response.profiles) {
       if (!profile.points || profile.points.length < 2) return null;
       const profileKey = exactBearingKey(profile.bearingDegrees);
-      if (!batch.includes(profileKey)) return null;
+      if (!batchKeys.has(profileKey) || completed.has(profileKey)) return null;
       const distancesMeters = new Float64Array(profile.points.length);
       const ellipsoidalHeightsMeters = new Float64Array(profile.points.length);
       profile.points.forEach((point, index) => {
         distancesMeters[index] = point.distanceMeters;
         ellipsoidalHeightsMeters[index] = point.ellipsoidalHeightMeters;
       });
-      cache.sections.set(profileKey, { distancesMeters, ellipsoidalHeightsMeters });
+      completed.set(profileKey, { distancesMeters, ellipsoidalHeightsMeters });
     }
-    if (batch.some((bearing) => !cache.sections.has(bearing))) return null;
+    if (batch.some((bearing) => !completed.has(bearing))) return null;
+    for (const [bearing, section] of completed) cache.sections.set(bearing, section);
   }
+  if (normalizedBearings.some((bearing) => !cache.sections.has(bearing))) return null;
   return (bearing) => cache.sections.get(exactBearingKey(bearing)) ?? null;
 }
 

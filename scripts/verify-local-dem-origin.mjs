@@ -17,6 +17,8 @@ const [
   env,
   elevation,
   bearingManager,
+  terrainSections,
+  profileLimits,
   tunnelTemplate,
   endpointRegistry,
   registrationEndpoint,
@@ -38,6 +40,8 @@ const [
   read("functions/_shared/env.ts"),
   read("server/gsiElevation.ts"),
   read("src/cache/tripodBearingProfileManager.ts"),
+  read("src/cache/tripodTerrainSections.ts"),
+  read("server/localDemProfileLimits.ts"),
   read("tools/local-dem-server/cloudflared-config.yml.example"),
   read("server/localDemEndpointRegistry.ts"),
   read("functions/api/local-dem-register.ts"),
@@ -95,8 +99,13 @@ assert.match(app, /record\.mode === ["']auto["']/);
 assert.match(app, /complete:\s*true/);
 assert.match(elevation, /lookupLocalDemGatewayAuto\(gatewayPoints, signal\)/);
 assert.match(bearingManager, /const PRECOMPUTED_BEARING_BATCH_SIZE = 360/);
-assert.match(bearingManager, /const EDRIVE_NATIONWIDE_BEARING_BATCH_SIZE = 120/);
-assert.match(bearingManager, /const EDRIVE_SAFE_BEARING_BATCH_SIZE = 24/);
+assert.match(profileLimits, /LOCAL_DEM_NATIONWIDE_MAX_BEARINGS = 120/);
+assert.match(profileLimits, /LOCAL_DEM_LEGACY_MAX_BEARINGS = 24/);
+assert.match(profileLimits, /export function localDemExactBearingBatchLimit/);
+assert.match(app, /localDemExactBearingBatchLimit\(/);
+assert.match(bearingManager, /localDemExactBearingBatchLimit\(requestedMaxDistanceMeters, true\)/);
+assert.match(terrainSections, /localDemExactBearingBatchLimit\(maxDistanceMeters, true\)/);
+assert.match(terrainSections, /localDemExactBearingBatchLimit\(maxDistanceMeters, false\)/);
 assert.match(bearingManager, /usesCompleteServerTerrainProfile/);
 
 assert.match(runtime, /new AsyncLocalStorage<RuntimeConfiguration>/);
