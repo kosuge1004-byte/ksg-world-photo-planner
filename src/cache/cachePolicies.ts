@@ -12,4 +12,8 @@ export const DEVICE_CACHE_POLICIES = {
   terrain: { namespace: "terrain-v3", ttlMs: 90 * DAY, maxEntries: 32_768, memoryEntries: 4_096 },
   geoid: { namespace: "geoid-v2", ttlMs: 180 * DAY, maxEntries: 4_096, memoryEntries: 512 },
   osm: { namespace: "osm-occlusion-v2", ttlMs: 14 * DAY, maxEntries: 512, memoryEntries: 64 },
+  // 撮影計画（プリセット）ごとの確定済み三脚候補線。
+  // 日時・天体・カメラ高・大気差・検索距離をキーに含めるため、
+  // 条件の違う線を誤って復元しない。プリセット上限と500件に合わせる。
+  projectTerrainArc: { namespace: "project-terrain-arc-v1", ttlMs: 5 * 365 * DAY, maxEntries: 500, memoryEntries: 8 },
 } satisfies Record<string, DeviceCachePolicy>;

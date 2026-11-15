@@ -31,6 +31,8 @@ const cases = [
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/spot-candidate-list-and-pending-queue.test.mjs"] },
   { name: "terrain-aware tripod candidate line from exact bearings; selected candidate stays on the line",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/tripod-terrain-arc.test.mjs"] },
+  { name: "preset restores only condition-matched confirmed terrain candidate lines from IndexedDB",
+    arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/project-terrain-arc-preset-cache.test.mjs"] },
   { name: "candidate visibility points combine exact DEM terrain and PLATEAU buildings; subject id is excluded exactly",
     arguments: ["--import", "./scripts/register-typescript-source-loader.mjs", "--test", "./tests/regression/candidate-point-visibility.test.mjs"] },
   { name: "hamburger display guide covers all main-screen lines, points, pins and controls",

@@ -152,6 +152,15 @@ import {
   terrainSectionSourcesFor,
 } from "./cache/tripodTerrainSections";
 import {
+  createProjectTerrainArcSnapshot,
+  deleteProjectTerrainArcSnapshot,
+  loadProjectTerrainArcSnapshot,
+  projectTerrainArcContextKey,
+  restoreProjectTerrainArcs,
+  saveProjectTerrainArcSnapshot,
+  type ProjectTerrainArcSnapshot,
+} from "./cache/projectTerrainArcCache";
+import {
   loadPersistentTripodSeeds,
   savePersistentTripodSeeds,
   clearPersistentTripodSeeds,
@@ -740,6 +749,15 @@ function App() {
   const [moonAgeCalendarOpen, setMoonAgeCalendarOpen] = useState(false);
   const [projectSaveOpen, setProjectSaveOpen] = useState(false);
   const [projects, setProjects] = useState<PlannerProject[]>(loadProjects);
+  // 「プリセットから読み込んだのに確定線が未準備」とならないよう、
+  // 現在開いているプリセットIDと、IndexedDBから読んだ確定線を保持する。
+  // 線本体はlocalStorageのPlannerProjectへ入れず、旧データと容量上限を守る。
+  const [activePlannerProjectId, setActivePlannerProjectId] = useState<string | null>(null);
+  const [loadedProjectTerrainArc, setLoadedProjectTerrainArc] = useState<{
+    projectId: string;
+    snapshot: ProjectTerrainArcSnapshot | null;
+  } | null>(null);
+  const savedProjectTerrainArcSignaturesRef = useRef<Map<string, string>>(new Map());
   const [subjectHistory, setSubjectHistory] = useState<SubjectRecord[]>(loadSubjectHistory);
   // 2026-09-09追記: 新規保存が完了した直後だけ、一覧を開いて名称編集欄を出すための通知。
   const [justSavedDownload, setJustSavedDownload] =
@@ -2352,6 +2370,9 @@ function App() {
     terrainSectionRevision,
     arcPassFor,
   ]);
+  const terrainArcProjectContextKey = useMemo(() => terrainArcRequest
+    ? projectTerrainArcContextKey(terrainArcRequest)
+    : null, [terrainArcRequest]);
   type TerrainArcCalculationResult = {
     request: NonNullable<typeof terrainArcRequest>;
     arcs: Partial<Record<RiseSetCandidateBodyId, TripodCandidateRiseSetArc>>;
@@ -2364,6 +2385,33 @@ function App() {
     request: NonNullable<typeof terrainArcRequest> | null;
     attempt: number;
   }>({ request: null, attempt: 0 });
+
+  // プリセットと一緒に保存した確定線は、現在の計算条件と完全一致する
+  // 場合だけ復元する。このeffectを新規計算effectより先に置くことで、
+  // terrainArcResultRefが復元値を先に参照でき、同じ小数方位をEドライブへ再要求しない。
+  useEffect(() => {
+    if (!terrainArcRequest || !terrainArcProjectContextKey ||
+      !activePlannerProjectId ||
+      loadedProjectTerrainArc?.projectId !== activePlannerProjectId) return;
+    const restoredArcs = restoreProjectTerrainArcs(
+      loadedProjectTerrainArc.snapshot,
+      terrainArcProjectContextKey
+    ).filter((arc) => terrainArcRequest.ids.includes(arc.id));
+    if (restoredArcs.length === 0) return;
+    const restored: TerrainArcCalculationResult = {
+      request: terrainArcRequest,
+      arcs: Object.fromEntries(restoredArcs.map((arc) => [arc.id, arc])),
+      completed: Object.fromEntries(restoredArcs.map((arc) => [arc.id, true])),
+    };
+    terrainArcResultRef.current = restored;
+    setTerrainArcResult(restored);
+  }, [
+    terrainArcRequest,
+    terrainArcProjectContextKey,
+    activePlannerProjectId,
+    loadedProjectTerrainArc,
+  ]);
+
   useEffect(() => {
     if (!terrainArcRequest || !terrainArcRequest.expectsTerrain) return;
     const request = terrainArcRequest;
@@ -2485,6 +2533,44 @@ function App() {
       if (retryTimerId !== undefined) window.clearTimeout(retryTimerId);
     };
   }, [terrainArcRequest, tripodCandidateCalculationStatus, terrainArcRetrySequence]);
+
+  // プリセットを開いた後に確定線が完成した場合も自動保存する。
+  // これにより旧プリセットは破壊的移行なしで、1回完成後から高速復元できる。
+  useEffect(() => {
+    if (!activePlannerProjectId || !terrainArcRequest || !terrainArcProjectContextKey ||
+      !terrainArcResult) return;
+    const activeProject = projects.find((project) => project.id === activePlannerProjectId);
+    if (!activeProject ||
+      activeProject.shootingDateTimeLocal !== dateTimeLocal ||
+      activeProject.timeZone !== timeZone ||
+      activeProject.cameraSettings.lensCenterHeightMeters !== cameraSettings.lensCenterHeightMeters ||
+      Math.abs(activeProject.subject.latitude - terrainArcRequest.subject.latitude) > 1e-10 ||
+      Math.abs(activeProject.subject.longitude - terrainArcRequest.subject.longitude) > 1e-10) return;
+    const resultContextKey = projectTerrainArcContextKey(terrainArcResult.request);
+    if (resultContextKey !== terrainArcProjectContextKey) return;
+    const exactArcs = Object.values(terrainArcResult.arcs).filter(
+      (arc): arc is TripodCandidateRiseSetArc => arc?.kind === "terrain"
+    );
+    const snapshot = createProjectTerrainArcSnapshot(terrainArcProjectContextKey, exactArcs);
+    if (!snapshot) return;
+    const signature = `${snapshot.contextKey}|${snapshot.arcs.map((arc) =>
+      `${arc.id}:${arc.segments.reduce((sum, segment) => sum + segment.length, 0)}:${arc.setAtMilliseconds}`
+    ).sort().join("|")}`;
+    if (savedProjectTerrainArcSignaturesRef.current.get(activePlannerProjectId) === signature) return;
+    savedProjectTerrainArcSignaturesRef.current.set(activePlannerProjectId, signature);
+    void saveProjectTerrainArcSnapshot(activePlannerProjectId, snapshot).catch((error: unknown) => {
+      console.warn("プリセットの確定三脚候補線を保存できませんでした", error);
+    });
+  }, [
+    activePlannerProjectId,
+    terrainArcRequest,
+    terrainArcProjectContextKey,
+    terrainArcResult,
+    projects,
+    dateTimeLocal,
+    timeZone,
+    cameraSettings.lensCenterHeightMeters,
+  ]);
 
   // 2026-09-10追記: 被写体→天体方位の破線は元々2Dマップ(Map2DOverlay.tsx)
   // にしか実装が無く、3D表示中は最初から描画されなかった(仕様漏れ)。
@@ -5662,6 +5748,22 @@ ${diagnosticMessage}
       displaySettings: { celestialMenuOpen },
     };
     setProjects(upsertProject(project));
+    setActivePlannerProjectId(project.id);
+    const snapshot = terrainArcProjectContextKey && terrainArcResult &&
+      projectTerrainArcContextKey(terrainArcResult.request) === terrainArcProjectContextKey
+      ? createProjectTerrainArcSnapshot(
+          terrainArcProjectContextKey,
+          Object.values(terrainArcResult.arcs).filter(
+            (arc): arc is TripodCandidateRiseSetArc => arc?.kind === "terrain"
+          )
+        )
+      : null;
+    setLoadedProjectTerrainArc({ projectId: project.id, snapshot });
+    if (snapshot) {
+      void saveProjectTerrainArcSnapshot(project.id, snapshot).catch((error: unknown) => {
+        console.warn("プリセットの確定三脚候補線を保存できませんでした", error);
+      });
+    }
     setProjectSaveOpen(false);
     setProjectSaveTripodOverride(null);
     setSearchMessage("現在の撮影計画をプロジェクトへ保存しました");
@@ -5670,6 +5772,13 @@ ${diagnosticMessage}
   async function loadPlannerProject(project: PlannerProject): Promise<void> {
     const viewer = mapViewerRef.current;
     if (!viewer || viewer.isDestroyed()) { setSearchMessage("マップの読込完了後にプロジェクトを読み込んでください"); return; }
+    // ピンを切り替えてから読み始めると、復元前に同じ小数方位の
+    // Eドライブ要求が走る。高さ補正と並行して先に端末キャッシを読む。
+    const terrainArcSnapshotPromise = loadProjectTerrainArcSnapshot(project.id)
+      .catch((error: unknown) => {
+        console.warn("プリセットの確定三脚候補線を読み込めませんでした", error);
+        return null;
+      });
     let projectSubject = project.subject;
     const storedSurfaceHint = subjectSurfaceHintForSpotLocation(project.subject);
     if (
@@ -5701,6 +5810,10 @@ ${diagnosticMessage}
         }));
       }
     }
+    const terrainArcSnapshot = await terrainArcSnapshotPromise;
+    if (viewer.isDestroyed()) return;
+    setActivePlannerProjectId(project.id);
+    setLoadedProjectTerrainArc({ projectId: project.id, snapshot: terrainArcSnapshot });
     stopAllEditModes();
     const subject = setSubjectPinFromPosition(viewer, Cartesian3.fromDegrees(projectSubject.longitude, projectSubject.latitude, projectSubject.height), projectSubject.label, projectSubject);
     const tripod = setTripodPin(viewer, Cartesian3.fromDegrees(project.tripod.longitude, project.tripod.latitude, project.tripod.height), project.tripod);
@@ -5800,7 +5913,16 @@ ${diagnosticMessage}
   }
 
   function updatePlannerProject(project: PlannerProject): void { setProjects(upsertProject(project)); }
-  function removePlannerProject(id: string): void { setProjects(deleteProject(id)); }
+  function removePlannerProject(id: string): void {
+    setProjects(deleteProject(id));
+    void deleteProjectTerrainArcSnapshot(id).catch((error: unknown) => {
+      console.warn("プリセットの確定三脚候補線を削除できませんでした", error);
+    });
+    if (activePlannerProjectId === id) {
+      setActivePlannerProjectId(null);
+      setLoadedProjectTerrainArc(null);
+    }
+  }
 
   async function shareUrlViaSystemOrClipboard(url: string): Promise<void> {
     const nav = navigator as Navigator & { share?: (data: { title?: string; url?: string }) => Promise<void> };

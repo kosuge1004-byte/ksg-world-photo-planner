@@ -165,6 +165,16 @@ export async function getDeviceCache<T>(
   return record.value;
 }
 
+/** 1キーだけをメモリとIndexedDBの両方から削除する。 */
+export async function deleteDeviceCache(
+  policy: DeviceCachePolicy,
+  key: string
+): Promise<void> {
+  const id = compoundKey(policy.namespace, key);
+  memory.delete(id);
+  await removePersistent(id);
+}
+
 /**
  * Read multiple keys with one IndexedDB readonly transaction. Memory/expiry/LRU
  * semantics are identical to getDeviceCache(); only transaction overhead changes.
