@@ -10,7 +10,10 @@ import type { ResolvedGroundPoint } from "../types/points";
 import { isResolvedGroundPoint } from "../types/points";
 import { MIN_STRUCTURE_CLEARANCE_METERS } from "../height/subjectSurfaceResolution";
 import { diagnosticFetch } from "../network/networkDiagnostics";
-import { isPlateauRoofLookupResponse } from "../types/plateauRoof";
+import {
+  isPlateauRoofLookupResponse,
+  plateauBuildingReference,
+} from "../types/plateauRoof";
 import { withAbortableTimeout } from "../utils/abortableSemaphore";
 
 // 2026-09-02追記（ユーザー提案により）: 屋根合わせ（clampToHeightMostDetailed
@@ -477,6 +480,7 @@ async function resolveStoredPlateauRoofPoint(
         geoidHeightMeters,
         heightSource: "3d-picked",
         subjectSurfaceTarget: "structure-roof",
+        plateauBuildingRef: plateauBuildingReference(candidate),
         label,
       };
       return isResolvedGroundPoint(point) ? point : null;

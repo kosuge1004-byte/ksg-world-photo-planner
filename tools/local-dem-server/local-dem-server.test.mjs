@@ -147,6 +147,51 @@ function postPlateauRoof(base, value, options = {}) {
   });
 }
 
+function postCandidateVisibility(base, value, options = {}) {
+  return fetch(`${base}/v1/plateau/line-of-sight`, {
+    method: "POST",
+    headers: {
+      "x-astrosight-origin-token": TOKEN,
+      "content-type": "application/json",
+      ...options.headers,
+    },
+    body: JSON.stringify(value),
+  });
+}
+
+test("candidate visibility endpoint is authenticated, strictly validated and delegates a bounded batch", async () => {
+  const request = {
+    subject: { latitude: 35, longitude: 139, orthometricHeightMeters: 100 },
+    lensCenterHeightMeters: 1.6,
+    points: [{
+      key: "moon:1000", celestialId: "moon", timestampMilliseconds: 1000,
+      latitude: 35, longitude: 139.01,
+    }],
+  };
+  const base = await start(async () => new Map(), { maximumBodyBytes: 65_536 }, undefined,
+    undefined, undefined, {
+      candidatePointVisibilityLookup: async (received) => {
+        assert.deepEqual(received, request);
+        return {
+          results: [{ key: "moon:1000", status: "clear" }],
+          excludedSubjectBuilding: null,
+        };
+      },
+    });
+  const response = await postCandidateVisibility(base, request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    results: [{ key: "moon:1000", status: "clear" }],
+    excludedSubjectBuilding: null,
+  });
+  const malformed = await postCandidateVisibility(base, { ...request, directory: "E:\\" });
+  assert.equal(malformed.status, 400);
+  const unauthorized = await fetch(`${base}/v1/plateau/line-of-sight`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),
+  });
+  assert.equal(unauthorized.status, 401);
+});
+
 test("authenticated batch returns aligned results and null for missing data", async () => {
   const base = await start(async (source, points) => {
     assert.equal(source, "DEM10B");
@@ -546,11 +591,11 @@ test("prepared PLATEAU store returns only explicit LOD2+ roof surfaces and ignor
   await writeFile(file, compressed);
   const rows = [
     {
-      dataset, year: 2026, cityCode: "12345", special: false, entry,
+      dataset, year: 2026, cityCode: "12345", special: false, entry, mesh: "52397519",
       file: relative, bbox: [35, 139, 35.001, 139.001], storedBytes: compressed.length,
     },
     {
-      dataset: "plateau-special", year: 2027, cityCode: null, special: true,
+      dataset: "plateau-special", year: 2027, cityCode: null, special: true, mesh: "5239751",
       entry: "s/udx/bldg/52397519_bldg_6697_op.gml", file: "buildings/plateau-special/52397519_bldg_6697_op.gml.ndjson.gz",
       bbox: [35, 139, 35.001, 139.001], storedBytes: 1,
     },

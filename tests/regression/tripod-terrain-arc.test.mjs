@@ -173,12 +173,15 @@ test("with several intersections the farthest one is used, like the confirmed-ca
   const sample = timeline.model.samples.find((item) => item.rayAltitudeDegrees > 7 && item.rayAltitudeDegrees < 9);
   const level = terrainIntersectionForSample(timeline.model, sample, section(() => GROUND));
   assert.equal(level.type, "hit");
+  assert.equal(level.terrainObstructed, false);
   // 手前1km〜1.2kmに高さ250mの尾根を置くと、視線は尾根に入り・抜け・最後に平地へ届く（交点3つ）。
   const ridge = section((distance) => distance >= 1000 && distance <= 1200 ? 250 : GROUND);
   const withRidge = terrainIntersectionForSample(timeline.model, sample, ridge);
   assert.equal(withRidge.type, "hit");
   assert.ok(Math.abs(withRidge.rayDistanceMeters - level.rayDistanceMeters) < 1, "farthest intersection");
   assert.ok(Math.abs(withRidge.groundEllipsoidalHeightMeters - GROUND) < 1e-6);
+  assert.equal(withRidge.terrainObstructed, true);
+  assert.ok(withRidge.obstructionDistanceMeters > 0);
 });
 
 test("samples beyond the search range go to the limit circle only when the section covers the range", () => {

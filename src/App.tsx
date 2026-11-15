@@ -165,6 +165,15 @@ import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache"
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
 import { clearTripodCandidateEntities, updateTripodCandidateEntities } from "./cesium/tripodCandidateEntities";
+import {
+  clearCandidatePointVisibilityEntities,
+  updateCandidatePointVisibilityEntities,
+} from "./cesium/candidatePointVisibilityEntities";
+import {
+  searchCandidatePointVisibility,
+  type CandidatePointVisibilityPoint,
+} from "./visibility/candidatePointVisibility";
+import { CANDIDATE_POINT_VISIBILITY_ENABLED } from "./visibility/candidatePointVisibilityFeature";
 import { loadLastSession, saveLastSessionPins } from "./storage/lastSession";
 import { selectCelestialTrackPass } from "./cesium/celestialTrackPass";
 import {
@@ -2590,6 +2599,127 @@ function App() {
     selectedDate,
     celestialVisibility,
   ]);
+
+  // 「見通し」機能は通常の候補計算から独立させる。ボタンを切れば結果・通信・
+  // Cesium Entityをまとめて撤去でき、将来この機能自体を外す場合も、この状態群と
+  // visibility/ 配下、専用APIだけを除けば既存経路へ影響しない。
+  const [candidateVisibilityActive, setCandidateVisibilityActive] = useState(false);
+  const [candidateVisibilityPending, setCandidateVisibilityPending] = useState(false);
+  const [candidateVisibilityPoints, setCandidateVisibilityPoints] =
+    useState<CandidatePointVisibilityPoint[]>([]);
+  const candidateVisibilityControllerRef = useRef<AbortController | null>(null);
+  const candidateVisibilityContextRef = useRef<string | null>(null);
+  const candidateVisibilityContextKey = useMemo(() => JSON.stringify({
+    subject: subjectPoint ? [
+      subjectPoint.latitude,
+      subjectPoint.longitude,
+      subjectPoint.orthometricHeightMeters ?? subjectPoint.height,
+      subjectPoint.plateauBuildingRef ?? null,
+    ] : null,
+    lens: cameraSettings.lensCenterHeightMeters,
+    day: selectedDayStart.getTime(),
+    pass: arcPassKey,
+    terrain: terrainSectionRevision,
+  }), [
+    subjectPoint,
+    cameraSettings.lensCenterHeightMeters,
+    selectedDayStart,
+    arcPassKey,
+    terrainSectionRevision,
+  ]);
+
+  const toggleCandidatePointVisibility = useCallback(() => {
+    if (!CANDIDATE_POINT_VISIBILITY_ENABLED) return;
+    if (candidateVisibilityActive) {
+      candidateVisibilityControllerRef.current?.abort();
+      candidateVisibilityControllerRef.current = null;
+      candidateVisibilityContextRef.current = null;
+      setCandidateVisibilityActive(false);
+      setCandidateVisibilityPending(false);
+      setCandidateVisibilityPoints([]);
+      setSearchMessage("見通し候補点を非表示にしました");
+      return;
+    }
+    if (!subjectPoint) {
+      setSearchMessage("先に被写体を設定してください");
+      return;
+    }
+    const exactArcs = tripodCandidateRiseSetArcs.filter((arc) => arc.kind === "terrain");
+    if (exactArcs.length === 0) {
+      setSearchMessage("高精度DEMの三脚候補線がまだ準備できていません");
+      return;
+    }
+    candidateVisibilityControllerRef.current?.abort();
+    const controller = new AbortController();
+    candidateVisibilityControllerRef.current = controller;
+    candidateVisibilityContextRef.current = candidateVisibilityContextKey;
+    setCandidateVisibilityActive(true);
+    setCandidateVisibilityPending(true);
+    setCandidateVisibilityPoints([]);
+    setSearchMessage("見通せる三脚候補点を確認しています…");
+    void searchCandidatePointVisibility({
+      subject: subjectPoint,
+      lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
+      arcs: exactArcs,
+      signal: controller.signal,
+      onProgress: ({ completed, total }) => {
+        if (controller.signal.aborted) return;
+        setSearchMessage(`見通し候補点を確認中 ${completed}/${total}`);
+      },
+    }).then((result) => {
+      if (controller.signal.aborted ||
+        candidateVisibilityControllerRef.current !== controller) return;
+      setCandidateVisibilityPoints(result.points);
+      setCandidateVisibilityPending(false);
+      setSearchMessage(
+        `見通し確認済み ${result.points.length}点` +
+        `／非表示 地形遮蔽${result.terrainBlockedCount}・建物遮蔽${result.buildingBlockedCount}` +
+        `・建物未確認${result.buildingUnverifiedCount}`
+      );
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      console.warn("見通し候補点を確認できませんでした", error);
+      if (candidateVisibilityControllerRef.current === controller) {
+        setCandidateVisibilityActive(false);
+        setCandidateVisibilityPending(false);
+        setCandidateVisibilityPoints([]);
+        setSearchMessage("見通し候補点を確認できませんでした");
+      }
+    });
+  }, [
+    candidateVisibilityActive,
+    candidateVisibilityContextKey,
+    cameraSettings.lensCenterHeightMeters,
+    setSearchMessage,
+    subjectPoint,
+    tripodCandidateRiseSetArcs,
+  ]);
+
+  useEffect(() => {
+    if (!candidateVisibilityActive || candidateVisibilityContextRef.current === null ||
+      candidateVisibilityContextRef.current === candidateVisibilityContextKey) return;
+    candidateVisibilityControllerRef.current?.abort();
+    candidateVisibilityControllerRef.current = null;
+    candidateVisibilityContextRef.current = null;
+    setCandidateVisibilityActive(false);
+    setCandidateVisibilityPending(false);
+    setCandidateVisibilityPoints([]);
+  }, [candidateVisibilityActive, candidateVisibilityContextKey]);
+
+  useEffect(() => () => candidateVisibilityControllerRef.current?.abort(), []);
+
+  useEffect(() => {
+    const viewer = mapViewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    if (!candidateVisibilityActive || mapDisplayMode !== "3d" || !mapReady) {
+      clearCandidatePointVisibilityEntities(viewer);
+      return;
+    }
+    updateCandidatePointVisibilityEntities(viewer, candidateVisibilityPoints);
+    return () => {
+      if (!viewer.isDestroyed()) clearCandidatePointVisibilityEntities(viewer);
+    };
+  }, [candidateVisibilityActive, candidateVisibilityPoints, mapDisplayMode, mapReady]);
 
   // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
   // 対応するCesium Entityが無く、候補計算が正常でも点だけ表示されなかった。
@@ -6632,6 +6762,18 @@ ${diagnosticMessage}
   const [pendingPreliminaryCandidate, setPendingPreliminaryCandidate] =
     useState<TripodCandidate | null>(null);
 
+  function selectCandidateVisibilityPoint(candidate: CandidatePointVisibilityPoint) {
+    const selectedTime = new Date(candidate.timestampMilliseconds);
+    if (!Number.isNaN(selectedTime.getTime())) {
+      const localized = zonedDateTimeLocalFromDate(selectedTime, timeZoneRef.current);
+      dateTimeLocalRef.current = localized;
+      setDateTimeLocal(localized);
+    }
+    // この点は赤線を作った高精度DEM断面で地形交点・途中遮蔽を確認済み。
+    // preliminary扱いの確認ダイアログへ戻さず、通常の確定配置経路へ渡す。
+    placeTripodAtCandidateConfirmed({ ...candidate, solutionType: "aligned" });
+  }
+
   function selectTripodCandidate(candidate: TripodCandidate) {
     // 2026-08-28追記: 「候補点計算中」の暫定候補（地形未確認の理論値）を
     // そのまま設置すると、実際には建物や崖の上など、不正確な場所を
@@ -7065,6 +7207,7 @@ ${diagnosticMessage}
               milkyWayPath={visibleMilkyWayPath}
               visibility={celestialVisibility}
               candidates={displayedTripodCandidates}
+              candidateVisibilityPoints={candidateVisibilityActive ? candidateVisibilityPoints : []}
               candidateRiseSetArcs={tripodCandidateRiseSetArcs}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
@@ -7095,6 +7238,7 @@ ${diagnosticMessage}
                 });
               }}
               onSelectCandidate={selectTripodCandidate}
+              onSelectVisibilityPoint={selectCandidateVisibilityPoint}
           />
           )}
         </div>
@@ -7255,6 +7399,17 @@ ${diagnosticMessage}
             )}
 
             <div className="map-right-actions">
+              {CANDIDATE_POINT_VISIBILITY_ENABLED && <button
+                type="button"
+                className={`candidate-visibility-toggle${candidateVisibilityActive ? " active" : ""}`}
+                aria-pressed={candidateVisibilityActive}
+                aria-busy={candidateVisibilityPending}
+                onClick={toggleCandidatePointVisibility}
+                title="赤い三脚候補線上で、地形とPLATEAU建物に遮られない候補点を検索"
+              >
+                <span>{candidateVisibilityPending ? "…" : "◎"}</span>
+                <small>見通し</small>
+              </button>}
               <button
                 type="button"
                 className="map-display-mode-toggle"

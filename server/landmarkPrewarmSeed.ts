@@ -12,7 +12,7 @@ import type { LandmarkSubjectSpec } from "../src/types/landmarkSubjectSpec.ts";
 // 地表は heightMeters: 0、構造物は接地面から頂上までの確認済み高さ(m)。
 export type PrewarmLandmark = {
   name: string;
-  category: "mountain" | "natural" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel" | "rollercoaster";
+  category: "mountain" | "natural" | "place" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel" | "rollercoaster";
   latitude: number;
   longitude: number;
 } & LandmarkSubjectSpec;
@@ -335,6 +335,28 @@ export const PREWARM_LANDMARKS: PrewarmLandmark[] = [
   // 高さ: 最高部97m（ナガシマスパーランド公表値、複数の観光情報サイトで一致）。
   // 注意: 座標がリフトヒル頂上そのものかは未確認（全長2,479mの施設代表点）。
   { name: "スチールドラゴン2000", category: "rollercoaster", latitude: 35.0326866, longitude: 136.7332893, subjectSurface: "structure", heightMeters: 97 },
+  // ---- 2026年10月・11月のDynamic Spot候補から監査済みの地点 ----
+  // 元データ: E:\AstroSight-GSI-data-20260926\登録スポット候補\登録スポット202610一覧.txt
+  //          E:\AstroSight-GSI-data-20260926\登録スポット候補\登録スポット202611一覧.txt
+  { name: "坂町（広島県・登録地点）", category: "place", latitude: 34.341389, longitude: 132.513885, subjectSurface: "terrain", heightMeters: 0 },
+  { name: "蔵王山展望台（愛知県）", category: "place", latitude: 34.6847686, longitude: 137.2619563, subjectSurface: "terrain", heightMeters: 0 },
+  { name: "中津川市（登録地点）", category: "place", latitude: 35.577428, longitude: 137.410834, subjectSurface: "terrain", heightMeters: 0 },
+  { name: "恵那峡ワンダーランド", category: "themepark", latitude: 35.4879663, longitude: 137.4078776, subjectSurface: "terrain", heightMeters: 0 },
+  { name: "大阪芸術大学", category: "place", latitude: 34.5111993, longitude: 135.631448, subjectSurface: "terrain", heightMeters: 0 },
+  // OSM node 6526079680で風車実体を確認。公表高がないため候補一覧どおり地表対象。
+  { name: "風車（岐阜県海津市）", category: "place", latitude: 35.1780112, longitude: 136.6560029, subjectSurface: "terrain", heightMeters: 0 },
+  { name: "名古屋駅", category: "place", latitude: 35.1696345, longitude: 136.884475, subjectSurface: "terrain", heightMeters: 0 },
+  // 高さ: https://online.bunka.go.jp/heritages/detail/593833 （31.5m）。座標: OSM way 659312405。
+  { name: "本山寺五重塔（香川県）", category: "temple", latitude: 34.139926, longitude: 133.6938063, subjectSurface: "structure", heightMeters: 31.5 },
+  // 高さ: https://www.city.marugame.lg.jp/site/castle/2897.html （約15m）。座標: OSM way 174102606。
+  { name: "丸亀城天守", category: "castle", latitude: 34.2862768, longitude: 133.8001135, subjectSurface: "structure", heightMeters: 15 },
+  // 高さ: https://www.town.oji.nara.jp/material/files/group/2/03_narutoshi.pdf （17.5m）。座標: OSM way 1365753918。
+  { name: "トリーデなると", category: "building", latitude: 34.177834, longitude: 134.618738, subjectSurface: "structure", heightMeters: 17.5 },
+  { name: "朝日山森林公園（香川県）", category: "natural", latitude: 34.1803415, longitude: 133.7610172, subjectSurface: "terrain", heightMeters: 0 },
+  // 高さ: https://www.city.nagoya.jp/shisei/keikaku/1008387/1008424/1008434/1008443/1034167/1008459/1034171.html （約220m）。
+  { name: "JRゲートタワー", category: "building", latitude: 35.1721125, longitude: 136.8828338, subjectSurface: "structure", heightMeters: 220 },
+  // 高さ: https://www.areasaku.or.jp/kankou/spot/19101.html （35m）。
+  { name: "コスモタワー（長野県佐久市）", category: "tower", latitude: 36.1918696, longitude: 138.4827035, subjectSurface: "structure", heightMeters: 35 },
   // TODO: 比叡山延暦寺、出羽三山（月山神社・湯殿山神社）、淡路島世界平和
   // 大観音（解体済のため除外）など、他の山上寺社仏閣も今後追加検討。
   // 沖縄県で高さ100m以上の建物はリュークスタワー（The WEST/The EAST）のみ

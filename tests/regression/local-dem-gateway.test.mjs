@@ -9,6 +9,7 @@ import { computeBearingProfileBatch } from "../../server/bearingProfileBatch.ts"
 import { lookupGsiElevations } from "../../server/gsiElevation.ts";
 import {
   computeLocalBearingProfile,
+  lookupLocalCandidatePointVisibility,
   lookupLocalPlateauRoof,
   lookupLocalDemGatewayAuto,
   lookupLocalDemGatewayForSource,
@@ -106,6 +107,35 @@ test("prepared PLATEAU roof lookup uses the authenticated fixed origin route and
 
   globalThis.fetch = async () => Response.json({ candidate: { ...candidate, lod: 1 } });
   assert.equal(await lookupLocalPlateauRoof(35.65858, 139.74543), null);
+});
+
+test("candidate visibility uses the authenticated fixed origin route and rejects partial results", async () => {
+  configureServerRuntime({ localDemGateway: gatewayConfiguration });
+  const request = {
+    subject: { latitude: 35, longitude: 139, orthometricHeightMeters: 100 },
+    lensCenterHeightMeters: 1.6,
+    points: [{
+      key: "moon:1000", celestialId: "moon", timestampMilliseconds: 1000,
+      latitude: 35, longitude: 139.01,
+    }],
+  };
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://dem-origin.example.test/v1/plateau/line-of-sight");
+    assert.deepEqual(JSON.parse(init.body), request);
+    const headers = new Headers(init.headers);
+    assert.equal(headers.get("x-astrosight-origin-token"), gatewayConfiguration.originToken);
+    return Response.json({
+      results: [{ key: "moon:1000", status: "clear" }],
+      excludedSubjectBuilding: null,
+    });
+  };
+  assert.deepEqual(await lookupLocalCandidatePointVisibility(request), {
+    results: [{ key: "moon:1000", status: "clear" }],
+    excludedSubjectBuilding: null,
+  });
+
+  globalThis.fetch = async () => Response.json({ results: [], excludedSubjectBuilding: null });
+  assert.equal(await lookupLocalCandidatePointVisibility(request), null);
 });
 
 test("named gateway is disabled when the Access credential pair is incomplete", async () => {

@@ -72,6 +72,29 @@ async function main(): Promise<void> {
       plateauRoofLookup: plateauBuildings
         ? (latitude, longitude) => plateauBuildings.lookup(latitude, longitude)
         : undefined,
+      candidatePointVisibilityLookup: plateauBuildings
+        ? async (request, signal) => {
+            const samples = await lookupGsiElevations(
+              request.points.map((point) => ({
+                latitude: point.latitude,
+                longitude: point.longitude,
+                maximumDetail: "1m" as const,
+                interpolationMode: "los-safe" as const,
+              })),
+              signal,
+              undefined,
+              { useLocalGateway: false }
+            );
+            const groundHeights = new Map<string, number>();
+            request.points.forEach((point, index) => {
+              const height = samples[index]?.heightMeters;
+              if (typeof height === "number" && Number.isFinite(height)) {
+                groundHeights.set(point.key, height);
+              }
+            });
+            return plateauBuildings.lineOfSight(request, groundHeights);
+          }
+        : undefined,
     }
   );
   const server = createServer((request, response) => {

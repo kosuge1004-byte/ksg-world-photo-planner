@@ -4,6 +4,7 @@ import {
   useState,
 } from "react";
 
+import { DisplayGuide } from "./DisplayGuide";
 import type { CameraSettings } from "../types/camera";
 import type { PrecisionSettings, RefractionCorrectionMode } from "../types/precision";
 import {
@@ -89,6 +90,7 @@ export function TopSettingsBar({
   const [precisionMenuOpen, setPrecisionMenuOpen] = useState(false);
   const [threeDSourceMenuOpen, setThreeDSourceMenuOpen] = useState(false);
   const [mapSourcesOpen, setMapSourcesOpen] = useState(false);
+  const [displayGuideOpen, setDisplayGuideOpen] = useState(false);
   const [tileCacheClearState, setTileCacheClearState] =
     useState<"idle" | "clearing" | "cleared" | "failed">("idle");
   const handleClearOfflineTileCache = async () => {
@@ -164,6 +166,7 @@ export function TopSettingsBar({
     setThreeDSourceMenuOpen(false);
     setMapSourcesOpen(false);
     setLightPollutionGuideOpen(false);
+    setDisplayGuideOpen(false);
   };
 
   const closeMenu = () => {
@@ -171,17 +174,19 @@ export function TopSettingsBar({
     setModeMenuOpen(false);
   };
 
-  const toggleDetailPanel = (panel: "precision" | "3d" | "light" | "sources") => {
+  const toggleDetailPanel = (panel: "precision" | "3d" | "light" | "sources" | "display") => {
     const next = {
       precision: panel === "precision" ? !precisionMenuOpen : false,
       threeD: panel === "3d" ? !threeDSourceMenuOpen : false,
       light: panel === "light" ? !lightPollutionGuideOpen : false,
       sources: panel === "sources" ? !mapSourcesOpen : false,
+      display: panel === "display" ? !displayGuideOpen : false,
     };
     setPrecisionMenuOpen(next.precision);
     setThreeDSourceMenuOpen(next.threeD);
     setLightPollutionGuideOpen(next.light);
     setMapSourcesOpen(next.sources);
+    setDisplayGuideOpen(next.display);
   };
   const [focalLengthInput, setFocalLengthInput] = useState(
     String(settings.focalLengthMm)
@@ -255,7 +260,7 @@ export function TopSettingsBar({
       </button>
       {modeMenuOpen && (
         <div
-          className={(precisionMenuOpen || threeDSourceMenuOpen || mapSourcesOpen || lightPollutionGuideOpen)
+          className={(precisionMenuOpen || threeDSourceMenuOpen || mapSourcesOpen || lightPollutionGuideOpen || displayGuideOpen)
             ? "calculation-mode-menu precision-open"
             : "calculation-mode-menu"}
           role="dialog"
@@ -265,6 +270,16 @@ export function TopSettingsBar({
             <strong>メニュー</strong>
             <button type="button" className="menu-close-button" onClick={closeMenu} aria-label="メニューを閉じる">閉じる</button>
           </div>
+          <button
+            type="button"
+            className={displayGuideOpen ? "active" : undefined}
+            onClick={() => toggleDetailPanel("display")}
+            aria-expanded={displayGuideOpen}
+            aria-controls="display-guide"
+          >
+            <b>表示の説明</b><small>線・点・ピン・画面操作の見方</small>
+          </button>
+          {displayGuideOpen && <DisplayGuide onClose={() => setDisplayGuideOpen(false)} />}
           <button
             type="button"
             className={threeDSourceMenuOpen ? "active" : undefined}
@@ -313,7 +328,7 @@ export function TopSettingsBar({
                     <b>Google Photorealistic 3D Tiles</b><small>初期値</small>
                   </span>
                   <small>
-                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。遮蔽判定・最終確認は標準モードと同じくDEM地形のみで行います（建物3Dは表示専用です）。従量制サービスの利用量が増えます。
+                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。通常の三脚候補計算はDEM地形を使い、「見通し」確認はDEM地形とPLATEAU建物を使います。Google建物3Dは表示専用です。従量制サービスの利用量が増えます。
                   </small>
                 </span>
               </label>
@@ -377,7 +392,7 @@ export function TopSettingsBar({
                   <b>DEM（地形の高さデータ）</b>、ジオイド、気象補正、天体計算はどちらの表示でも共通です。
                 </small>
                 <small>
-                  <b>PLATEAU（建物を含む立体データ、オープンデータ）</b>は三脚・被写体の高さ（屋根への合わせ込み）に使います。遮蔽判定には使いません（DEM地形のみで判定します）。
+                  <b>PLATEAU（建物を含む立体データ、オープンデータ）</b>は三脚・被写体の高さ（屋根への合わせ込み）と、「見通し」ボタンの建物遮蔽確認に使います。通常の三脚候補計算はDEM地形で行います。
                 </small>
                 <small>
                   <b>Google Photorealistic 3D Tiles</b>はGoogleタイルモードの3Dマップの見た目にのみ使います（規約により、高さの判定・遮蔽判定には使用しません）。詳しいデータほど読込時間と通信量が増える場合があります。

@@ -12,6 +12,7 @@ import {
   findPrecomputedBearingProfileTarget,
   registeredProfileCoverageDistanceMeters,
 } from "../../src/data/precomputedBearingProfileTargets.ts";
+import { JAPAN_LANDMARKS } from "../../src/data/japanLandmarks.ts";
 import { apiEndpoint } from "../../src/network/apiEndpoint.ts";
 
 const SKYTREE = { latitude: 35.7100627, longitude: 139.8107004 };
@@ -44,7 +45,10 @@ test("exact registered location is returned unchanged", () => {
 });
 
 test("precomputed targets include every non-mountain landmark and Steel Dragon 2000", () => {
-  assert.equal(PRECOMPUTED_BEARING_PROFILE_TARGETS.length, 203);
+  const expectedTargetCount = JAPAN_LANDMARKS.filter(
+    (landmark) => landmark.category !== "mountain" || landmark.name === "富士山"
+  ).length;
+  assert.equal(PRECOMPUTED_BEARING_PROFILE_TARGETS.length, expectedTargetCount);
   assert.equal(
     findPrecomputedBearingProfileTarget(35.0326866, 136.7332893)?.name,
     "スチールドラゴン2000"

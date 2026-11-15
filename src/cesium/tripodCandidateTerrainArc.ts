@@ -115,6 +115,10 @@ export function alignTerrainArcToExactCandidate(
   if (!nearest || nearestDelta > maximumTimeDeltaMs) return arc;
   const replacement: TripodCandidateRiseSetArcPoint = {
     ...candidate,
+    // 精密候補の座標へ合わせても、同じ時刻頂点で既に確認した地形LOS結果は
+    // 失わない。建物判定機能はこの情報を入力にするが、既存候補計算には影響しない。
+    lineOfSightPossiblyObstructed: nearest.lineOfSightPossiblyObstructed,
+    obstructionDistanceMeters: nearest.obstructionDistanceMeters,
     timestampMilliseconds: nearest.timestampMilliseconds,
   };
   const replace = (point: TripodCandidateRiseSetArcPoint) =>
@@ -204,7 +208,15 @@ function rayHeightAtRayDistance(geometry: SampleGeometry, rayDistanceMeters: num
 
 type SampleOutcome =
   /** 視線がレンズの高さで地面に届いた。 */
-  | { type: "hit"; rayDistanceMeters: number; groundEllipsoidalHeightMeters: number }
+  | {
+      type: "hit";
+      rayDistanceMeters: number;
+      groundEllipsoidalHeightMeters: number;
+      /** 被写体自身（始点）と三脚地点（終点）を除く途中地形が視線を横切る。 */
+      terrainObstructed: boolean;
+      /** 三脚候補地点から遮蔽地形までの概算直線距離。 */
+      obstructionDistanceMeters?: number;
+    }
   /** 検索上限まで視線が地面より上（候補は検索上限より遠い）。 */
   | { type: "beyond" }
   /** この時刻に候補は無い、または断面の範囲では判断できない。 */
@@ -255,7 +267,35 @@ export function terrainIntersectionForSample(
     lastError = error;
     lastGroundDistance = groundDistance;
   }
-  if (hit) return { type: "hit", ...hit };
+  if (hit) {
+    // 候補を置く条件は「視線高 = 地面 + レンズ高」だが、遮蔽判定は
+    // 「視線高 = 地面」そのものと比較する。レンズ高を引いた交点の個数だけで
+    // 判定すると、視線の1.6m下にある地面まで遮蔽と誤認するため、同じ正確な
+    // 地形断面をもう一度、実際の視線高で確認する。
+    let obstructionDistanceMeters: number | undefined;
+    for (let index = 0; index < count; index += 1) {
+      const groundDistance = section.distancesMeters[index];
+      const ground = section.ellipsoidalHeightsMeters[index];
+      if (!Number.isFinite(groundDistance) || !Number.isFinite(ground) || groundDistance <= 1) continue;
+      const rayDistance = rayDistanceAtGroundDistance(geometry, groundDistance);
+      if (rayDistance === null || rayDistance >= hit.rayDistanceMeters - 0.5) continue;
+      const clearanceMeters = rayHeightAtRayDistance(geometry, rayDistance) - ground;
+      // 断面補間と浮動小数の数cm差で遮蔽扱いにしない。25cmを超えて地形が
+      // 視線より高い場合だけ確定する。被写体建物の除外はPLATEAU側でIDにより行う。
+      if (clearanceMeters < -0.25) {
+        const fromCandidate = hit.rayDistanceMeters - rayDistance;
+        obstructionDistanceMeters = obstructionDistanceMeters === undefined
+          ? fromCandidate
+          : Math.min(obstructionDistanceMeters, fromCandidate);
+      }
+    }
+    return {
+      type: "hit",
+      ...hit,
+      terrainObstructed: obstructionDistanceMeters !== undefined,
+      ...(obstructionDistanceMeters !== undefined ? { obstructionDistanceMeters } : {}),
+    };
+  }
   if (!Number.isFinite(lastError) || !(lastError > 0)) return { type: "none" };
   // 交点なし・最後まで視線が地面より上。断面が検索上限まで届いていれば「上限より遠い」。
   const reachedRayDistance = rayDistanceAtGroundDistance(geometry, lastGroundDistance);
@@ -335,6 +375,12 @@ function placePoint(
       distanceMeters,
       solutionType: "preliminary",
       timestampMilliseconds: sample.timestampMilliseconds,
+      ...(outcome.type === "hit" ? {
+        lineOfSightPossiblyObstructed: outcome.terrainObstructed,
+        ...(outcome.obstructionDistanceMeters !== undefined
+          ? { obstructionDistanceMeters: outcome.obstructionDistanceMeters }
+          : {}),
+      } : {}),
     },
   };
 }

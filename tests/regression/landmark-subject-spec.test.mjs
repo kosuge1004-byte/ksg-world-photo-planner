@@ -16,6 +16,7 @@ const allowlist = new Set(JSON.parse(fs.readFileSync(
 // 分類ごとに取り得る被写体仕様。城・寺社・自然は現存構造物か跡地/地形かで両方あり得る。
 const REQUIRED_SURFACE_BY_CATEGORY = {
   mountain: "terrain",
+  place: "terrain",
   themepark: "terrain",
   tower: "structure",
   building: "structure",
@@ -79,7 +80,10 @@ test("every non-mountain registered spot is a required precomputed target", asyn
   assert.match(endpoint, /findPrecomputedBearingProfileTarget/u);
   assert.doesNotMatch(endpoint, /ACTIVE_PREWARM_LANDMARKS/u);
   const published = new Set(PRECOMPUTED_BEARING_PROFILE_TARGETS.map((target) => target.name));
-  assert.equal(published.size, 203);
+  const expected = JAPAN_LANDMARKS.filter(
+    (landmark) => landmark.category !== "mountain" || landmark.name === "富士山"
+  ).length;
+  assert.equal(published.size, expected);
   assert.equal(published.has("スチールドラゴン2000"), true);
   assert.ok(JAPAN_LANDMARKS.some((landmark) => landmark.name === "スチールドラゴン2000"));
 });

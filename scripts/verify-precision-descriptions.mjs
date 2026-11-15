@@ -14,7 +14,9 @@ const precisionTypes = read("src/types/precision.ts");
 
 for (const [expected, label] of [
   ["Google Photorealistic 3D Tilesを使用しません", "standard mode"],
-  ["遮蔽判定・最終確認は標準モードと同じくDEM地形のみ", "highest mode"],
+  ["通常の三脚候補計算はDEM地形を使い", "highest mode terrain calculation"],
+  ["「見通し」確認はDEM地形とPLATEAU建物を使います", "visibility calculation"],
+  ["Google建物3Dは表示専用です", "Google visual-only geometry"],
   ["DEM（地形の高さデータ）", "DEM"],
   ["PLATEAU（建物を含む立体データ、オープンデータ）", "PLATEAU height"],
   ["利用できる天気データで空気による光の曲がりを補正します", "automatic refraction"],

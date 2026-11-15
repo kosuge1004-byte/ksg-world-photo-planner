@@ -6,7 +6,7 @@
 
 import type { LandmarkSubjectSpec } from "../types/landmarkSubjectSpec";
 
-export type JapanLandmarkCategory = "mountain" | "natural" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel" | "rollercoaster";
+export type JapanLandmarkCategory = "mountain" | "natural" | "place" | "castle" | "themepark" | "building" | "tower" | "temple" | "ferriswheel" | "rollercoaster";
 
 export type JapanLandmark = {
   name: string;
@@ -313,4 +313,26 @@ export const JAPAN_LANDMARKS: readonly JapanLandmark[] = [
   // 高さ: 最高部97m（ナガシマスパーランド公表値、複数の観光情報サイトで一致）。
   // 注意: 座標がリフトヒル頂上そのものかは未確認（全長2,479mの施設代表点）。
   { name: "スチールドラゴン2000", category: "rollercoaster", latitude: 35.0326866, longitude: 136.7332893, subjectSurface: "structure", heightMeters: 97, aliases: ["スチールドラゴン", "スチドラ", "Steel Dragon 2000", "Steel Dragon", "ナガシマスパーランド スチールドラゴン"] },
+  // ---- 2026年10月・11月のDynamic Spot候補から監査済みの地点 ----
+  // 元データ: E:\AstroSight-GSI-data-20260926\登録スポット候補\登録スポット202610一覧.txt
+  //          E:\AstroSight-GSI-data-20260926\登録スポット候補\登録スポット202611一覧.txt
+  { name: "坂町（広島県・登録地点）", category: "place", latitude: 34.341389, longitude: 132.513885, subjectSurface: "terrain", heightMeters: 0, aliases: ["広島県坂", "坂町", "坂"] },
+  { name: "蔵王山展望台（愛知県）", category: "place", latitude: 34.6847686, longitude: 137.2619563, subjectSurface: "terrain", heightMeters: 0, aliases: ["蔵王山展望台", "田原市 蔵王山展望台"] },
+  { name: "中津川市（登録地点）", category: "place", latitude: 35.577428, longitude: 137.410834, subjectSurface: "terrain", heightMeters: 0, aliases: ["35.577428, 137.410834"] },
+  { name: "恵那峡ワンダーランド", category: "themepark", latitude: 35.4879663, longitude: 137.4078776, subjectSurface: "terrain", heightMeters: 0 },
+  { name: "大阪芸術大学", category: "place", latitude: 34.5111993, longitude: 135.631448, subjectSurface: "terrain", heightMeters: 0 },
+  // OSM node 6526079680で風車実体を確認。公表高がないため候補一覧どおり地表対象。
+  { name: "風車（岐阜県海津市）", category: "place", latitude: 35.1780112, longitude: 136.6560029, subjectSurface: "terrain", heightMeters: 0, aliases: ["風車", "海津市 風車"] },
+  { name: "名古屋駅", category: "place", latitude: 35.1696345, longitude: 136.884475, subjectSurface: "terrain", heightMeters: 0, aliases: ["JR名古屋駅"] },
+  // 高さ: 文化遺産オンライン（礎石から相輪先端まで31.5m）。座標: OSM way 659312405の建物中心。
+  { name: "本山寺五重塔（香川県）", category: "temple", latitude: 34.139926, longitude: 133.6938063, subjectSurface: "structure", heightMeters: 31.5, aliases: ["本山寺五重塔", "第70番札所 本山寺", "本山寺"] },
+  // 高さ: 丸亀市公式（約15m）。座標: OSM way 174102606の天守建物中心。
+  { name: "丸亀城天守", category: "castle", latitude: 34.2862768, longitude: 133.8001135, subjectSurface: "structure", heightMeters: 15, aliases: ["丸亀城", "丸亀城天守閣"] },
+  // 高さ: 交流・防災拠点施設研修資料（17.5m）。座標: OSM way 1365753918の建物中心。
+  { name: "トリーデなると", category: "building", latitude: 34.177834, longitude: 134.618738, subjectSurface: "structure", heightMeters: 17.5, aliases: ["旧鳥居記念博物館"] },
+  { name: "朝日山森林公園（香川県）", category: "natural", latitude: 34.1803415, longitude: 133.7610172, subjectSurface: "terrain", heightMeters: 0, aliases: ["朝日山森林公園"] },
+  // 高さ: 名古屋市環境影響評価の事業規模（約220m）。座標: OSM way 51080885の建物中心。
+  { name: "JRゲートタワー", category: "building", latitude: 35.1721125, longitude: 136.8828338, subjectSurface: "structure", heightMeters: 220, aliases: ["ジェイアールゲートタワー"] },
+  // 高さ: 佐久広域連合・佐久市公式（35m）。
+  { name: "コスモタワー（長野県佐久市）", category: "tower", latitude: 36.1918696, longitude: 138.4827035, subjectSurface: "structure", heightMeters: 35, aliases: ["コスモタワー", "稲荷山公園 コスモタワー"] },
 ] as const;
