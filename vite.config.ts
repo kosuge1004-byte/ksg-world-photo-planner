@@ -11,7 +11,7 @@ import { resolveJapanesePlaceName } from "./server/placeGeocode.ts";
 import { lookupGsiElevations, prefetchGsiTerrainAroundSubject } from "./server/gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./server/gsiGeoid.ts";
 import {
-  computeBearingProfileBatch,
+  computeBridgeAwareBearingProfileBatch,
   isBearingProfileBatchRequest,
 } from "./server/bearingProfileBatch.ts";
 import { lookupOsmSiteContexts } from "./server/osmSiteContext.ts";
@@ -178,7 +178,7 @@ function localGsiElevationApi(): Plugin {
               throw new Error("全方位地形の取得条件が不正です");
             }
             response.statusCode = 200;
-            response.end(JSON.stringify(await computeBearingProfileBatch(body)));
+            response.end(JSON.stringify(await computeBridgeAwareBearingProfileBatch(body)));
           } catch (error) {
             response.statusCode = 422;
             response.end(JSON.stringify({

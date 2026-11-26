@@ -10,8 +10,8 @@ const job = fs.readFileSync("server/runBearingProfileDownloadJob.ts", "utf8");
 
 const checks = [
   ["external calls have a bounded timeout helper", /EXTERNAL_CALL_TIMEOUT_MS\s*=\s*45_000/.test(job) && job.includes("async function withTimeout")],
-  ["10m coarse terrain fetch is timeout-protected", /withTimeout\(\s*sampleServerWorldTerrain\([\s\S]{0,200}"10m"/.test(job)],
-  ["1m high precision terrain fetch is timeout-protected", /withTimeout\(\s*sampleServerWorldTerrain\([\s\S]{0,200}"1m"/.test(job)],
+  ["10m coarse terrain fetch is timeout-protected", /withTimeout\(\s*sampleServer(?:WorldTerrain|TripodSupportSurface)\([\s\S]{0,200}"10m"/.test(job)],
+  ["1m high precision terrain fetch is timeout-protected", /withTimeout\(\s*sampleServer(?:WorldTerrain|TripodSupportSurface)\([\s\S]{0,200}"1m"/.test(job)],
   ["water/river site-context fetch is timeout-protected", /withTimeout\(\s*fetchServerSiteContexts\(waterPrefetchPoints/.test(job)],
   ["subject-surroundings site-context fetch is timeout-protected", /withTimeout\(\s*fetchServerSiteContexts\(fullSiteContextPoints/.test(job)],
   // 「タイムアウトして次に進むだけでは駄目」への対応:

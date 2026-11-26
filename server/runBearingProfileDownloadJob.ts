@@ -13,7 +13,7 @@ import type {
 } from "../src/types/backgroundBearingProfile.ts";
 import type { SiteContext } from "../src/types/geospatial.ts";
 import type { GroundPoint } from "../src/types/points.ts";
-import { sampleServerWorldTerrain } from "./worldTerrain.ts";
+import { sampleServerTripodSupportSurface } from "./worldTerrain.ts";
 import { fetchServerSiteContexts } from "./siteContext.ts";
 
 // この旧サーバージョブは一般地点用として50kmを維持する。富士山100kmは
@@ -75,7 +75,7 @@ async function computeBearingProfile(
   // 上書きする。1m取得が失敗した場合は10m値をそのまま使う（端末版のcatch節と
   // 同じフォールバック方針）。
   const coarse = await withTimeout(
-    sampleServerWorldTerrain(
+    sampleServerTripodSupportSurface(
       cartographicPoints.map(({ destination }) =>
         Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
       ),
@@ -87,7 +87,7 @@ async function computeBearingProfile(
   let precise = coarse;
   try {
     precise = await withTimeout(
-      sampleServerWorldTerrain(
+      sampleServerTripodSupportSurface(
         cartographicPoints.map(({ destination }) =>
           Cartographic.fromDegrees(destination.longitude, destination.latitude, 0)
         ),

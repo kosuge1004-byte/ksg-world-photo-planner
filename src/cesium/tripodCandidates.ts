@@ -28,6 +28,10 @@ import {
   terrainDataSource,
 } from "./worldTerrain";
 import {
+  isBridgeSupportSurfaceSample,
+  sampleTripodSupportSurface,
+} from "./bridgeAwareTerrain";
+import {
   resetGsiElevationCacheStats,
   getGsiElevationCacheStats,
 } from "./gsiElevationClient";
@@ -2559,10 +2563,16 @@ async function calculateOneCandidates(
     // （被写体の真下であっても、その交点をそのまま候補として示す）。
     const refinementStartedAt = performance.now();
     trace("refinement:start", `seedDistance=${solution.distanceMeters.toFixed(2)}m`);
-    const gsiWaterNoData = terrainDataSource(solution.cartographic) === "GSI_WATER_ZERO";
-    const riverWaterSurface = mappedWaterSurfaceKind === "river";
+    const bridgeSupportSurface = isBridgeSupportSurfaceSample(solution.cartographic);
+    const gsiWaterNoData = !bridgeSupportSurface &&
+      terrainDataSource(solution.cartographic) === "GSI_WATER_ZERO";
+    // A point confirmed on GSI's bridge/elevated road centreline is a road
+    // surface even when the same horizontal coordinate lies inside a river or
+    // sea polygon. Do not replace its reconstructed deck with water height.
+    const riverWaterSurface = !bridgeSupportSurface && mappedWaterSurfaceKind === "river";
     const seaOrOtherWaterSurface =
-      mappedWaterSurfaceKind === "sea-or-other-water" || (gsiWaterNoData && !riverWaterSurface);
+      (!bridgeSupportSurface && mappedWaterSurfaceKind === "sea-or-other-water") ||
+      (gsiWaterNoData && !riverWaterSurface);
 
     let finalGroundPoint: GroundPoint;
     if (riverWaterSurface) {
@@ -2772,7 +2782,7 @@ export async function calculateTripodCandidates(
   cameraSettingsOrLensHeight: CameraSettings | number,
   date: Date,
   calculationMode: CalculationMode,
-  terrainSampler: TerrainSampler = sampleWorldTerrain,
+  terrainSampler: TerrainSampler = sampleTripodSupportSurface,
   signal?: AbortSignal,
   previewAspectRatio = 3 / 2,
   distanceRange?: TripodDistanceRange,

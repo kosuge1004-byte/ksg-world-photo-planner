@@ -1032,6 +1032,33 @@ export function geoidHeightMetersForTerrainSample(sample: Cartographic): number 
 }
 
 /**
+ * A terrain-support model (for example a bridge deck reconstructed from its
+ * two road approaches) may change only the height of an authoritative sample.
+ * Keep the original DEM source and point-specific geoid attached to the new
+ * Cartographic so the downstream precision and datum checks remain valid.
+ */
+export function deriveTerrainSampleAtHeight(
+  source: Cartographic,
+  ellipsoidalHeightMeters: number
+): Cartographic {
+  const derived = Cartographic.fromRadians(
+    source.longitude,
+    source.latitude,
+    ellipsoidalHeightMeters
+  );
+  const terrainSource = terrainSourceBySample.get(source);
+  if (terrainSource) terrainSourceBySample.set(derived, terrainSource);
+  const geoidHeightMeters = geoidHeightBySample.get(source);
+  if (Number.isFinite(geoidHeightMeters)) {
+    geoidHeightBySample.set(derived, geoidHeightMeters as number);
+  }
+  if (authoritativeGsiNoDataBySample.has(source)) {
+    authoritativeGsiNoDataBySample.add(derived);
+  }
+  return derived;
+}
+
+/**
  * テスト専用: 実際の地形取得（sampleWorldTerrainNeutral等）を経由せず、
  * 特定のCartographicへジオイド高を直接紐づける。本番のロジックは
  * server/worldTerrain.ts内の地形取得処理が自動的にgeoidHeightBySample.set()

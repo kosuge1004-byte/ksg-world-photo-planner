@@ -147,51 +147,6 @@ function postPlateauRoof(base, value, options = {}) {
   });
 }
 
-function postCandidateVisibility(base, value, options = {}) {
-  return fetch(`${base}/v1/plateau/line-of-sight`, {
-    method: "POST",
-    headers: {
-      "x-astrosight-origin-token": TOKEN,
-      "content-type": "application/json",
-      ...options.headers,
-    },
-    body: JSON.stringify(value),
-  });
-}
-
-test("candidate visibility endpoint is authenticated, strictly validated and delegates a bounded batch", async () => {
-  const request = {
-    subject: { latitude: 35, longitude: 139, orthometricHeightMeters: 100 },
-    lensCenterHeightMeters: 1.6,
-    points: [{
-      key: "moon:1000", celestialId: "moon", timestampMilliseconds: 1000,
-      latitude: 35, longitude: 139.01,
-    }],
-  };
-  const base = await start(async () => new Map(), { maximumBodyBytes: 65_536 }, undefined,
-    undefined, undefined, {
-      candidatePointVisibilityLookup: async (received) => {
-        assert.deepEqual(received, request);
-        return {
-          results: [{ key: "moon:1000", status: "clear" }],
-          excludedSubjectBuilding: null,
-        };
-      },
-    });
-  const response = await postCandidateVisibility(base, request);
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
-    results: [{ key: "moon:1000", status: "clear" }],
-    excludedSubjectBuilding: null,
-  });
-  const malformed = await postCandidateVisibility(base, { ...request, directory: "E:\\" });
-  assert.equal(malformed.status, 400);
-  const unauthorized = await fetch(`${base}/v1/plateau/line-of-sight`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),
-  });
-  assert.equal(unauthorized.status, 401);
-});
-
 test("authenticated batch returns aligned results and null for missing data", async () => {
   const base = await start(async (source, points) => {
     assert.equal(source, "DEM10B");

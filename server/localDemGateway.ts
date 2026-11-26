@@ -21,11 +21,6 @@ import {
   isPlateauRoofLookupResponse,
   type PlateauRoofCandidate,
 } from "../src/types/plateauRoof.ts";
-import {
-  isCandidatePointVisibilityResponse,
-  type CandidatePointVisibilityRequest,
-  type CandidatePointVisibilityResponse,
-} from "../src/types/candidatePointVisibility.ts";
 
 export type LocalDemGatewaySource =
   | "DEM1A"
@@ -165,56 +160,6 @@ function plateauRoofEndpointUrl(configuration: LocalDemGatewayConfiguration): UR
   const elevationEndpoint = endpointUrl(configuration);
   if (!elevationEndpoint) return null;
   return new URL("/v1/plateau/roof", elevationEndpoint);
-}
-
-function candidatePointVisibilityEndpointUrl(
-  configuration: LocalDemGatewayConfiguration
-): URL | null {
-  const elevationEndpoint = endpointUrl(configuration);
-  if (!elevationEndpoint) return null;
-  return new URL("/v1/plateau/line-of-sight", elevationEndpoint);
-}
-
-export async function lookupLocalCandidatePointVisibility(
-  request: CandidatePointVisibilityRequest,
-  signal?: AbortSignal
-): Promise<CandidatePointVisibilityResponse | null> {
-  const configuration = await resolvedGatewayConfiguration();
-  if (!configuration) return null;
-  const endpoint = candidatePointVisibilityEndpointUrl(configuration);
-  if (!endpoint) return null;
-  if (signal?.aborted) throw createAbortError();
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort(createTimeoutError("建物見通し判定APIタイムアウト"));
-  }, REQUEST_TIMEOUT_MS);
-  const onAbort = () => controller.abort(createAbortError());
-  signal?.addEventListener("abort", onAbort, { once: true });
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: gatewayHeaders(configuration),
-      body: JSON.stringify(request),
-      cache: "no-store",
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      return null;
-    }
-    const expectedKeys = new Set(request.points.map((point) => point.key));
-    const value = await readBoundedJson(response);
-    return isCandidatePointVisibilityResponse(value, expectedKeys) ? value : null;
-  } catch {
-    if (signal?.aborted && !timedOut) throw createAbortError();
-    return null;
-  } finally {
-    clearTimeout(timeout);
-    signal?.removeEventListener("abort", onAbort);
-  }
 }
 
 export async function lookupLocalPlateauRoof(

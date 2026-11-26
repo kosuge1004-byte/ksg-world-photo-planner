@@ -16,7 +16,6 @@ type GuideSample =
   | "dot-moon"
   | "dot-milky-way"
   | "dot-polaris"
-  | "dot-visible"
   | "pin-subject"
   | "pin-tripod"
   | "pin-pending"
@@ -102,9 +101,6 @@ export function DisplayGuide({ onClose }: Props) {
         <GuideRow sample="dot-polaris" title="薄紫の点（北極星の三脚候補）">
           北極星の方向条件を満たす三脚候補点です。
         </GuideRow>
-        <GuideRow sample="dot-visible" title="緑の小点（見通し確認済み）">
-          「◎ 見通し」でDEM地形とPLATEAU建物の両方を調べ、被写体まで遮られないと確認できた点です。遮蔽あり・未確認・判定不能の点は緑で表示しません。
-        </GuideRow>
         <GuideRow sample="pin-subject" title="赤いピン（被写体）">
           撮影する被写体の正式位置です。構造物では、取得できた高さ情報に基づく頂上位置を使います。
         </GuideRow>
@@ -177,9 +173,6 @@ export function DisplayGuide({ onClose }: Props) {
         <GuideRow title="＋・−">
           地図を拡大・縮小します。地図のドラッグや3Dカメラ操作でも表示位置を変えられます。
         </GuideRow>
-        <GuideRow title="◎ 見通し">
-          赤い三脚候補線上の点をDEM地形とPLATEAU建物で確認し、遮蔽なしと確定した点だけを緑で表示します。
-        </GuideRow>
         <GuideRow title="2D／3D 切替">
           平面地図と立体地図を切り替えます。2つを裏で同時に動かす切替ではありません。
         </GuideRow>
@@ -211,7 +204,7 @@ export function DisplayGuide({ onClose }: Props) {
       </section>
 
       <p className="display-guide-note">
-        Google Photorealistic 3D Tilesは3D地図の見た目に使用します。高さ・候補計算にはDEM等を使い、「◎ 見通し」はDEM地形とPLATEAU建物を使用します。樹木・工事・仮設物など、元データに無い障害物は判定できません。
+        Google Photorealistic 3D Tilesは3D地図の見た目に使用します。高さ・三脚候補計算にはDEM等を使用します。
       </p>
     </section>
   );

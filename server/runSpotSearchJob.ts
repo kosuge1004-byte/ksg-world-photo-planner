@@ -8,7 +8,7 @@ import type { CameraSettings } from "../src/types/camera.ts";
 import type { SpotSearchJob } from "../src/types/backgroundSearch.ts";
 import { createServerLineOfSightEvaluator } from "./celestialTerrainVisibility.ts";
 import { fetchServerSiteContexts } from "./siteContext.ts";
-import { sampleServerWorldTerrain } from "./worldTerrain.ts";
+import { sampleServerTripodSupportSurface } from "./worldTerrain.ts";
 import { prefetchGsiTerrainAroundSubject } from "./gsiElevation.ts";
 import { formatSearchDuration, type SpotSearchPerformanceMetrics } from "../src/search/searchPerformance.ts";
 import { lookupPublishedPrecomputedBearingProfile } from "./publishedPrecomputedBearingProfiles.ts";
@@ -41,7 +41,7 @@ const exactServerTerrainSampler: TerrainSampler = (
   points,
   signal,
   maximumDetail
-) => sampleServerWorldTerrain(
+) => sampleServerTripodSupportSurface(
   points,
   signal,
   maximumDetail ? points.map(() => maximumDetail) : undefined

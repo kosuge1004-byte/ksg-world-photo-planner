@@ -1,10 +1,3 @@
-export type PlateauBuildingReference = {
-  dataset: string;
-  year: number | null;
-  buildingId: string;
-  lod: 2 | 3 | 4;
-};
-
 export type PlateauRoofCandidate = {
   dataset: string;
   year: number | null;
@@ -19,26 +12,6 @@ export type PlateauRoofCandidate = {
   measuredHeightMeters: number | null;
   badCoordinatePolygons: number;
 };
-
-export function plateauBuildingReference(
-  candidate: PlateauRoofCandidate
-): PlateauBuildingReference {
-  return {
-    dataset: candidate.dataset,
-    year: candidate.year,
-    buildingId: candidate.buildingId,
-    lod: candidate.lod,
-  };
-}
-
-export function isPlateauBuildingReference(value: unknown): value is PlateauBuildingReference {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const reference = value as Partial<PlateauBuildingReference>;
-  return typeof reference.dataset === "string" && reference.dataset.length > 0 &&
-    typeof reference.buildingId === "string" && reference.buildingId.length > 0 &&
-    (reference.year === null || Number.isInteger(reference.year)) &&
-    (reference.lod === 2 || reference.lod === 3 || reference.lod === 4);
-}
 
 export type PlateauRoofLookupResponse = {
   candidate: PlateauRoofCandidate | null;

@@ -328,7 +328,7 @@ export function TopSettingsBar({
                     <b>Google Photorealistic 3D Tiles</b><small>初期値</small>
                   </span>
                   <small>
-                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。通常の三脚候補計算はDEM地形を使い、「見通し」確認はDEM地形とPLATEAU建物を使います。Google建物3Dは表示専用です。従量制サービスの利用量が増えます。
+                    標準3D表示と同じ計算に加え、3Dマップの見た目がGoogle Photorealistic 3D Tilesになります。通常の三脚候補計算はDEM地形を使い、Google建物3Dは表示専用です。従量制サービスの利用量が増えます。
                   </small>
                 </span>
               </label>
@@ -392,7 +392,7 @@ export function TopSettingsBar({
                   <b>DEM（地形の高さデータ）</b>、ジオイド、気象補正、天体計算はどちらの表示でも共通です。
                 </small>
                 <small>
-                  <b>PLATEAU（建物を含む立体データ、オープンデータ）</b>は三脚・被写体の高さ（屋根への合わせ込み）と、「見通し」ボタンの建物遮蔽確認に使います。通常の三脚候補計算はDEM地形で行います。
+                  <b>PLATEAU（建物を含む立体データ、オープンデータ）</b>は三脚・被写体の高さ（屋根への合わせ込み）に使います。三脚候補計算はDEM地形で行います。
                 </small>
                 <small>
                   <b>Google Photorealistic 3D Tiles</b>はGoogleタイルモードの3Dマップの見た目にのみ使います（規約により、高さの判定・遮蔽判定には使用しません）。詳しいデータほど読込時間と通信量が増える場合があります。

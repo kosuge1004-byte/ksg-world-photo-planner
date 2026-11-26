@@ -135,6 +135,7 @@ import {
   buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
   findCarryOverRiseSetPass,
+  resolveTripodCandidateArcReferenceGroundHeights,
   prioritizedRiseSetCandidateBodyIds,
   type RiseSetArcPass,
   type RiseSetCandidateBodyId,
@@ -174,15 +175,6 @@ import { warmGsiDeviceTilesFromPersistentCache } from "./cesium/gsiDemTileCache"
 import { buildTripodSearchBaseLines } from "./cesium/tripodSearchLine";
 import { clearTripodSearchLineEntities, updateTripodSearchLineEntities } from "./cesium/tripodSearchLineEntities";
 import { clearTripodCandidateEntities, updateTripodCandidateEntities } from "./cesium/tripodCandidateEntities";
-import {
-  clearCandidatePointVisibilityEntities,
-  updateCandidatePointVisibilityEntities,
-} from "./cesium/candidatePointVisibilityEntities";
-import {
-  searchCandidatePointVisibility,
-  type CandidatePointVisibilityPoint,
-} from "./visibility/candidatePointVisibility";
-import { CANDIDATE_POINT_VISIBILITY_ENABLED } from "./visibility/candidatePointVisibilityFeature";
 import { loadLastSession, saveLastSessionPins } from "./storage/lastSession";
 import { selectCelestialTrackPass } from "./cesium/celestialTrackPass";
 import {
@@ -2161,9 +2153,9 @@ function App() {
   // 同じくらいの高さの場所（離れた丘の上など）にあると、視線がその高さまで降りてこず、
   // 全時刻が検索上限の円周に並んでいた。優先順に複数の基準を用意し、
   // 実際に交点ができる最初の高さを使う（buildTripodCandidateRiseSetArc）。
-  //   1. 被写体直下の地表（塔・建物の周辺は同じくらいの高さの土地であることが多い）
-  //   2. 三脚ピンの地表（山頂など、被写体ピン自体が地表にある場合）
-  //   3. 被写体地点の標高0m相当
+  //   1. DEM等で解決した被写体直下の地表
+  //   2. 地表被写体自身、または屋根高から確認済み構造物高を引いた地表
+  //   3. 現在の三脚ピンの地表
   // この線は「地面を平らと仮定した目安の線」。断面データがある地点では、下の
   // 「標高を加味した三脚候補線」が代わりに表示される。
   const subjectLatitude = subjectPoint?.latitude ?? null;
@@ -2201,7 +2193,7 @@ function App() {
         }
       })
       .catch(() => {
-        // 取得できない場合は、三脚ピン・標高0mの基準で線を描く。
+        // 取得できない場合は、被写体属性から導ける地表または三脚ピンを使う。
         if (!cancelled) {
           window.clearTimeout(settleTimer);
           setSubjectGroundHeight((current) => current?.key === subjectGroundKey
@@ -2215,10 +2207,6 @@ function App() {
   const subjectGroundEllipsoidalHeight = subjectGroundHeight?.key === subjectGroundKey
     ? subjectGroundHeight.ellipsoidalHeightMeters
     : null;
-  const tripodGroundEllipsoidalHeight = tripodPoint
-    ? Math.round(ellipsoidalHeightMeters(tripodPoint) * 10) / 10
-    : null;
-  const subjectGeoidHeight = subjectPoint?.geoidHeightMeters ?? null;
   // 2026-10-08修正: 目安の線の高さ基準は、被写体ごとに最初に決めた値で固定する。
   // 以前は三脚ピンを動かすたび（山のように被写体自体が地表にある場合）や、表示中の
   // 時刻の確定候補が入れ替わるたびに基準が変わり、線全体が動いていた。
@@ -2229,16 +2217,22 @@ function App() {
     if (frozenArcReferenceRef.current?.key === subjectGroundKey) {
       return frozenArcReferenceRef.current.heights;
     }
-    const heights = [subjectGroundEllipsoidalHeight, tripodGroundEllipsoidalHeight, subjectGeoidHeight]
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const heights = resolveTripodCandidateArcReferenceGroundHeights({
+      subject: subjectPoint,
+      resolvedSubjectGroundEllipsoidalHeightMeters: subjectGroundEllipsoidalHeight,
+      tripod: tripodPoint,
+    });
+    // 正しい楕円体地表高が1つも無い場合は、誤った高さで線を作らない。
+    // 後から地表解決または三脚配置が完了すると、このmemoが再評価される。
+    if (heights.length === 0) return null;
     frozenArcReferenceRef.current = { key: subjectGroundKey, heights };
     return heights;
   }, [
     subjectGroundSettled,
     subjectGroundKey,
     subjectGroundEllipsoidalHeight,
-    tripodGroundEllipsoidalHeight,
-    subjectGeoidHeight,
+    subjectPoint,
+    tripodPoint,
   ]);
 
   // 2026-10-09: 表示中の時刻が属する回の線を出す。
@@ -2685,127 +2679,6 @@ function App() {
     selectedDate,
     celestialVisibility,
   ]);
-
-  // 「見通し」機能は通常の候補計算から独立させる。ボタンを切れば結果・通信・
-  // Cesium Entityをまとめて撤去でき、将来この機能自体を外す場合も、この状態群と
-  // visibility/ 配下、専用APIだけを除けば既存経路へ影響しない。
-  const [candidateVisibilityActive, setCandidateVisibilityActive] = useState(false);
-  const [candidateVisibilityPending, setCandidateVisibilityPending] = useState(false);
-  const [candidateVisibilityPoints, setCandidateVisibilityPoints] =
-    useState<CandidatePointVisibilityPoint[]>([]);
-  const candidateVisibilityControllerRef = useRef<AbortController | null>(null);
-  const candidateVisibilityContextRef = useRef<string | null>(null);
-  const candidateVisibilityContextKey = useMemo(() => JSON.stringify({
-    subject: subjectPoint ? [
-      subjectPoint.latitude,
-      subjectPoint.longitude,
-      subjectPoint.orthometricHeightMeters ?? subjectPoint.height,
-      subjectPoint.plateauBuildingRef ?? null,
-    ] : null,
-    lens: cameraSettings.lensCenterHeightMeters,
-    day: selectedDayStart.getTime(),
-    pass: arcPassKey,
-    terrain: terrainSectionRevision,
-  }), [
-    subjectPoint,
-    cameraSettings.lensCenterHeightMeters,
-    selectedDayStart,
-    arcPassKey,
-    terrainSectionRevision,
-  ]);
-
-  const toggleCandidatePointVisibility = useCallback(() => {
-    if (!CANDIDATE_POINT_VISIBILITY_ENABLED) return;
-    if (candidateVisibilityActive) {
-      candidateVisibilityControllerRef.current?.abort();
-      candidateVisibilityControllerRef.current = null;
-      candidateVisibilityContextRef.current = null;
-      setCandidateVisibilityActive(false);
-      setCandidateVisibilityPending(false);
-      setCandidateVisibilityPoints([]);
-      setSearchMessage("見通し候補点を非表示にしました");
-      return;
-    }
-    if (!subjectPoint) {
-      setSearchMessage("先に被写体を設定してください");
-      return;
-    }
-    const exactArcs = tripodCandidateRiseSetArcs.filter((arc) => arc.kind === "terrain");
-    if (exactArcs.length === 0) {
-      setSearchMessage("高精度DEMの三脚候補線がまだ準備できていません");
-      return;
-    }
-    candidateVisibilityControllerRef.current?.abort();
-    const controller = new AbortController();
-    candidateVisibilityControllerRef.current = controller;
-    candidateVisibilityContextRef.current = candidateVisibilityContextKey;
-    setCandidateVisibilityActive(true);
-    setCandidateVisibilityPending(true);
-    setCandidateVisibilityPoints([]);
-    setSearchMessage("見通せる三脚候補点を確認しています…");
-    void searchCandidatePointVisibility({
-      subject: subjectPoint,
-      lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
-      arcs: exactArcs,
-      signal: controller.signal,
-      onProgress: ({ completed, total }) => {
-        if (controller.signal.aborted) return;
-        setSearchMessage(`見通し候補点を確認中 ${completed}/${total}`);
-      },
-    }).then((result) => {
-      if (controller.signal.aborted ||
-        candidateVisibilityControllerRef.current !== controller) return;
-      setCandidateVisibilityPoints(result.points);
-      setCandidateVisibilityPending(false);
-      setSearchMessage(
-        `見通し確認済み ${result.points.length}点` +
-        `／非表示 地形遮蔽${result.terrainBlockedCount}・建物遮蔽${result.buildingBlockedCount}` +
-        `・建物未確認${result.buildingUnverifiedCount}`
-      );
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted || isAbortError(error)) return;
-      console.warn("見通し候補点を確認できませんでした", error);
-      if (candidateVisibilityControllerRef.current === controller) {
-        setCandidateVisibilityActive(false);
-        setCandidateVisibilityPending(false);
-        setCandidateVisibilityPoints([]);
-        setSearchMessage("見通し候補点を確認できませんでした");
-      }
-    });
-  }, [
-    candidateVisibilityActive,
-    candidateVisibilityContextKey,
-    cameraSettings.lensCenterHeightMeters,
-    setSearchMessage,
-    subjectPoint,
-    tripodCandidateRiseSetArcs,
-  ]);
-
-  useEffect(() => {
-    if (!candidateVisibilityActive || candidateVisibilityContextRef.current === null ||
-      candidateVisibilityContextRef.current === candidateVisibilityContextKey) return;
-    candidateVisibilityControllerRef.current?.abort();
-    candidateVisibilityControllerRef.current = null;
-    candidateVisibilityContextRef.current = null;
-    setCandidateVisibilityActive(false);
-    setCandidateVisibilityPending(false);
-    setCandidateVisibilityPoints([]);
-  }, [candidateVisibilityActive, candidateVisibilityContextKey]);
-
-  useEffect(() => () => candidateVisibilityControllerRef.current?.abort(), []);
-
-  useEffect(() => {
-    const viewer = mapViewerRef.current;
-    if (!viewer || viewer.isDestroyed()) return;
-    if (!candidateVisibilityActive || mapDisplayMode !== "3d" || !mapReady) {
-      clearCandidatePointVisibilityEntities(viewer);
-      return;
-    }
-    updateCandidatePointVisibilityEntities(viewer, candidateVisibilityPoints);
-    return () => {
-      if (!viewer.isDestroyed()) clearCandidatePointVisibilityEntities(viewer);
-    };
-  }, [candidateVisibilityActive, candidateVisibilityPoints, mapDisplayMode, mapReady]);
 
   // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
   // 対応するCesium Entityが無く、候補計算が正常でも点だけ表示されなかった。
@@ -6884,18 +6757,6 @@ ${diagnosticMessage}
   const [pendingPreliminaryCandidate, setPendingPreliminaryCandidate] =
     useState<TripodCandidate | null>(null);
 
-  function selectCandidateVisibilityPoint(candidate: CandidatePointVisibilityPoint) {
-    const selectedTime = new Date(candidate.timestampMilliseconds);
-    if (!Number.isNaN(selectedTime.getTime())) {
-      const localized = zonedDateTimeLocalFromDate(selectedTime, timeZoneRef.current);
-      dateTimeLocalRef.current = localized;
-      setDateTimeLocal(localized);
-    }
-    // この点は赤線を作った高精度DEM断面で地形交点・途中遮蔽を確認済み。
-    // preliminary扱いの確認ダイアログへ戻さず、通常の確定配置経路へ渡す。
-    placeTripodAtCandidateConfirmed({ ...candidate, solutionType: "aligned" });
-  }
-
   function selectTripodCandidate(candidate: TripodCandidate) {
     // 2026-08-28追記: 「候補点計算中」の暫定候補（地形未確認の理論値）を
     // そのまま設置すると、実際には建物や崖の上など、不正確な場所を
@@ -7329,7 +7190,6 @@ ${diagnosticMessage}
               milkyWayPath={visibleMilkyWayPath}
               visibility={celestialVisibility}
               candidates={displayedTripodCandidates}
-              candidateVisibilityPoints={candidateVisibilityActive ? candidateVisibilityPoints : []}
               candidateRiseSetArcs={tripodCandidateRiseSetArcs}
               tripodSearchLines={tripodSearchLines}
               foregroundObject={foregroundObject}
@@ -7360,7 +7220,6 @@ ${diagnosticMessage}
                 });
               }}
               onSelectCandidate={selectTripodCandidate}
-              onSelectVisibilityPoint={selectCandidateVisibilityPoint}
           />
           )}
         </div>
@@ -7521,17 +7380,6 @@ ${diagnosticMessage}
             )}
 
             <div className="map-right-actions">
-              {CANDIDATE_POINT_VISIBILITY_ENABLED && <button
-                type="button"
-                className={`candidate-visibility-toggle${candidateVisibilityActive ? " active" : ""}`}
-                aria-pressed={candidateVisibilityActive}
-                aria-busy={candidateVisibilityPending}
-                onClick={toggleCandidatePointVisibility}
-                title="赤い三脚候補線上で、地形とPLATEAU建物に遮られない候補点を検索"
-              >
-                <span>{candidateVisibilityPending ? "…" : "◎"}</span>
-                <small>見通し</small>
-              </button>}
               <button
                 type="button"
                 className="map-display-mode-toggle"

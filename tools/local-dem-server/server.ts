@@ -5,6 +5,7 @@ import {
   computeBearingProfileBatch,
   lookupBearingProfileGeoidHeights,
 } from "../../server/bearingProfileBatch.ts";
+import { lookupGsiBridgeSurfaceContexts } from "../../server/gsiBridgeSurface.ts";
 import {
   configureLocalDemMemoryBudgetForPrivateOrigin,
   lookupLocalDemElevationsForSource,
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
       lookupElevations: (points, requestSignal) =>
         lookupGsiElevations(points, requestSignal, undefined, { useLocalGateway: false }),
       lookupGeoidHeights: lookupBearingProfileGeoidHeights,
+      lookupBridgeContexts: lookupGsiBridgeSurfaceContexts,
       nowIso: () => new Date().toISOString(),
     });
   // 2026-10-16: 自動登録スポットが保存されるたびに、その月の「登録スポット候補」
@@ -71,29 +73,6 @@ async function main(): Promise<void> {
       nationwideDemReady: demReadiness.nationwideReady,
       plateauRoofLookup: plateauBuildings
         ? (latitude, longitude) => plateauBuildings.lookup(latitude, longitude)
-        : undefined,
-      candidatePointVisibilityLookup: plateauBuildings
-        ? async (request, signal) => {
-            const samples = await lookupGsiElevations(
-              request.points.map((point) => ({
-                latitude: point.latitude,
-                longitude: point.longitude,
-                maximumDetail: "1m" as const,
-                interpolationMode: "los-safe" as const,
-              })),
-              signal,
-              undefined,
-              { useLocalGateway: false }
-            );
-            const groundHeights = new Map<string, number>();
-            request.points.forEach((point, index) => {
-              const height = samples[index]?.heightMeters;
-              if (typeof height === "number" && Number.isFinite(height)) {
-                groundHeights.set(point.key, height);
-              }
-            });
-            return plateauBuildings.lineOfSight(request, groundHeights);
-          }
         : undefined,
     }
   );

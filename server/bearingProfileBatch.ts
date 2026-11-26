@@ -24,6 +24,11 @@ import { lookupLocalJpgeo2024Height } from "./jpgeo2024Local.ts";
 import { isPrecomputedBearingProfileResponse } from "./precomputedBearingProfiles.ts";
 import { lookupPublishedPrecomputedBearingProfile } from "./publishedPrecomputedBearingProfiles.ts";
 import { findPrecomputedBearingProfileTarget } from "./precomputedBearingProfileTargets.ts";
+import {
+  lookupGsiBridgeSurfaceContexts,
+  resolveBridgeDeckOrthometricHeight,
+  type GsiBridgeSurfaceContext,
+} from "./gsiBridgeSurface.ts";
 
 const MAX_BEARINGS_PER_REQUEST = 360;
 const STANDARD_MAX_DISTANCE_METERS = 50_000;
@@ -51,6 +56,10 @@ export type BearingProfileBatchDependencies = {
     points: Coordinate[],
     signal?: AbortSignal
   ) => Promise<number[]>;
+  lookupBridgeContexts?: (
+    points: Coordinate[],
+    signal?: AbortSignal
+  ) => Promise<Array<GsiBridgeSurfaceContext | null> | null>;
   nowIso: () => string;
 };
 
@@ -134,6 +143,90 @@ function chunks<T>(values: readonly T[], size: number): T[][] {
   );
 }
 
+async function applyBridgeDeckHeights(
+  coordinates: Coordinate[],
+  elevationSamples: GsiElevationSample[],
+  dependencies: BearingProfileBatchDependencies,
+  signal: AbortSignal | undefined,
+  tileCacheCounter: TileCacheCounter
+): Promise<GsiElevationSample[]> {
+  if (!dependencies.lookupBridgeContexts || coordinates.length === 0) {
+    return elevationSamples;
+  }
+  let contexts: Array<GsiBridgeSurfaceContext | null> | null;
+  try {
+    contexts = await dependencies.lookupBridgeContexts(coordinates, signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return elevationSamples;
+  }
+  if (!contexts || contexts.length !== coordinates.length) return elevationSamples;
+
+  const uniqueContexts = new Map<string, GsiBridgeSurfaceContext>();
+  for (const context of contexts) {
+    if (context) uniqueContexts.set(context.bridgeKey, context);
+  }
+  if (uniqueContexts.size === 0) return elevationSamples;
+
+  const anchorRequests: GsiElevationRequestPoint[] = [];
+  const anchorRanges = new Map<string, { start: number; middle: number; end: number }>();
+  for (const context of uniqueContexts.values()) {
+    const start = anchorRequests.length;
+    anchorRequests.push(...context.startOutsidePoints.map((point) => ({
+      ...point,
+      maximumDetail: "1m" as const,
+      interpolationMode: "neutral" as const,
+    })));
+    const middle = anchorRequests.length;
+    anchorRequests.push(...context.endOutsidePoints.map((point) => ({
+      ...point,
+      maximumDetail: "1m" as const,
+      interpolationMode: "neutral" as const,
+    })));
+    anchorRanges.set(context.bridgeKey, { start, middle, end: anchorRequests.length });
+  }
+
+  const anchorSamples: GsiElevationSample[] = [];
+  try {
+    for (const chunk of chunks(anchorRequests, MAX_ELEVATION_POINTS_PER_LOOKUP)) {
+      if (signal?.aborted) throw signal.reason;
+      anchorSamples.push(...await dependencies.lookupElevations(chunk, signal, tileCacheCounter));
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return elevationSamples;
+  }
+  if (anchorSamples.length !== anchorRequests.length) return elevationSamples;
+
+  return elevationSamples.map((sample, index) => {
+    const context = contexts?.[index];
+    if (!context) return sample;
+    const range = anchorRanges.get(context.bridgeKey);
+    if (!range) return sample;
+    const startSamples = anchorSamples.slice(range.start, range.middle).filter(
+      (anchor): anchor is GsiElevationSample & { heightMeters: number } =>
+        anchor.source !== null && Number.isFinite(anchor.heightMeters)
+    );
+    const endSamples = anchorSamples.slice(range.middle, range.end).filter(
+      (anchor): anchor is GsiElevationSample & { heightMeters: number } =>
+        anchor.source !== null && Number.isFinite(anchor.heightMeters)
+    );
+    if (startSamples.length === 0 || endSamples.length === 0) return sample;
+    const existingHeightMeters = sample.source !== null && Number.isFinite(sample.heightMeters)
+      ? Number(sample.heightMeters)
+      : 0;
+    const heightMeters = resolveBridgeDeckOrthometricHeight({
+      existingHeightMeters,
+      startApproachHeightsMeters: startSamples.map((anchor) => anchor.heightMeters),
+      endApproachHeightsMeters: endSamples.map((anchor) => anchor.heightMeters),
+      positionFraction: context.positionFraction,
+    });
+    if (heightMeters === null) return sample;
+    const source = sample.source ?? startSamples[0]?.source ?? endSamples[0]?.source ?? null;
+    return { heightMeters, source };
+  });
+}
+
 export async function computeBearingProfileBatch(
   request: BearingProfileBatchRequest,
   signal?: AbortSignal,
@@ -187,7 +280,7 @@ export async function computeBearingProfileBatch(
       maximumDetail: "1m",
       interpolationMode: "neutral",
     }));
-    const elevationSamples: GsiElevationSample[] = [];
+    let elevationSamples: GsiElevationSample[] = [];
     for (const chunk of chunks(elevationRequests, MAX_ELEVATION_POINTS_PER_LOOKUP)) {
       if (signal?.aborted) throw signal.reason;
       elevationSamples.push(...await dependencies.lookupElevations(chunk, signal, tileCacheCounter));
@@ -195,6 +288,13 @@ export async function computeBearingProfileBatch(
     if (elevationSamples.length !== prepared.length) {
       throw new Error("全方位地形APIの標高応答点数が一致しません");
     }
+    elevationSamples = await applyBridgeDeckHeights(
+      prepared.map(({ destination }) => destination),
+      elevationSamples,
+      dependencies,
+      signal,
+      tileCacheCounter
+    );
 
     const geoidValues: number[] = [];
     for (const chunk of chunks(
@@ -263,4 +363,20 @@ export async function computeBearingProfileBatch(
     requestedBearingCount: request.bearings.length,
     pointCount: request.bearings.length * distances.length,
   };
+}
+
+/**
+ * Local/precompute entry point with bridge vector lookups enabled. The base
+ * function remains within the Cloudflare free-plan subrequest budget; the
+ * production E-drive origin injects the same bridge dependency explicitly.
+ */
+export function computeBridgeAwareBearingProfileBatch(
+  request: BearingProfileBatchRequest,
+  signal?: AbortSignal,
+  tileCacheCounter: TileCacheCounter = createTileCacheCounter()
+): Promise<BearingProfileBatchResponseV2> {
+  return computeBearingProfileBatch(request, signal, {
+    ...defaultDependencies,
+    lookupBridgeContexts: lookupGsiBridgeSurfaceContexts,
+  }, tileCacheCounter);
 }

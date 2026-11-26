@@ -27,8 +27,6 @@ test("display guide covers every main-screen visual family and distinguishes exa
     "赤の細い実線（三脚候補線・確定）",
     "赤の細い破線（三脚候補線・目安）",
     "白の破線（3D地図のみ）",
-    "緑の小点（見通し確認済み）",
-    "遮蔽あり・未確認・判定不能の点は緑で表示しません",
     "赤いピン（被写体）",
     "青いピン（三脚）",
     "半透明で点滅するピン",
@@ -37,7 +35,6 @@ test("display guide covers every main-screen visual family and distinguishes exa
     "青い破線と両端の点",
     "時間軸",
     "2D・3D地図の操作",
-    "◎ 見通し",
     "2つを裏で同時に動かす切替ではありません",
     "画面上部の共通設定",
   ];
@@ -46,12 +43,14 @@ test("display guide covers every main-screen visual family and distinguishes exa
   }
 });
 
-test("the guide and 3D settings state the current DEM plus PLATEAU visibility path without claiming Google geometry is calculated", () => {
+test("the guide and 3D settings describe DEM calculation and visual-only Google geometry", () => {
   const guide = read("src/components/DisplayGuide.tsx");
   const topBar = read("src/components/TopSettingsBar.tsx");
-  assert.match(guide, /「◎ 見通し」はDEM地形とPLATEAU建物を使用します/);
-  assert.match(topBar, /「見通し」確認はDEM地形とPLATEAU建物を使います/);
+  assert.match(guide, /高さ・三脚候補計算にはDEM等を使用します/);
+  assert.match(topBar, /三脚候補計算はDEM地形を使い/);
   assert.match(topBar, /Google建物3Dは表示専用です/);
+  assert.doesNotMatch(guide, /◎ 見通し|見通し確認済み/);
+  assert.doesNotMatch(topBar, /「見通し」確認|「見通し」ボタン/);
   assert.doesNotMatch(topBar, /遮蔽判定には使いません（DEM地形のみで判定します）/);
 });
 
@@ -62,7 +61,6 @@ test("display guide has mobile-readable sections and visual samples", () => {
     ".display-guide-section {",
     ".display-guide-row {",
     ".display-guide-sample.line-candidate-exact::before",
-    ".display-guide-sample.dot-visible::before",
     ".display-guide-sample.pin-tripod::before",
     ".display-guide-sample.timeline",
   ]) {

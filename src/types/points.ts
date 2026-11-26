@@ -1,5 +1,3 @@
-import type { PlateauBuildingReference } from "./plateauRoof";
-
 export type HeightSource =
   | "dem"
   | "terrain"
@@ -33,12 +31,6 @@ export type GroundPoint = {
   subjectSurfaceTarget?: SubjectSurfaceTarget;
   /** カタログ等で確認済みの、接地面から構造物頂上までの高さ。 */
   structureHeightMeters?: number;
-  /**
-   * PLATEAUで被写体屋根を確定した場合の建物識別子。
-   * 見通し判定では、この建物だけを遮蔽物から除外する。周辺一帯を距離だけで
-   * 除外しないための任意情報で、旧保存データには存在しなくてもよい。
-   */
-  plateauBuildingRef?: PlateauBuildingReference;
   label: string;
 };
 

@@ -11,7 +11,7 @@
 
 import { calculateTripodCandidates, type TerrainSampler } from "../src/cesium/tripodCandidates.ts";
 import { calculateCelestialHorizontalCoordinates } from "../src/cesium/celestial.ts";
-import { sampleServerWorldTerrain } from "./worldTerrain.ts";
+import { sampleServerTripodSupportSurface } from "./worldTerrain.ts";
 import type { PrewarmLandmark } from "./landmarkPrewarmSeed.ts";
 import type { CelestialScreenPoint, CelestialBodyId } from "../src/types/celestial.ts";
 import type { CameraSettings } from "../src/types/camera.ts";
@@ -35,7 +35,7 @@ export const REQUEST_DELAY_MS = 1500; // GSIサーバーへの配慮（1リク�
 export const LANDMARK_DELAY_MS = 4000; // ランドマーク間の追加の間隔
 
 const terrainSampler: TerrainSampler = (points, signal, maximumDetail) =>
-  sampleServerWorldTerrain(points, signal, maximumDetail ? points.map(() => maximumDetail) : undefined);
+  sampleServerTripodSupportSurface(points, signal, maximumDetail ? points.map(() => maximumDetail) : undefined);
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

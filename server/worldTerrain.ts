@@ -8,9 +8,15 @@ import {
 } from "cesium";
 
 import { lookupGsiElevations } from "./gsiElevation.ts";
-import type { GsiElevationRequestPoint } from "./gsiElevation.ts";
+import type { GsiElevationRequestPoint, GsiElevationSample } from "./gsiElevation.ts";
 import { lookupGsiGeoidHeight } from "./gsiGeoid.ts";
 import { serverCesiumIonToken } from "./cloudflareRuntime.ts";
+import {
+  lookupGsiBridgeSurfaceContexts,
+  markBridgeSupportSurfaceSample,
+  resolveBridgeDeckOrthometricHeight,
+  type GsiBridgeSurfaceContext,
+} from "./gsiBridgeSurface.ts";
 
 type GsiMaximumDetail = NonNullable<GsiElevationRequestPoint["maximumDetail"]>;
 
@@ -223,6 +229,109 @@ export async function sampleServerWorldTerrain(
   }
 
   abortIfRequested(signal);
+  return output;
+}
+
+/**
+ * Server-side counterpart of the browser's sampleTripodSupportSurface. Only
+ * coordinates classified as a GSI bridge/elevated road are changed, and both
+ * paths use the same approach-height resolver.
+ */
+export async function sampleServerTripodSupportSurface(
+  points: Cartographic[],
+  signal?: AbortSignal,
+  maximumDetails?: Array<GsiMaximumDetail | undefined>
+): Promise<Cartographic[]> {
+  const base = await sampleServerWorldTerrain(points, signal, maximumDetails);
+  if (base.length === 0) return base;
+  const coordinates = base.map((point) => ({
+    latitude: CesiumMath.toDegrees(point.latitude),
+    longitude: CesiumMath.toDegrees(point.longitude),
+  }));
+  const contexts = await lookupGsiBridgeSurfaceContexts(coordinates, signal);
+  if (!contexts) return base;
+  const bridgeIndexes = contexts.flatMap((context, index) => context ? [index] : []);
+  if (bridgeIndexes.length === 0) return base;
+
+  let existingSamples: GsiElevationSample[];
+  try {
+    existingSamples = await lookupGsiElevations(bridgeIndexes.map((index) => ({
+      ...coordinates[index],
+      maximumDetail: maximumDetails?.[index] ?? "1m",
+      interpolationMode: "neutral",
+    })), signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return base;
+  }
+
+  const uniqueContexts = new Map<string, GsiBridgeSurfaceContext>();
+  for (const context of contexts) if (context) uniqueContexts.set(context.bridgeKey, context);
+  const approaches = new Map<string, {
+    startApproachHeightsMeters: number[];
+    endApproachHeightsMeters: number[];
+  }>();
+  await Promise.all([...uniqueContexts.values()].map(async (context) => {
+    const anchors = [...context.startOutsidePoints, ...context.endOutsidePoints];
+    try {
+      const samples = await lookupGsiElevations(anchors.map((point) => ({
+        ...point,
+        maximumDetail: "1m",
+        interpolationMode: "neutral",
+      })), signal);
+      const finite = (sample: GsiElevationSample): sample is GsiElevationSample & { heightMeters: number } =>
+        sample.source !== null && Number.isFinite(sample.heightMeters);
+      const start = samples.slice(0, context.startOutsidePoints.length).filter(finite)
+        .map((sample) => sample.heightMeters);
+      const end = samples.slice(context.startOutsidePoints.length).filter(finite)
+        .map((sample) => sample.heightMeters);
+      if (start.length > 0 && end.length > 0) {
+        approaches.set(context.bridgeKey, {
+          startApproachHeightsMeters: start,
+          endApproachHeightsMeters: end,
+        });
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+  }));
+
+  const output = [...base];
+  await Promise.all(bridgeIndexes.map(async (pointIndex, localIndex) => {
+    const context = contexts[pointIndex];
+    const approach = context && approaches.get(context.bridgeKey);
+    const existing = existingSamples[localIndex];
+    if (!context || !approach || !existing) return;
+    const existingOrthometric = existing.source !== null && Number.isFinite(existing.heightMeters)
+      ? Number(existing.heightMeters)
+      : 0;
+    const deckOrthometric = resolveBridgeDeckOrthometricHeight({
+      existingHeightMeters: existingOrthometric,
+      ...approach,
+      positionFraction: context.positionFraction,
+    });
+    if (deckOrthometric === null) return;
+    let geoidHeightMeters = existing.source !== null && Number.isFinite(existing.heightMeters)
+      ? base[pointIndex].height - Number(existing.heightMeters)
+      : Number.NaN;
+    if (!Number.isFinite(geoidHeightMeters)) {
+      try {
+        geoidHeightMeters = await lookupGsiGeoidHeight(
+          coordinates[pointIndex].latitude,
+          coordinates[pointIndex].longitude,
+          signal,
+          true
+        );
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return;
+      }
+    }
+    const derived = Cartographic.clone(base[pointIndex]);
+    derived.height = deckOrthometric + geoidHeightMeters;
+    markBridgeSupportSurfaceSample(derived);
+    output[pointIndex] = derived;
+  }));
   return output;
 }
 

@@ -20,6 +20,11 @@ import { keepServerTaskAlive, serverPersistentCache } from "./cloudflareRuntime.
 import { precomputedBearingProfileIdentity } from "./precomputedBearingProfiles.ts";
 import { EDRIVE_PROFILE_WRITE_BACK_PREFIX } from "./r2SafetyBudget.ts";
 
+// Cache identity, not the public response schema. v2 adds GSI bridge/elevated
+// road deck reconstruction; reusing a v1 object would silently restore the
+// riverbed/water profile that this calculation fixes.
+const EDRIVE_PROFILE_ALGORITHM_VERSION = "bridge-deck-v2";
+
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -32,7 +37,9 @@ export async function edriveProfileWriteBackKey(request: BearingProfileBatchRequ
     maxDistanceMeters: request.maxDistanceMeters,
   });
   const bearings = [...new Set(request.bearings)].sort((a, b) => a - b).join(",");
-  return `${EDRIVE_PROFILE_WRITE_BACK_PREFIX}${await sha256Hex(`${identity}|${bearings}`)}.json`;
+  return `${EDRIVE_PROFILE_WRITE_BACK_PREFIX}${await sha256Hex(
+    `${EDRIVE_PROFILE_ALGORITHM_VERSION}|${identity}|${bearings}`
+  )}.json`;
 }
 
 /** 書き戻し済みのJSONバイト列（未解析）。無ければnull。 */

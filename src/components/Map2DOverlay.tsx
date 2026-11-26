@@ -18,7 +18,6 @@ import {
   projectCoordinatesToMapPixel,
 } from "../map/webMercator";
 import type { MapPixelPoint, MapSize } from "../map/webMercator";
-import type { CandidatePointVisibilityPoint } from "../visibility/candidatePointVisibility";
 
 
 type Props = {
@@ -38,7 +37,6 @@ type Props = {
   milkyWayPath: MilkyWayPathPoint[];
   visibility: CelestialVisibility;
   candidates: TripodCandidate[];
-  candidateVisibilityPoints: CandidatePointVisibilityPoint[];
   candidateRiseSetArcs: TripodCandidateRiseSetArc[];
   tripodSearchLines: TripodSearchBaseLine[];
   foregroundObject: ForegroundObject | null;
@@ -46,7 +44,6 @@ type Props = {
   tripodCandidatesCalculating: boolean;
   onMoveForeground: (coordinates: { latitude: number; longitude: number }) => void;
   onSelectCandidate: (candidate: TripodCandidate) => void;
-  onSelectVisibilityPoint: (candidate: CandidatePointVisibilityPoint) => void;
 };
 
 function pinStyle(point: MapPixelPoint): CSSProperties {
@@ -136,7 +133,6 @@ export function Map2DOverlayComponent({
   tripodSubjectDistanceMeters,
   visibility,
   candidates,
-  candidateVisibilityPoints,
   candidateRiseSetArcs,
   tripodSearchLines,
   foregroundObject,
@@ -144,7 +140,6 @@ export function Map2DOverlayComponent({
   tripodCandidatesCalculating,
   onMoveForeground,
   onSelectCandidate,
-  onSelectVisibilityPoint,
 }: Props) {
   if (size.width <= 0 || size.height <= 0) return null;
 
@@ -278,23 +273,6 @@ export function Map2DOverlayComponent({
               {candidate.lineOfSightPossiblyObstructed ? " ⚠視界不良の可能性" : ""}
             </button>
           </div>
-        );
-      })}
-
-      {candidateVisibilityPoints.map((candidate) => {
-        if (!visibility[candidate.id]) return null;
-        const pixel = projectCoordinatesToMapPixel(candidate, center, zoom, size);
-        if (!isClearOfMapControls(pixel, size)) return null;
-        return (
-          <button
-            type="button"
-            key={`visibility-${candidate.visibilityKey}`}
-            className="map-candidate-visibility-point confirmed"
-            style={{ left: pixel.x, top: pixel.y }}
-            onClick={() => onSelectVisibilityPoint(candidate)}
-            aria-label={`${candidate.label} 地形・建物の見通し確認済み`}
-            title={`${candidate.label}：地形・PLATEAU建物の遮蔽なし`}
-          />
         );
       })}
 

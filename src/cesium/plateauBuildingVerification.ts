@@ -12,7 +12,6 @@ import { MIN_STRUCTURE_CLEARANCE_METERS } from "../height/subjectSurfaceResoluti
 import { diagnosticFetch } from "../network/networkDiagnostics";
 import {
   isPlateauRoofLookupResponse,
-  plateauBuildingReference,
 } from "../types/plateauRoof";
 import { withAbortableTimeout } from "../utils/abortableSemaphore";
 
@@ -480,7 +479,6 @@ async function resolveStoredPlateauRoofPoint(
         geoidHeightMeters,
         heightSource: "3d-picked",
         subjectSurfaceTarget: "structure-roof",
-        plateauBuildingRef: plateauBuildingReference(candidate),
         label,
       };
       return isResolvedGroundPoint(point) ? point : null;

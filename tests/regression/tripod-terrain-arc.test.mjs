@@ -6,6 +6,7 @@ import {
   buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
   prioritizedRiseSetCandidateBodyIds,
+  resolveTripodCandidateArcReferenceGroundHeights,
   riseSetArcSegments,
 } from "../../src/cesium/tripodCandidateRiseSetArc.ts";
 import {
@@ -62,6 +63,56 @@ test("rise/set terrain lines prioritize the displayed body and then process one 
   assert.deepEqual(prioritizedRiseSetCandidateBodyIds("moon"), ["moon", "sun", "milkyWay"]);
   assert.deepEqual(prioritizedRiseSetCandidateBodyIds("milkyWay"), ["milkyWay", "sun", "moon"]);
   assert.deepEqual(prioritizedRiseSetCandidateBodyIds(null), []);
+});
+
+test("guide-line ground references never confuse geoid separation with ellipsoidal ground height", () => {
+  const roof = {
+    ...subject,
+    subjectSurfaceTarget: "structure-roof",
+    structureHeightMeters: 333,
+  };
+  assert.deepEqual(resolveTripodCandidateArcReferenceGroundHeights({
+    subject: roof,
+    resolvedSubjectGroundEllipsoidalHeightMeters: null,
+    tripod: null,
+  }), [55]);
+  assert.equal(
+    resolveTripodCandidateArcReferenceGroundHeights({
+      subject: roof,
+      resolvedSubjectGroundEllipsoidalHeightMeters: null,
+      tripod: null,
+    }).includes(subject.geoidHeightMeters),
+    false,
+    "geoid separation N is not a ground-height candidate"
+  );
+  assert.deepEqual(resolveTripodCandidateArcReferenceGroundHeights({
+    subject: { ...subject, subjectSurfaceTarget: "terrain" },
+    resolvedSubjectGroundEllipsoidalHeightMeters: null,
+    tripod: null,
+  }), [388]);
+  assert.deepEqual(resolveTripodCandidateArcReferenceGroundHeights({
+    subject,
+    resolvedSubjectGroundEllipsoidalHeightMeters: null,
+    tripod: null,
+  }), [], "legacy point with unknown surface is not guessed");
+
+  // この実データ相当条件では、誤ってN=37mを地表高に使うと、正しい55mに対して
+  // 線の頂点が平均約59m・最大約484m動く。単なる表示上の丸め誤差ではない。
+  const correct = buildTripodCandidateRiseSetArc({
+    ...day,
+    referenceGroundEllipsoidalHeightMeters: [55],
+  });
+  const wrongDatum = buildTripodCandidateRiseSetArc({
+    ...day,
+    referenceGroundEllipsoidalHeightMeters: [subject.geoidHeightMeters],
+  });
+  const wrongByTime = new Map(wrongDatum.points.map((point) => [point.timestampMilliseconds, point]));
+  const displacements = correct.points.flatMap((point) => {
+    const wrong = wrongByTime.get(point.timestampMilliseconds);
+    return wrong ? [Math.abs(point.distanceMeters - wrong.distanceMeters)] : [];
+  });
+  assert.ok(displacements.length > 0);
+  assert.ok(Math.max(...displacements) > 400, "datum confusion must remain reproducible by regression test");
 });
 
 test("the selected exact candidate is the single displayed point and lies on the terrain line", async () => {

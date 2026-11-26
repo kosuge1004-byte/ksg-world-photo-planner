@@ -4,21 +4,7 @@ import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import zlib from "node:zlib";
-import type {
-  CandidatePointVisibilityRequest,
-  CandidatePointVisibilityResponse,
-} from "../../src/types/candidatePointVisibility.ts";
-import type {
-  PlateauBuildingReference,
-  PlateauRoofCandidate,
-} from "../../src/types/plateauRoof.ts";
-import {
-  buildPlateauLineOfSightPath,
-  findPlateauLineOfSightBlocker,
-  japaneseThirdMeshCode,
-  plateauPathIntersectsBbox,
-  type PlateauLineOfSightBuilding,
-} from "./plateauLineOfSight.ts";
+import type { PlateauRoofCandidate } from "../../src/types/plateauRoof.ts";
 
 const DIRECTORY = "plateau-buildings";
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
@@ -60,10 +46,6 @@ type LoadedFile = { header: { dataset: string; entry: string }; buildings: Store
 
 export type PlateauBuildingStore = {
   lookup(latitude: number, longitude: number): Promise<PlateauRoofCandidate | null>;
-  lineOfSight(
-    request: CandidatePointVisibilityRequest,
-    candidateGroundHeightsMeters: ReadonlyMap<string, number>
-  ): Promise<CandidatePointVisibilityResponse>;
   entryCount: number;
 };
 
@@ -94,60 +76,6 @@ function validManifestRecord(value: unknown): value is ManifestRecord {
       /^buildings\/[a-z0-9._-]+\/[^/]+\.gml\.ndjson\.gz$/iu.test(record.file))) &&
     (record.bbox === null || validBbox(record.bbox)) &&
     Number.isSafeInteger(record.storedBytes) && (record.storedBytes as number) >= 0;
-}
-
-function buildingLevelAtPoint(
-  building: StoredBuilding,
-  latitude: number,
-  longitude: number
-): 1 | 2 | 3 | 4 | null {
-  if (!contains(building.b, latitude, longitude) || (building.bad ?? 0) !== 0) return null;
-  const levels = Object.keys(building.l ?? {}).map(Number)
-    .filter((level): level is 1 | 2 | 3 | 4 => level >= 1 && level <= 4)
-    .sort((left, right) => right - left);
-  for (const level of levels) {
-    const geometry = building.l?.[String(level)];
-    if (geometry?.t?.some((face) => insideFace(latitude, longitude, face))) return level;
-  }
-  return null;
-}
-
-function lineOfSightGeometries(
-  record: ManifestRecord,
-  building: StoredBuilding
-): PlateauLineOfSightBuilding[] {
-  if ((building.bad ?? 0) !== 0) return [];
-  const levels = Object.keys(building.l ?? {}).map(Number)
-    .filter((level): level is 1 | 2 | 3 | 4 => level >= 1 && level <= 4)
-    .sort((left, right) => right - left);
-  for (const level of levels) {
-    const geometry = building.l?.[String(level)];
-    if (!geometry || !validRange(geometry.z) || !Array.isArray(geometry.t) || geometry.t.length < 1) continue;
-    const values: PlateauLineOfSightBuilding[] = [{
-        dataset: record.dataset,
-        buildingId: building.id,
-        bbox: building.b,
-        geometry: {
-          minimumHeightMeters: geometry.z[0],
-          maximumHeightMeters: geometry.z[1],
-          topFaces: geometry.t,
-        },
-      }];
-    if (validRange(geometry.zi) && Array.isArray(geometry.ti) && geometry.ti.length > 0) {
-      values.push({
-        dataset: record.dataset,
-        buildingId: building.id,
-        bbox: building.b,
-        geometry: {
-          minimumHeightMeters: geometry.zi[0],
-          maximumHeightMeters: geometry.zi[1],
-          topFaces: geometry.ti,
-        },
-      });
-    }
-    return values;
-  }
-  return [];
 }
 
 function cellKey(latitude: number, longitude: number): string {
@@ -307,10 +235,6 @@ export async function createPlateauBuildingStore(configuredRoot: string): Promis
     if (!validManifestRecord(value)) throw new Error("building manifest record is invalid");
     if (!value.special && value.file && value.bbox) records.push(value);
   }
-  const coveredThirdMeshes = new Set(
-    records.map((record) => record.mesh).filter((mesh) => /^\d{8}$/u.test(mesh))
-  );
-
   const cells = new Map<string, number[]>();
   records.forEach((record, index) => {
     const bbox = record.bbox as [number, number, number, number];
@@ -391,54 +315,6 @@ export async function createPlateauBuildingStore(configuredRoot: string): Promis
     return candidates;
   };
 
-  const buildingsAtPoint = async (latitude: number, longitude: number) => {
-    const matches: Array<{
-      key: string;
-      reference: PlateauBuildingReference | null;
-    }> = [];
-    const indexes = cells.get(cellKey(latitude, longitude)) ?? [];
-    for (const index of indexes) {
-      const record = records[index];
-      if (!contains(record.bbox as number[], latitude, longitude)) continue;
-      const loaded = await loadFile(record);
-      for (const building of loaded.buildings) {
-        const level = buildingLevelAtPoint(building, latitude, longitude);
-        if (!level) continue;
-        matches.push({
-          key: `${record.dataset}\u0000${building.id}`,
-          reference: level >= 2 ? {
-            dataset: record.dataset,
-            year: record.year,
-            buildingId: building.id,
-            lod: level,
-          } : null,
-        });
-      }
-    }
-    return matches;
-  };
-
-  const buildingsForPath = async (
-    pathPoints: readonly { latitude: number; longitude: number }[]
-  ): Promise<PlateauLineOfSightBuilding[]> => {
-    const recordIndexes = new Set<number>();
-    for (const point of pathPoints) {
-      for (const index of cells.get(cellKey(point.latitude, point.longitude)) ?? []) {
-        recordIndexes.add(index);
-      }
-    }
-    const buildings: PlateauLineOfSightBuilding[] = [];
-    for (const index of recordIndexes) {
-      const record = records[index];
-      if (!plateauPathIntersectsBbox(pathPoints, record.bbox as [number, number, number, number])) continue;
-      const loaded = await loadFile(record);
-      for (const building of loaded.buildings) {
-        buildings.push(...lineOfSightGeometries(record, building));
-      }
-    }
-    return buildings;
-  };
-
   const selectHighest = (candidates: PlateauRoofCandidate[]) => candidates.reduce<PlateauRoofCandidate | null>(
     (highest, candidate) => !highest || candidate.orthometricHeightMeters > highest.orthometricHeightMeters
       ? candidate : highest,
@@ -459,58 +335,6 @@ export async function createPlateauBuildingStore(configuredRoot: string): Promis
         refined.push(...await lookupExact(point.latitude, point.longitude));
       }
       return selectHighest(refined);
-    },
-    lineOfSight: async (request, candidateGroundHeightsMeters) => {
-      const detectedSubjectBuildings = await buildingsAtPoint(
-        request.subject.latitude,
-        request.subject.longitude
-      );
-      const excludedBuildingKeys = new Set(detectedSubjectBuildings.map((match) => match.key));
-      if (request.subject.plateauBuildingRef) {
-        excludedBuildingKeys.add(
-          `${request.subject.plateauBuildingRef.dataset}\u0000${request.subject.plateauBuildingRef.buildingId}`
-        );
-      }
-      const excludedSubjectBuilding = request.subject.plateauBuildingRef ??
-        detectedSubjectBuildings.find((match) => match.reference)?.reference ?? null;
-
-      const results = [] as CandidatePointVisibilityResponse["results"];
-      for (const point of request.points) {
-        const groundHeightMeters = candidateGroundHeightsMeters.get(point.key);
-        if (!Number.isFinite(groundHeightMeters)) {
-          results.push({ key: point.key, status: "unverified" });
-          continue;
-        }
-        const path = buildPlateauLineOfSightPath(point, request.subject);
-        if (path.distanceMeters <= 2) {
-          results.push({ key: point.key, status: "clear" });
-          continue;
-        }
-        const buildings = await buildingsForPath(path.points);
-        const blocker = findPlateauLineOfSightBlocker(
-          path,
-          (groundHeightMeters as number) + request.lensCenterHeightMeters,
-          request.subject.orthometricHeightMeters,
-          buildings,
-          excludedBuildingKeys
-        );
-        if (blocker) {
-          results.push({
-            key: point.key,
-            status: "blocked",
-            obstructionDistanceMeters: blocker.distanceFromCandidateMeters,
-            obstructionBuildingId: blocker.buildingId,
-            dataset: blocker.dataset,
-          });
-          continue;
-        }
-        const completeCoverage = path.points.every((pathPoint) => {
-          const mesh = japaneseThirdMeshCode(pathPoint.latitude, pathPoint.longitude);
-          return mesh !== null && coveredThirdMeshes.has(mesh);
-        });
-        results.push({ key: point.key, status: completeCoverage ? "clear" : "unverified" });
-      }
-      return { results, excludedSubjectBuilding };
     },
   };
 }

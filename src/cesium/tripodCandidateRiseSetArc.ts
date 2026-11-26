@@ -1,7 +1,7 @@
 import type { CalculationMode } from "../types/camera";
 import type { CelestialBodyId, TripodCandidate } from "../types/celestial";
 import type { GroundPoint } from "../types/points";
-import { withLensCenterHeight } from "../types/points";
+import { ellipsoidalHeightMeters, withLensCenterHeight } from "../types/points";
 import type { RefractionWeatherContext } from "../search/refractionWeather";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import { calculateCelestialHorizontalCoordinates, findHorizonCrossing } from "./celestial";
@@ -135,6 +135,54 @@ export type BuildTripodCandidateRiseSetArcInput = {
    */
   referenceGroundEllipsoidalHeightMeters?: number | readonly number[];
 };
+
+export type TripodCandidateArcReferenceGroundInput = {
+  subject: GroundPoint | null;
+  resolvedSubjectGroundEllipsoidalHeightMeters: number | null;
+  tripod: GroundPoint | null;
+};
+
+/**
+ * 目安線に使える「地表のWGS84楕円体高」だけを優先順で返す。
+ *
+ * geoidHeightMeters は楕円体高と標高の差 N であり、地表高そのものではない。
+ * ここへ混ぜると、地表取得が遅い／失敗した場合に N を地面の高さとして採用し、
+ * 三脚候補線が本来の位置からずれるため、入力候補には絶対に使用しない。
+ */
+export function resolveTripodCandidateArcReferenceGroundHeights({
+  subject,
+  resolvedSubjectGroundEllipsoidalHeightMeters,
+  tripod,
+}: TripodCandidateArcReferenceGroundInput): number[] {
+  const candidates: number[] = [];
+  const add = (value: number | null | undefined) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return;
+    const rounded = Math.round(value * 10) / 10;
+    if (!candidates.some((candidate) => Math.abs(candidate - rounded) < 0.05)) {
+      candidates.push(rounded);
+    }
+  };
+
+  // DEM等で解決した被写体直下の地表が最優先。
+  add(resolvedSubjectGroundEllipsoidalHeightMeters);
+
+  // 地表点なら被写体自身の楕円体高、構造物なら屋根高から確認済み構造物高を引く。
+  // surface が未確定の旧データは、屋根を地表と誤認しないよう推測しない。
+  if (subject?.subjectSurfaceTarget === "terrain") {
+    add(ellipsoidalHeightMeters(subject));
+  } else if (
+    subject?.subjectSurfaceTarget === "structure-roof" &&
+    typeof subject.structureHeightMeters === "number" &&
+    Number.isFinite(subject.structureHeightMeters) &&
+    subject.structureHeightMeters > 0
+  ) {
+    add(ellipsoidalHeightMeters(subject) - subject.structureHeightMeters);
+  }
+
+  // 被写体側の地表が使えない場合に限って、現在の三脚地表を次候補にする。
+  if (tripod) add(ellipsoidalHeightMeters(tripod));
+  return candidates;
+}
 
 function findLastCrossing(
   id: RiseSetCandidateBodyId,

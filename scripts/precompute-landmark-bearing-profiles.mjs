@@ -5,7 +5,7 @@ import { gzip, gunzipSync } from "node:zlib";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { configureServerRuntime } from "../server/cloudflareRuntime.ts";
-import { computeBearingProfileBatch } from "../server/bearingProfileBatch.ts";
+import { computeBridgeAwareBearingProfileBatch } from "../server/bearingProfileBatch.ts";
 import { ACTIVE_PREWARM_LANDMARKS } from "../server/landmarkPrewarmSeed.ts";
 import {
   findPrecomputedBearingProfileTarget,
@@ -221,7 +221,7 @@ for (const [offset, landmark] of selected.entries()) {
       bearings,
       maxDistanceMeters,
     };
-    const response = await computeBearingProfileBatch(request);
+    const response = await computeBridgeAwareBearingProfileBatch(request);
     if (!isPrecomputedBearingProfileResponse(response, request)) {
       const reason = response.failedBearings[0]?.reason || "incomplete profile response";
       throw new Error(reason);
