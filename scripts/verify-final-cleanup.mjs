@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { retiredVisibilityModulePaths, retiredVisibilityModuleSource } from "./retired-visibility-files.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = path.join(projectRoot, "src");
@@ -49,7 +50,15 @@ for (const relativePath of removedFiles) {
   }
 }
 
-const sourceFiles = walk(sourceRoot).filter((filePath) => /\.(?:ts|tsx|css)$/.test(filePath));
+const retiredSourceFiles = new Set(retiredVisibilityModulePaths.map((relativePath) => {
+  const filePath = path.join(projectRoot, relativePath);
+  if (fs.existsSync(filePath) && read(relativePath).replace(/\r\n/g, "\n") !== retiredVisibilityModuleSource) {
+    throw new Error(`retired module contains executable code or unexpected content: ${relativePath}`);
+  }
+  return filePath;
+}));
+const sourceFiles = walk(sourceRoot).filter((filePath) =>
+  /\.(?:ts|tsx|css)$/.test(filePath) && !retiredSourceFiles.has(filePath));
 const normalizedSourceFiles = new Set(sourceFiles.map((filePath) => path.normalize(filePath)));
 const dependencyGraph = new Map();
 

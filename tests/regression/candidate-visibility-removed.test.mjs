@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { retiredVisibilityModulePaths, retiredVisibilityModuleSource } from "../../scripts/retired-visibility-files.mjs";
 
-const removedFiles = [
-  "CANDIDATE_POINT_VISIBILITY_FEATURE.md",
-  "src/visibility/candidatePointVisibilityFeature.ts",
-  "src/visibility/candidatePointVisibility.ts",
-  "src/types/candidatePointVisibility.ts",
-  "src/cesium/candidatePointVisibilityEntities.ts",
-  "functions/api/candidate-point-visibility.ts",
-  "tools/local-dem-server/plateauLineOfSight.ts",
-];
-
-test("candidate-point visibility files and execution routes stay removed", () => {
-  for (const file of removedFiles) {
-    assert.equal(existsSync(file), false, `${file} must stay removed`);
+test("in-place upgrades overwrite retired candidate visibility modules with no executable code", () => {
+  for (const file of retiredVisibilityModulePaths) {
+    if (existsSync(file)) {
+      assert.equal(readFileSync(file, "utf8").replace(/\r\n/g, "\n"), retiredVisibilityModuleSource, file);
+    }
   }
+  const obsoleteDocumentation = "CANDIDATE_POINT_VISIBILITY_FEATURE.md";
+  if (existsSync(obsoleteDocumentation)) {
+    assert.equal(readFileSync(obsoleteDocumentation, "utf8").trim(),
+      "見通し機能は廃止されました。このファイルは、旧版への上書き時に以前の説明を残さないために同梱しています。");
+  }
+});
+
+test("candidate-point visibility execution routes stay removed", () => {
   for (const file of [
     "src/App.tsx",
     "src/components/Map2DOverlay.tsx",
