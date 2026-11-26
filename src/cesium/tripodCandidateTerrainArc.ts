@@ -1,6 +1,8 @@
 import { Cartesian3, Cartographic, Ellipsoid } from "cesium";
 
 import { ellipsoidalHeightMeters } from "../types/points";
+import { calculateKarneyLineMetrics } from "../geodesy/karneyGeodesic";
+import type { TripodCandidate } from "../types/celestial";
 import {
   RISE_SET_BODY_LABELS,
   type RiseSetArcModel,
@@ -50,6 +52,7 @@ const WGS84_E2 = (1 / 298.257223563) * (2 - 1 / 298.257223563);
 // そこを1本の線で結ぶと実在しない直線が描かれる。
 const SEGMENT_BREAK_MIN_METERS = 300;
 const SEGMENT_BREAK_RATIO = 0.35;
+const MAX_CONNECTED_VERTEX_SHIFT_METERS = 50;
 // 断面が検索上限のこの割合まで届いていれば、「断面の端でも視線が地面より上」を
 // 「検索上限より遠くに候補がある」とみなして検索上限の円周へ収める。
 const SECTION_COVERS_RANGE_RATIO = 0.99;
@@ -76,9 +79,9 @@ export function requiredTerrainBearings(timeline: RiseSetArcTimeline): number[] 
 
 /** 同一天体に複数交点がある場合、赤線と同じ最遠交点だけを表示対象にする。 */
 export function farthestTripodCandidatesByBody(
-  candidates: readonly import("../types/celestial").TripodCandidate[]
-): import("../types/celestial").TripodCandidate[] {
-  const farthest = new Map<string, import("../types/celestial").TripodCandidate>();
+  candidates: readonly TripodCandidate[]
+): TripodCandidate[] {
+  const farthest = new Map<string, TripodCandidate>();
   for (const candidate of candidates) {
     const current = farthest.get(candidate.id);
     if (!current || candidate.distanceMeters > current.distanceMeters) {
@@ -88,21 +91,50 @@ export function farthestTripodCandidatesByBody(
   return [...farthest.values()];
 }
 
-/**
- * 選択時刻の精密候補を候補線の最寄り時刻頂点へ反映する。
- * 線は2分刻み、候補点は選択時刻そのものなので、この反映が無いと地形急変部では
- * 同じ計算式でも線分補間と点が離れて見える。3分より遠い頂点は別の出入り回として
- * 扱い、誤って線を移動しない。
- * 正確な地形線の取得待ちに表示する目安線にも同じ処理を適用する。
- */
+function isMappedTerrainCandidate(candidate: TripodCandidate): boolean {
+  return candidate.solutionType !== "preliminary" && candidate.solutionType !== "direction-only" &&
+    Number.isFinite(candidate.latitude) && Math.abs(candidate.latitude) <= 90 &&
+    Number.isFinite(candidate.longitude) && Math.abs(candidate.longitude) <= 180 &&
+    Number.isFinite(candidate.height) && Number.isFinite(candidate.distanceMeters);
+}
+
+/** 置換で隣の線分を過度に曲げない範囲だけ、精密点を同じ地形区間へ合わせる。 */
+function canMoveConnectedVertex(
+  segment: TripodCandidateRiseSetArcPoint[],
+  nearest: TripodCandidateRiseSetArcPoint,
+  candidate: TripodCandidate,
+  timestampMilliseconds: number
+): boolean {
+  const index = segment.indexOf(nearest);
+  const before = segment[index - 1];
+  const after = segment[index + 1];
+  if ((before && timestampMilliseconds < before.timestampMilliseconds) ||
+    (after && timestampMilliseconds > after.timestampMilliseconds)) return false;
+
+  // 頂点の水平移動量に上限を設け、各隣接辺の長さの半分も越えないようにする。
+  // これなら隣の点の向こう側へ行って折り返すような線を生成しない。
+  let maximumShift = MAX_CONNECTED_VERTEX_SHIFT_METERS;
+  for (const adjacent of [before, after]) {
+    if (!adjacent) continue;
+    maximumShift = Math.min(maximumShift, calculateKarneyLineMetrics(nearest, adjacent).distanceMeters / 2);
+  }
+  return calculateKarneyLineMetrics(nearest, candidate).distanceMeters <= maximumShift;
+}
+
+/** 地形線の同じ区間へ接続できなければ、確定座標を赤い単独点として返す。 */
 export function alignTerrainArcToExactCandidate(
   arc: TripodCandidateRiseSetArc,
-  candidate: import("../types/celestial").TripodCandidate | undefined,
+  candidate: TripodCandidate | undefined,
   timestampMilliseconds: number,
   maximumTimeDeltaMs = 3 * 60_000
 ): TripodCandidateRiseSetArc {
-  if (!candidate || candidate.id !== arc.id ||
+  if (!candidate || candidate.id !== arc.id || !isMappedTerrainCandidate(candidate) ||
     !Number.isFinite(timestampMilliseconds)) return arc;
+  const isolated: TripodCandidateRiseSetArcPoint = { ...candidate, timestampMilliseconds };
+  const withIsolatedPoint = () => ({ ...arc, isolatedPoints: [...(arc.isolatedPoints ?? []), isolated] });
+  // 目安線は別の高さ条件で求めているため、精密点に合わせて動かさない。
+  if (arc.kind !== "terrain") return withIsolatedPoint();
+
   let nearest: TripodCandidateRiseSetArcPoint | null = null;
   let nearestDelta = Number.POSITIVE_INFINITY;
   for (const point of arc.points) {
@@ -112,7 +144,17 @@ export function alignTerrainArcToExactCandidate(
       nearestDelta = delta;
     }
   }
-  if (!nearest || nearestDelta > maximumTimeDeltaMs) return arc;
+  const segments = arc.segments ?? [arc.points];
+  const containingSegment = nearest ? segments.find((segment) => segment.includes(nearest)) : undefined;
+  if (!nearest || !containingSegment || nearestDelta > maximumTimeDeltaMs) return withIsolatedPoint();
+  if (containingSegment.length > 1 &&
+    !canMoveConnectedVertex(containingSegment, nearest, candidate, timestampMilliseconds)) {
+    return withIsolatedPoint();
+  }
+  if (containingSegment.length === 1 &&
+    calculateKarneyLineMetrics(nearest, candidate).distanceMeters > MAX_CONNECTED_VERTEX_SHIFT_METERS) {
+    return withIsolatedPoint();
+  }
   const replacement: TripodCandidateRiseSetArcPoint = {
     ...candidate,
     // 精密候補の座標へ合わせても、同じ時刻頂点で既に確認した地形LOS結果は
@@ -123,25 +165,27 @@ export function alignTerrainArcToExactCandidate(
   };
   const replace = (point: TripodCandidateRiseSetArcPoint) =>
     point === nearest ? replacement : point;
-  const segments = (arc.segments ?? [arc.points]).map((segment) => segment.map(replace));
-  return { ...arc, points: segments.flat(), segments };
+  const adjusted = segments.map((segment) => segment === containingSegment ? segment.map(replace) : segment);
+  return { ...arc, points: adjusted.flat(), segments: adjusted };
 }
 
 /**
  * 正確な地形線を優先し、取得中・一時失敗中は目安線を途切れさせず表示する。
- * どちらを使う場合も選択時刻の確定候補を同じ時刻の頂点へ反映するため、
- * 三脚候補点だけが線から離れて見える状態を作らない。
+ * 線が無くても、選択時刻に地形確認済みの候補点があれば単独で表示する。
  */
 export function selectTripodCandidateRiseSetArc(
   terrainArc: TripodCandidateRiseSetArc | undefined,
   fallbackArc: TripodCandidateRiseSetArc | undefined,
-  candidate: import("../types/celestial").TripodCandidate | undefined,
+  candidate: TripodCandidate | undefined,
   timestampMilliseconds: number
 ): TripodCandidateRiseSetArc | null {
   const arc = terrainArc ?? fallbackArc;
-  return arc
-    ? alignTerrainArcToExactCandidate(arc, candidate, timestampMilliseconds)
-    : null;
+  if (arc) return alignTerrainArcToExactCandidate(arc, candidate, timestampMilliseconds);
+  if (!candidate || candidate.id === "polaris" || !isMappedTerrainCandidate(candidate) ||
+    !Number.isFinite(timestampMilliseconds)) return null;
+  const instant = new Date(timestampMilliseconds);
+  const point = { ...candidate, timestampMilliseconds };
+  return { id: candidate.id, riseAt: instant, setAt: instant, points: [point], segments: [[point]] };
 }
 
 type SampleGeometry = {
@@ -448,18 +492,19 @@ export async function buildTerrainRiseSetArc(
   }
   closeSegment();
 
-  const drawable = segments.filter((segment) => segment.length >= 2);
-  const hasRealIntersection = drawable.some((segment) =>
-    segment.some((point) => point.distanceMeters < model.maxDistanceMeters)
-  );
-  // 検索上限の円周だけが残る場合は線として見せない（目安の線と同じ方針）。
-  if (!hasRealIntersection) return null;
+  const hasRealPoint = (segment: TripodCandidateRiseSetArcPoint[]) =>
+    segment.some((point) => point.distanceMeters < model.maxDistanceMeters);
+  const hasTerrainLine = segments.some((segment) => segment.length >= 2 && hasRealPoint(segment));
+  // 単独の実交点は残す。探索上限を表す補助頂点だけを赤い点として出さない。
+  const visibleSegments = segments.filter((segment) => hasRealPoint(segment) ||
+    (segment.length >= 2 && hasTerrainLine));
+  if (visibleSegments.length === 0) return null;
   return {
     id: timeline.id,
     riseAt: timeline.riseAt,
     setAt: timeline.setAt,
-    points: segments.flat(),
-    segments,
+    points: visibleSegments.flat(),
+    segments: visibleSegments,
     kind: "terrain",
     model,
   };

@@ -1143,6 +1143,11 @@ function App() {
     useState<Partial<Record<number, boolean>>>({});
   const [tripodCandidates, setTripodCandidates] =
     useState<TripodCandidate[]>([]);
+  const tripodArcCandidateContext = useRef(new WeakMap<TripodCandidate, {
+    subject: GroundPoint;
+    timestampMilliseconds: number;
+    lensCenterHeightMeters: number;
+  }>());
   // 2026-09-02変更（明示指示により）: 計算中の暫定候補（地形未確認の
   // 理論値）は地図に表示しない方針となったため撤去した。表示するのは
   // 地形確認まで完了した確定候補（tripodCandidates）のみ。
@@ -2635,9 +2640,7 @@ function App() {
     [displayedTripodCandidates]
   );
 
-  // 画面に出す三脚候補線。正確な小数方位の断面を優先し、取得待ち・一時失敗中は
-  // 目安線を表示する。どちらも選択時刻の精密候補を最寄り頂点へ反映し、
-  // 赤線が消える状態と、赤線から候補点だけが離れる状態を作らない。
+  // 正確な地形線を優先。前後の線へ接続できない確定点は独立した赤点にする。
   const tripodCandidateRiseSetArcs = useMemo(() => {
     if (!terrainArcRequest) return [];
     const result = terrainArcResult;
@@ -2655,7 +2658,12 @@ function App() {
       result.request.passKey === terrainArcRequest.passKey
     ));
     const exactCandidates = new Map(
-      farthestTripodCandidatesByBody(displayedTripodCandidates)
+      (timelineInteracting ? [] : displayedTripodCandidates.filter((candidate) => {
+        const context = tripodArcCandidateContext.current.get(candidate);
+        return context?.subject === terrainArcRequest.subject &&
+          context.timestampMilliseconds === selectedDate.getTime() &&
+          context.lensCenterHeightMeters === terrainArcRequest.lensCenterHeightMeters;
+      }))
         .map((candidate) => [candidate.id, candidate] as const)
     );
     const fallbackArcs = new Map(
@@ -2678,6 +2686,7 @@ function App() {
     displayedTripodCandidates,
     selectedDate,
     celestialVisibility,
+    timelineInteracting,
   ]);
 
   // 2026-10-01: 2DではMap2DOverlayが三脚候補点を描画しているが、3D側には
@@ -2841,11 +2850,20 @@ function App() {
       refractionMode: precisionSettings.refractionCorrectionMode,
       preferredDistancesById,
     });
+    const candidateContext = {
+      subject: subjectPoint,
+      timestampMilliseconds: selectedDate.getTime(),
+      lensCenterHeightMeters: cameraSettings.lensCenterHeightMeters,
+    };
+    const rememberArcCandidateContext = (candidates: TripodCandidate[]) => {
+      for (const candidate of candidates) tripodArcCandidateContext.current.set(candidate, candidateContext);
+    };
     const exactCacheKey = exactCacheEnabled ? calculationKey : null;
     const exactCachedCandidates = exactCacheKey
       ? getExactTripodCandidates(exactCacheKey)
       : null;
     if (exactCachedCandidates) {
+      rememberArcCandidateContext(exactCachedCandidates);
       tripodCandidatesRef.current = exactCachedCandidates;
       lastConfirmedTripodCandidatesRef.current = exactCachedCandidates;
       lastConfirmedTripodSubjectRef.current = { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude };
@@ -2920,6 +2938,7 @@ function App() {
           // 「確定した三脚候補」と表示される。確定候補が1件以上ある場合だけ
           // 高速経路を採用し、0件/nullはauthoritativeな通常探索へ進める。
           if (bearingProfileResult && bearingProfileResult.length > 0) {
+            rememberArcCandidateContext(bearingProfileResult);
             tripodCandidatesRef.current = bearingProfileResult;
             lastConfirmedTripodCandidatesRef.current = bearingProfileResult;
             lastConfirmedTripodSubjectRef.current = {
@@ -3051,6 +3070,7 @@ function App() {
                 () => {},
                 (resolvedId, resolvedCandidates) => {
                   if (cancelled || controller.signal.aborted || resolvedCandidates.length === 0) return;
+                  rememberArcCandidateContext(resolvedCandidates);
                   // 先に完了した天体の全交点を即時表示し、遅い天体の完了を待たない。
                   setTripodCandidates((current) => {
                     if (cancelled || controller.signal.aborted) return current;
@@ -3071,6 +3091,7 @@ function App() {
           }
           if (!cancelled) {
             const displayedCandidates = candidates;
+            rememberArcCandidateContext(displayedCandidates);
             tripodCandidatesRef.current = displayedCandidates;
             lastConfirmedTripodCandidatesRef.current = displayedCandidates;
             lastConfirmedTripodSubjectRef.current = { latitude: subjectPoint.latitude, longitude: subjectPoint.longitude };

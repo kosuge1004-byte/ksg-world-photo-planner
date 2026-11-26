@@ -10,9 +10,15 @@ import {
 } from "cesium";
 
 import type { CelestialBodyId, TripodCandidate } from "../types/celestial";
-import { riseSetArcSegments, type TripodCandidateRiseSetArc } from "./tripodCandidateRiseSetArc";
+import {
+  riseSetArcIsolatedPoints,
+  riseSetArcSegments,
+  tripodCandidatePositionKey,
+  type TripodCandidateRiseSetArc,
+} from "./tripodCandidateRiseSetArc";
 
 const ENTITY_ID_PREFIX = "ksg-tripod-candidate";
+const ISOLATED_POINT_COLOR = Color.fromCssColorString("#ff2a2a");
 
 const CANDIDATE_COLOR_BY_ID: Record<CelestialBodyId, string> = {
   sun: "#ffc928",
@@ -47,6 +53,9 @@ export function updateTripodCandidateEntities(
   if (viewer.isDestroyed()) return;
 
   clearTripodCandidateEntities(viewer);
+  const isolatedArcPoints = candidateRiseSetArcs.flatMap(riseSetArcIsolatedPoints);
+  const isolatedArcPointKeys = new Set(isolatedArcPoints.map(tripodCandidatePositionKey));
+  const drawnCandidateKeys = new Set<string>();
 
   candidates.forEach((candidate, index) => {
     if (
@@ -57,6 +66,8 @@ export function updateTripodCandidateEntities(
       return;
     }
 
+    const positionKey = tripodCandidatePositionKey(candidate);
+    drawnCandidateKeys.add(positionKey);
     viewer.entities.add(
       new Entity({
         id: entityId(candidate, index),
@@ -68,7 +79,7 @@ export function updateTripodCandidateEntities(
         ),
         point: {
           pixelSize: 15,
-          color: candidateColor(candidate.id),
+          color: isolatedArcPointKeys.has(positionKey) ? ISOLATED_POINT_COLOR : candidateColor(candidate.id),
           outlineColor: Color.WHITE,
           outlineWidth: 3,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -76,6 +87,26 @@ export function updateTripodCandidateEntities(
         },
       })
     );
+  });
+
+  isolatedArcPoints.forEach((point, index) => {
+    const positionKey = tripodCandidatePositionKey(point);
+    if (drawnCandidateKeys.has(positionKey) ||
+      !Number.isFinite(point.latitude) || !Number.isFinite(point.longitude) ||
+      !Number.isFinite(point.height)) return;
+    drawnCandidateKeys.add(positionKey);
+    viewer.entities.add(new Entity({
+      id: `${ENTITY_ID_PREFIX}:${point.id}-isolated-${index}`,
+      name: `${point.label}の単独三脚候補点`,
+      position: Cartesian3.fromDegrees(point.longitude, point.latitude, point.height),
+      point: {
+        pixelSize: 8,
+        color: ISOLATED_POINT_COLOR,
+        outlineColor: Color.WHITE,
+        outlineWidth: 1,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    }));
   });
 
   // 2026-10-08: 線は区間ごとに描く。標高を加味した線は、交点が尾根をまたいで別の斜面へ

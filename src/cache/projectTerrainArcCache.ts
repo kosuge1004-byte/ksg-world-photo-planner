@@ -114,7 +114,7 @@ function validSnapshot(value: unknown): value is ProjectTerrainArcSnapshot {
       arc.segments.some((segment) => !Array.isArray(segment) || segment.some((point) => !validPoint(point, id)))) {
       return false;
     }
-    if (arc.segments.flat().length < 2) return false;
+    if (!arc.segments.some((segment) => segment.length > 0)) return false;
   }
   return true;
 }
@@ -128,7 +128,7 @@ export function createProjectTerrainArcSnapshot(
     const segments = (arc.segments ?? [arc.points]).map((segment) =>
       segment.map((point) => ({ ...point }))
     );
-    if (segments.flat().length < 2) return [];
+    if (!segments.some((segment) => segment.length > 0)) return [];
     return [{
       id: arc.id,
       riseAtMilliseconds: arc.riseAt.getTime(),

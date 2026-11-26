@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { Color, EntityCollection } from "cesium";
 
 import {
   buildRiseSetArcTimeline,
   buildTripodCandidateRiseSetArc,
   prioritizedRiseSetCandidateBodyIds,
   resolveTripodCandidateArcReferenceGroundHeights,
+  riseSetArcIsolatedPoints,
   riseSetArcSegments,
 } from "../../src/cesium/tripodCandidateRiseSetArc.ts";
 import {
@@ -18,6 +20,7 @@ import {
   terrainIntersectionForSample,
   terrainSectionBearing,
 } from "../../src/cesium/tripodCandidateTerrainArc.ts";
+import { updateTripodCandidateEntities } from "../../src/cesium/tripodCandidateEntities.ts";
 import {
   buildCelestialBackwardRay,
   rayCartographicAtDistance,
@@ -128,7 +131,12 @@ test("the selected exact candidate is the single displayed point and lies on the
   const timeline = buildRiseSetArcTimeline({ ...day, sampleMinutes: 2 });
   const terrain = await buildTerrainRiseSetArc(timeline, () => section(() => GROUND), { yieldEverySamples: 0 });
   const target = terrain.points[Math.floor(terrain.points.length / 2)];
-  const exact = { ...target, latitude: target.latitude + 0.0001, longitude: target.longitude - 0.0001 };
+  const exact = {
+    ...target,
+    solutionType: "aligned",
+    latitude: target.latitude + 0.000001,
+    longitude: target.longitude - 0.000001,
+  };
   const aligned = alignTerrainArcToExactCandidate(terrain, exact, target.timestampMilliseconds);
   const replaced = aligned.points.find((point) => point.timestampMilliseconds === target.timestampMilliseconds);
   assert.equal(replaced.latitude, exact.latitude);
@@ -139,21 +147,85 @@ test("the selected exact candidate is the single displayed point and lies on the
   assert.equal(flat.kind, "flat");
   assert.equal(riseSetArcSegments(flat).length, 1);
   const flatTarget = flat.points[Math.floor(flat.points.length / 2)];
-  const flatExact = { ...flatTarget, latitude: flatTarget.latitude + 0.0002 };
+  const flatExact = { ...flatTarget, solutionType: "aligned", latitude: flatTarget.latitude + 0.0002 };
   const selectedFallback = selectTripodCandidateRiseSetArc(
     undefined, flat, flatExact, flatTarget.timestampMilliseconds
   );
   assert.ok(selectedFallback, "exact terrain取得待ちでも目安線を返す");
-  assert.equal(
-    selectedFallback.points.find((point) => point.timestampMilliseconds === flatTarget.timestampMilliseconds).latitude,
-    flatExact.latitude,
-    "目安線も選択時刻の確定候補と交差する"
-  );
+  assert.equal(selectedFallback.points, flat.points, "目安線の頂点を移動しない");
+  assert.deepEqual(riseSetArcIsolatedPoints(selectedFallback), [flatExact]);
   assert.equal(
     selectTripodCandidateRiseSetArc(terrain, flat, exact, target.timestampMilliseconds).kind,
     "terrain",
     "exact terrain取得後は正確な地形線へ置き換える"
   );
+});
+
+test("1851m moon candidate stays a red dot and cannot make the Matsuyama guide turn back", () => {
+  const time = Date.parse("2027-01-01T01:36:00+09:00");
+  const ground = 132.215742 + 33.649397;
+  const flat = buildTripodCandidateRiseSetArc({
+    ...day,
+    id: "moon",
+    subject: {
+      latitude: 33.8455768,
+      longitude: 132.7655346,
+      label: "松山城",
+      height: ground + 20.1,
+      ellipsoidalHeightMeters: ground + 20.1,
+    },
+    dayStart: new Date("2027-01-01T00:00:00+09:00"),
+    dayEnd: new Date("2027-01-02T00:00:00+09:00"),
+    lensCenterHeightMeters: 1.6,
+    referenceGroundEllipsoidalHeightMeters: ground,
+  });
+  assert.ok(flat);
+  const candidate = {
+    id: "moon", label: "月", latitude: 33.8507802, longitude: 132.7465818,
+    height: 58, distanceMeters: 1851, solutionType: "aligned",
+  };
+  const nearest = flat.points.reduce((best, point) =>
+    Math.abs(point.timestampMilliseconds - time) < Math.abs(best.timestampMilliseconds - time) ? point : best);
+  assert.equal(Math.round(nearest.distanceMeters), 265);
+  const point = { ...candidate, timestampMilliseconds: time };
+  const result = selectTripodCandidateRiseSetArc(undefined, flat, candidate, time);
+  assert.deepEqual(riseSetArcSegments(result), riseSetArcSegments(flat));
+  assert.deepEqual(riseSetArcIsolatedPoints(result), [point]);
+
+  const terrain = { ...flat, kind: "terrain" };
+  const adjustedTerrain = selectTripodCandidateRiseSetArc(terrain, undefined, candidate, time);
+  assert.deepEqual(riseSetArcSegments(adjustedTerrain), riseSetArcSegments(terrain));
+  assert.deepEqual(riseSetArcIsolatedPoints(adjustedTerrain), [point]);
+
+  const pointOnly = selectTripodCandidateRiseSetArc(undefined, undefined, candidate, time);
+  assert.deepEqual(riseSetArcSegments(pointOnly), []);
+  assert.deepEqual(riseSetArcIsolatedPoints(pointOnly), [point]);
+  assert.equal(selectTripodCandidateRiseSetArc(undefined, undefined,
+    { ...candidate, solutionType: "direction-only" }, time), null);
+
+  const entities = new EntityCollection();
+  const viewer = { entities, isDestroyed: () => false, scene: { requestRender() {} } };
+  updateTripodCandidateEntities(viewer, [], [pointOnly]);
+  assert.equal(entities.values.length, 1);
+  assert.ok(entities.values[0].point.color.getValue().equals(Color.fromCssColorString("#ff2a2a")));
+  assert.equal(entities.values[0].polyline, undefined);
+  updateTripodCandidateEntities(viewer, [candidate], [pointOnly]);
+  assert.equal(entities.values.length, 1, "選択マーカーと同位置の赤点を重ねて追加しない");
+  assert.ok(entities.values[0].point.color.getValue().equals(Color.fromCssColorString("#ff2a2a")));
+});
+
+test("a single real DEM intersection remains a point without a guide line", async () => {
+  const timeline = buildRiseSetArcTimeline({ ...day, sampleMinutes: 2 });
+  const valid = timeline.model.samples.filter((sample) => sample.rayAltitudeDegrees > 10);
+  timeline.model.samples = valid.slice(0, 3);
+  const bearing = terrainSectionBearing(timeline.model.samples[1].azimuthDegrees);
+  const arc = await buildTerrainRiseSetArc(timeline, (key) =>
+    section(() => key === bearing ? GROUND : 700), { yieldEverySamples: 0 });
+  assert.ok(arc);
+  assert.deepEqual(riseSetArcSegments(arc), []);
+  const points = riseSetArcIsolatedPoints(arc);
+  assert.equal(points.length, 1);
+  assert.equal(points[0].timestampMilliseconds, timeline.model.samples[1].timestampMilliseconds);
 });
 
 test("on perfectly level ground the terrain line coincides with the level-ground guide", async () => {
@@ -563,6 +635,8 @@ test("app wiring: exact terrain line, exact candidate anchor, and no rounded fal
   assert.match(app, /groundDistanceMeters = calculateKarneyLineMetrics\([\s\S]*?\)\.distanceMeters;[\s\S]*?calculateKarneyDestinationPoint\([\s\S]*?groundDistanceMeters\s*\)/);
   // 区間ごとに描き、標高を加味した線は実線・目安の線は破線。
   assert.match(map2d, /riseSetArcSegments\(arc\)/);
+  assert.match(map2d, /<circle[\s\S]*className="map-tripod-isolated-point"/);
+  assert.match(app, /timelineInteracting \? \[\] : displayedTripodCandidates\.filter/);
   assert.match(map2d, /"map-tripod-rise-set-arc terrain"/);
   assert.match(css, /\.map-tripod-rise-set-arc\.terrain\s*\{[\s\S]*?stroke-dasharray:\s*none;/);
   assert.match(entities, /riseSetArcSegments\(arc\)/);

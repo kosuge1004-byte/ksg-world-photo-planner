@@ -16,6 +16,7 @@ type GuideSample =
   | "dot-moon"
   | "dot-milky-way"
   | "dot-polaris"
+  | "dot-candidate-isolated"
   | "pin-subject"
   | "pin-tripod"
   | "pin-pending"
@@ -89,6 +90,9 @@ export function DisplayGuide({ onClose }: Props) {
 
       <section className="display-guide-section" aria-labelledby="display-guide-points">
         <h3 id="display-guide-points">地図上の点・ピン</h3>
+        <GuideRow sample="dot-candidate-isolated" title="赤い点（単独の三脚候補）">
+          前後の候補と連続しない地形上の候補です。位置だけを点で表示します。
+        </GuideRow>
         <GuideRow sample="dot-sun" title="黄の点（太陽の三脚候補）">
           現在選択している太陽の時刻条件を満たす三脚候補点です。タップすると三脚を配置できます。
         </GuideRow>

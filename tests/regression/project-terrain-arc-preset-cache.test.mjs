@@ -91,6 +91,15 @@ test("平坦地形の目安線は確定線として保存しない", () => {
   assert.equal(createProjectTerrainArcSnapshot(projectTerrainArcContextKey(context()), [flat]), null);
 });
 
+test("単独の地形交点をプリセットに保存しても線は作らない", () => {
+  const key = projectTerrainArcContextKey(context());
+  const arc = exactArc();
+  const points = [arc.points[0]];
+  const snapshot = createProjectTerrainArcSnapshot(key, [{ ...arc, points, segments: [points] }]);
+  assert.ok(snapshot);
+  assert.deepEqual(restoreProjectTerrainArcs(snapshot, key)[0].segments, [points]);
+});
+
 test("確定線はIndexedDBでプリセットIDごとに永続化・削除できる", async () => {
   const projectId = "preset-terrain-line-test";
   const key = projectTerrainArcContextKey(context());

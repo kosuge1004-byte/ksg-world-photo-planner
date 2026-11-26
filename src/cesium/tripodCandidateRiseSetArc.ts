@@ -82,6 +82,8 @@ export type TripodCandidateRiseSetArc = {
    * 切るために使う。未指定の場合は points 全体を1本の線として描く。
    */
   segments?: TripodCandidateRiseSetArcPoint[][];
+  /** 選択時刻の確定点で、前後の線へ接続できない地点。表示時だけ追加する。 */
+  isolatedPoints?: TripodCandidateRiseSetArcPoint[];
   /** buildTripodCandidateRiseSetArc() が作った線だけが持つ。 */
   model?: RiseSetArcModel;
 };
@@ -91,6 +93,21 @@ export function riseSetArcSegments(
   arc: TripodCandidateRiseSetArc
 ): TripodCandidateRiseSetArcPoint[][] {
   return (arc.segments ?? [arc.points]).filter((segment) => segment.length >= 2);
+}
+
+export function riseSetArcIsolatedPoints(
+  arc: TripodCandidateRiseSetArc
+): TripodCandidateRiseSetArcPoint[] {
+  return [
+    ...(arc.segments ?? [arc.points]).flatMap((segment) => segment.length === 1 ? segment : []),
+    ...(arc.isolatedPoints ?? []),
+  ];
+}
+
+export function tripodCandidatePositionKey(
+  candidate: Pick<TripodCandidate, "id" | "latitude" | "longitude">
+): string {
+  return `${candidate.id}:${candidate.latitude}:${candidate.longitude}`;
 }
 
 /** 出から入りまでの時刻と、線の頂点を求めるための元データ。 */

@@ -1082,6 +1082,8 @@ button { cursor: pointer; }
   stroke-dasharray: none;
   stroke-width: 1;
 }
+.map-tripod-isolated-point { fill: #ff2a2a; stroke: #fff; stroke-width: 1; }
+.map-tripod-candidate-marker.isolated { color: #ff2a2a; }
 .map-tripod-candidate-line { stroke-width: 2.5; stroke-dasharray: 6 4; filter: drop-shadow(0 1px 1px #000); }
 .map-candidate-sun { stroke: rgba(255, 185, 0, .95); }
 .map-candidate-moon { stroke: rgba(37, 191, 255, .95); }
@@ -2825,6 +2827,7 @@ body.pseudo-fullscreen-active {
 .display-guide-sample.line-polaris::before { border-color: #9e6cff; }
 .display-guide-sample.line-candidate-exact::before { border-top: 2px solid #ff2a2a; }
 .display-guide-sample.line-candidate-estimate::before { border-top: 2px dashed #ff2a2a; }
+.display-guide-sample.dot-candidate-isolated::before { background: #ff2a2a; }
 .display-guide-sample.line-sight::before { border-top: 3px dashed #fff; }
 .display-guide-sample.line-preview-track::before { border-top: 3px solid #ffe42c; }
 .display-guide-sample.line-measure::before { border-top: 2px dashed #5ab9ff; }

@@ -12,7 +12,12 @@ import type { GroundPoint } from "../types/points";
 import type { ForegroundObject } from "../types/foreground";
 import { calculateKarneyDestinationPoint } from "../geodesy/karneyGeodesic";
 import type { TripodSearchBaseLine } from "../cesium/tripodSearchLine";
-import { riseSetArcSegments, type TripodCandidateRiseSetArc } from "../cesium/tripodCandidateRiseSetArc";
+import {
+  riseSetArcIsolatedPoints,
+  riseSetArcSegments,
+  tripodCandidatePositionKey,
+  type TripodCandidateRiseSetArc,
+} from "../cesium/tripodCandidateRiseSetArc";
 import {
   coordinatesAtMapPixel,
   projectCoordinatesToMapPixel,
@@ -166,6 +171,8 @@ export function Map2DOverlayComponent({
       ),
     }))
   );
+  const isolatedArcPoints = candidateRiseSetArcs.flatMap(riseSetArcIsolatedPoints);
+  const isolatedArcPointKeys = new Set(isolatedArcPoints.map(tripodCandidatePositionKey));
 
 
   return (
@@ -220,6 +227,16 @@ export function Map2DOverlayComponent({
             </g>
           );
         })}
+        {isolatedArcPoints.map((point) => {
+          const pixel = projectCoordinatesToMapPixel(point, center, zoom, size);
+          return <circle
+            key={`${tripodCandidatePositionKey(point)}:${point.timestampMilliseconds}`}
+            className="map-tripod-isolated-point"
+            cx={pixel.x}
+            cy={pixel.y}
+            r={4}
+          />;
+        })}
       </svg>
 
       {candidates.map((candidate) => {
@@ -239,7 +256,9 @@ export function Map2DOverlayComponent({
           >
             <button
               type="button"
-              className={`map-tripod-candidate-marker map-candidate-marker-${candidate.id}`}
+              className={`map-tripod-candidate-marker map-candidate-marker-${candidate.id}${
+                isolatedArcPointKeys.has(tripodCandidatePositionKey(candidate)) ? " isolated" : ""
+              }`}
               onClick={() => onSelectCandidate(candidate)}
               aria-label={`${candidate.label} 三脚候補 ${Math.round(candidate.distanceMeters)}m`}
               title={`${candidate.label}の三脚候補点`}
